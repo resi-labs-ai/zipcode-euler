@@ -28,10 +28,11 @@ trusting any single party**.
 
 Each of those questions now has a data source: identity and income (Plaid), credit (Credit Karma),
 title and liens (Pippin, DART), and — the keystone — a live appraisal from **Bittensor Subnet 46
-(resi)**, a model competition that prices homes. The breakthrough is running all of it through a
+(resi)**, a model competition that prices homes, with a mandatory regional home-price index that bounds
+any model-wide error. The breakthrough is running all of it through a
 **Chainlink CRE workflow**: a decentralized network fetches the data, verifies it with cryptographic
-proofs (Reclaim + EigenLayer) so no private data is ever exposed, and writes a signed credit decision
-on-chain. The underwriter becomes code that a network agrees on, not a person you have to trust.
+proofs (Reclaim + EigenLayer) so no private data is ever exposed, and writes a verified, signed credit
+attestation on-chain. The underwriter becomes code that a network agrees on, not a person you have to trust.
 
 ## How it works (plain version)
 
@@ -40,8 +41,10 @@ on-chain. The underwriter becomes code that a network agrees on, not a person yo
    stack above and prices the specific home.
 3. If approved, the protocol opens an **isolated, individually-priced credit line** — collateralized
    on-chain by a token representing the lien, while the actual lien sits in a legal vehicle off-chain.
-4. The originator **draws USDC** to fund their home-equity loans, repays over time, and when the line is
-   closed the collateral is burned and the lien released.
+4. The originator requests **draws** through the protocol's API — they never touch the chain. The
+   decentralized workflow's controller is the on-chain borrower; a banking partner (Erebor) wires the
+   dollars to the originator and collects repayments. When the line is closed the collateral is burned
+   and the lien released.
 5. Every sensitive step — opening a line, pricing collateral, moving pool money — can **only** be done
    by the decentralized workflow. No admin can reach in and move funds.
 
@@ -53,8 +56,8 @@ Two things make this more than a lending app:
   specific property. Do this thousands of times and you've built something nobody else has: a dense,
   trust-minimized price feed for American homes — independently valuable, and the foundation for
   everything below.
-- **A closed capital loop.** The protocol is built in three stages that form one machine:
-  - **ONE — the credit pool** (what we build first): fund originators against home equity.
+- **A closed capital loop.** Three structures share the same oracle and collateral backbone and form one machine:
+  - **ONE — the credit pool** (the first structure): fund originators against home equity.
   - **TWO — a peer-to-peer marketplace**: match outside lenders directly with borrowers, one market per
     loan.
   - **THREE — tokenized mortgage-backed securities** (via Securitize): a standing buyer that purchases
@@ -80,4 +83,4 @@ trusting a desk to underwrite it for them.
 ---
 
 *For the engineering scope (contracts, interfaces, call paths), see [`claude-zipcode.md`](./claude-zipcode.md).
-For the V1 build plan, see [`todo.md`](./todo.md).*
+For the build plan, see [`todo.md`](./todo.md).*
