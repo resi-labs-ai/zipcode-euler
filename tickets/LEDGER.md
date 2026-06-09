@@ -474,7 +474,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   **Phase 8-S spec foundation DONE; Phase 8-B build tickets (8-Bw + 8-B1…12) TODO** (see PROGRESS item 8 +
   `reports/design/szipUSD-baal-redesign-report.md`). The WOOF-07 digest below is retained ONLY as the record of the
   wrong pass.
-  - **8-B1 · Baal substrate scaffold (§4.5 / `baal-spec.md` 8-B1) — BUILT-VERIFIED 2026-06-07.** *What it does:* a
+  - **8-B1 · Baal substrate scaffold (§4.5 / `reports/design/baal-spec.md` 8-B1) — BUILT-VERIFIED 2026-06-07.** *What it does:* a
     summon script (`contracts/script/SummonSubstrate.s.sol`) that calls the LIVE `BaalAndVaultSummoner` (Base
     `0x2eF2…`) to produce Baal + main Safe (avatar/ragequit target = FREE equity) + non-ragequittable sidecar
     (COMMITTED equity / the freeze) + Loot/Shares clones (Loot soulbound/paused, **Shares = 0 forever**). *Locked
@@ -484,14 +484,14 @@ deliberately pushed to another ticket — verify at the end that each is actuall
     shares). Team owner injected at summon via `executeAsBaal → execTransactionFromModule → addOwnerWithThreshold`;
     main-Safe addr **computed-from-live-factory + asserted == `baal.avatar()`** (fail-closed). *Holes surfaced →
     resolution:* (a) the baal-spec "post-deploy `setShamans`" seam was **un-reachable** (inert governance) → fixed
-    in `claude-zipcode.md §4.5 item-0` + `baal-spec.md 8-B1` (the authority model); (b) BaalSummoner's proxy factory
+    in `claude-zipcode.md §4.5 item-0` + `reports/design/baal-spec.md 8-B1` (the authority model); (b) BaalSummoner's proxy factory
     = `0xC22834581EbC…` (slot 208), not `0xa6B7…` → new `BaseAddresses.BAAL_SAFE_PROXY_FACTORY`. *Cross-ticket
     obligations created:* Gate/all-manager-holders must NOT call `mintShares` (zero-Shares invariant); item-9
     sidecar-funding gated on team-owner; item-10 team-k-of-n / remove-Baal-as-owner / Roles-scoped-CRE-operator /
     unpredictable-saltNonce. *Proof:* 8/8 fork tests, 115/115 total — `forge test --match-contract
     SummonSubstrateTest`. **Not git-committed** (repo working-tree untracked; on `main`). Memory:
     [[szipusd-safe-authority-model]].
-  - **SzipNavOracle · the szipUSD NAV-per-share oracle (§7 / `baal-spec.md §3`) — BUILT-VERIFIED 2026-06-07.**
+  - **SzipNavOracle · the szipUSD NAV-per-share oracle (§7 / `reports/design/baal-spec.md §3`) — BUILT-VERIFIED 2026-06-07.**
     *What it does:* `contract SzipNavOracle is ReceiverTemplate` — the szipUSD **issuance + exit pricing primitive**
     (NOT display-only). Composes junior-basket NAV **on-chain** across the main + sidecar Safes (incl. the staked
     ICHI LP read off the gauge), CRE-**pushes only** the off-chain leg marks (`alphaUSD`, `HYDX/USD`) via reportType 7,
@@ -518,7 +518,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
     *Caveat:* authored AND built in one window (build-subagent dropped on a socket error mid-run, unresumable) — the
     formal fresh-subagent zero-guess gate wasn't run independently; build surfaced no ticket contradiction; code is
     green+kept+fork-verified.
-  - **Exit Gate + szipUSD · the junior share + the windowed exit valve (§6.4/§7 / `baal-spec.md §4/§5/§7`) —
+  - **Exit Gate + szipUSD · the junior share + the windowed exit valve (§6.4/§7 / `reports/design/baal-spec.md §4/§5/§7`) —
     BUILT-VERIFIED 2026-06-08.** *What it does:* `SzipUSD` = a plain transferable 18-dp ERC-20, `onlyGate` mint/burn
     (the user token; trades on CoW). `ExitGate` = the **sole Baal `Loot` custodian** (holds `manager`=2, granted
     post-deploy by `team→mainSafe.execTransaction→setShamans([gate],[2])`), **sole szipUSD minter/burner**, **sole
@@ -549,7 +549,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
     *Caveat:* authored AND built in one window (no independent fresh-subagent zero-guess rebuild — non-blocking, same
     as `SzipNavOracle`). (The earlier "M1 zipUSD-sufficiency" caveat is void — pure in-kind ragequit has no numeraire
     to be short of; a leaver simply gets their pro-rata slice of whatever's free.)
-- **8-B14 · `SzipBuyBurnModule` · the haircut buy-and-burn BID module (§7 / `baal-spec.md §7`) — BUILT-VERIFIED
+- **8-B14 · `SzipBuyBurnModule` · the haircut buy-and-burn BID module (§7 / `reports/design/baal-spec.md §7`) — BUILT-VERIFIED
   2026-06-08.** *What it does:* the protocol's discounted **buyer-of-last-resort** for szipUSD. A Zodiac Module
   (`is Module`, zodiac-core) `enableModule`'d on the **engine Safe**, one immutable CRE `operator`, mutating the Safe
   only via `exec(...,Operation.Call)`. `postBid(GPv2OrderInput{sellAmount,buyAmount,validTo})` validates + signs a
@@ -591,7 +591,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   0x9008D19f58AAbD9eD0D60971565AA8510560ab41`, `VaultRelayer 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110`,
   `CowswapOrderSigner 0x23dA9AdE38E4477b23770DeD512fD37b12381FAB` (reference-only).
 - **8-B5 · `ReservoirLoopModule` + `SzipReservoirLpOracle` + `ReservoirBorrowGuard` + `ReservoirMarketDeployer` · the
-  strike-financing reservoir loop (§4.5.1 8-B5 / `baal-spec.md §10.8`) — BUILT-VERIFIED 2026-06-08.** *What it does:*
+  strike-financing reservoir loop (§4.5.1 8-B5 / `reports/design/baal-spec.md §10.8`) — BUILT-VERIFIED 2026-06-08.** *What it does:*
   the on-chain seam of the self-collateralizing harvest loop — the LP finances its own oHYDX strike. The **2nd engine
   Zodiac Module** (`is Module`, zodiac-core, `enableModule`'d on the szipUSD engine Safe, one immutable CRE
   `operator`, mutates the Safe only via `exec(...,Operation.Call)`) drives the **Safe's OWN EVC account** (NOT a
@@ -616,7 +616,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   computes the per-LP-share mark off-chain (`(reserve_xALPHA·priceXAlpha + reserve_zipUSD·priceZipUSD)/lpTotalSupply`
   — the same reserve×price math `SzipNavOracle` runs for the basket LP leg) + pushes it. *Holes surfaced →
   resolution:* (a) **2 §4.5.1 spec clarifications** (the `OP_BORROW` borrow-pin + the LP_MARK reportType) + **1
-  SPEC-GAP deferred** (LP_MARK registration in the §8 CRE report ABI — `spec-clear-CRE.md` TODO; pinned placeholder
+  SPEC-GAP deferred** (LP_MARK registration in the §8 CRE report ABI — now DONE `claude-zipcode.md §8.0/§8.6`; pinned placeholder
   `7` + CRE-track obligation). (b) Critic hardening folded into the ticket: aggregate `borrowCap` (security F1), the
   required borrow guard (security F8a), the deployer-creates-the-borrow-vault fix (junior #10 — router must precede
   the borrow vault whose oracle is the router). (c) **4 build-exposed corrections folded back** (kept-build doctrine):
@@ -641,7 +641,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   `contracts/src/supply/SzipReservoirLpOracle.sol` + `contracts/script/ReservoirMarketDeployer.sol` +
   `contracts/test/ReservoirLoopModule.t.sol` (no `reference/` or kept-contract edits; `BaseAddresses.sol` untouched).
   Ticket `tickets/sodo/8-B5-reservoir-loop.md`; `reports/8-B5-report.md`.
-- **8-B6 · `LpStrategyModule` · the LP build/stake module (§4.5.1 8-B6 / `baal-spec.md §10.8`) — BUILT-VERIFIED
+- **8-B6 · `LpStrategyModule` · the LP build/stake module (§4.5.1 8-B6 / `reports/design/baal-spec.md §10.8`) — BUILT-VERIFIED
   2026-06-08.** *What it does:* owns the LP's whole lifecycle — build the zipUSD/xALPHA ICHI LP, gauge-stake it to farm
   oHYDX, and unstake/re-stake slices for the 8-B5 loop. The **3rd engine Zodiac Module** (`is Module`, zodiac-core,
   `enableModule`'d on the szipUSD engine Safe, one immutable CRE `operator`, mutates the Safe only via
@@ -688,7 +688,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   `contracts/src/supply/szipUSD/LpStrategyModule.sol` + `contracts/test/LpStrategyModule.t.sol` (no `reference/` or
   kept-contract edits; `BaseAddresses.sol` untouched — live test vault/gauge are test-file constants). Ticket
   `tickets/sodo/8-B6-lp-strategy.md`; `reports/8-B6-report.md`.
-- **8-B7 · `HarvestVoteModule` · the harvest/vote (emissions + governance) module (§4.5.1 8-B7 / `baal-spec.md §10.8`) —
+- **8-B7 · `HarvestVoteModule` · the harvest/vote (emissions + governance) module (§4.5.1 8-B7 / `reports/design/baal-spec.md §10.8`) —
   BUILT-VERIFIED 2026-06-08.** *What it does:* the per-epoch emissions+governance leg of the auto-sodomizer — claims the
   gauge's oHYDX to the Safe, takes the **vote-floor `exerciseVe` slice** (free permalock → grows the Safe's
   account-aggregate veHYDX), re-**votes** our gauge (votes reset weekly), and claims the anti-dilution **rebase**. The
@@ -734,7 +734,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   interface adds (`IVoter`/`IVotingEscrow`/new `IRewardsDistributor`) + `BaseAddresses` (`HYDREX_VE`/
   `HYDREX_REWARDS_DISTRIBUTOR`); spec corrections in `claude-zipcode.md §4.5.1` + `baal-spec §10.8`. Ticket
   `tickets/sodo/8-B7-harvest-vote.md`; `reports/8-B7-report.md`.
-- **8-B8 · `ExerciseModule` · the paid oHYDX-exercise (strike-financing) module (§4.5.1 8-B8 / `baal-spec.md §10.8`) —
+- **8-B8 · `ExerciseModule` · the paid oHYDX-exercise (strike-financing) module (§4.5.1 8-B8 / `reports/design/baal-spec.md §10.8`) —
   BUILT-VERIFIED 2026-06-08.** *What it does:* the **paid** exercise of the sell slice — pays the ~30% USDC strike
   (financed by the 8-B5 borrow; the USDC is already in the Safe) to `oHYDX.exercise(...)` and receives liquid **HYDX**
   to the Safe, which 8-B9 then market-sells to repay. The **5th engine Zodiac Module**; the *paid* counterpart to 8-B7's
@@ -782,7 +782,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   `contracts/src/supply/szipUSD/ExerciseModule.sol` + `contracts/test/ExerciseModule.t.sol` + `IOptionToken` adds
   (`paymentToken`/`getMinPaymentAmount`); spec tidy in `claude-zipcode.md §4.5.1`. Ticket
   `tickets/sodo/8-B8-exercise-ohydx.md`; `reports/8-B8-report.md`.
-- **8-B9 · `SellModule` · the swap (market-sell + POL-buy) module (§4.5.1 8-B9 / `baal-spec.md §10.8`) — BUILT-VERIFIED
+- **8-B9 · `SellModule` · the swap (market-sell + POL-buy) module (§4.5.1 8-B9 / `reports/design/baal-spec.md §10.8`) — BUILT-VERIFIED
   2026-06-08.** *What it does:* the **6th engine Zodiac Module** (sibling of 8-B8, NO EVC/oracle/repay) — the swap leg
   of the auto-sodomizer. Two `onlyOperator` mutators sharing a private `_swap(tokenIn, tokenOut, amountIn, minOut,
   deadline)` approve→`exactInputSingle`→reset-approve dance (the 8-B8 token-dance, router target instead of oHYDX):
@@ -889,7 +889,41 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   `src/interfaces/euler/IEulerEarn.sol` + EXTENDED `src/interfaces/zodiac/IRoles.sol`/`src/interfaces/safe/ISafe.sol`.
   `tickets/sodo/8-Bw-credit-warehouse.md`; `reports/8-Bw-report.md`. Run `forge test --fork-url $BASE_RPC_URL
   --match-contract WarehouseAdminModule` — green, run it yourself.
-- **9 · `ZipRedemptionQueue` (§4.5/§6.1)** — senior par redemption: 30-day epoch queue, pro-rata, no mid-epoch cancel.
+- **9 · `ZipRedemptionQueue` (§4.5/§6.1 / baal-spec §12) — BUILT-VERIFIED 2026-06-09.** *What it does:* the SENIOR
+  exit — un-staked zipUSD → USDC at **par ($1)** via a **30-day epoch queue** with **pro-rata partial fills** +
+  **carry-forward** when the warehouse can't free enough cash; the inverse of the WOOF-06 mint. NOT the junior Exit
+  Gate (different instrument, par not NAV). *Locked shape:* `contract ZipRedemptionQueue is ReentrancyGuard` —
+  **clean-room** (NOT inherited): the ERC-7540 `requestRedeem→settle→claim` lifecycle + EIP-7540 `setOperator` shape
+  from `reference/erc7540-reference`, but escrowing **external** zipUSD (`ESynth`) and paying USDC at **par**
+  (`÷scaleUp`, derived in-ctor, same as the deposit-module mint) — NOT solmate's `share==this`/NAV `convertToAssets`.
+  Pro-rata via a **global cumulative-remaining factor `cumRemaining` (PREC=1e27) scoped by an `era` counter**
+  (the Maple `:367-387` idea, clean-room): O(1) per op, iteration-free, auto-carry across epochs with no per-user
+  action, **fair/censorship-resistant** (no `settleEpoch` caller can omit a requester). `_realize` ceil(pendingNow)
+  /floor(filled); a 100%-drain **bumps `era` + resets `cumRemaining`** (`eraAt<era ⇒ fully filled`) — the zero-safe
+  full-drain. **Funded externally** by the warehouse REDEEM→REPAY (the queue reads its **own** USDC balance, calls
+  **no** EulerEarn — KR-1). Privileged op `settleEpoch` gated on an **immutable `controller`** (the CRE
+  redemption-settle operator), **never renounced**, **no Owned/owner/sweep/pause** (non-sweepable — KR-2). zipUSD
+  burned at settle via `ESynth.burn(address(this),·)` (own-balance, no allowance/capacity). *Holes surfaced →
+  resolution (all in the ticket, pre-build):* **(div-by-zero, junior-dev)** the naive `cumRemaining*=R` hit 0 on a
+  full fill → fixed with the **`era` construct**. **(CRITICAL value-destruction, security)** the era bump keyed on
+  `filledShares==pending` but `filledShares` is always a `scaleUp` multiple while `pending` (zipUSD) can carry
+  sub-`scaleUp` dust → era never bumps → `cumRemaining` decays to 1 → zipUSD burned with **no claimable USDC**,
+  every invariant still green → fixed by **`require(shares % scaleUp == 0)`** in `requestRedeem` (par is whole-
+  USDC-unit anyway; also kills the sub-`scaleUp` dust-trap). **(qa)** added the **ghost-accumulator solvency
+  harness** `ghost_totalPaid <= ghost_totalDelivered` (the binding invariant), donation-tolerant `zipBalance >=
+  totalPending`, redeem/withdraw zero guards, cross-era + over-funded + boundary tests, `block.timestamp`-anchored
+  epoch clock. *Spec edit:* a whole-USDC-unit redemption-granularity clarification to `claude-zipcode.md §6.1`
+  (faithful, not a mechanism change). *Cross-ticket:* **DISCHARGED** the warehouse REDEEM/REPAY seam (PROGRESS row
+  317 — no EulerEarn coupling, settles own balance, non-sweepable, fork-proven against the real `WarehouseAdminModule`
+  + real `ESynth` burn). **Disambiguated** PROGRESS row 272 ("Item 9 · sidecar rotation") = baal-spec-§8's *freeze/
+  rotation module* (item-10/8-B11), NOT this senior queue — annotated. *Created (item-10):* wire `repaySink==queue`
+  + `controller`=CRE-settle-operator (distinct identity); the REPAY Roles-scope re-target authority must be the
+  timelock/multisig NOT the settle operator (security F6); the senior-queue `audit/2`/`audit/3` rows (deferred like
+  8-Bw). *Proof:* **44/44** (37 unit + 5 invariant/fuzz @128k calls + 2 Base-fork), **468/468 total no regression** —
+  `forge test [--fork-url $BASE_RPC_URL]` (independently re-run). **ZERO load-bearing guesses.** Code:
+  `contracts/src/supply/ZipRedemptionQueue.sol` + `contracts/src/interfaces/euler/IZipUSD.sol` +
+  `contracts/test/ZipRedemptionQueue.t.sol`. NOT git-committed (superintendent commit decision). Ticket
+  `tickets/sodo/9-zip-redemption-queue.md`; `reports/9-report.md` — run it yourself.
 - **10 · Deploy + wiring script (§9)** — vanilla Euler/OZ/CRE config; covers audit/2.md S1–S12 (deploys + installs
   the hook, wires + freezes each per-line `ROUTER_i` inside `openLine` [no shared router / no `govSetFallbackOracle`],
   renounces ESynth ownership, etc.).

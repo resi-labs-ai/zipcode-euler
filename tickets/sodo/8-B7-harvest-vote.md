@@ -61,7 +61,7 @@ Two files under the supply/engine tree, plus three minimal interface edits/addit
   slice FIRST → re-`vote` → pass the remainder to 8-B8. **State: none beyond the set-once wiring** (no `tokenId`).
   Invariants: vote-floor-first; re-vote every epoch; `exerciseVe` is the FLAT/DOWN hedge; the module is the Safe's
   **sole** voter.
-- `baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
+- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
   `onlyOperator`, mutate the Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via
   `ModuleProxyFactory`, init in `setUp` under `initializer`, Call-only / no delegatecall) + **§10.8 / 8-B7** (the
   harvest+vote description, corrected to the account-keyed surface) + **§7/§10.6 #3** (the oHYDX + veHYDX-fee

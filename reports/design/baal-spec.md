@@ -1,4 +1,4 @@
-# baal-spec.md — full DRAFT spec for the szipUSD junior vault (spec-ready, staging for claude-zipcode.md)
+# reports/design/baal-spec.md — full DRAFT spec for the szipUSD junior vault (spec-ready, staging for claude-zipcode.md)
 
 > **What this file is.** A **complete, spec-ready draft** of the szipUSD junior-vault subsystem, written in
 > `claude-zipcode.md` section form so it can be approved item-by-item and then integrated section-by-section into the
@@ -40,13 +40,13 @@
 | What | Path |
 |---|---|
 | Canonical spec (integration target) | `claude-zipcode.md` |
-| This draft spec | `baal-spec.md` (repo root) |
+| This draft spec | `reports/design/baal-spec.md` (repo root) |
 | Builder reference index (file:line map) | `reference/BAAL-ZODIAC-REFERENCE-MAP.md` |
 | Baal contracts (canonical) | `reference/Baal/` |
 | Zodiac base contracts (inherit) | `reference/zodiac-core/` |
 | Zodiac address book + SDK | `reference/zodiac/` |
 | Roles modifier v2 (warehouse) + **CoW swap SDK** | `reference/zodiac-modifier-roles/` (`packages/sdk/src/swaps/`) |
-| **xALPHA LST + CCIP bridge spec** | `bridge/xalpha-bridge-impl.md` (+ `reference/evm-bittensor/`, `reference/subtensor/precompiles/`) |
+| **xALPHA LST + CCIP bridge spec** | `tickets/bridge/8x-01-szalpha-wrapper-cct.md` (+ `reference/evm-bittensor/`, `reference/subtensor/precompiles/`) |
 | ERC-7540 senior queue fork | `reference/erc7540-reference/` (+ `reference/maple-withdrawal-manager/`) |
 | Engine design narrative | `pending-docs/auto-sodomizer.md` (+ `hydrex.md`, `treasury.md`, `monitoring.md`) |
 | Deposit module ticket (RE-AUTHOR — §15) | `tickets/woof/WOOF-06-deposit-module.md` |
@@ -159,13 +159,13 @@ staked positions, (c) composes spot NAV, (d) maintains a cumulative TWAP accumul
 | oHYDX | **intrinsic = HYDX × (1 − exerciseDiscount)**, `exerciseDiscount` read on-chain from the option contract at mark time; marked post-exercise | derived |
 | **ICHI LP (incl. staked in gauge)** | **reserves × {zipUSD $1, xALPHA as above} at pool TWAP** — **IL is marked-through** (true reserve value, not hidden) | hybrid |
 
-- **xALPHA value source (the integrity story).** Per `bridge/xalpha-bridge-impl.md §2`, xALPHA is a wstETH/cToken-
+- **xALPHA value source (the integrity story).** Per `tickets/bridge/8x-01-szalpha-wrapper-cct.md`, xALPHA is a wstETH/cToken-
   style LST: its exchange rate is `staked alpha ÷ supply` read from the **validator stake** (Subtensor precompiles
   StakingV2 `0x805` / Metagraph `0x802`), **no DEX, no pool price** in the mint/redeem path — so the **$100k/mo
   subnet emissions accrue here as a rising exchange rate** (real, non-manipulable). Only the `alphaUSD` conversion
   rides the subnet AMM (thin-pool/depth risk) → that leg is TWAP'd + guarded. Value floor = redeemability
-  (`redeem → unstake → bridge → AMM` is always callable, bridge spec §70–72). Ground §3's xALPHA leg against
-  `bridge/xalpha-bridge-impl.md` at build.
+  (`redeem → unstake → bridge → AMM` is always callable, per the 8x-01 ticket). Ground §3's xALPHA leg against
+  `tickets/bridge/8x-01-szalpha-wrapper-cct.md` at build.
 - **Quantities** (balances of every leg across MAIN + SIDECAR + the **staked** ICHI LP read off the gauge) are read
   on-chain — never trust a pushed balance.
 - **veHYDX is NOT a markable leg.** The permalocked veNFT (8-B7) is non-redeemable, so it carries **~0 principal** in
@@ -622,7 +622,7 @@ short W, §3.3).
 
 ### 10.5 Source
 `pending-docs/auto-sodomizer.md` (+ §11 the compounding flywheel) + `hydrex.md`; xALPHA mark/source
-`bridge/xalpha-bridge-impl.md`. Hydrex/engine addresses in `claude-zipcode.md §4.5.1` + `pending-docs/hydrex.md §2.5`.
+`tickets/bridge/8x-01-szalpha-wrapper-cct.md`. Hydrex/engine addresses in `claude-zipcode.md §4.5.1` + `pending-docs/hydrex.md §2.5`.
 
 ### 10.6 The yield stack — what covers IL (junior NAV sources)
 The engine's bet: **harvested yield > IL + xALPHA risk.** The IL-covering stack, each a distinct flow marked **once**
@@ -645,7 +645,7 @@ that partly arrive denominated in xALPHA.
 The junior is compensated for bearing first-loss by the §10.6 **subsidy-funded refinery — NOT the credit spread.**
 Four flows accrue to the **team treasury, never the Baal basket**, and are **never counted in junior NAV** (§3 marks
 basket assets only):
-1. **xALPHA ⇄ ALPHA arbitrage** (LST mint/redeem arb, `bridge/xalpha-bridge-impl.md`).
+1. **xALPHA ⇄ ALPHA arbitrage** (LST mint/redeem arb, `tickets/bridge/8x-01-szalpha-wrapper-cct.md`).
 2. **zipUSD ⇄ USDC arbitrage** (the peg, §6.2/§12).
 3. **~6% APR on the credit lines** (lending interest, §11).
 4. **0.2% flat facility fee on revolving credit**, per line on fulfillment.
@@ -862,9 +862,9 @@ rotation (item 9 / §8.3). The orchestration seam + the regime classifier + the 
 
 **Where it lives.** A custom **`onlyOperator`** modifier + the immutable operator address on each module (Zodiac's
 `onlyOwner` is admin-only, so it can't be the op gate — `auto-sodomizer.md §8 inv 1`). The **off-chain CRE workflow**
-(the orchestrator; same trust pattern as `bridge/xALPHA-apr.md`) computes regime/splits/sizes and calls these
-entrypoints. **The CRE workflow itself is a separate build** (`spec-clear-CRE.md` — not yet run); 8-B11 is the
-*on-chain surface* it calls.
+(the orchestrator; same trust pattern as `tickets/bridge/8x-02-xalpha-apr-cre.md`) computes regime/splits/sizes and calls these
+entrypoints. **The CRE workflow itself is a separate build** (`claude-zipcode.md §8.7`; CRE-05 build, not yet run);
+8-B11 is the *on-chain surface* it calls.
 
 **How it works (per epoch + on triggers).** claim → classify regime (price vs short EMA: UP/FLAT/DOWN,
 `hydrex.md §9.2`) → split (vote-floor-first, then the §11.2 A/B/C weights) → drive the strike loop (8-B5/8-B8/8-B9)
@@ -876,10 +876,10 @@ harvest/exercise/borrow/sell/payout/compound/rotation. Immutable = set at deploy
 the revolving borrow (8-B5) safe — it kills the external oracle-manipulation exploit.
 
 **What it touches.** Every module 8-B5…8-B13 (it is their only caller); item 9 (hosts the rotation); 8-B12 (consumes
-its regime/caps/halts); the CRE workflow (`spec-clear-CRE.md`).
+its regime/caps/halts); the CRE workflow (`claude-zipcode.md §8.7`).
 
 **Source (verify at build).** `auto-sodomizer.md §3/§8 inv 1`; `hydrex.md §10` (bot pipeline: Watcher → Rebalancer →
-Voter); `spec-clear-CRE.md`; `reference/zodiac-core` `Module`; `reference/cre-*` for the workflow.
+Voter); `claude-zipcode.md §8.7`; `reference/zodiac-core` `Module`; `reference/cre-*` for the workflow.
 
 **Params (settled).** Operator = the single immutable CRE workflow address (deploy-time). Regime classifier, split
 policy (= 8-B10's open weights), caps (8-B12) are CRE-workflow policy. No *additional* open economic decision beyond
@@ -891,7 +891,7 @@ critical governor), utilization `U`, IL-vs-HYDX, plus the surveillance tripwires
 backing / clock). Feeds §12, the depositor UI, and the CRE gates (8-B11).
 
 **Where it lives.** **On-chain:** the NAV + trailing-APR computation (CRE-published on-chain, reuse
-`bridge/xALPHA-apr.md` pattern) + the `maxDeposit` **TVL gate** (the WOOF-06 deposit gate). **Off-chain:** the
+`tickets/bridge/8x-02-xalpha-apr-cre.md` pattern) + the `maxDeposit` **TVL gate** (the WOOF-06 deposit gate). **Off-chain:** the
 read-only dashboard (multicall + archive + event indexer) — **full spec in `monitoring.md`.**
 
 **How it works (the metrics).**
@@ -910,7 +910,7 @@ read-only dashboard (multicall + archive + event indexer) — **full spec in `mo
 caps size the loop); WOOF-06 (`maxDeposit` TVL gate); the depositor UI (trailing-realized only).
 
 **Source (verify at build).** `auto-sodomizer.md §7/§8 inv 6&7`; `hydrex.md §10`; **`monitoring.md` (full
-surveillance spec)**; `bridge/xALPHA-apr.md` (the on-chain APR/NAV publish pattern); `reference/cre-*`.
+surveillance spec)**; `tickets/bridge/8x-02-xalpha-apr-cre.md` (the on-chain APR/NAV publish pattern); `reference/cre-*`.
 
 **Params (settled).** TVL cap = a **measured formula** (re-derived each epoch, not a static knob); trailing-realized
 only; soft-bleed caps (8-B9); tripwire thresholds (`monitoring.md §3` escalation tiers, governed). No open economic
@@ -1141,7 +1141,7 @@ against the retired seam and must be rebuilt; blocked until 8-B1 + SzipNavOracle
 | `zodiac-core` | **base contracts to inherit** — `Module`/`Modifier`/`Operation`/`ModuleProxyFactory` for 8-B5…8-B14. |
 | `zodiac` | address book + `deployAndSetUpModule`, module ABIs. |
 | `zodiac-modifier-roles` | **Roles v2 (warehouse)** + **`packages/sdk/src/swaps/` CoW order SDK** (§6/§7). |
-| `bridge/xalpha-bridge-impl.md`, `evm-bittensor`, `subtensor` | **xALPHA LST + mark source** (precompiles `0x805`/`0x802`; CCIP/CCT bridge) for §3/§10. |
+| `tickets/bridge/8x-01-szalpha-wrapper-cct.md`, `evm-bittensor`, `subtensor` | **xALPHA LST + mark source** (precompiles `0x805`/`0x802`; CCIP/CCT bridge) for §3/§10. |
 | `erc7540-reference`, `maple-withdrawal-manager` | senior queue (§12). |
 | `euler-earn`, `euler-vault-kit`, `ethereum-vault-connector`, `evk-periphery`, `euler-price-oracle` | venue (Euler): EulerEarn (warehouse), EVK, EVC, `ESynth` (zipUSD). |
 | `cre-*`, `chainlink-*` | CRE workflow + push-oracle plumbing. |
@@ -1150,7 +1150,7 @@ against the retired seam and must be rebuilt; blocked until 8-B1 + SzipNavOracle
 
 **Canonical-source rules:** Baal → `reference/Baal` (never `baal-v3.5`); inherit Zodiac → `reference/zodiac-core`;
 addresses/SDK → `reference/zodiac`; warehouse access control + CoW SDK → `reference/zodiac-modifier-roles` v2;
-xALPHA mark → `bridge/xalpha-bridge-impl.md` + Subtensor precompiles.
+xALPHA mark → `tickets/bridge/8x-01-szalpha-wrapper-cct.md` + Subtensor precompiles.
 
 ---
 
@@ -1173,7 +1173,7 @@ xALPHA mark → `bridge/xalpha-bridge-impl.md` + Subtensor precompiles.
 
 Hydrex/engine, CoW (`GPv2Settlement`/`VaultRelayer`), and the xALPHA CCT bridge / Subtensor precompile addresses to
 be pinned at build from `pending-docs/hydrex.md §2.5`, `reference/zodiac-modifier-roles` swaps, and
-`bridge/xalpha-bridge-impl.md §6.1`.
+`tickets/bridge/8x-01-szalpha-wrapper-cct.md`.
 
 ---
 
@@ -1189,7 +1189,7 @@ be pinned at build from `pending-docs/hydrex.md §2.5`, `reference/zodiac-modifi
 5. **Mint/burn bypass the Loot pause** (`from==0`/`to==0`).
 6. **Zodiac clone constructor is dead** — init in `setUp` under `initializer`; init/ownerless the mastercopy.
 7. **xALPHA value = LST exchange rate `staked alpha ÷ supply` (stake accounting, NO pool price) × `alphaUSD`
-   (subnet AMM TWAP × TAO/USD)** — only the `alphaUSD` leg is a market price (`bridge/xalpha-bridge-impl.md §2`).
+   (subnet AMM TWAP × TAO/USD)** — only the `alphaUSD` leg is a market price (`tickets/bridge/8x-01-szalpha-wrapper-cct.md`).
    Subnet emissions accrue in the exchange rate → in-kind issuance is **full fair-value, NO haircut** (§3.4).
 8. **The protocol never reads the szipUSD market price for accounting** (§3.4).
 9. **Senior (ERC-7540 queue, §12) ≠ junior (Exit Gate, §5).**
@@ -1217,4 +1217,4 @@ NAV; impatient exit = **sell szipUSD on CoW**; the protocol's **8-B14 buy-and-bu
 **sidecar**; **loss** is a **pari-passu provision-that-recovers** (junior-vs-senior the only tranche; the "first-loss
 floor" is an exit constraint). The **senior** zipUSD exit is a *separate* ERC-7540 queue + the Roles-governed
 CreditWarehouse — never conflate. Ground every contract claim in `reference/` via `BAAL-ZODIAC-REFERENCE-MAP.md` and
-the xALPHA mark in `bridge/xalpha-bridge-impl.md`; obey §18.
+the xALPHA mark in `tickets/bridge/8x-01-szalpha-wrapper-cct.md`; obey §18.

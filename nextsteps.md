@@ -16,11 +16,14 @@ Read this, then orient.
 >   windowed ragequit at `min(spot,twap)` NAV (partial-fill) + a **CoW** secondary + 8-B14 buy-and-burn; first-loss =
 >   a **conservative provision-that-recovers** marked on `SzipNavOracle`, **NOT** withhold-no-markdown. **Author /
 >   build against IT.**
-> - **`baal-spec.md` = the build-grade companion** for the un-authored **8-B** tickets — the contract-cited recipes
->   for the **substrate scaffold (8-B1), `SzipNavOracle`, the Exit Gate, and engine 8-B5…8-B14**, plus the **Base
->   address book** (`BaalAndVaultSummoner 0x2eF2fC8a18A914818169eFa183db480d31a90c5D`, `BaalSummoner`, Loot/Shares
->   singletons). **Author the 8-B tickets FROM `baal-spec` + `claude-zipcode`; then DELETE `baal-spec.md` once those
->   tickets have consumed it** (it is a staging doc, not a permanent one).
+> - **`reports/design/baal-spec.md` = the build-grade companion** for the **8-B** tickets — the contract-cited recipes
+>   for the **substrate scaffold (8-B1), `SzipNavOracle`, the Exit Gate, and engine 8-B5…8-B14 + 8-Bw warehouse**, plus
+>   the **Base address book** (`BaalAndVaultSummoner 0x2eF2fC8a18A914818169eFa183db480d31a90c5D`, `BaalSummoner`,
+>   Loot/Shares singletons). **MOVED to `reports/design/` (2026-06-09) — it is the design trail now, not a root spec:**
+>   nearly all of it is consumed (8-B1 / `SzipNavOracle` / Exit Gate / 8-B5…B10 / B14 / 8-Bw all BUILT-VERIFIED), so
+>   it is **mostly historical**. Its only remaining live "Model from" duty is **item 9 (`§12 ZipRedemptionQueue`)** +
+>   the **loss side (`§9`, M2)**; author those FROM it, then **DELETE it once they consume it** (staging, not permanent).
+>   The canonical reflection of everything in it lives in `claude-zipcode.md` (its `[→ §X]` pointers).
 > - **`WOOF-06` + `INFLOW-06` are already re-authored** to the two-token shape (Gate seam, transferable szipUSD,
 >   NAV-proportional); the stale `contracts/src/supply/ZipDepositModule.sol` stub is deleted; **cold-build them once
 >   8-B1 / `SzipNavOracle` / the Exit Gate land** (they mock the Gate seam until then).
@@ -48,7 +51,7 @@ Read this, then orient.
    then Phase L L1→L12 loop) + the source of each ticket's "Done when". `audit/3-results.md` is the authority
    map. (Note: some item-8 acceptance rows carry `EXCISED / 8-B` markers — the Baal junior acceptance is
    re-authored at the 8-B build tickets, **not** a hole.)
-7. **`pending-docs/`** — the *why* + open legs (`vision.md`, `spv-lien-proof.md`, `treasury.md`), not build spec.
+7. **`pending-docs/`** — the *why* + open legs (`vision.md`, `spv-lien-proof.md`), not build spec. *(The post-M1 `treasury.md` economics doc was removed 2026-06-09 — to be re-authored.)*
 
 Project memory (auto-loaded) holds the locked decisions + the authoring method. Trust it; the docs are authoritative.
 

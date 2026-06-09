@@ -4,8 +4,8 @@
 > single-sided (xALPHA or zipUSD), earn a [trailing-realized] yield"** — depositors **never see an oHYDX, a
 > strike, or a gauge.** Under the hood a CRE-driven robot farms gauge oHYDX, exercises it **via a
 > self-collateralizing borrow loop (the LP is its own working capital)**, **market-sells** the HYDX within the
-> soft-bleed caps, and either **pays out** (USDC or boosted xALPHA) or **compounds** the proceeds back into more
-> staked LP + loan-book capacity. It is a **HYDX-bleed-funded yield** — designed to abstract complexity, convert
+> soft-bleed caps, and **recycles** the proceeds into the basket — backed zipUSD → single-sided gauge-staked LP →
+> **NAV-per-share accretion** (the single sink; no payout, no xALPHA buy, no boost). It is a **HYDX-bleed-funded yield** — designed to abstract complexity, convert
 > xALPHA dump-pressure into LPs, and feed the loan book.
 >
 > **Status / where the build spec lives.** This file is the design **narrative** (rationale, economics, the
@@ -13,12 +13,12 @@
 > modules **8-B5…8-B13**) — build tickets are authored from there, not from here. The supply-side token model is
 > locked in `claude-zipcode.md` §2/§4.5/§11/§17 and assumed throughout: **the vault IS `szipUSD`** (one junior
 > ERC-4626 share); **depositors deposit `zipUSD` or `xALPHA` single-sided** and receive `szipUSD`; the **LP is
-> `zipUSD/xALPHA`** (clean, yieldless $1 leg); real lending yield is the **protocol's** (privatized → buys
-> xALPHA) and the depositor's pay is the **HYDX-vamp + the xALPHA subsidy**, frozen-but-accruing through the §11
-> duration bond.
-> Refs: `hydrex.md` (the Hydrex leg, exit constraint, soft-bleed caps), `treasury.md` (§4.6 product, §4.7 boost
-> loop, §7 foundation), `monitoring.md` (surveillance — TVL cap, profitability-halt, backing feeds),
-> `bridge/xALPHA-apr.md` (CRE APR pattern). Memory: [[hydrex-gauge-architecture]].
+> `zipUSD/xALPHA`** (clean, yieldless $1 leg); real lending yield is the **protocol's** (it over-collateralizes
+> zipUSD in the credit warehouse) and the depositor's return is **NAV accretion** — the HYDX-vamp free value
+> recycled into the basket (single sink, 8-B10), realized on exit at NAV, plus the §11 Duration-Bond premium.
+> Refs: `hydrex.md` (the Hydrex leg, exit constraint, soft-bleed caps), `claude-zipcode.md §4.5.1` (the engine modules / recycle sink), `monitoring.md` (surveillance
+> — TVL cap, profitability-halt, backing feeds),
+> `tickets/bridge/8x-02-xalpha-apr-cre.md` (CRE APR pattern). Memory: [[hydrex-gauge-architecture]].
 
 ---
 
@@ -43,7 +43,7 @@ the failure mode the design exists to prevent.
 |---|---|---|
 | **Depositor** | single-sided deposit of **xALPHA** *or* **zipUSD** | the **szipUSD** vault share (ERC-4626) |
 | **Vault (szipUSD Safe)** | holds the basket and its **ICHI single-sided** zipUSD/xALPHA LP, **gauge-staked** | oHYDX emissions + swap fees |
-| **CRE robot** | the only permissioned operator (harvest, exercise, sell, payout, compound, rebalance) | — |
+| **CRE robot** | the only permissioned operator (harvest, exercise, sell, recycle) | — |
 | **Protocol treasury** | receives loan-book USDC + the lending spread/fees (the strike loop borrows the warehouse's un-utilized USDC, NOT treasury) | — |
 
 - **Single-sided in (ICHI):** a depositor holding xALPHA deposits it directly — *not a sell.* This is the
@@ -77,17 +77,17 @@ the failure mode the design exists to prevent.
         └─────────┬───────────┘                 └────────────────────────┘
                   │ free value (USDC, residual above strike+interest)
         ┌─────────▼───────────────────────────────────┐
-        │  Allocation / payout router (§6, §11)         │
-        │   Mode A: pay depositors USDC                 │
-        │   Mode B: →warehouse→mint zipUSD→buy xALPHA   │  (treasury.md §4.7)
-        │           →pay boosted xALPHA                 │
-        │   Mode C: →warehouse→mint zipUSD→(swap if     │  (the flywheel, §11)
-        │           short)→add+stake LP; credit-line ↑  │
+        │  Recycle sink (§6 — the single sink, 8-B10)   │
+        │   →deposit USDC into the credit warehouse     │
+        │    (senior backing / lending capacity ↑)      │
+        │   →mint backed zipUSD into the basket         │
+        │   →8-B6 single-sides it into gauge-staked LP  │
+        │   →szipUSD NAV-per-share accretes             │
         └──────────────────────────────────────────────┘
 ```
 
 **The CRE robot is the only writer.** Everything that touches the borrow facility, the market-sell, and the
-payout/compound is permissioned to the CRE workflow address. This is what makes the revolving borrow safe (§5);
+recycle is permissioned to the CRE workflow address. This is what makes the revolving borrow safe (§5);
 depositor principal is protected by the LP collateral on the strike borrow.
 
 ---
@@ -109,7 +109,7 @@ depositor principal is protected by the LP collateral on the strike borrow.
    - e. **repay** the borrow from the proceeds; **withdraw** the LP from escrow (unlocks at debt = 0); **re-stake**
      to resume emissions.
    - f. the **residual** (proceeds above strike + interest) is the **free value**.
-5. **Route the free value** → the allocation / payout router (§6, §11): Mode A / B / C per the Treasury-owned weight.
+5. **Recycle the free value** → the single sink (§6, 8-B10): deposit → backed zipUSD into the basket → 8-B6 single-sided LP → NAV accretion.
 6. **Rebalance** (epoch boundary): re-vote (`Voter.vote` — votes reset weekly); update the trailing-APR accumulator.
 
 **Caps on every sell** (`hydrex.md` §9.3): per-order slippage ≤2–3%; per-epoch volume ≤1–2% of pool USDC; never
@@ -150,50 +150,37 @@ sale completes within an epoch.
 
 ---
 
-## 6. Payout / allocation modes
+## 6. The recycle sink — the single free-value destination
 
-> **SUPERSEDED (2026-06-08) — read against `claude-zipcode.md §4.5.1`.** The three-mode framing below (Mode A clean
-> USDC / Mode B boosted xALPHA / Mode C compound) is **retired.** There is now **one sink:** the free value is
-> recycled — `ZipDepositModule.deposit` (USDC → `CreditWarehouse` senior backing) mints backed zipUSD **directly
-> into the basket** (the recycle module runs on the MAIN Safe — no `gate.depositFor`, no shares), and 8-B6
-> single-sides it into the gauge-staked LP. The basket grows, share count is flat → **NAV-per-share accretes for
-> every holder.** No USDC payout, no xALPHA boost distribution, no pull-claim distributor; the depositor's return is
-> NAV accretion realized on exit. 8-B13 (Mode C) is removed — absorbed into the recycle.
+> Single sink (2026-06-08; `claude-zipcode.md §4.5.1`, 8-B10 `RecycleModule`). The earlier three-mode framing
+> (Mode A clean USDC / Mode B boosted xALPHA / Mode C compound) is **retired** — there is no USDC payout, no
+> zipUSD→xALPHA buy, no "+30% boost" distribution, and no pull-claim distributor. `8-B13` is removed (absorbed here).
 
-The free value (§4 step 4f) is routed by a Treasury-owned policy across three sinks:
+The free value (§4 step 4f) has **one** destination: it is recycled into the basket so NAV-per-share rises for
+every holder.
 
-**Mode A — clean USDC.** Net USDC distributed pro-rata to `szipUSD` shares. Simplest; the cash *leaves* (no AUM
-growth). Use when the goal is a plain USDC-yield product.
+- **`ZipDepositModule.deposit(usdc)`** parks the free USDC as **senior backing in the `CreditWarehouse`** (the
+  recycle module runs on the MAIN Safe — no `gate.depositFor`, no new shares) and mints **backed zipUSD 1:1**
+  directly into the basket.
+- **8-B6 single-sides** that zipUSD into the **gauge-staked LP** (single-sided zipUSD ICHI vault — no balanced
+  add, no xALPHA leg to fund).
+- The basket grows, share count is flat → **NAV-per-share accretes.** The depositor's return is that accretion,
+  realized on exit at NAV (plus the §11 Duration-Bond premium).
 
-**Mode B — boosted xALPHA (the recycle loop, `treasury.md` §4.7).** Net USDC → **deposit into the loan book /
-warehouse** (real AUM) → **mint zipUSD (backed 1:1 by the just-deposited USDC, by construction)** → **swap
-zipUSD→xALPHA on our POL** (fee recaptured: we own LP + veNFT) → distribute xALPHA as a **"+30% boost"** on the
-token depositors already receive.
-- **Retains the USDC in the loan book** (AUM-accretive) and **markets louder** ("+30% APR, stake here").
-- **The boost buy-side must be funded ONLY by HYDX-extracted (free) value** — never reserves, never unbacked mint.
-  This is the load-bearing invariant (§8 inv. 3).
-- Boost value is **reflexive + time-limited** (rides xALPHA→HYDX, expires ~6mo) → present trailing-realized.
-
-**Mode C — compound (the recycle loop's growth sink, §11).** Instead of distributing the value, the free-value
-USDC is recycled into **more staked LP** (grow the engine) and the same USDC stays as **senior backing / lending
-capacity** (expand credit lines). The bought xALPHA is **not** handed to depositors — it is **paired with zipUSD
-and added to the gauge-staked LP** (§11).
-
-**Mode selection is a Treasury-owned vault parameter** (per-vault, not per-deposit; set alongside the vote-floor
-target `s*`, `hydrex.md` §4). The three are not mutually exclusive — the **free-value allocation policy** (§11.2)
-splits each epoch's free value across {compound (Mode C), boost (Mode B), clean USDC (Mode A)} per a Treasury
-weight. Mode C is the compounding/growth default once the engine is live and the vote floor is held; Mode B is
-the acquisition-window distribute-and-market default; Mode A is the clean fallback.
+**Free-value-only (the load-bearing invariant, §8 inv. 3).** The recycle spends **only** `freeValueAccrued`
+(HYDX-extracted), and the zipUSD it mints is backed 1:1 by the just-deposited USDC (deposit precedes mint) — never
+depositor principal, never an unbacked mint, never a reserve spend. The same USDC does double duty: **senior
+backing** (over-collateralizes zipUSD / lending capacity ↑) **and** the raw material for the LP growth. The
+recycle *amount* each epoch is a Treasury-owned weight (the numbers are open, pinned post-M1; the mechanism is fixed).
 
 ---
 
 ## 7. Accounting, APR, and the TVL cap
 
 - **Shares.** ERC-4626. `szipUSD` NAV = (ICHI LP value + idle basket assets + accrued, un-distributed proceeds +
-  any in-flight loop balance net of the open borrow) / supply. Payouts are realized distributions, not NAV
-  markups, so the headline is honest.
-- **APR — trailing realized only.** `APR = (USD value actually distributed over trailing 7d, annualized) ÷ avg
-  TVL`. Computed/published on-chain by the CRE (reuse `bridge/xALPHA-apr.md` pattern). **Never** publish a
+  any in-flight loop balance net of the open borrow) / supply. The recycle adds **real basket assets** (backed
+  zipUSD → single-sided LP), so NAV-per-share genuinely rises — not a paper markup; the headline is honest.
+- **APR — trailing realized only.** `APR = (NAV-per-share growth over trailing 7d, annualized)`. Computed/published on-chain by the CRE (reuse `tickets/bridge/8x-02-xalpha-apr-cre.md` pattern). **Never** publish a
   projection. The number **degrades visibly** as the HYDX bleed/floor bite — that's the design, not a bug.
 - **TVL cap (the critical governor).** The vault's farmed-oHYDX run-rate scales with TVL; if it exceeds the HYDX
   pool's absorption, the vault dumps faster than the market clears → it **kills its own APR.** So:
@@ -204,13 +191,12 @@ the acquisition-window distribute-and-market default; Mode A is the clean fallba
 
 ## 8. Invariants (the hard rules — enforce in code, not policy)
 
-1. **Permissioned writer.** Only the CRE address operates harvest/exercise/borrow/sell/payout/compound.
+1. **Permissioned writer.** Only the CRE address operates harvest/exercise/borrow/sell/recycle.
 2. **Depositor principal is never at risk in the dump.** The strike borrow draws the warehouse's **un-utilized
    `USDC Resting Vault`**, **over-collateralized by the ICHI LP**, CRE-only, repaid each loop — never USDC already
    committed to a credit line.
-3. **Free-value-only.** In Mode B (boost) and Mode C (compound), xALPHA is bought **only** with HYDX-extracted
-   free value; no unbacked zipUSD mint, no reserve spend to prop xALPHA. (Backing is automatic — deposit precedes
-   mint.)
+3. **Free-value-only.** The recycle spends **only** HYDX-extracted free value; the zipUSD it mints is backed 1:1
+   by the just-deposited USDC (deposit precedes mint). No unbacked mint, no reserve spend, no xALPHA buy.
 4. **Soft-bleed caps** (`hydrex.md` §9.3) enforced on every sell; amber-taper ~$0.018, halt below $0.015.
 5. **Loop sizing + regime gate.** Borrow/exercise only an amount whose repay market-sell fits the soft-bleed cap;
    enter the loop only in **UP/FLAT** (DOWN → `exerciseVe`, no loop); the LP slice is unstaked **only inside the
@@ -233,23 +219,23 @@ the acquisition-window distribute-and-market default; Mode A is the clean fallba
   `exercise(amount,maxPayment,recipient,deadline)` (prefer the deadline overload), `exerciseVe(amount,recipient)`,
   `getDiscountedPrice(amount)`, `getTimeWeightedAveragePrice(amount)`, **`getMinPaymentAmount()` — NO args**,
   `discount()` (= 30).
-- **Sell:** `SwapRouter (0x6f4b…)` `exactInputSingle` — HYDX→USDC (the loop's market-sell), and zipUSD→xALPHA on
-  our POL (Mode B/C buy leg).
+- **Sell:** `SwapRouter (0x6f4b…)` `exactInputSingle` — HYDX→USDC (the loop's market-sell). *(No zipUSD→xALPHA buy
+  leg — the recycle adds single-sided zipUSD LP, 8-B6.)*
 - **Strike borrow (the loop):** an EVK isolated market — the warehouse **`USDC Resting Vault`** (un-utilized USDC) + an **ICHI-LP
   escrow collateral vault** + a dedicated `EulerRouter`, driven by the CRE-gated module
   (`postCollateral`/`borrow`/`repay`/`withdrawCollateral`). Borrower-of-record = the szipUSD Safe (its own EVC
   account). Build detail: `claude-zipcode.md` §4.5.1 (8-B5).
 - **Governance:** `Voter (0xc69E…)` `vote/reset`; rebase claim on the veNFT.
-- **Payout Mode B/C:** `ZipDepositModule.deposit` → backed zipUSD mint (+ warehouse senior backing); `SwapRouter`
-  zipUSD→xALPHA on our POL; Mode C additionally `gauge.deposit` the re-built LP.
-- **CRE workflow:** the orchestrator; same trust pattern as `bridge/xALPHA-apr.md`.
+- **Recycle (8-B10):** `ZipDepositModule.deposit` → backed zipUSD mint (+ warehouse senior backing) → 8-B6
+  single-sided `gauge.deposit` the LP into the basket. No zipUSD→xALPHA swap, no payout, no distributor.
+- **CRE workflow:** the orchestrator; same trust pattern as `tickets/bridge/8x-02-xalpha-apr-cre.md`.
 
 ---
 
 ## 10. Failure modes & open items
 
 **Failure modes (each maps to an invariant):** uncapped TVL → APR death (→ inv. 6); flash-loan exercise → forced
-worst-impact sell (→ §5); uncollateralized strike or depositor-funded xALPHA buy → cascade (→ inv. 2/3); projected APR → broken
+worst-impact sell (→ §5); uncollateralized strike or depositor-funded recycle → cascade (→ inv. 2/3); projected APR → broken
 trust when it degrades (→ inv. 7); thin pool can't absorb the repay sale → **loop stall** (LP unstaked + borrow
 open, but over-collateralized — no bad debt), bounded by the size gate + the DOWN-regime gate (→ inv. 5); spot
 below floor → underwater exercise (→ §4 step 4c soft-halt pre-check).
@@ -257,30 +243,25 @@ below floor → underwater exercise (→ §4 step 4c soft-halt pre-check).
 **Open items (→ the 8-B build modules):**
 - [ ] szipUSD ERC-4626 + ICHI single-sided integration + gauge staking (8-B1/8-B2/8-B6).
 - [ ] CRE harvest workflow — regime classifier, split policy, the self-collateralizing loop, rebalance
-      (8-B11 on-chain seam / `spec-clear-CRE.md` workflow).
+      (8-B11 on-chain seam / `claude-zipcode.md §8.7` workflow).
 - [ ] The self-collateralizing strike loop — EVK isolated market (warehouse USDC Resting Vault + ICHI-LP escrow),
       CRE-only (8-B5).
-- [ ] Payout router (Mode A/B) with the free-value-only gate enforced on Mode B (8-B10).
-- [ ] **Compounder / LP-rebalance (Mode C, §11)** — the "how much xALPHA → swap-if-short → add+stake LP"
-      evaluator + the free-value allocation policy (8-B13).
-- [ ] Trailing-realized APR oracle — reuse `bridge/xALPHA-apr.md` (8-B4).
+- [ ] Recycle sink (8-B10 `RecycleModule`) — free-value-only gate; deposit → backed zipUSD → 8-B6 single-sided LP → NAV.
+- [ ] ~~Compounder / LP-rebalance (Mode C / 8-B13)~~ **REMOVED — absorbed into the 8-B10 single-sided recycle.**
+- [ ] Trailing-realized APR oracle — reuse `tickets/bridge/8x-02-xalpha-apr-cre.md` (8-B4).
 - [ ] TVL-cap controller wired to measured net Swap flow — `hydrex.md` §5 (8-B2 enforce / 8-B12 compute).
 - [ ] Gauge whitelist confirmed (`hydrex.md` §9.4) — the gating dependency for the whole product.
 
 ---
 
-## 11. The compounding flywheel — LP growth + credit-line expansion (Mode C)
+## 11. The compounding flywheel — LP growth + credit-line expansion
 
-> **SUPERSEDED (2026-06-08) — the flywheel is the same, the module is not.** "Mode C / 8-B13" as a separate
-> compounder/LP-rebalance module is **REMOVED.** The compounding it describes (free value → senior backing +
-> gauge-staked LP → more oHYDX → more free value) is now done by the **8-B10 recycle + 8-B6 single-sided LP** — no
-> balanced add, no zipUSD→xALPHA swap-to-fund (single-sided LP needs no xALPHA leg). See `claude-zipcode.md §4.5.1`.
+> Single sink (2026-06-08): the separate "Mode C / 8-B13" compounder/LP-rebalance module is **REMOVED** — the
+> compounding below is the **8-B10 recycle + 8-B6 single-sided LP**, with **no balanced add and no zipUSD→xALPHA
+> swap-to-fund** (single-sided LP needs no xALPHA leg). `claude-zipcode.md §4.5.1` is the contract-cited spec.
 
-> **Build module:** `claude-zipcode.md` §4.5.1 **8-B13 (Compounder / LP-rebalance)**. This section is the design
-> narrative; §4.5.1 is the contract-cited spec the ticket is authored from.
-
-Modes A/B (§6) *distribute* the free value. **Mode C reinvests it** — and it is the strategically dominant mode,
-because reinvesting does two things at once that the design is built to maximize:
+The recycle (§6) is the single sink, and it is reflexively growth-creating — it does two things at once that the
+design maximizes:
 
 1. **It grows the gauge-staked LP** → more oHYDX emissions → more HYDX to extract and market-sell → more free
    value next epoch. **We earn the most by extracting and selling HYDX, so the engine's own output should buy
@@ -294,57 +275,31 @@ So the flywheel is: **dump HYDX → free-value USDC → warehouse (credit-line c
 grow staked LP (emissions ↑) → dump more HYDX.** Bounded by the same governors as everything else — the TVL cap
 (§7), the soft-bleed caps (§4), and the free-value-only invariant (§8 inv. 3).
 
-### 11.1 The LP-rebalance evaluator (the "how much xALPHA" question)
+### 11.1 The add is single-sided (no "how much xALPHA" question)
 
-The LP is the **ICHI single-sided zipUSD/xALPHA** position (`hydrex.md` §2.5). To grow it the compounder must
-supply tokens in the vault's current target composition. The evaluator, per epoch (CRE-driven):
+The LP is the **single-sided zipUSD ICHI vault** (`hydrex.md` §2.5, 8-B6): the recycle deposits **only zipUSD**.
+Per epoch (CRE-driven): take the recycle budget `B` of `freeValueAccrued`, `ZipDepositModule.deposit(B)` parks it
+as warehouse senior backing + mints `B·scaleUp` backed zipUSD into the basket, and 8-B6 single-sides that zipUSD
+into the gauge-staked LP (`ICHI deposit` + `gauge.deposit`). ICHI's ALM acquires the ~30% xALPHA leg from the
+pool's own flow. **There is no xALPHA-shortfall evaluator, no zipUSD→xALPHA swap-to-fund, and no idle-xALPHA
+accumulation** — the retired balanced-add machinery is moot. `freeValueAccrued` is decremented by `B` (the
+free-value-only gate, §8 inv. 3); the mint is deposit-backed, so it never touches depositor USDC or mints unbacked.
 
-1. **Budget.** Take the Mode-C slice of this epoch's `freeValueAccrued` (USDC) per the allocation policy
-   (§11.2). Call it `B`.
-2. **Deposit `B` to the warehouse** (`EE_POOL.deposit(B, CreditWarehouse)`) and **mint `B·scaleUp` zipUSD**
-   against it (backed 1:1, the §4.5 zap path / `ZipDepositModule` — the same mechanism Mode B uses; the USDC is
-   now senior backing AND lending capacity). The basket now holds `B·scaleUp` fresh **zipUSD**.
-3. **Read the LP target ratio.** Query the ICHI vault for its current xALPHA:zipUSD deposit ratio `r` (the
-   amount of xALPHA needed per unit zipUSD for a balanced add). Compute `xNeeded = r · zipToDeposit`.
-4. **Inventory check — "do we already have the xALPHA?"** Read the basket's idle **xALPHA** balance `xHave`.
-   - **`xHave ≥ xNeeded`** → we have the tokens: add the LP directly (step 6).
-   - **`xHave < xNeeded`** → **swap-to-fund.** Swap part of the fresh zipUSD → xALPHA on **our POL** (the
-     zipUSD/xALPHA pool, `SwapRouter.exactInputSingle`, fee recaptured — we own the LP + veNFT) to cover the
-     `xNeeded − xHave` shortfall, **within a slippage cap** (the swap is a *buy* of xALPHA, so it supports the
-     token — but it still moves price; cap per-order impact like every other swap, §4). This is the
-     **zipUSD→xALPHA acquisition path** the depositor never sees.
-5. **Re-derive** the balanced (zipUSD, xALPHA) pair from the *actual* post-swap balances (the swap consumed some
-   zipUSD), so the add uses what we truly hold — no second swap, no dust chase.
-6. **Add + stake.** ICHI `deposit(zipAmount, xAlphaAmount)` → receive LP → `gauge.deposit(LP)` (8-B6). Emissions
-   on the new LP start next claim.
-7. **Account.** Decrement `freeValueAccrued` by `B` (the free-value-only gate, §8 inv. 3, enforced exactly as
-   Mode B's buy leg — the compounder can spend **only** HYDX-extracted free value; it never touches depositor
-   USDC or mints unbacked zipUSD, because the mint in step 2 is deposit-backed).
+### 11.2 The recycle amount (Treasury-owned)
 
-**Why swap zipUSD rather than hold idle xALPHA:** the basket should not sit on idle xALPHA waiting to be paired —
-idle xALPHA earns nothing and carries price risk. The compounder mints exactly the zipUSD it needs from free
-value and converts the short leg on demand. If the basket *does* already hold xALPHA (e.g. from single-sided
-depositor inflows, §2), the evaluator uses it first and swaps less — that is the `xHave ≥ xNeeded` branch.
-
-### 11.2 The free-value allocation policy (Treasury-owned)
-
-Each epoch's free value splits across the three sinks: **compound (Mode C) / boost (Mode B) / clean USDC (Mode
-A)**. The split is a **Treasury-owned vault parameter** (the same governance seam as Mode selection, §6) — *not*
-hard-coded and *not* per-deposit. The design default during the growth window is **compound-weighted** (the
-flywheel), tapering toward boost/clean payout as the HYDX bleed degrades (§7). **FLAG (Treasury decision):** the
-concrete default weights, the taper schedule, and whether the vote-floor `exerciseVe` slice (§4 step 3) is taken
-before or after the Mode-C budget are open policy parameters — pin them when the engine economics are finalized
-(`treasury.md`). The mechanism here is weight-agnostic; only the numbers are open.
+There is one sink, so the only open parameter is **how much** of each epoch's `freeValueAccrued` to recycle now vs
+leave as basket cash — a Treasury-owned weight (the growth-window default is recycle-heavy, tapering as the HYDX
+bleed degrades, §7). **FLAG (Treasury decision):** the concrete default + taper schedule + whether the vote-floor
+`exerciseVe` slice (§4 step 3) is taken before or after the recycle budget are open policy numbers, pinned when the
+engine economics are finalized post-M1. The mechanism is fixed; only the numbers are open.
 
 ### 11.3 Invariants (in addition to §8)
 
 - **Free-value-only (inherits §8 inv. 3).** The compounder spends only `freeValueAccrued`; the zipUSD it mints is
   backed 1:1 by the just-deposited free-value USDC (deposit precedes mint). Never depositor USDC, never reserves,
   never an unbacked mint.
-- **Swap is buy-side + capped.** The zipUSD→xALPHA swap is on our own POL and is a *buy* of xALPHA (supports the
-  token); still slippage-capped per-order like every sell (§4) so a thin pool can't be moved on the add.
-- **No idle-xALPHA accumulation.** The evaluator converts on demand and uses on-hand xALPHA first; it does not
-  build a standing idle xALPHA position to pair later.
-- **Backing is automatic.** Because the USDC is deposited to the warehouse before the mint, the new zipUSD (in
-  LP and in the swap) is always senior-backed — the credit-expansion leg and the LP-growth leg are the same
-  capital viewed two ways, never double-counted.
+- **Single-sided, no swap.** The add deposits only zipUSD; there is no zipUSD→xALPHA swap, so no thin-pool slippage
+  surface and no idle-xALPHA position to manage.
+- **Backing is automatic.** Because the USDC is deposited to the warehouse before the mint, the new zipUSD is
+  always senior-backed — the credit-expansion leg and the LP-growth leg are the same capital viewed two ways,
+  never double-counted.

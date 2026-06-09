@@ -21,7 +21,7 @@ CRE touches chain in **two trust modes**, and the old §8 only described one:
    (`msg.sender == operator`) entrypoints directly (8-B5…8-B10). **Not** a DON-signed report; operator-TRUSTED
    (`RecycleModule.creditFreeValue` is unbounded) — which is exactly what makes the revolving reservoir borrow
    safe (kills the external-oracle-manipulation exploit). Verified in the built modules:
-   `LpStrategyModule.sol:36/100`, `RecycleModule.sol:60/115`; design root `baal-spec.md 8-B11`,
+   `LpStrategyModule.sol:36/100`, `RecycleModule.sol:60/115`; design root `reports/design/baal-spec.md 8-B11`,
    `auto-sodomizer.md §8` inv. 1.
 §8.0 / §8.7 now name both paths and route every workflow into one of them.
 

@@ -95,7 +95,7 @@ It is the **second engine Zodiac Module** (after 8-B14): it reuses the `is Modul
   `GenericFactory`-governor-retained wiring, the CRE-fed `LP_MARK` collateral oracle as a deploy prerequisite, the
   verified call signatures for loop steps 2–6, the lender-side invariant). *(The §4.5.1 oracle + borrow-pin notes
   were clarified this window — see the spec edits.)*
-- `baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
+- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
   `onlyOperator`, mutate the Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via
   `ModuleProxyFactory`, init in `setUp` under `initializer`, Call-only/no-delegatecall) + **§10.8 / 8-B5** (the
   strike-loop description) + **§14** (`borrowCap` = governed param).
@@ -188,8 +188,8 @@ It is the **second engine Zodiac Module** (after 8-B14): it reuses the `is Modul
   (`router.govSetConfig` under the retained Timelock), NOT an oracle-local owner. *(This renounce is distinct from —
   and not in tension with — "Do NOT renounce the router/vault governor": the **oracle's** owner is renounced; the
   **router's** governor is retained.)*
-- **`LP_MARK` reportType — pinned placeholder, CRE-ratified later.** `claude-zipcode.md §8` (the CRE report ABI) is
-  TODO (`spec-clear-CRE.md`), so the engine-oracle reportType is not yet registered there. **Pin `uint8 constant
+- **`LP_MARK` reportType — pinned placeholder, CRE-ratified.** `claude-zipcode.md §8` (the CRE report ABI) now
+  registers it (§8.0/§8.6, ratified 2026-06-09 as per-receiver-scoped `7`). **Pin `uint8 constant
   LP_MARK = 7`** in the built oracle (distinct from the registry's `REVALUATION = 3`); the report flags it for the
   CRE window to ratify in §8. The envelope is the shared §4.4 shape: `abi.encode(uint8 reportType, abi.encode(uint256
   mark, uint32 ts))`.
@@ -445,7 +445,7 @@ confirmed by the spec-fidelity critic). 8-B5 is a downstream consumer + creates 
   **borrow vault** the deployer creates (so it IS the warehouse `USDC Resting Vault`), and the deploy MUST set the
   module's `borrowVault` to that address + keep its governor at the Timelock (LTV/caps tunable). The fork test proves
   the wiring against a directly-seeded borrow vault; production points EE at it.
-- **(owed by the CRE track, `spec-clear-CRE.md` §8)** register the **`LP_MARK` reportType** (pinned `7` in the built
+- **(owed by the CRE track, `claude-zipcode.md §8`; registered §8.0/§8.6 2026-06-09)** register the **`LP_MARK` reportType** (pinned `7` in the built
   oracle) in the §8 report ABI alongside the §4.4 lien types, and have the CRE strategy workflow (8-B11) compute the
   per-LP-share mark from the same reserve×price math `SzipNavOracle` uses and push it each epoch (within
   `validityWindow`). **This is the one SPEC-GAP the spec-fidelity critic surfaced** — it is CRE-§8 territory (still

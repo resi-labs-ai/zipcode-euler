@@ -3,8 +3,10 @@
 > The off-chain leg: how the on-chain 1/1 lien token is bound to a **real, legally perfected lien** on a
 > home (custodied by an SPV), how its **value** and **insurance** are established, and the **proofs** that
 > make all three verifiable before the protocol extends credit. This was the least-defined link in the
-> system; it is now **addressed by a notarization service ("Proof")**, with one residual trusted leg — the
-> SPV's legal execution on recovery (§5). No emojis. **Status: ADDRESSED via Proof — residual trust noted.**
+> system; it is now a **two-layer model** (§6.1): **authoritative fact-feeds** (county recorder/title, appraiser,
+> carrier) supply existence/value/insurance, and **Proof** notarizes that the SPV's lien instrument is genuine +
+> ours. Residual trusted leg = the SPV's legal execution on recovery (§5). No emojis. **Status: DEC-01 RESOLVED
+> (model decided 2026-06-09) — the business legs (insurance product, SPV, legal) are tracked separately, §6.2/§6.3.**
 
 ## 1. Why this exists
 The protocol prices and lends against a 1/1 `LienCollateralToken` (`claude-zipcode.md` §4.2). On-chain, the
@@ -14,18 +16,22 @@ enforceable lien** stands behind that token — and what it is worth, and whethe
 back" thesis (`vision.md`), rests on them. This doc is how **Proof** (a notarization service over the SPV's
 document set) shrinks that trust to a verifiable attestation.
 
-## 2. The bridge — the Proof family
+## 2. The bridge — the Proof family (two layers: fact-feed + Proof wrapper)
 - An **SPV** holds the perfected lien off-chain (the legal owner of the claim on the home).
 - The on-chain `LienCollateralToken` is the protocol's representation of that lien.
-- **Proof** (a notarization API) attests, over the SPV's documents, a **family** of facts the CRE
-  underwriting workflow consumes as gates/values before a line is opened:
-  - **Proof of Lien** — the lien exists, is recorded at the expected position against the expected
-    property, and the protocol (via the SPV) **owns / has valid claim** to it. Boolean gate before mint.
-  - **Proof of Value** — the institution-grade origination appraisal (the value the loan was underwritten
-    on), surfaced from the document set → the oracle equity mark. (This replaces the aspirational Subnet 46
-    AVM as the valuation source; the Zipcode subnet's role is the DON/validation fabric, not the appraiser.)
-  - **Proof of Insurance** — an off-chain insurance policy covers the position. A **gate at origination**
-    (don't lend without it) and the **claim path at recovery** (covers the foreclosure shortfall).
+- Each attestation the CRE consumes is **two layers**: an **authoritative fact-feed** (the truth) wrapped by
+  **Proof** (genuineness + ownership + integrity of the SPV's *instrument*; identity-verified, tamper-sealed
+  x.509 — *not* the truth of the contents). Each is fetched node-mode → identical consensus (§8.1):
+  - **Proof of Lien** — *fact:* a **county recorder / title feed** (e.g. Pippin/DART) confirms the lien exists,
+    recorded at the expected position against the property — the **anti-fabrication source** (a real lien is in
+    the public record; a manufactured one is not). *Proof:* seals that the SPV's lien instrument + assignment is
+    genuine and **ours**. Boolean gate before mint.
+  - **Proof of Value** — *fact:* the institution-grade origination **appraisal** → the oracle equity mark (NOT
+    the Subnet-46 AVM; the subnet is the DON/validation fabric, not the appraiser). *Proof:* seals the appraisal
+    document's genuineness.
+  - **Proof of Insurance** — *fact:* the **carrier** confirms a policy covers the position. *Proof:* seals the
+    binder. A gate at origination + the claim path at recovery.
+- Fabrication is further blunted by **KYB'd originators** + **secondaries-first selection** (§5).
 
 ## 3. Where it plugs in
 - **Origination** (`claude-zipcode.md` §8.1 / §8.5): the CRE workflow fans in the Proof family alongside
@@ -41,11 +47,11 @@ document set) shrinks that trust to a verifiable attestation.
   covers the capital hole, with xALPHA as the last-resort backstop. The SPV is the legal enforcement arm.
 
 ## 4. Open questions — now answered
-- **Authoritative source of "perfected":** the **Proof notarization service**, attesting over the SPV's
-  recorded documents (it notarizes whichever record applies — recorder reference, title binder, SPV
-  statement — rather than us choosing one upfront).
-- **What the proof attests:** lien existence + recording position + ownership/claim (Proof of Lien); the
-  appraised value (Proof of Value); insurance coverage (Proof of Insurance).
+- **Authoritative source of "perfected":** the **county recorder / title feed** for existence + recording
+  position (the fact), with **Proof** sealing that the SPV's instrument + assignment is genuine and ours.
+- **What each layer attests:** the **fact-feeds** (recorder/title, appraiser, carrier) supply existence /
+  value / insurance; **Proof** supplies genuineness + ownership + integrity of the instrument — *not* the truth
+  of the contents (the DEC-01 finding, §6.1).
 - **Jurisdiction variance:** lien-perfection rules differ by state; the Proof schema generalizes across the
   record types it notarizes (per-jurisdiction as needed).
 - **Residual trust:** even with Proof you still trust (a) Proof's notarization integrity and (b) the SPV's
@@ -69,49 +75,40 @@ the DEC-01 clearance checklist in §6.1 — that is the authoritative gate.)**
 These are the load-bearing assumptions the design *names but has not verified*. They are off-chain/real-world
 risks, and any of them could reshape the protocol if reality says no. Ordered by stakes.
 
-### 6.1 DEC-01 — the Proof capability gate (the one external dependency the off-chain half rests on)
-**Status: UNCONFIRMED.** We *assert* a notarization service ("Proof") can attest the collateral facts; we
-have **not** confirmed it can. DEC-01 is that confirmation. It gates three tracks — **CRE** (live origination,
-`claude-zipcode.md §8.9`), the **subnet** (Proof-family fetch + zk-verify, §8.10), and **M2-loss** (recovery
-oracles) — and until it clears, all three build against **mock Proof inputs** (the contracts already test
-against mock reports, so this is not a Solidity blocker; `claude-zipcode.md §15` runs on mocks).
+### 6.1 DEC-01 — the Proof capability gate — **RESOLVED (model decided 2026-06-09)**
+**Was:** "can Proof attest lien/value/insurance/recovery in a CRE-consumable form?" **Finding (the Proof.com API
+was reviewed):** a notarization attests **signer identity + document integrity/execution — NOT the truth of the
+contents.** A real, notarized document can still state a false value; the notary doesn't catch that. So Proof
+**cannot be the *fact* oracle.** Resolution — a **two-layer model**:
 
-**The binding constraint — "CRE-consumable form."** It is not enough that Proof *knows* a fact; the CRE
-workflow must be able to fetch it in a way the DON can agree on. Per `claude-zipcode.md §8.1`, each attestation
-must be:
-- **Per-lien** — a discrete response keyed to one lien, not a portfolio score.
-- **zkTLS-provable** — fetched in node mode (`http.Client.SendRequest`) and verified at the subnet/node layer
-  (Reclaim/EigenLayer or subnet-native), so raw PII never enters consensus; only the proof / derived bound does
-  (`runtime.GetSecret` is DON-only).
-- **Identical-consensus-able** — because the value is a notarized *fact* (one appraisal), the DON aggregates
-  with `ConsensusIdenticalAggregation` (`reference/cre-sdk-go/cre/consensus_aggregators.go:33`), **not** a
-  median. Every node must fetch the **same bytes** — so Proof's response must be **deterministic and signed**, not
-  a freshly-timestamped or non-reproducible payload. A fuzzy/streaming/clock-stamped API breaks identical
-  consensus and would force a redesign of the aggregation model.
+- **Facts = authoritative feeds**, each fetched node-mode → identical consensus (§8.1):
+  - **county recorder / title** (e.g. Pippin/DART) — existence + recording position; the **anti-fabrication**
+    source (a manufactured lien isn't in the public record);
+  - **appraiser / appraisal** — value → `equityMark`;
+  - **carrier** — insurance in force;
+  - (M2) **recovery receipts** via Erebor — foreclosure/force-sale proceeds.
+- **Proof = the integrity / ownership wrapper:** the SPV's lien **instrument + assignment**, identity-verified,
+  tamper-sealed (x.509 under Proof's CA). Attests *genuine, executed, unaltered, ours* — not the facts.
+- **CRE mechanics (buildable; the binding "CRE-consumable" bar is met by construction):** Proof's API returns a
+  sealed PDF behind a **rotating pre-signed URL** (no canonical hash, no signed-JSON, no verify-by-API) → the DON
+  **downloads the sealed artifact, hashes it on-node, and verifies the x.509 chain** → identical bytes for
+  `ConsensusIdenticalAggregation`. Auth is a shared bearer token → fetched **DON-only via `runtime.GetSecret`**.
+  The recorder/appraiser/carrier feeds surface the same per-lien identical-consensus way.
+- **Anti-fabrication** (the "manufactured lien" risk): the **recorder/title feed** + **KYB'd originators** +
+  **secondaries-first selection** (§5) — not Proof alone.
 
-**The attestation family — what each is, how CRE consumes it, where it surfaces, and the fallback if Proof can't.**
+**Not a build blocker.** CRE-01 builds against **mock Proof + mock feeds** and swaps the real endpoints in as they
+integrate (the xALPHA-stand-in pattern). The API→subnet→CRE fetch/zk-verify/aggregate wiring is build-time work on
+the CRE-01 / subnet track, not a gate. The reportType surfaces are unchanged (`proofRef` in types 1/2,
+`equityMark`, recovery 5/6).
 
-| Attestation | Asserts | CRE form | On-chain surface (`§8.0`) | Status | Fallback if Proof can't |
-|---|---|---|---|---|---|
-| **Proof of Lien** | lien exists + recorded position + SPV owns/has valid claim | identical-consensus **boolean gate** | precondition only; `proofRef` commitment in origination/draw (types 1/2). No gate → no report → no mint | UNCONFIRMED | a different recorder/title feed per jurisdiction; without it there is **no mint path** (hard block, no graceful degrade) |
-| **Proof of Value** | the institution-grade origination appraisal (home value − senior debt) | identical-consensus **value** → `equityMark` | `equityMark` in types 1/2 + revaluation type 3 (→registry, §8.1) | UNCONFIRMED | a separate appraisal/AVM feed surfaced through the same identical-consensus path; the conservatism then lives in the LTV gap (§4.2), not the mark |
-| **Proof of Insurance** | a policy covers the position | identical-consensus **boolean gate** + a coverage figure | precondition at origination; coverage figure at recovery feeds the §11 waterfall | UNCONFIRMED + **no product** (see §6.2) | direct-from-carrier attestation — but the product itself may not exist; if so, re-decide the backstop stack (§6.2) |
-| **Recovery milestones** (M2) | default status + foreclosure/force-sale proceeds | DON-signed status/recovery report | type 5/6 → controller; `recoveryProceeds` → `DefaultCoordinator` (M2) | UNCONFIRMED | manual/oracle-attested recovery receipts via Erebor; gates M2-loss only, not M1 origination |
+**Still open — their own risks, NOT this gate:** the **insurance product** (§6.2 — may not exist), **legal /
+regulatory** (§6.3), and pinning the **actual vendors** (recorder/title, appraisal, carrier, the SPV/custody
+partner + the verifiable-release handoff). These gate *live, real-collateral* origination + the M2 loss side;
+they do not block the M1 build or the proof-of-operations (which runs on mocks, `claude-zipcode.md §15`).
 
-**The DEC-01 clearance checklist (what concretely closes the gate):**
-1. Obtain Proof's **actual API spec**; confirm each row above is producible as a **per-lien, signed,
-   deterministic, zkTLS-provable** response (the identical-consensus bar above).
-2. For each field Proof **cannot** do, pin the named fallback feed (column 6) and confirm it meets the same bar.
-3. Resolve the **insurance product** question (§6.2) — or re-decide the backstop ordering if no product exists.
-4. Pin the **SPV / custody partner** and the on-chain↔legal handoff: mint authorization tied to Proof of Lien;
-   release/`burn` tied to a **verifiable SPV release** (§3, `claude-zipcode.md §4.4c`).
-5. Author the **per-jurisdiction Proof schema** + the **CRE integration of each endpoint** (the per-endpoint
-   fetch/zk-verify/aggregate wiring that becomes part of CRE-01 / the subnet track).
-
-**What DEC-01 does NOT remove (residual trust, even when cleared):** (a) Proof's own notarization integrity
-(shrunk to a notarization-service trust, not eliminated); (b) the **SPV's legal execution on recovery**
-(irreducibly trusted, mitigated only by **secondaries-first** originator selection, §5/§4). These are noted, not
-closed by DEC-01.
+**Residual trust (irreducible, even now):** Proof's own notarization integrity + the **SPV's legal execution on
+recovery** — mitigated, not eliminated, by secondaries-first selection.
 
 ### 6.2 Insurance — no carrier, no product, no terms
 We made **off-chain insurance the PRIMARY capital backstop for the senior** (junior → insurance → xALPHA). But

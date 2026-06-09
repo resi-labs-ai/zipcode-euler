@@ -69,7 +69,7 @@ USDC), mocked in unit tests — **no new `BaseAddresses` constant** (parity with
   recycle sink = `ZipDepositModule.deposit(usdc)` backed-1:1 mint into the basket → 8-B6 single-sided LP → NAV
   accretion; free-value-only invariant ENFORCED ON-CHAIN (the gate); the recycle is a realized reinvestment, **not** a
   NAV markup; **State = the accumulator + wiring only** (no mode flag, no checkpoints — single sink, single entrypoint).
-- `baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one CRE operator = `onlyOperator`, mutate the
+- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one CRE operator = `onlyOperator`, mutate the
   Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via `ModuleProxyFactory`, init in `setUp`
   under `initializer`, Call-only / no delegatecall) + **§10.8 / 8-B10** (the recycle description: the free-value-only
   invariant funded only by HYDX-extracted value; what it touches: 8-B9 buy leg / 8-B5 free-value source / `ZipDepositModule`

@@ -40,13 +40,16 @@ The only things that make sense to hand an external team are: **the actual Solid
 how it fits together**, **exact build specs** (the tickets, de-jargoned), and a **`reference/` pruned to what was
 actually used**. This role produces that package — and produces it so it can be *checked*, not just trusted.
 
-## Where this sits among the four super-roles
-- **`superintendent.md`** — the persistent reviewer. Guards composable integrity across seams, gates progress.
-- **`superintendent-auditor.md`** — the build-verification pass. Proves each brick is real: materialize → build →
-  on-chain-verify interfaces/addresses → keep the code → update tracking docs.
-- **`superintendent-methodology.md` (this)** — the handoff translation. The auditor proves each brick is real;
-  *this role makes the assembled set legible to humans who do not speak our internal shorthand,* and packages it
-  so WOOF + a UI team + you can converge on a deployed, money-through smoke test async.
+## Where this sits among the super-roles
+- **`superintendent.md`** — the persistent reviewer. Guards composable integrity across seams, gates progress, and
+  **owns build-verification** (review check #4: re-run/read-source/own-`cast`, don't trust the builder's green). The
+  separate **`superintendent-auditor.md` is RETIRED** (2026-06-09) — under keep-the-build each builder window
+  materializes + on-chain-verifies + keeps its own code inline, so the standalone build-verification pass was
+  subsumed; its one distinct kernel (independent skeptical re-verification) now lives in `superintendent.md` #4.
+- **`superintendent-methodology.md` (this)** — the handoff translation. The build is proven real inline (kept code,
+  fork tests, on-chain-verified sigs/addresses); *this role makes the assembled set legible to humans who do not
+  speak our internal shorthand,* and packages it so WOOF + a UI team + you can converge on a deployed,
+  money-through smoke test async.
 - **`superintendent-allaprima.md`** — the frontend concept art: alla-prima UI sketches over `euler-lite`, filed as
   build-ready tickets for the WOOF renderers.
 

@@ -1,4 +1,4 @@
-# 8-B4 — `SzipNavOracle` (§7 / `baal-spec.md §3`) — the szipUSD NAV-per-share oracle
+# 8-B4 — `SzipNavOracle` (§7 / `reports/design/baal-spec.md §3`) — the szipUSD NAV-per-share oracle
 
 > **MATERIALIZED + BUILDS GREEN 2026-06-07 (keep-the-build doctrine).** Built from this ticket against the kept
 > WOOF-00..05/8-B1 scaffold: `forge build` clean (solc 0.8.24) + **39/39 unit tests pass** (incl. a live
@@ -14,7 +14,7 @@
 > **Item ID:** `SzipNavOracle` (historically "8-B4"). **Team folder:** `tickets/sodo/`. **Build-only** (internal
 > plumbing — the Exit Gate + WOOF-06 read its views; the depositor-facing NAV/APR view is INFLOW-06's job, so no
 > interface ticket — same call as WOOF-02, the other `ReceiverTemplate` oracle).
-> **NEXT after this:** the Exit Gate + szipUSD (`baal-spec.md §4/§5`).
+> **NEXT after this:** the Exit Gate + szipUSD (`reports/design/baal-spec.md §4/§5`).
 
 **Deliverable**
 `contracts/src/supply/SzipNavOracle.sol` — `contract SzipNavOracle is ReceiverTemplate`.
@@ -36,19 +36,19 @@ the basket; this contract only *marks* it.)
 
 **Spec §**
 `claude-zipcode.md` **§7** (the `SzipNavOracle` paragraph — the issuance/exit primitive; the three pricing inputs;
-the two-layer xALPHA mark) + **`baal-spec.md §3`** (the build-grade per-leg source table, composition/TWAP/safety
+the two-layer xALPHA mark) + **`reports/design/baal-spec.md §3`** (the build-grade per-leg source table, composition/TWAP/safety
 rails, invariants). Cross:
 - **§4.4** report ABI — the shared envelope `abi.encode(uint8 reportType, bytes payload)`; this oracle is the
   **direct** recipient of the **new `reportType == 7`** (NAV leg price), `payload = (uint8[] legs, uint256[]
   prices, uint32 ts)` *(added to §4.4 this window — see "Spec edits this ticket makes")*.
-- **§4.5 / §4.5.1 / `baal-spec.md §10`** — the basket the oracle marks (zipUSD + xALPHA + the zipUSD/xALPHA ICHI LP
+- **§4.5 / §4.5.1 / `reports/design/baal-spec.md §10`** — the basket the oracle marks (zipUSD + xALPHA + the zipUSD/xALPHA ICHI LP
   gauge-farmed on Hydrex + transient USDC/HYDX/oHYDX) and the two Safes (main = free equity / sidecar = committed).
-- **§11 / §4.6 / `baal-spec.md §9`** — the **provision-that-recovers**: the `DefaultCoordinator` (M2) writes a
+- **§11 / §4.6 / `reports/design/baal-spec.md §9`** — the **provision-that-recovers**: the `DefaultCoordinator` (M2) writes a
   bounded, immediately-downward provision into this oracle; recovery writes it back up.
 - **§12** — NAV/solvency: this oracle is the junior `navPerShare` primitive *(§12 rewritten this window from the
   retired "display-only / WITHHOLD-not-markdown / in-kind exit with no oracle" model — see "Spec edits")*.
 - **§17** — locked: `W = 4h`; `navPerShare₀ = $1.00`; **no self-issuance haircut**; NAV is the issuance/exit
-  primitive (not display-only). `bridge/xalpha-bridge-impl.md §2` — the two-layer xALPHA mark source.
+  primitive (not display-only). `tickets/bridge/8x-01-szalpha-wrapper-cct.md` — the two-layer xALPHA mark source.
 
 **Model from (verified against `reference/` + the kept WOOF-02 keepsake)**
 - **`is ReceiverTemplate`** — `reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol`, imported
@@ -77,7 +77,7 @@ rails, invariants). Cross:
   than serving them raw; it adds the **on-chain TWAP accumulator** + the **deviation circuit-break** (WOOF-02 has
   neither). **0.8.24 gotcha (from WOOF-02):** use `if (!cond) revert CustomError();`, **never**
   `require(cond, CustomError())` (that overload is ≥ 0.8.26).
-- **xALPHA two-layer mark** (`baal-spec.md §3.2` + `bridge/xalpha-bridge-impl.md §2`): `xAlphaUSD = exchangeRate ×
+- **xALPHA two-layer mark** (`reports/design/baal-spec.md §3.2` + `tickets/bridge/8x-01-szalpha-wrapper-cct.md`): `xAlphaUSD = exchangeRate ×
   alphaUSD`, where **`exchangeRate` (alpha-per-xAlpha, 18-dp) is read ON-CHAIN** from the xALPHA token (LST
   exchange rate = `staked alpha ÷ supply` — stake accounting, **no pool price**, so subnet emissions accrue here
   non-manipulably) and **`alphaUSD` (USD per 1.0 ALPHA, 18-dp, `1e18 = $1`) is the CRE-pushed market leg** (TWAP'd
@@ -97,7 +97,7 @@ rails, invariants). Cross:
   deposit/withdraw/claim — that is 8-B6/8-B7).
 - **oHYDX intrinsic** — `contracts/src/interfaces/hydrex/IOptionToken.sol` (kept): `discount() returns (uint256)`
   (= 30 on Base, fork-verified 2026-06-06). Intrinsic per oHYDX = `hydxUSD × (100 − discount) / 100`. **Verify
-  `discount()` is in the stub; if absent, add it** (cited in `baal-spec.md §10.8` 8-B8).
+  `discount()` is in the stub; if absent, add it** (cited in `reports/design/baal-spec.md §10.8` 8-B8).
 - **Token balances** — `import {IERC20} from "forge-std/interfaces/IERC20.sol"` (the WOOF-02 import; `balanceOf`,
   `totalSupply`, `decimals` present). zipUSD (`ESynth`, 18-dp), USDC (6-dp), HYDX (18-dp), oHYDX (18-dp), xALPHA
   (18-dp stand-in). Read balances via `IERC20(token).balanceOf(safe)`.
@@ -131,7 +131,7 @@ rails, invariants). Cross:
   **owns** valuation (§3.4/§7). Issuance/exit/buyback price **only** off this oracle.
 - **Do NOT push any quantity or any on-chain-readable leg price.** `reportType 7` carries **only** `alphaUSD` and
   (optionally) `HYDX/USDC` — the legs that cannot be sourced on Base. Every balance, the xALPHA `exchangeRate`, the
-  oHYDX `discount`, and the ICHI reserves are **read on-chain, never trusted from a push** (`baal-spec.md §3.2`).
+  oHYDX `discount`, and the ICHI reserves are **read on-chain, never trusted from a push** (`reports/design/baal-spec.md §3.2`).
 - **Do NOT TWAP-smooth the impairment provision.** A `DefaultCoordinator` write takes effect **immediately**
   (it is subtracted from the spot basket value so `navExit = min(spot, twap)` drops at once — no escape); recovery
   writes back up. There is no mechanism that smooths a markdown *away* (§7).
@@ -185,7 +185,7 @@ rails, invariants). Cross:
     (created at deploy / by 8-B6). While unset (both `address(0)`), the LP leg contributes **0** (M1 pre-LP basket =
     zipUSD/xALPHA/USDC only) — a deliberate, documented degrade, **not** a revert.
   - **`setEngineSafe(address engineSafe_)`** — the 8-B14 buy-and-burn Safe whose **transient pre-burn szipUSD** is
-    excluded from the denominator (`baal-spec.md §2.3`/§3.3). While unset, the pending-burn adjustment is **0**.
+    excluded from the denominator (`reports/design/baal-spec.md §2.3`/§3.3). While unset, the pending-burn adjustment is **0**.
   - **`setDefaultCoordinator(address dc_)`** — the sole provision writer (M2). While unset, `writeProvision`
     reverts `NotDefaultCoordinator` for everyone (no provision path until wired) and the provision stays 0.
 - Genesis price constant: **`uint256 public constant GENESIS_NAV = 1e18;`** (= `navPerShare₀ = $1.00`, §4.2/§17).
@@ -210,7 +210,7 @@ rails, invariants). Cross:
     LegPriceUpdated(leg, prices[i], uint48(ts));`. **Atomicity:** one bad entry reverts the whole `onReport`
     (no partial writes) — the CRE workflow must shard gas-bounded (downstream obligation).
 
-*Spot NAV composition (the heart — `baal-spec.md §3.3`)*
+*Spot NAV composition (the heart — `reports/design/baal-spec.md §3.3`)*
 - `grossBasketValue() public view returns (uint256)` — **all values in 18-dp USD (`1e18 = $1`)**, summed across
   *(ZERO-GUESS GATE 8-B4: `public`, not `internal` — the kept build exposes it as a view getter that the unit suite
   reads directly to pin the NAV math; downstream introspection is harmless. An independent rebuild that read it as
@@ -340,7 +340,7 @@ rails, invariants). Cross:
   only defenses are `msg.sender == defaultCoordinator` + set-once + the deploy-time renounce. Until wired,
   `writeProvision` reverts for everyone (fail-closed); the item-10 deploy MUST verify the wiring before renounce.
 - **The xALPHA `exchangeRate()` read is non-manipulable in production** (LST stake-accounting = `staked alpha ÷
-  supply`, **no pool price**, `bridge/xalpha-bridge-impl.md §2`) but in **M1 is a STAND-IN mock** — the production
+  supply`, **no pool price**, `tickets/bridge/8x-01-szalpha-wrapper-cct.md`) but in **M1 is a STAND-IN mock** — the production
   Rubicon `LiquidStakedV3` rate-getter selector + its supply-immutability are verified at 8x/bridge integration
   (flag, do not block).
 - **Genesis / first-deposit is the Gate's responsibility:** the oracle returns `GENESIS_NAV = 1e18` only at zero
@@ -437,7 +437,7 @@ rails, invariants). Cross:
   ICHI pool does not exist on Base yet → the LP *math* is mock-driven, the *interface* is fork-verified — exactly
   the WOOF-04 pattern.) Document that the xALPHA `exchangeRate()` getter is **stand-in-verified** for M1, with the
   production wrapper selector to be confirmed at 8x/bridge integration.
-- **Acceptance (integration — owned here, satisfied downstream):** the **Exit Gate** (`baal-spec.md §4/§5`) reads
+- **Acceptance (integration — owned here, satisfied downstream):** the **Exit Gate** (`reports/design/baal-spec.md §4/§5`) reads
   `navEntry()` at `depositFor` (issuance) + `navExit()` at window-RQ (exit) + `poke()`s the accumulator; **WOOF-06**
   reads `navEntry()` (NAV-proportional, round-down); **item 10** wires `setShareToken`/`setLpPosition`/`setEngineSafe`/
   `setDefaultCoordinator` then `renounceOwnership()` (asserting they are wired first); the **CRE track** produces the
@@ -448,7 +448,7 @@ rails, invariants). Cross:
 8-B1 (the main + sidecar Safe addresses — the basket containers) and WOOF-00 (scaffold + the `x402-cre-price-alerts`
 remap). Buildable + provable in isolation with mocks for the not-yet-built basket components (szipUSD, our ICHI
 pool/gauge, the engine Safe, the DefaultCoordinator) + fork sig-verification of the real ICHI/gauge/oHYDX faces.
-Downstream consumers: the **Exit Gate + szipUSD** (`baal-spec.md §4/§5`), **WOOF-06** (the zap re-author),
+Downstream consumers: the **Exit Gate + szipUSD** (`reports/design/baal-spec.md §4/§5`), **WOOF-06** (the zap re-author),
 **8-B14** (buy-and-burn reads NAV), the **DefaultCoordinator** (M2 provision writer), **item 10** (wiring + renounce),
 the **CRE track** (the reportType-7 producer).
 
@@ -463,9 +463,9 @@ the **CRE track** (the reportType-7 producer).
    (consistent with §7/§4.5/§11/§17 — the PROGRESS-flagged stale residual).
 
 **Cross-ticket obligations this ticket CREATES (discharge by the named item)**
-1. **Exit Gate + szipUSD (next item, `baal-spec.md §4/§5`):** issue NAV-proportionally off `navEntry()` (round down),
+1. **Exit Gate + szipUSD (next item, `reports/design/baal-spec.md §4/§5`):** issue NAV-proportionally off `navEntry()` (round down),
    exit/window-RQ at `navExit()`, and `poke()` the accumulator before reading; `szipUSD` is wired via `setShareToken`.
-2. **8-B14 buy-and-burn (`baal-spec.md §7`):** the engine Safe holding transient pre-burn szipUSD is wired via
+2. **8-B14 buy-and-burn (`reports/design/baal-spec.md §7`):** the engine Safe holding transient pre-burn szipUSD is wired via
    `setEngineSafe` so it is excluded from the denominator.
 3. **DefaultCoordinator (M2, §11/§4.6):** it is the sole `writeProvision` caller (wired via `setDefaultCoordinator`)
    and MUST enforce the bound (down by `atRisk×(1−recoveryFloor)`, up by realized receipts) — the oracle does not.

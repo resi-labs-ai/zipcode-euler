@@ -70,7 +70,7 @@ mechanism-fidelity corrections of an un-open-sourced host — the build follows 
 
 ## Authoritative-doc edits
 - `claude-zipcode.md §4.5.1` — the 8-B7 block rewritten to the account-keyed surface (the 5 corrections).
-- `baal-spec.md §10.8` — the 8-B7 "Where it lives" + "Source + addresses" lines corrected to match (the staging
+- `reports/design/baal-spec.md §10.8` — the 8-B7 "Where it lives" + "Source + addresses" lines corrected to match (the staging
   companion the ticket was authored from).
 - `tickets/PROGRESS.md` — 8-B7 row DONE, NEXT=8-B8, banner updated, 5 new obligation rows, the spec-gap log entry, the
   session-log line.
@@ -88,4 +88,4 @@ mechanism-fidelity corrections of an un-open-sourced host — the build follows 
   `contracts/test/HarvestVoteModule.t.sol`, **`forge test [--fork-url $BASE_RPC_URL] --match-contract HarvestVoteModule`
   green (26/26), 326/326 total — run it yourself.**
 - **NEXT = 8-B8** (exercise/strike-financing module — LP → reservoir collateral → CRE-borrow USDC → exercise oHYDX →
-  HYDX; depends 8-B5 + 8-B7; `baal-spec.md §10.8` / §4.5.1 8-B8 block).
+  HYDX; depends 8-B5 + 8-B7; `reports/design/baal-spec.md §10.8` / §4.5.1 8-B8 block).

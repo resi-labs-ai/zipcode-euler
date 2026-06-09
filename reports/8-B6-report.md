@@ -16,7 +16,7 @@ storage written in any mutating path. **29/29 tests** (24 unit + 5 Base-fork), *
 - Ticket: `tickets/sodo/8-B6-lp-strategy.md`. No `reference/` or kept-contract edits; `BaseAddresses.sol` untouched.
 
 ## What the window did (the harness loop)
-1. **Drafted** the build-only ticket from `claude-zipcode.md §4.5.1` 8-B6 + `baal-spec.md §10.8`, modeling the kept
+1. **Drafted** the build-only ticket from `claude-zipcode.md §4.5.1` 8-B6 + `reports/design/baal-spec.md §10.8`, modeling the kept
    `ReservoirLoopModule` (8-B5) + `SzipBuyBurnModule` (8-B14). Probed live Base first to pin the ICHI deposit path +
    the gauge shape (see Judgment calls).
 2. **Fanned out 5 critics** (junior-developer, spec-fidelity, reference-verifier, qa-engineer, security-engineer) in
@@ -88,7 +88,7 @@ storage written in any mutating path. **29/29 tests** (24 unit + 5 Base-fork), *
 ## Status + NEXT
 - **8-B6 DONE — BUILT-VERIFIED**, kept on disk, NOT git-committed (whole tree untracked).
 - **NEXT = 8-B7** (harvest/vote module — claim oHYDX + fees, `exerciseVe` the vote-floor slice first, `Voter.vote`
-  each epoch, claim the veNFT rebase; `baal-spec.md §10.8` / `hydrex.md §4/§8/§9.2`). It custodies the veHYDX veNFT
+  each epoch, claim the veNFT rebase; `reports/design/baal-spec.md §10.8` / `hydrex.md §4/§8/§9.2`). It custodies the veHYDX veNFT
   and needs the `IVoter`/`IVotingEscrow`/`IOptionToken` interfaces (already vendored + on-chain-verified).
 
 ## A skeptical note (per kickoff: "no findings is a flag")

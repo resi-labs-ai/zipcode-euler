@@ -15,7 +15,7 @@ your commit call).
 ---
 
 ## What this window did
-1. **Authored `tickets/sodo/8-B9-sell-module.md`** from `claude-zipcode.md §4.5.1` + `baal-spec.md §10.8` +
+1. **Authored `tickets/sodo/8-B9-sell-module.md`** from `claude-zipcode.md §4.5.1` + `reports/design/baal-spec.md §10.8` +
    `auto-sodomizer.md`/`hydrex.md`, modeling 8-B8 `ExerciseModule` (the same token-approve dance + `_exec`-bubble +
    return decode + 4-→8-address `setUp` order-guard).
 2. **Verified the new external surface (Algebra `SwapRouter`) on the live chain BEFORE drafting** — this was the

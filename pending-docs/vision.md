@@ -51,9 +51,9 @@ person you have to trust.
 ## How it works (plain version)
 
 1. **Suppliers** deposit USDC. The default path **"zaps"** it straight through: USDC mints **zipUSD** (a
-   $1 credit dollar) and auto-stakes into **szipUSD** — the junior position that earns the loan spread,
-   boosted by subnet incentives, in exchange for absorbing losses first and standing ready to be
-   term-locked through a duration squeeze. The headline yield product is the **szipUSD APR**. (Anyone who
+   $1 credit dollar) and auto-stakes into **szipUSD** — the junior position that earns yield by absorbing
+   losses first: the protocol recycles its lending earnings into the position so its value compounds, plus a
+   premium when it is term-locked through a duration squeeze. The headline yield product is **szipUSD**. (Anyone who
    just wants the flat $1 dollar can simply hold zipUSD.)
 2. A **HELOC originator** applies for a credit line. The CRE workflow underwrites them from the data
    stack above and prices the specific home.
@@ -73,8 +73,9 @@ person you have to trust.
 ## How the money works
 
 You deposit USDC, and by default it **zaps** straight into the yield position: your USDC mints **zipUSD**
-(a $1 credit dollar) and auto-stakes into **szipUSD**, the junior that earns the loan spread plus subnet
-incentives in exchange for taking the first loss. The **szipUSD APR is the headline product.** When a loan
+(a $1 credit dollar) and auto-stakes into **szipUSD**, the junior that earns yield in exchange for taking the
+first loss — the protocol recycles its lending earnings into the position so its share value compounds, with an
+added premium when it is locked into a Duration Bond. **szipUSD is the headline product.** When a loan
 defaults the protocol still holds the legal lien on a real house, and the position is covered by an
 off-chain insurance policy — so a default is a *timing* problem, not a *total-loss* problem. The junior
 fronts the loss now; recovery and insurance pay it back later.
@@ -88,10 +89,12 @@ fronts the loss now; recovery and insurance pay it back later.
   in a **secondary pool** at market price, paired against USDC (deliberately not xALPHA, so the dollar's
   relief valve never depends on our thinnest token). zipUSD stays $1 because the junior absorbs losses
   before it ever does.
-- **szipUSD — the staked junior, and the main product.** This is what the zap puts you in. It earns the
-  loan spread plus subnet incentives, because it takes the first loss and stands ready to be locked into a
-  **Duration Bond** through a hold. It is the protocol's shock absorber: the capital that covers stress the
-  moment it happens so that zipUSD stays a dollar.
+- **szipUSD — the staked junior, and the main product.** This is what the zap puts you in. Its **share value
+  accretes** as the protocol recycles its earnings into the position, with an added **Duration-Bond premium**
+  when it is locked through a hold — the return it earns for taking the first loss. (The loan spread itself is
+  the **protocol's** — it over-collateralizes the dollar's reserves rather than paying the junior directly.) It
+  is the protocol's shock absorber: the capital that covers stress the moment it happens so that zipUSD stays a
+  dollar.
 
 **xALPHA's job (and what it is *not*).** xALPHA is **not** the dollar's primary backing — the **house and the
 insurance** are. xALPHA has two jobs, in order. First and mainly, it is the **duration premium**: each line
@@ -151,7 +154,8 @@ reopened takeout — pays out.
 The protocol publishes its health in the open:
 - **Total NAV** — cash plus the marked-to-recovery value of the loans.
 - **zipUSD minted** and the **zipUSD peg** vs USDC (deviation is the stress signal).
-- **szipUSD APR** — the headline yield — and the **bonus APR** paid on active Duration Bonds.
+- **szipUSD APR** — the headline yield, a trailing-realized return as its **share value accretes** — and the
+  **bonus** paid on active Duration Bonds.
 - **Utilization / free liquidity** — how much of the pool is lent out vs withdrawable; the early warning
   for a duration squeeze.
 - **Insurance coverage** — the on-chain **xALPHA** insurance pool, and the off-chain policy coverage attested

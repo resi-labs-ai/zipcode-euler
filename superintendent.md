@@ -60,6 +60,14 @@ Review it:
    address verified against the live chain** (Basescan / `cast`), not merely "it compiles." PROGRESS/LEDGER should
    say "code at `contracts/src/X.sol`, `forge test` green," not "cold-build YES, discarded." **(Build-ticket
    windows only — N/A for a spec-edit window; see the two-kinds note above.)**
+   **Verify, don't trust — including the builder's own subagent (absorbs the retired `superintendent-auditor.md`).**
+   The builder dispatches a cold-build subagent that writes *both* the contract and its tests, so a green report is
+   a **claim, not proof** — green tests the same subagent authored can be circular. Before accepting a
+   BUILT-VERIFIED claim, do an **independent skeptical pass on a build you doubt**: re-run `forge test --fork-url
+   $BASE_RPC_URL` yourself, **read the contract source** (confirm the logic is real, not just that tests pass), and
+   spot-check the load-bearing facts (selectors / addresses / fork reads) with your **own `cast`**. "Compiles" is
+   never verification — a stub always compiles; selector-probe the live contract. (This independent re-verification
+   was the one distinct function of the old auditor role; it now lives here, executed rather than read-only.)
 5. **Cross-ticket seams (highest-risk part of composable integrity).** Obligations are tracked two ways: the
    *source* digest in `tickets/LEDGER.md`, and the **inbound-keyed open/discharged table in `tickets/PROGRESS.md`
    → "Open cross-ticket obligations"** (the one a builder reads when authoring the receiving item). On each

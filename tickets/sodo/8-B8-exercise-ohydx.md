@@ -53,7 +53,7 @@ Two files under the supply/engine tree, plus two minimal interface additions:
   (operator-only, recipient-pinned, value-0), with the caps/regime/cutoff enforced upstream. **State: none beyond the
   set-once wiring** (the "pending-exercise
   accounting / in-flight strike-borrow" §4.5.1 names is 8-B5's `debtOf` + the 8-B11 robot's view, not module storage).
-- `baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one CRE operator = `onlyOperator`, mutate
+- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one CRE operator = `onlyOperator`, mutate
   the Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via `ModuleProxyFactory`, init in
   `setUp` under `initializer`, Call-only / no delegatecall) + **§10.8 / 8-B8** (the exercise description: the *paid*
   exercise of the sell slice, distinct from 8-B7's free `exerciseVe`; strike = `max(30%·2h-TWAP, $0.01)` read from

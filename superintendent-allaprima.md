@@ -33,8 +33,9 @@ broad-stroke rendering — but it is still **big brushes, still squinting at the
   fixed reality). Capture what exists; do not declare project state or finalize anything beyond the sketch.
 
 ## Where this sits among the super-roles
-- **`superintendent.md`** — the persistent reviewer (composable integrity, gates progress).
-- **`superintendent-auditor.md`** — the build-verification pass (proves each contract brick is real).
+- **`superintendent.md`** — the persistent reviewer (composable integrity, gates progress; also owns
+  build-verification — review check #4 — since the separate **`superintendent-auditor.md` is RETIRED 2026-06-09**,
+  subsumed by the keep-the-build builder loop).
 - **`superintendent-methodology.md`** — the handoff translation (process → a legible package for external teams).
 - **`superintendent-allaprima.md` (this)** — the frontend concept art: alla-prima UI sketches over euler-lite,
   filed as build-ready tickets for the WOOF renderers.
@@ -94,6 +95,11 @@ The user-facing surface of what's built is the supply path; the lending side is 
   display.
 - **Exit** — `requestExit` + the **net-new exit-queue / cooldown panel** + `cancelExit`; claim status from the
   Gate's reads.
+- **Solvency dashboard** (`INFLOW-12`, §12) — NAV, zipUSD supply + peg, szipUSD NAV-per-share / trailing APR,
+  utilization / free liquidity, insurance coverage. Reads the **subgraph** (`GRAPH`) for the aggregated metrics +
+  direct view reads for point-in-time values. **Distinct from `monitoring.md` / 8-B12** — that is the off-chain
+  *engine-ops surveillance* (the CRE-bot trigger panel + tripwires + Treasury digest), NOT this depositor-facing
+  dashboard; they share the §12 metric vocabulary but are different artifacts/owners. Net-new screen over euler-lite.
 - **Wallet / network / approvals** — reuse euler-lite's Reown/wagmi connect; point at Base mainnet; our token
   approvals.
 

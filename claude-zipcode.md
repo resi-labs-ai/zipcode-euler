@@ -92,7 +92,7 @@ perfected lien, **Proof** notarizes the lien / value / insurance attestations (`
 |---|---|---|
 | **zipUSD** | The **$1 utility dollar** — minted 1:1 on USDC deposit, redeemed for USDC (epoch queue, §6.1) or sold (secondary, §6.2). The protocol's dollar plumbing: the **exit hatch** out of szipUSD and a composable USDC-pegged asset other markets can lend against (vs szipUSD, a future **zipCRED** RWA, or other RWAs) — not an investment tranche. Mechanically still **insulated from loss until the junior is exhausted** (loss waterfall, §11). | mintable/burnable ERC-20 (`ESynth`) |
 | **szipUSD** | The junior, **the main product** — a **transferable ERC-20 share** (18-dp) over a **Baal/Moloch-v3 Gnosis Safe basket** (zipUSD + xALPHA + the zipUSD/xALPHA ICHI LP gauge-farmed on Hydrex, §4.5). The **Exit Gate** mints szipUSD **1:1 against soulbound Baal Loot it custodies** — Loot is the ragequit-bearing layer, held + ragequitted **only** by the gate (no raw-ragequit footgun), while the user share is **freely transferable**. Deposit → **NAV-proportional** szipUSD (`shares = value / navPerShare`, priced via `SzipNavOracle`, §7). **Two exits:** *patient* = the gate's intent-queue + liquidity-window ragequit at NAV (**partial-fill per window**, §6.4); *impatient* = **sell szipUSD on a CoW book** (§6.2). Duration-Bond **freeze structural via the sidecar** (§6.4/§11). **Depositor return = NAV accretion** — the HYDX-vamp free value is recycled into the basket (8-B10) lifting NAV-per-share weekly, realized on exit at NAV (+ the Duration-Bond premium + any post-M1 xALPHA emission incentive). (Real lending APR/fees are the **protocol's** → they over-collateralize zipUSD in the `CreditWarehouse` now; future treasury buybacks, §17.) **NAV is the issuance/exit pricing primitive** (`SzipNavOracle`, §7/§12). Bears **residual** first loss as a **pari-passu conservative provision-that-recovers** (§11): a default is **freeze-dominant** (duration-risk — insured/collateralized HELOC), the day-one markdown is small and writes back up on verified recovery. | transferable ERC-20 share; gate mints 1:1 vs soulbound Loot; NAV-priced; window-RQ / CoW exits |
-| **xALPHA** | **ONE token — the liquid-staked Zipcode-subnet alpha (LST), bridged to Base via CCIP** (`bridge/xalpha-bridge-impl.md`). It does **six jobs**: per-lien **first-loss bond** (protocol-posted at launch, originators self-fund via OTC as they scale, §4.6); the **Duration-Bond premium** (in-kind, priced via the CRE feed, never market-sold, §11); the **szipUSD incentive emission** (post-M1); the **zipUSD/xALPHA POL pair leg** (post-M1, §4.5); a **last-resort capital backstop** — liquidated **alpha → TAO → USDC on Bittensor** to cover a realized loss after insurance (§11); and the **treasury buyback target** (real USDC lending yield → buy xALPHA, the closed loop, `pending-docs/treasury.md`). Yield-bearing because it is the LST. | external ERC-20 — the bridged subnet LST (xALPHA) |
+| **xALPHA** | **ONE token — the liquid-staked Zipcode-subnet alpha (LST), bridged to Base via CCIP** (`tickets/bridge/8x-01-szalpha-wrapper-cct.md`). It does **six jobs**: per-lien **first-loss bond** (protocol-posted at launch, originators self-fund via OTC as they scale, §4.6); the **Duration-Bond premium** (in-kind, priced via the CRE feed, never market-sold, §11); the **szipUSD incentive emission** (post-M1); the **zipUSD/xALPHA POL pair leg** (post-M1, §4.5); a **last-resort capital backstop** — liquidated **alpha → TAO → USDC on Bittensor** to cover a realized loss after insurance (§11); and the **treasury buyback target** (real USDC lending yield → buy xALPHA, the closed loop — post-M1, §17). Yield-bearing because it is the LST. | external ERC-20 — the bridged subnet LST (xALPHA) |
 
 The peg is **"minted 1:1,"** not a NAV. zipUSD stays $1; the pool's growth accrues to `szipUSD`, and any
 retained growth is surplus NAV over the zipUSD supply (an over-collateralization cushion held by the
@@ -565,7 +565,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
 - **`szipUSD` — the junior NAV vault, the main product (§6/§11).**
 
   > **MODEL LOCKED 2026-06-07 — the current spec is the two-token model above (§2/§4.5/§6.4/§7/§11) +
-  > `baal-spec.md`.** The narrative below predates that lock. **CURRENT (build from it):** the Baal+Zodiac substrate,
+  > `reports/design/baal-spec.md`.** The narrative below predates that lock. **CURRENT (build from it):** the Baal+Zodiac substrate,
   > the multi-asset basket held natively in the Safe, the windows + sidecar-freeze, the auto-sodomizer engine.
   > **SUPERSEDED (do NOT build from the phrasing below):** *NAV-display-only* → NAV is the pricing primitive (§7);
   > *withhold-with-no-markdown* → pari-passu conservative provision-that-recovers (§11); *soulbound szipUSD claim* →
@@ -606,7 +606,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   >   via the CRE module against the real ICHI/gauge/oHYDX/NFPM/EulerEarn with **stand-in pool/gauge addresses**
   >   (our zipUSD/xALPHA gauge whitelist is pending the Hydrex OTC); production = swap addresses.
   > - **Decomposes into the 8-B build tickets** (substrate 8-B1, `SzipNavOracle`, the Exit Gate, engine 8-B5…8-B14;
-  >   see `baal-spec.md` §13 + `tickets/PROGRESS.md` item 8). **The §2/§5/§6.4/§7/§11/§12/§17 money-model text was
+  >   see `reports/design/baal-spec.md` §13 + `tickets/PROGRESS.md` item 8). **The §2/§5/§6.4/§7/§11/§12/§17 money-model text was
   >   rewritten to the two-token / NAV-oracle / provision-that-recovers model (2026-06-07); `audit/1` I1–I4 still need
   >   a re-derivation pass.** Tickets are now authorable against the rewritten mechanism.
 
@@ -643,7 +643,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   **ragequit** (in-kind, pro-rata). The "strategies that must be built on the Zodiac side" — each a Zodiac
   module (`execTransactionFromModule` on the Safe) or a Baal shaman, all driven by the CRE strategy-admin
   robot — are the ticket-level components:
-  0. **Safe authority — two-tier admin/operator (RATIFIED 2026-06-07; `baal-spec.md` 8-B1).** The summoner forces
+  0. **Safe authority — two-tier admin/operator (RATIFIED 2026-06-07; `reports/design/baal-spec.md` 8-B1).** The summoner forces
      each Safe owned **1/1 by the Baal**, and with **zero Shares the Baal is governance-inert** (no proposal can
      pass), so the substrate must be made driveable at summon. **Admin = the team multisig added as a Safe
      owner/signer** on both Safes (cold; governs the module set — enable/disable/swap = "change what the CRE can
@@ -691,7 +691,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   the basket compounds — that is what compensates the junior for duration risk ("frozen but earning") and is
   **waterfall leg (e)** (partial self-insurance, §11). **Bounded** (`hydrex.md`): TVL-capped, front-loaded,
   trailing-realized + degrading over ~6 months. **Full design: `pending-docs/auto-sodomizer.md`** (economics:
-  `treasury.md`; the xALPHA CCIP leg: `bridge/xalpha-bridge-impl.md`). **Gating dependency:** the Hydrex gauge
+  post-M1 treasury economics (TBD); the xALPHA CCIP leg: `tickets/bridge/8x-01-szalpha-wrapper-cct.md`). **Gating dependency:** the Hydrex gauge
   **whitelist** for our zipUSD/xALPHA pool (`hydrex.md` §9.4, via the OTC) — until it lands, **build + fork-test
   against live Base with stand-in pool/gauge addresses**, swap for production.
   **Build-grade per-module specs (8-B5…8-B10): see §4.5.1 below** — the contract behavior, external signatures
@@ -711,16 +711,16 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
 The auto-sodomizer loop (the engine inventory above) decomposes into the build tickets **8-B5…8-B14**. Each is
 raised here to zero-guess detail; **the substrate is referenced, not re-spec'd here** (8-B1 Baal + main-Safe +
 **sidecar** scaffold; the **Exit Gate** — holds `manager`, absorbs the mint/TVL + lock/freeze shamans + the
-buy-and-burn; and **`SzipNavOracle`**; see `baal-spec.md §13`).
+buy-and-burn; and **`SzipNavOracle`**; see `reports/design/baal-spec.md §13`).
 
-> **2026-06-07 additions (`baal-spec.md` §10):** (1) **8-B14 — szipUSD buy-and-burn** — engine USDC posts discounted
+> **2026-06-07 additions (`reports/design/baal-spec.md` §10):** (1) **8-B14 — szipUSD buy-and-burn** — engine USDC posts discounted
 > `BUY szipUSD` CoW bids *below* NAV, then **burns** the fills (the impatient-exit liquidity floor + the
 > haircut-to-stayers mechanism, §6.2/§6.4). (2) The **xALPHA emission program / POL-as-liquidity-mining** — the
 > protocol deposits its monthly xALPHA emissions **in-kind** (NAV-proportional, §4.5) and the engine pairs them with
 > resting zipUSD into the 70/30 ICHI LP; the lending spread + arbs accrue to **treasury, not the junior** (§17). (3)
 > The **strike loop borrows the warehouse `USDC Resting Vault`** (un-utilized USDC, LP-collateralized), **not** a
 > treasury vault (8-B5). Full design narrative: `pending-docs/auto-sodomizer.md` +
-`hydrex.md` + `monitoring.md`; economics `treasury.md`. **§5/§17 yield routing is honored, not reopened** (lending
+`hydrex.md` + `monitoring.md`; economics post-M1 (TBD). **§5/§17 yield routing is honored, not reopened** (lending
 APR = the protocol's → xALPHA; depositor pay = the HYDX-vamp + the xALPHA subsidy; bounded, TVL-capped,
 trailing-realized). None of these modules changes a §11/§12 money-model invariant (the strike is borrowed from the warehouse
 **`USDC Resting Vault`** — un-utilized USDC — **over-collateralized by the ICHI LP and repaid each loop**, so
@@ -1004,7 +1004,7 @@ self-collateralizing harvest loop; the LP is its own working capital).
   distribution.**
 - **No payout, no xALPHA, no distributor.** The harvested value is reinvested as basket NAV (realized by holders on
   exit at NAV, §6.4/§7) — there is no USDC-to-holder payout and no xALPHA boost. (Supersedes the prior Mode A/B/C
-  framing + `treasury.md §4.7`; the reinvest sink formerly split out as **8-B13 is absorbed here** — single-sided LP
+  framing (post-M1 economics, TBD); the reinvest sink formerly split out as **8-B13 is absorbed here** — single-sided LP
   removes the balanced-add/swap machinery 8-B13 carried.)
 - **Free-value-only invariant (load-bearing, `auto-sodomizer.md` §8 inv. 3) — ENFORCE ON-CHAIN.** The
   **8-B10 module owns** the single `uint256 freeValueAccrued` storage (no other module writes it); the **CRE
@@ -1030,10 +1030,10 @@ module (size xALPHA, swap zipUSD→xALPHA to fund the short leg, balanced ICHI a
 into the gauge-staked LP — so the balanced-add/swap-to-fund machinery is moot (single-sided LP needs no xALPHA
 leg). There is one sink (recycle → NAV), not three modes; the engine's on-chain contracts end at 8-B10.
 
-**8-B11 — CRE strategy-admin robot: the on-chain module surface only** (the off-chain Go workflow is authored by
-`spec-clear-CRE.md` §8 — **coordinate, do not duplicate**).
-- The robot is the off-chain Go orchestrator (CRE, `cre-sdk-go` → wasip1). **Its §8 workflow lives in
-  `spec-clear-CRE.md`** (the 8-B11 robot-ops row it enumerates). **This window pins only the on-chain seam it drives:**
+**8-B11 — CRE strategy-admin robot: the on-chain module surface only** (the off-chain Go workflow is specified in
+**§8.7** — **coordinate, do not duplicate**).
+- The robot is the off-chain Go orchestrator (CRE, `cre-sdk-go` → wasip1). **Its workflow is specified in §8.7**
+  (the engine strategy-admin operator path). **This subsection pins only the on-chain seam it drives:**
   - A single immutable **CRE operator address** is the sole authorized caller of every 8-B5…8-B10 entrypoint
     (`onlyCRE`, set-once-then-immutable, mirroring §4.4). It is the Zodiac-module `msg.sender`; the module then
     forwards to the Safe via its inherited `exec(...)` (`core/Module.sol:43`). This realizes `auto-sodomizer.md` §8 inv. 1.
@@ -1230,12 +1230,19 @@ secondary AMM (§6.2) is the early-exit path.**)**
 
 - **Base:** fork `erc7540-reference` `BaseERC7540` + `ControlledAsyncRedeem` (MIT) for the
   `requestRedeem → fulfill → claim` lifecycle + operator approval. A redeemer calls `requestRedeem(zipUSD)`;
-  the zipUSD is escrowed and the request joins the current epoch's queue.
+  the zipUSD is escrowed and the request joins the current epoch's queue. Redemption is at **par to 6-dp USDC**, so
+  a request must be a **whole USDC-unit** of zipUSD (`amount % 1e12 == 0`); a holder with an odd zipUSD balance
+  redeems the whole-unit floor and keeps/sells the sub-unit remainder on the AMM (§6.2). (This whole-unit
+  granularity also keeps the pro-rata epoch accounting exact — a sub-unit remainder can never be filled at par.)
 - **Epoch + pro-rata (clean-room, modeled on Maple):** at the 30-day boundary, `settleEpoch()`:
-  1. read freeable USDC from the venue pool (what the pool can withdraw now);
+  1. read the queue's **own** free USDC balance (`balanceOf(this) − reservedAssets`) — the cash the warehouse
+     **REDEEM → REPAY** already delivered to the queue (§8.5); the queue calls EulerEarn **never** (it is the
+     non-sweepable REPAY sink, not a pool client);
   2. `redeemable = queued × freeable / totalQueuedValue` per requester (pro-rata; full fill if liquidity
-     suffices) — the `MapleWithdrawalManager:383` idea, reimplemented;
-  3. burn the filled zipUSD, withdraw the USDC from the venue pool, mark each requester `claimable`;
+     suffices) — the `MapleWithdrawalManager:383` idea, reimplemented as a global cumulative-remaining factor
+     scoped by an `era` counter (O(1), iteration-free);
+  3. burn the filled zipUSD (own-balance burn — no allowance/capacity) and mark each requester `claimable` (the
+     USDC is already in the queue from the REPAY, so no withdraw step);
   4. carry the unfilled remainder to the next epoch (`Maple:262-271` carry-forward idea).
 - **Trigger:** `settleEpoch()` is called by the controller on the 30-day boundary via a Go CRE
   `cron.Trigger` (§8) — reuses the controller-as-privileged-caller and the cron workflow.
@@ -1336,7 +1343,7 @@ are in a tracked queue with a visible clock.
 
 There are **three pricing inputs**, all CRE-mediated (same DON push-cache trust model):
 1. **Collateral equity mark** (the **Proof of Value** appraisal − senior debt) → the zipUSD dollar NAV — the lien oracle (`ZipcodeOracleRegistry`, §4.1).
-2. **xALPHA mark** — a junior basket leg + the **Duration-Bond premium**. **Two layers** (`bridge/xalpha-bridge-impl.md §2`):
+2. **xALPHA mark** — a junior basket leg + the **Duration-Bond premium**. **Two layers** (`tickets/bridge/8x-01-szalpha-wrapper-cct.md`):
    the **LST exchange rate** (`staked alpha ÷ xAlpha supply`, read from the validator stake — stake accounting,
    **no pool price** in the mint/redeem path, so the subnet emissions accrue here non-manipulably) × **`alphaUSD`**
    (the subnet **TAO/alpha AMM TWAP** × TAO/USD). Only the `alphaUSD` market leg is TWAP'd + staleness/circuit-break
@@ -1431,7 +1438,7 @@ two trust modes; every workflow below is one or the other.
 2. **The operator path — the single immutable CRE operator → the engine modules' `onlyOperator` entrypoints.**
    The auto-sodomizer engine (8-B5…8-B10, §4.5/§4.5.1) is driven by **one immutable operator identity** calling
    plain `msg.sender == operator` entrypoints on the engine Zodiac modules — **not** DON-signed reports
-   (`baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
+   (`reports/design/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
    `RecycleModule.creditFreeValue` is unbounded), and that trust is exactly what makes the revolving reservoir
    borrow safe (it kills the external-oracle-manipulation exploit, §4.5.1). Full surface: §8.7.
 The two paths are independent identities by construction (the engine `operator` is asserted `!= owner` at module
@@ -1603,7 +1610,7 @@ cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
 ### 8.7 Engine strategy-admin operator (8-B11 — the operator path, NOT a report)
 The auto-sodomizer engine (§4.5/§4.5.1, 8-B5…8-B10) is driven by the **single immutable CRE operator** calling
 the engine Zodiac modules' `onlyOperator` (`msg.sender == operator`) entrypoints — a **different write path
-from every §8.0 report** (`baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This is the off-chain
+from every §8.0 report** (`reports/design/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This is the off-chain
 orchestrator whose **on-chain surface is 8-B11** (a plain `onlyOperator` modifier + an immutable operator
 address on each module); the workflow itself is this CRE build. It is **not** Forwarder-gated and emits **no
 DON-signed report** — the operator submits ordinary transactions (it may still run as a CRE workflow using
@@ -1634,21 +1641,38 @@ junior's pay + self-insurance** (the loop vamps net-new USDC, compounding the ba
 waterfall leg (e), §11). It is bounded — TVL-capped, front-loaded, trailing-realized (`hydrex.md`).
 
 ### 8.8 xALPHA-APR feed
-The trailing-realized xALPHA APR is CRE-published on-chain on the same push-cache pattern as the leg marks
-(`bridge/xALPHA-apr.md`; reuse the §8.6 producer shape). It is **trailing-realized, never projected** (§12).
-The xALPHA `alphaUSD` mark it depends on is the §8.6 `NAV_LEG` leg-0 push; the APR figure feeds §12 / the
-depositor UI and the engine regime gates (8-B12 → 8-B11). (CRE-03 pairs this with the §8.6 share-price feeds —
-one bridge/oracle workflow family.)
+The **intrinsic xALPHA-LST APR** is CRE-published on-chain on the same push-cache pattern as the leg marks
+(`tickets/bridge/8x-02-xalpha-apr-cre.md`; reuse the §8.6 producer shape). It is **trailing-realized, never projected** (§12) and
+**derived from on-chain reads alone — no treasury/budget constant.** The number is the annualized growth of the
+wrapper's `exchangeRate()` (`IXAlphaRate.exchangeRate()`, alpha-per-xALPHA = staked-alpha ÷ supply, StakingV2
+`0x805` under the hood): since `deposit`/`redeem` mint/burn at the prevailing rate (NAV-neutral), **every move in
+`exchangeRate()` is validator dividends compounding into the wrapper's staked pool** — that is the LST's own
+staking yield. Formula: `intrinsic_APR = (rate_now / rate_prev − 1) × (year / Δ)`, alpha-denominated and
+**numeraire-clean** (supply cancels in the ratio; the cross-chain circulating supply matters only for per-token
+NAV/USD *value* and the post-M1 incentive denominator, not for this ratio). A metagraph emission read
+(`getEmission`/`getDividends` `0x802`) is a **forward cross-check only**, not the headline (validator-take/split
+caveat). This is **distinct from** the szipUSD depositor APR (NAV accretion from the recycle loop — the 8-B12 /
+§8.6 product feed); it is xALPHA's *own* yield. It feeds §12 / the depositor UI and the engine regime gates
+(8-B12 → 8-B11). The stale "lending-spread + coupon" base leg is **dropped** (lending yield → treasury, not
+depositors, §17/[[supply-side-redesign-locked]]); the **post-M1 szipUSD incentive APR** (xALPHA emitted as a
+subsidy: `emitted × xALPHA_USD ÷ szipUSD_TVL`) is a separate, clearly-labeled, deferred overlay that consumes
+this primitive — never blended. (CRE-03 pairs this with the §8.6 share-price feeds — one bridge/oracle workflow
+family.)
 
-### 8.9 The Proof capability gate (DEC-01 — the external blocker)
-Every report in §8.0 that carries a credit fact (origination type 1, draw type 2, revaluation type 3, the §8.4
-recovery proceeds) is **gated on the Proof-of-Value/Lien/Insurance capability (DEC-01)**: can "Proof" attest
-**lien-perfected + ownership + value + insurance per-lien** in a CRE-consumable form (a zkTLS/notarization
-attestation the node-mode fetch can verify and reach identical consensus on)? **This spec assumes DEC-01 and
-specs against it** (the §8.10 proof-layer sources are the input map), but it is the **one external dependency that
-blocks a live origination build** — until Proof exposes a per-lien attestation API, CRE-01 builds + simulates
-against **mock Proof attestations** (the contracts already test against mock reports, §8 intro) and the
-origination path cannot go live. Flagged, not resolved here (it is a capability decision, not a §8 mechanism).
+### 8.9 The Proof capability gate (DEC-01 — RESOLVED, two-layer model)
+Every report in §8.0 carrying a credit fact (origination 1, draw 2, revaluation 3, §8.4 recovery) needs its facts
+attested in a CRE-consumable (per-lien, signed, deterministic, identical-consensus) form. **DEC-01 RESOLVED
+(2026-06-09, `pending-docs/spv-lien-proof.md §6.1`):** a notarization attests *signer identity + document
+integrity* — **not the truth of the contents** — so the model is **two layers**. The **facts** come from
+authoritative feeds (county recorder/title = existence/position + anti-fabrication; appraiser = value →
+`equityMark`; carrier = insurance), and **Proof** seals that the SPV's lien instrument + assignment is genuine and
+ours. The DON downloads each signed artifact (the sealed Proof PDF behind a rotating pre-signed URL; the
+recorder/appraiser/carrier responses), **hashes it on-node**, verifies the cert chain, and aggregates
+`ConsensusIdenticalAggregation` (`reference/cre-sdk-go/cre/consensus_aggregators.go:33`); fetches are DON-only
+(`runtime.GetSecret`). **Not a live-origination blocker:** CRE-01 builds against **mock Proof + mock feeds** and
+swaps the real endpoints in as they integrate (the §8.10 source map; the xALPHA-stand-in pattern). The remaining
+external dependencies are the insurance **product** (SPV-doc §6.2), **legal** (§6.3), and pinning the feed vendors /
+SPV partner — those gate *real-collateral* origination, not the build.
 
 ### 8.10 Off-chain underwriting & proof layer
 The CRE workflow (§8.1) fans these in per-node (zk-verified at the subnet/node layer) and aggregates them
@@ -1678,7 +1702,7 @@ Each workflow above is a CRE-NN ticket basis. The PHASE2 stubs are updated to th
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) | — | none |
 | `CRE-01` | Origination / draw / close / status reports → controller (1/2/4/5,6); revaluation → registry (3, **gas-bounded sharded**, §8.1); default/recovery → `DefaultCoordinator` (§8.4, M2 fields sketch) | report | DEC-01 (§8.9) |
 | `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
-| `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 (xALPHA lane), else stand-in |
+| `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REPAY** ops via the Roles adapter (§8.5) | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) |
 | `CRE-05` (new) | Engine strategy-admin **operator** orchestrator (§8.7 — the operator path, drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy) | operator | none (operator-trusted; engine modules built) |
 
@@ -2206,7 +2230,7 @@ would add its own reference repos behind the `IZipcodeVenue` boundary (§4.7).
 
 **Resolved 2026-06-05 (supply-side redesign — user-directed + ratified):**
 - **xALPHA — one token.** The liquid-staked Zipcode-subnet
-  alpha (LST), bridged via CCIP (§2, `bridge/xalpha-bridge-impl.md`). One token does first-loss bond /
+  alpha (LST), bridged via CCIP (§2, `tickets/bridge/8x-01-szalpha-wrapper-cct.md`). One token does first-loss bond /
   Duration-Bond premium / szipUSD incentive / zipUSD-xALPHA POL leg / last-resort backstop (alpha→TAO→USDC) /
   treasury buyback target. (The M2-sketch loss-side names are now `LienXAlphaEscrow` / `slashXAlphaToCapital` /
   `slashXAlphaToCohort` / `lockXAlpha` / `releaseXAlpha`.)
@@ -2228,7 +2252,7 @@ would add its own reference repos behind the `IZipcodeVenue` boundary (§4.7).
   xALPHA subsidy. **Implementation is flexible (user's call): the yield may live in the protocol-held shares and
   be resolved to the treasury at each credit-cycle end, OR accrue to the treasury directly — economically
   identical.** **M1 scope:** the protocol holds the yield-bearing lending shares; the szipUSD headline is the
-  **seeded xALPHA emission** (`treasury.md` §4.1 budget); the **treasury buyback strategy that recycles the
+  **seeded xALPHA emission** (post-M1 treasury budget, TBD); the **treasury buyback strategy that recycles the
   privatized yield is post-M1**. **Money-model note:** this supersedes the §2/§5/§12 "szipUSD NAV = its own EE
   fee-shares" framing *at the economic level* (depositor yield = xALPHA, not the fee-shares); for M1 the yield
   may still accrue in the protocol-held shares (so `audit/1-results.md` I1–I4 hold mechanically), but **I3–I4
@@ -2291,7 +2315,7 @@ a Duration Bond · **sdVAULT** the **post-M1 Hydrex/oHYDX yield-engine module** 
 vault (zipUSD/xALPHA ICHI LP + CRE oHYDX autocompounder; `auto-sodomizer.md`) — **not a separate token** · **zap**
 deposit → mint zipUSD → auto-stake szipUSD in one tx · **zipCRED** a future RWA token (tokenized credit) ·
 **xALPHA** — the **one** liquid-staked Zipcode-subnet alpha (LST), bridged via CCIP
-(`bridge/xalpha-bridge-impl.md`): per-lien first-loss bond + Duration-Bond premium + szipUSD incentive +
+(`tickets/bridge/8x-01-szalpha-wrapper-cct.md`): per-lien first-loss bond + Duration-Bond premium + szipUSD incentive +
 zipUSD/xALPHA POL leg + last-resort backstop (alpha→TAO→USDC) + treasury buyback target · **markdown**
 event-driven recovery-aware debt-value haircut (`debt − equity
 mark × haircut`; set at the deviation Proof re-mark, not continuous, not time-linear) · **settle** write-off

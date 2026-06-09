@@ -1,11 +1,14 @@
-# hydrex.md — Hydrex as a customer-acquisition subsidy: governance floor, structured-product surface, the xALPHA boost loop
+# hydrex.md — Hydrex as a customer-acquisition subsidy: governance floor, structured-product surface, the recycle sink
 
 > **SUPPLY-SIDE REDESIGN (2026-06-05) — read through these deltas (authoritative: `claude-zipcode.md` §2/§4.5/§17):**
 > The gauged pool / POL is **`zipUSD/xALPHA`** (not szipUSD/xALPHA) — the stable leg is the clean, *yieldless*
 > zipUSD. The recycle loop mints **zipUSD** (backed 1:1 by the deposited USDC) and swaps **zipUSD→xALPHA**.
 > `sdVAULT` collapsed into the **`szipUSD`** vault share (deposit zipUSD/xALPHA single-sided → szipUSD). The real
-> lending yield is the **protocol's** (privatized → buy xALPHA); depositors are subsidized by xALPHA, not the
-> lending yield. Full economic reconciliation is a tracked post-M1 follow-up.
+> lending yield is the **protocol's** (it over-collateralizes zipUSD in the credit warehouse). **SINGLE-SINK REWORK
+> (2026-06-08):** the depositor's return is **NAV accretion** — the HYDX-extracted free value is recycled into the
+> szipUSD basket (8-B10 `RecycleModule` → backed zipUSD → single-sided gauge-staked LP, 8-B6), lifting NAV-per-share;
+> there is **no buy-xALPHA / no "+30% boost" distribution / no payout** (those legs are retired). The standalone
+> raw-xALPHA *emission* incentive is a separate, deferred post-M1 program. Authoritative: `claude-zipcode.md §4.5.1`.
 
 > **What this decides:** how Zipcode uses Hydrex — a **team-controlled ve(3,3) emission machine** — as a
 > **time-limited, mostly-free customer-acquisition subsidy** for the szipUSD lending book, NOT as a yield or
@@ -18,8 +21,7 @@
 > *net-draining* (measured −$156k over 90 days, no buy-side), and a **$0.01 strike floor** strangles the option
 > below spot ~$0.015. So direct extraction is ≈ **break-even on the $89k entry** — the value is the **deposits the
 > lure acquires** and the **votes that power it**, fueled by the *team's* bleed, not our balance sheet.
-> Refs: `treasury.md` (closed loop, POL, the xALPHA boost loop), `bridge/xalpha-bridge-impl.md` (CCIP arb),
-> `claude-zipcode.md` (szipUSD, exit throttle §11). Memory: [[hydrex-gauge-architecture]],
+> Refs: `claude-zipcode.md §4.5.1` (the recycle sink / engine modules) + §11 (exit throttle), `tickets/bridge/8x-01-szalpha-wrapper-cct.md` (CCIP arb). *(The post-M1 closed-loop/POL/emission economics doc `treasury.md` was removed 2026-06-09 — to be re-authored.)* Memory: [[hydrex-gauge-architecture]],
 > [[rubicon-fork-and-closed-loop]], [[supply-zap-and-resi-bond-bootstrap]].
 
 ---
@@ -192,29 +194,32 @@ sizing to the pool's absorption.
 
 ---
 
-## 7. The xALPHA boost loop — recycling the bleed into real AUM
+## 7. The recycle sink — turning the bleed into real AUM + NAV accretion
 
-A value-creating recursion (full economics in `treasury.md` §4.7). Per HYDX sale of $X:
+A value-creating recursion (the single sink, 8-B10 `RecycleModule`; spec `claude-zipcode.md §4.5.1`). Per HYDX sale
+of $X:
 
 ```
-HYDX → $X USDC → DEPOSIT into lending book (real AUM, +$X)
-              → mint $X zipUSD (fully backed by the just-deposited USDC)
-              → swap zipUSD → xALPHA on OUR POL (swap fee recaptured: we own LP + veNFT)
-              → distribute the xALPHA as a "+30% boosted yield" on a token depositors already receive
+HYDX → $X USDC → DEPOSIT into the credit warehouse (senior backing, real AUM +$X)
+              → mint $X (·scaleUp) zipUSD, backed 1:1 by the just-deposited USDC
+              → recycle that zipUSD into the basket as single-sided gauge-staked LP (8-B6)
+              → szipUSD NAV-per-share accretes for every holder
 ```
 
-**Why it's sound (and not the death-spiral):** the buy-side is funded by **free HYDX-extracted value (the team's
-bleed), not our reserves.** Every zipUSD is minted *after* a real USDC deposit → **fully backed by construction**
-(no dilution, no peg stress — backing scales 1:1 with supply). The USDC **stays in the loan book** (AUM grows).
+**Why it's sound (and not the death-spiral):** the fuel is **free HYDX-extracted value (the team's bleed), not our
+reserves.** Every zipUSD is minted *after* a real USDC deposit → **fully backed by construction** (no dilution,
+backing scales 1:1). The USDC **stays as senior backing** (over-collateralizing zipUSD / funding lending capacity)
+and the recycled zipUSD becomes real basket assets (LP) → the depositor's return is **NAV accretion**, realized on
+exit at NAV. There is **no zipUSD→xALPHA buy and no "+30% boost" distribution** — those legs were retired in the
+single-sink rework.
 
 **Guardrails (the line you don't cross):**
-1. **Only ever spend HYDX-extracted (free) value to buy xALPHA.** Real reserves / unbacked minting → spiral. Free
-   money → fine.
-2. **Watch origination throughput, not backing.** The loop pumps real new capital into the book faster than
-   organic deposits — make sure loan origination keeps pace or it's idle drag / credit-quality creep. (Good
-   problem, but the real one.)
-3. **Time-limited + reflexive.** The boost rides xALPHA price, which rides the HYDX buying, which ends in ~6
-   months. Advertise trailing-realized.
+1. **Only ever recycle HYDX-extracted (free) value.** Real reserves / unbacked minting → spiral. Free money → fine.
+2. **Watch origination throughput, not backing.** The loop pumps real new capital into the warehouse faster than
+   organic deposits — make sure loan origination keeps pace or it's idle drag / credit-quality creep. (The real
+   constraint.)
+3. **Time-limited.** The HYDX bleed funding it ends in ~6 months; the NAV accretion it produces is trailing-realized,
+   never a projected APR.
 
 ---
 
@@ -283,7 +288,7 @@ per-epoch ceiling, multisig/timelock on the silo.
 **Whale** (team lock-power, liquid overhang, oHYDX hoard, sink weight — the **regime-change tripwire**);
 **Extraction** (USDC depth, tick-enumerated fill curve, measured net Swap flow, price/2h-TWAP); **Floor**
 (effective spread, TWAP-gap, distance-to-$0.01, profitability-halt); **Clock** (rebase, decay, weeks-to-sunset);
-**Backing** (szipUSD backing ratio, origination throughput, redemption ratio `treasury.md` §4.1); **Product**
+**Backing** (zipUSD warehouse over-collateralization, origination throughput; szipUSD NAV-per-share); **Product**
 (vault TVL vs bleed cap, trailing-realized APR). Trigger panel maps each amber/red to a §9 action; the red
 tripwires (team lock-power jump, backing < 1) page Treasury.
 
@@ -296,7 +301,7 @@ comp is only partial) over the 6-month window (front-loaded; emission 3.4M→2.0
 $0.045→~$0.015, exit-bound + floored). The cash is *not* the win.
 
 **The win, in order:** (1) **deposits** — real USDC into the loan book, acquired by the lure; (2) **POL depth** +
-the vote floor; (3) the **xALPHA boost loop** pumping HYDX-buyer USDC into AUM. All fueled by the *team's* bleed.
+the vote floor; (3) the **recycle sink** pumping HYDX-extracted USDC into warehouse AUM + szipUSD NAV. All fueled by the *team's* bleed.
 
 **Graduation (~6 months):** when HYDX hits ~$0.014–0.018 the option dies, the boost evaporates, and the team will
 likely have diluted your votes. **What stands: the loan book and the deposits.** Hydrex was the cheap acquisition
@@ -324,7 +329,7 @@ Lending-book performance is the only thing under all of this that's real — tha
 - [ ] **Gauge whitelist** for xALPHA/zipUSD (or Euler-ERC4626 MORPHO gauge) — the gating dependency. Verify §9.4 conditions on-chain.
 - [ ] **Tick-enumeration fill-curve** + **measured net Swap flow** (replace estimates with data).
 - [ ] **Structured-product vault** — single-sided ICHI + buffer/CRE-borrow strike financing + trailing-APR + TVL cap.
-- [ ] **xALPHA boost loop** wired with the "free-value-only" + backing invariants (`treasury.md` §4.7).
+- [ ] **recycle sink** wired with the "free-value-only" + backed-by-construction invariants (`claude-zipcode.md §4.5.1`, 8-B10).
 - [ ] **Bot + dashboard** (§10).
 - [ ] **OTC term sheet** — slippage comp + gauge + emissions/bribe terms, executed atomically with the buy.
 
@@ -333,4 +338,4 @@ Lending-book performance is the only thing under all of this that's real — tha
 On-chain (`cast`, Base, week 38): Voter `0xc69E…`, Minter `0xA7D6…`, EmissionSchedule `0x5aAa…`, ve `0x25B2…`,
 oHYDX `0xA113…`, pool `0x51f0…`, team Safes `0xd9e9…`/`0x1ae3…`/`0x7426…`. Verified source (Sourcify): `VoterV5`,
 `MinterUpgradeableV3`, `OptionTokenV4`. SDK `@hydrexfi/hydrex-sdk` (`LendingGauge` Euler/Morpho routing). 90-day
-USDC reserve trajectory via archive reads. Companion: `treasury.md`.
+USDC reserve trajectory via archive reads. Companions: `auto-sodomizer.md` + `monitoring.md`.

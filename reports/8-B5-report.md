@@ -18,7 +18,7 @@ oracle, a borrow-gating hook, and the reservoir-market deployer.
   untracked — commit is your call).
 
 ## What the window did
-1. Confirmed NEXT = the engine chain starting at **8-B5** (per the PROGRESS banner + `baal-spec.md §13` build order).
+1. Confirmed NEXT = the engine chain starting at **8-B5** (per the PROGRESS banner + `reports/design/baal-spec.md §13` build order).
 2. **Asked you one question** (the lone §4.5.1-flagged build decision): the LP collateral oracle shape. After a
    back-and-forth clarifying that this is the **Oracle Router** (`EulerRouter`) price feed (not the swap/orderflow
    router), you locked **option 1 — the CRE-fed push-cache** (CRE computes the per-LP-share reserve×price mark and
@@ -95,6 +95,6 @@ oracle, a borrow-gating hook, and the reservoir-market deployer.
   the oracle's behavior is fully tested regardless.
 
 ## NEXT
-**8-B6 — LP / gauge-stake module** (`baal-spec.md §13` / `§10.8`): builds + gauge-stakes the zipUSD/xALPHA ICHI LP and
+**8-B6 — LP / gauge-stake module** (`reports/design/baal-spec.md §13` / `§10.8`): builds + gauge-stakes the zipUSD/xALPHA ICHI LP and
 unstakes/re-stakes slices for this loop. It produces the real LP token 8-B5 stands-in for, and consumes the
 unstake/re-stake seam (loop steps 1 + 7). Then 8-B7…8-B13.

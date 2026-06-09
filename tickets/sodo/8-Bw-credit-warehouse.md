@@ -154,7 +154,7 @@ One authored contract, two extended/new interfaces, one deploy/wire library, one
 opType bytes / pinned-call table, the post-spec-edit version this window); §4.4 (report envelope `abi.encode(uint8,
 bytes)` `:424-426` + the immutable-Forwarder / `setExpectedWorkflowId` / renounce seam `:358-369`); §4.5
 `ZipDepositModule` (the zap deposits with the **warehouse Safe as the EE-share `receiver`**, `:537-545`); §6.1/§8.3
-senior queue (draws via REDEEM→REPAY); §11/§4.6 recovery (via REPAY). `baal-spec.md §11` (8-Bw build-grade companion)
+senior queue (draws via REDEEM→REPAY); §11/§4.6 recovery (via REPAY). `reports/design/baal-spec.md §11` (8-Bw build-grade companion)
 + §13 (build order). **No §17 decision reopened** (CRE-permissioned single writer; senior/junior Safes never
 conflated; venue-agnostic; no on-chain economic liquidation; Roles-v2-over-bespoke; GOD-EOA→multisig owner).
 

@@ -1,4 +1,4 @@
-# Exit Gate + szipUSD (§6.4 / §7 / `baal-spec.md §4/§5/§7`) — the junior share + the windowed exit valve
+# Exit Gate + szipUSD (§6.4 / §7 / `reports/design/baal-spec.md §4/§5/§7`) — the junior share + the windowed exit valve
 
 > **Item ID:** `Exit Gate + szipUSD` (absorbs the old `8-B2` mint shaman + `8-B3` lock/freeze shaman). **Team
 > folder:** `tickets/sodo/`. **Build-only** (internal plumbing — `requestExit`/`processWindow` are user/keeper
@@ -32,15 +32,15 @@ contract is the custody + issuance + exit valve only.)
 **Spec §**
 `claude-zipcode.md` **§6.4** (the Exit Gate: custody + issuance + intent queue + liquidity windows + the
 sidecar-freeze partial-fill) + **§7** (`SzipNavOracle` is the issuance/exit pricing primitive; `navEntry`/`navExit`
-bracket; the supply denominator) + **`baal-spec.md §4`** (the one issuance core), **§5** (the patient windowed
+bracket; the supply denominator) + **`reports/design/baal-spec.md §4`** (the one issuance core), **§5** (the patient windowed
 path), **§7** (the paired buy-and-burn), **§2.2/§2.3** (the two-token invariant). Cross:
 - **§2** — szipUSD = the transferable junior share; the soulbound is on the internal Loot, not the user token.
 - **§4.5** — the supply-side wiring: the zap (`ZipDepositModule`, WOOF-06) calls `gate.depositFor(zipUSD, amount,
   user)`; the `CreditWarehouse` is the *senior* custody (never conflate — zipUSD's backing, not the junior basket).
-- **§4.5 item-0 / `baal-spec.md` 8-B1** — the two-tier authority model: the Gate's `manager(2)` is granted by the
+- **§4.5 item-0 / `reports/design/baal-spec.md` 8-B1** — the two-tier authority model: the Gate's `manager(2)` is granted by the
   **team-admin Safe signer** (`mainSafe.execTransaction → Baal.setShamans([gate],[2])`), **not** a Baal proposal
   (governance is inert) and **not** raw `setShamans` by anyone (it is `baalOnly` = avatar-only).
-- **§11 / `baal-spec.md §8/§9`** — the freeze is the **non-ragequittable sidecar** (committed equity); the Gate
+- **§11 / `reports/design/baal-spec.md §8/§9`** — the freeze is the **non-ragequittable sidecar** (committed equity); the Gate
   ragequits only the **main Safe** (free equity). The Gate does **not** rotate, mark down, or size the freeze.
 - Locked **§17:** two-token model; Gate = sole real-Loot holder; **Shares stay 0 forever**; NAV-proportional
   bracketed issuance; exit = windowed ragequit at `min(spot, twap)` NAV (partial-fill) + the CoW secondary +
@@ -61,7 +61,7 @@ path), **§7** (the paired buy-and-burn), **§2.2/§2.3** (the two-token invaria
     pause (`LootERC20.mint` is `onlyOwner`=Baal; the pause hook allows `from==0`, `LootERC20.sol:65/92`).
   - **`burnLoot(address[] from, uint256[] amount)`** (`Baal.sol:834`, `baalOrManagerOnly`) — the **paired-burn**
     retire path (`from = [address(this)]`): `_burnLoot` (`:847`) is a **pure supply reduction, NO asset payout, no
-    window** (`baal-spec.md §18.2`). Used by `burnFor` (§7), NOT by the windowed exit.
+    window** (`reports/design/baal-spec.md §18.2`). Used by `burnFor` (§7), NOT by the windowed exit.
   - **`ragequit(address to, uint256 sharesToBurn, uint256 lootToBurn, address[] tokens)`** (`Baal.sol:619`) —
     permissionless on the **Loot-holder**: `_ragequit` (`:637`) burns `lootToBurn` from **`_msgSender()`** (`:647`),
     so **the Gate must be the caller** (it holds the Loot). It pays `to` a **pro-rata in-kind** slice of
@@ -121,7 +121,7 @@ path), **§7** (the paired buy-and-burn), **§2.2/§2.3** (the two-token invaria
   `baal.totalShares() == 0` after issuance/exit. The Gate's mint path is **`mintLoot([gate],[shares])` only**.
 - **Do NOT expose raw `ragequit` to depositors, and do NOT make szipUSD soulbound/transfer-gated.** The whole
   point: depositors hold only the **transferable** szipUSD (trades on CoW); the Gate is the **sole Loot-holder**,
-  hence the sole ragequit caller, hence controls *when* exits happen (§6.4 item 1, `baal-spec.md §2.3`).
+  hence the sole ragequit caller, hence controls *when* exits happen (§6.4 item 1, `reports/design/baal-spec.md §2.3`).
 - **Do NOT read or trust a caller-supplied value at issuance.** `depositFor` takes `(asset, amount, receiver)` — the
   Gate values `amount` via `navOracle.valueOf(asset, amount)`; no caller passes a price (§3.4/§7).
 - **Do NOT read the szipUSD *market* (CoW) price** anywhere — issuance/exit price **only** off `SzipNavOracle`.
@@ -139,7 +139,7 @@ path), **§7** (the paired buy-and-burn), **§2.2/§2.3** (the two-token invaria
   in the non-RQ sidecar (item 9 / 8-B11 rotation). The Gate ragequits **only `mainSafe`**, so it *automatically*
   reaches only free equity; the partial-fill (a window that can't fund every queued claim from the free zipUSD) **is**
   the freeze. No `coverageFloor` knob, no sidecar reference, no utilization read in this contract (§6.4 item 5,
-  `baal-spec.md §5.4`).
+  `reports/design/baal-spec.md §5.4`).
 - **Do NOT write any NAV markdown / provision** — that is the M2 `DefaultCoordinator` writing into `SzipNavOracle`,
   not the Gate.
 - **Do NOT make `depositFor` permissionless-mint without the staleness/`fresh` gate.** `navEntry()` reverting

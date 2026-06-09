@@ -1,18 +1,19 @@
 # monitoring.md — Surveillance spec: the race, the whale, the backing, the floor
 
-> **SUPPLY-SIDE REDESIGN (2026-06-05) — read through these deltas (authoritative: `claude-zipcode.md` §2/§4.5/§17):**
-> POL depth + the redemption-depth ratio are measured in **zipUSD** (the LP is `zipUSD/xALPHA`, not
-> szipUSD/xALPHA). `sdVAULT` collapsed into the **`szipUSD`** vault share. The **"szipUSD backing ratio"** below
-> is superseded: the real lending yield is the **protocol's** (privatized → buy xALPHA), so szipUSD is the
-> freezable vault share (backed by the zipUSD/xALPHA LP), not a USDC-share claim — this metric needs re-deriving
-> when the treasury/buyback module is specced (tracked post-M1).
+> **REDESIGN DELTAS — read through these (authoritative: `claude-zipcode.md` §2/§4.5/§4.5.1/§17):** the gauged LP/POL
+> is `zipUSD/xALPHA` (not szipUSD/xALPHA); `sdVAULT` collapsed into the **`szipUSD`** vault share. **Single-sink
+> rework (2026-06-08):** excess value is NOT paid out or used to buy xALPHA — it is **recycled (8-B10) into the
+> szipUSD basket → NAV-per-share accretion**, and the real lending yield is the **protocol's** (it over-collateralizes
+> zipUSD in the `CreditWarehouse`). So the old **"szipUSD backing ratio" / "boost-loop" / "redemption-depth ratio"**
+> framings below are superseded — the live solvency checks are **zipUSD warehouse over-collateralization** + **szipUSD
+> NAV-per-share**; the redemption-depth ratio belongs to the **deferred post-M1 xALPHA-emission program**, not M1.
 
 > **What this watches:** the four things that can quietly end the Hydrex leg or the depositor product, each with an
 > on-chain source, a cadence, a threshold, and the action it fires. Built as a **read-only multicall + archive
 > reads + event indexer**; no writes. Consolidates the dashboards in `hydrex.md` §10 and `auto-sodomizer.md` §7
 > and adds the four critical watch-items. The dashboard is the trigger source for the CRE bot (`hydrex.md` §10,
 > `auto-sodomizer.md` §4).
-> Refs: `hydrex.md`, `treasury.md`, `auto-sodomizer.md`. Memory: [[hydrex-gauge-architecture]].
+> Refs: `hydrex.md`, `auto-sodomizer.md`, `claude-zipcode.md §4.5.1`. Memory: [[hydrex-gauge-architecture]].
 
 ---
 
@@ -49,17 +50,18 @@ it *coming*, not after.
 > default split hard toward `exerciseVe` (defend the floor) and Treasury is paged for a buy/lock decision. Do not
 > wait for our share to actually fall — by then it's too late.
 
-### C. USDC inflows & szipUSD backing — the boost-loop solvency watch
+### C. Recycle inflow & zipUSD backing — the solvency watch
 
-The boost loop (`treasury.md` §4.7) pumps real USDC into the book; backing is fine *by construction*, but the
-**inflow-vs-origination** balance and the **redemption-depth ratio** are not automatic.
+The recycle (8-B10) pumps real USDC into the warehouse as senior backing; backing is fine *by construction*, but the
+**inflow-vs-origination** balance is not automatic — the loop adds lending capacity faster than organic deposits.
 
 | Metric | Source | Cadence | Threshold → action |
 |---|---|---|---|
-| Boost-loop USDC inflow | cumulative loan-book deposits routed from the auto-sodomizer | per epoch | tracks AUM growth from the bleed |
-| **szipUSD backing ratio** = total USDC/loan-value ÷ szipUSD supply | lending-market accounting | continuous | **< 1.0 → HALT all minting + escalate** (should never happen — deposit precedes mint; a breach means an accounting bug) |
-| **Origination throughput** = USDC deployed-in-loans ÷ USDC idle | lending-market state | per epoch | **idle fraction rising → origination lagging the inflow → throttle the loop (Mode A / slow buys)**; this is the *real* constraint, not backing |
-| **Redemption-depth ratio** = POL zipUSD depth ÷ cumulative emitted-but-unsold xALPHA | POL reserves + emission accounting | per epoch | **< 1.0 → "Current APR" un-realizable → headline at risk → cut emissions or deepen POL** (load-bearing, `treasury.md` §4.1) |
+| Recycle USDC inflow | cumulative warehouse deposits routed from the auto-sodomizer recycle | per epoch | tracks AUM growth from the bleed |
+| **zipUSD over-collateralization** = warehouse NAV ÷ zipUSD float | warehouse + `EE_POOL.convertToAssets` | continuous | **< 1.0 → HALT all minting + escalate** (should never happen — deposit precedes mint; a breach means an accounting bug) |
+| **szipUSD NAV-per-share** = basket NAV ÷ szipUSD supply | `SzipNavOracle` | continuous | should accrete; a *drop* = a loss event (provision booked) → investigate |
+| **Origination throughput** = USDC deployed-in-loans ÷ USDC idle | warehouse state | per epoch | **idle fraction rising → origination lagging the recycle inflow → throttle the recycle**; this is the *real* constraint, not backing |
+| **Redemption-depth ratio** *(deferred — post-M1 xALPHA-emission program only)* = POL zipUSD depth ÷ cumulative emitted-but-unsold xALPHA | POL reserves + emission accounting | per epoch | N/A in M1 (no raw-xALPHA emission); re-activates if/when that program ships |
 | Net new external USDC | depositor inflows − redemptions | per epoch | the prize metric — is the lure actually acquiring deposits |
 
 ### D. Option-floor proximity — slippage/spread vs the inflexible strike
@@ -95,7 +97,7 @@ the two converge.
 | **Extraction** | USDC depth, tick-enumerated fill curve, measured net Swap flow, price, 2h-TWAP | `pool` reads, `pool.ticks()`, Swap events, `oHYDX.twapOracle` |
 | **Floor (D)** | spot, strike, effective spread, TWAP-gap, per-order slippage, distance-to-floor | `oHYDX.getDiscountedPrice/getMinPaymentAmount/getTimeWeightedAveragePrice`, `pool` |
 | **Clock** | rebase %, emission decay, weeks-to-sunset | `Minter.calculate_rebase`, `EmissionSchedule` |
-| **Backing (C)** | szipUSD backing ratio, origination throughput, redemption-depth ratio, net new USDC | lending-market state, POL reserves |
+| **Backing (C)** | zipUSD over-collateralization, szipUSD NAV-per-share, origination throughput, net new USDC | warehouse state, `SzipNavOracle` |
 | **Product** | vault TVL vs bleed cap, trailing-realized APR, net deposit flow | `auto-sodomizer` vault, CRE APR oracle |
 
 ---
@@ -103,10 +105,10 @@ the two converge.
 ## 3. Escalation tiers
 
 - **Green (auto):** bot acts on the trigger (re-lock, re-vote, taper, sweep). No human.
-- **Amber (notify):** `g > 1%`, idle-USDC rising, effective spread < 40%, redemption ratio approaching 1.0 → log
-  + dashboard flag + daily digest to Treasury.
-- **Red (page):** **team lock-power jump**, **oHYDX hoard rapid drawdown**, backing ratio < 1.0, redemption ratio
-  < 1.0, profitability-halt tripped → page Treasury; bot defaults to the conservative posture (all-to-ve, pause
+- **Amber (notify):** `g > 1%`, idle-USDC rising, effective spread < 40% → log + dashboard flag + daily digest to
+  Treasury.
+- **Red (page):** **team lock-power jump**, **oHYDX hoard rapid drawdown**, zipUSD over-collateralization < 1.0,
+  profitability-halt tripped → page Treasury; bot defaults to the conservative posture (all-to-ve, pause
   sells, halt minting) until a human decides.
 
 ---
@@ -129,7 +131,7 @@ the two converge.
 - [ ] Multicall registry + per-epoch snapshotter (archive checkpoints).
 - [ ] Team-Safe event indexer + the **lock-power-jump / hoard-drawdown red tripwires** (highest priority — the
       regime-change early warning).
-- [ ] szipUSD backing + origination-throughput + redemption-depth feeds from the lending market.
+- [ ] zipUSD over-collateralization + szipUSD NAV-per-share + origination-throughput feeds from the warehouse/oracle.
 - [ ] Effective-spread / TWAP-gap / distance-to-floor continuous monitor + the **profitability-halt** signal into
       the auto-sodomizer.
 - [ ] Tick-enumeration fill curve (shared with `hydrex.md` §5 / `auto-sodomizer.md` §7).

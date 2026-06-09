@@ -13,7 +13,7 @@ The numbers/stubs here are an **estimate to be re-derived at the checkpoint**, n
 > - the **item-8 szipUSD Baal vault** (substrate 8-Bw/8-B1/`SzipNavOracle`/Exit Gate + engine 8-B5…8-B14) —
 >   the old `WOOF-08`/`INFLOW-08` and the separate `sdVAULT` track collapsed into it; the yield-engine spec
 >   pull (`spec-clear-8SY`) is **DONE**;
-> - the **xALPHA bridge** (`8x`) — pulled into M1, builds against a stand-in token (`bridge/xalpha-bridge-impl.md`);
+> - the **xALPHA bridge** (`8x`) — pulled into M1, builds against a stand-in token (`tickets/bridge/8x-01-szalpha-wrapper-cct.md`);
 > - `WOOF-09` (`ZipRedemptionQueue`) and `WOOF-10` (deploy/wiring) — M1 spine, tracked in PROGRESS;
 > - the superseded `ISzipUSD` 3-arg-`stake`/F4 obligation (the seam is now the Exit Gate's `depositFor`).
 
@@ -43,24 +43,32 @@ file → superintendent review, with composable integrity held by the cross-tick
 
 | Track | Stack | Design lives in | Maturity | Gate |
 |---|---|---|---|---|
-| CRE workflows | Go→wasip1 | `claude-zipcode.md` §8 (+ `bridge/xALPHA-apr.md`) | High-fidelity, **spec pull not yet run** | `spec-clear-CRE.md` (TODO) + Proof endpoints (DEC-01) |
+| CRE workflows | Go→wasip1 | `claude-zipcode.md` §8 (+ `tickets/bridge/8x-02-xalpha-apr-cre.md`) | **Producer spec DONE 2026-06-09** (§8.0–§8.11) | **DEC-01 RESOLVED** (two-layer model); build on mock + swap real feeds — live real-collateral origination needs §6.2/§6.3 + vendors |
 | Subnet | Bittensor (Py/Rust) | `claude-zipcode.md` §7, §8.5 | **Sketch** | Proof API + zk-verify choice (DEC-01) |
-| Inflow (frontend) | Nuxt/Vue/viem | `§5/§6/§12/§15` (INFLOW-06 done as the model) | In-spec; gated on build events | events from the item-8 / queue build tickets |
+| Inflow (frontend) | Nuxt/Vue/viem | `§5/§6/§12/§15`; owned by **`superintendent-allaprima.md`** → `tickets/frontend/` (own ledger) | Sketch sweep runs now; renderer gated on item-10 | item-10 deploy (addresses/ABIs) for the renderer half |
 | Subgraph | TS/AssemblyScript | §9 (events) + §12 (metrics) | Locked, needs formulas | final on-chain event ABIs |
-| Treasury (economics) | — (decision doc) | `pending-docs/treasury.md` | Strategy locked, ops-gated | GTV pairing (DEC-03) |
-| M2 loss | Solidity | `baal-spec.md §9` + §4.6 / §11 | Redesigned sketch (provision-that-recovers + foreclosure Proof oracles) | Proof attestations (DEC-01) |
+| Treasury (economics) | — (decision doc) | **doc removed 2026-06-09 — re-author post-M1** | Strategy locked, ops-gated | GTV pairing (DEC-03) **RESOLVED → xALPHA/zipUSD** |
+| M2 loss | Solidity | `reports/design/baal-spec.md §9` + §4.6 / §11 | Redesigned sketch (provision-that-recovers + foreclosure Proof oracles); `LienXAlphaEscrow` custody **pulled forward to M1-adjacent `8-Bx`** (PROGRESS) | Proof attestations (DEC-01) |
 
 ---
 
 ## Decision-resolving items — these gate everything below (some are user/legal, not cold-buildable)
 
-- **`DEC-01` Proof-capability confirmation** — can Proof attest lien/ownership/value/insurance **and** the
-  foreclosure/recovery milestones, per-lien, in a CRE-consumable form? **Gates CRE + subnet + M2-loss** (the
-  whole off-chain/loss half of the system). `spv-lien-proof.md` §6.1 + `baal-spec.md §9.4`.
-- **`DEC-02` canonical-vs-fork + CCT-registration** on chain 964 (testnet-945 attempt or Chainlink ping).
-  Gates the bridge's **real** lane (M1 8x builds against a stand-in until then). `bridge/xalpha-bridge-impl.md` §4.
-- **`DEC-03` GTV pairing terms** (can Zipcode bring szipUSD as the pairing, or is USDC mandated?). Gates
-  treasury / bridge canonical-vs-fork. `pending-docs/treasury.md` §6.
+- **`DEC-01` Proof-capability — RESOLVED 2026-06-09 (two-layer model).** A notarization attests instrument
+  genuineness/identity/integrity, NOT the truth of contents → **facts** come from authoritative feeds (county
+  recorder/title = existence + anti-fabrication, appraiser = value, carrier = insurance, Erebor = recovery) and
+  **Proof** seals the SPV instrument as genuine + ours, all on the same CRE identical-consensus path (DON hashes
+  the sealed artifact on-node + verifies cert). **NOT a blocker** — CRE/subnet/M2-loss build on mock + swap real
+  feeds in. Residual (their own risks): insurance product (§6.2), legal (§6.3), pinning feed/SPV vendors.
+  `spv-lien-proof.md` §6.1 + `reports/design/baal-spec.md §9.4`.
+- **`DEC-02` canonical-vs-fork + CCT-registration** on chain 964. **RESOLVED 2026-06-09.** Fork decided (self-built
+  `szALPHA` on our own validator); CCT registration on 964 confirmed **open/self-serve** — full TokenAdminRegistry +
+  RegistryModuleOwnerCustom + TokenPoolFactory stack is deployed and GTV's own xSN* xAlpha tokens are already registered
+  CCTs with a live Base lane (addresses in `tickets/bridge/8x-01-szalpha-wrapper-cct.md`). The bridge's real lane is now build-only.
+- **`DEC-03` GTV pairing terms** — **RESOLVED 2026-06-09**: Hydrex confirmed the LP pair is **xALPHA / zipUSD**
+  (the stable unit; USDC not mandated). Confirms the spec's existing `zipUSD/xALPHA` gauged pool (`claude-zipcode.md §4.5`,
+  `pending-docs/hydrex.md`); the only stale artifact was the "xALPHA/szipUSD closed loop" memory phrasing. Treasury
+  rationale (POL incentives) re-authors post-M1.
 → **~3 scoping items**
 
 ---
@@ -70,16 +78,16 @@ file → superintendent review, with composable integrity held by the cross-tick
 Each stub is a placeholder to be promoted to a real ticket via the harness + the per-track gate in
 `track-gates.md`. A track is not authorable until its gate clears.
 
-### CRE — off-chain robot (**§8 spec gate CLEARED 2026-06-09**; CRE-01 live build still gated on DEC-01)
-`spec-clear-CRE.md` raised §8 to the producer level (`claude-zipcode.md §8.0…§8.11`; `reports/design/CRE-spec-report.md`).
+### CRE — off-chain robot (**§8 spec gate CLEARED + DEC-01 RESOLVED 2026-06-09**; live real-collateral origination needs §6.2/§6.3 + vendors)
+The CRE §8 spec-pull window (2026-06-09) raised §8 to the producer level (`claude-zipcode.md §8.0…§8.11`; `reports/design/CRE-spec-report.md`; the `spec-clear-CRE.md` plan was consumed + deleted).
 Stubs updated to the §8.0 surface + the two new tracks:
 - `CRE-00` project/secrets scaffold (§8 intro / scaffolding note)
-- `CRE-01` origination / draw / close / status → controller + revaluation (sharded) → registry + default/recovery → `DefaultCoordinator` (§8.1/§8.4) — **gated on DEC-01** (§8.9; builds against mock Proof until then)
+- `CRE-01` origination / draw / close / status → controller + revaluation (sharded) → registry + default/recovery → `DefaultCoordinator` (§8.1/§8.4) — **DEC-01 RESOLVED (two-layer model, §8.9)**; builds on mock Proof+feeds, swaps real endpoints in; live real-collateral origination needs §6.2/§6.3 + vendors
 - `CRE-02` redemption-settle `cron` + warehouse REDEEM funding call (§8.3/§8.5)
 - `CRE-03` szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle`, `LP_MARK`(7)→`SzipReservoirLpOracle` — + xALPHA-APR feed (§8.6/§8.8)
 - `CRE-04` (new) senior-warehouse SUPPLY/APPROVE/REPAY via the Roles adapter (§8.5) — **must reconcile the 8-Bw `WarehouseAdminModule` decode before finalizing**
 - `CRE-05` (new) engine strategy-admin **operator** orchestrator (§8.7 — the operator path, drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation)
-→ **~6** (the §8 producer gate is cleared; CRE-01's *live* origination still waits on DEC-01, CRE-04 on the 8-Bw build)
+→ **~6** (the §8 producer gate is cleared + DEC-01 model resolved; CRE-01's *live real-collateral* origination waits on §6.2/§6.3 + feed vendors, CRE-04 on the 8-Bw build)
 
 ### Subnet — Bittensor (gated: DEC-01; sketch-level, no spec pull scheduled)
 - `SUBNET-01` validator/miner container scaffold (§7)
@@ -87,11 +95,16 @@ Stubs updated to the §8.0 surface + the two new tracks:
 - `SUBNET-03` DON→CRE Shape-B integration (§7/§13)
 → **~3** (the least-mature track — needs a spec pull of its own before tickets)
 
-### Inflow — frontend (gated on build-ticket events)
+### Inflow — frontend (the dedicated **alla-prima sketch sweep**, NOT this ledger)
+The frontend is owned by `superintendent-allaprima.md` (a separate role): it paints the supply/zap/position/exit UI
+over `reference/euler-lite`, files in **`tickets/frontend/`**, keeps its own **`tickets/frontend/PROGRESS-frontend.md`**,
+and is **READ-ONLY on this file + `PROGRESS.md`**. The sketch half runs now (the user-facing contracts are built); the
+renderer half is gated on item-10 deploy (addresses/ABIs). `INFLOW-06` was the model. The stubs below are that role's
+candidate worklist — it derives/confirms them from the built contracts, they are not authored from here:
 - `INFLOW-07` originator onboarding (§15)
 - `INFLOW-09` redemption-queue view (§6.1)
 - `INFLOW-12` solvency dashboard (§12)
-→ **~3**
+→ **~3** (owned by `superintendent-allaprima.md` → `tickets/frontend/`)
 
 ### Subgraph (gated on final event ABIs)
 - `GRAPH-01` event indexing (§9)
@@ -99,17 +112,21 @@ Stubs updated to the §8.0 surface + the two new tracks:
 → **2**
 
 ### M2 loss machinery (deferred; gated: DEC-01 foreclosure Proof oracles)
-- `M2-01` `LienXAlphaEscrow` (lock / `slashXAlphaToCapital` / `slashXAlphaToCohort`)
+- `M2-01` `LienXAlphaEscrow` — **PULLED FORWARD to M1-adjacent `8-Bx` (PROGRESS row, 2026-06-08).** The **custody half**
+  (`lockXAlpha` at launch / `releaseXAlpha` on repay) is M1; the **slash half** (`slashXAlphaToCapital` /
+  `slashXAlphaToCohort` → routes into the sidecar) is built + mock-tested with 8-Bx and goes live with the M2 default
+  flow. So this stub is now **tracked as `8-Bx` in `PROGRESS.md`**, not authored from here — kept listed only for the
+  M2 slash-flow integration.
 - `M2-02` `DefaultCoordinator` (bounded conservative-provision writer → recovery true-up; sole NAV-markdown writer)
 - `M2-03` systemic duration-squeeze freeze (Duration-Bond trigger B)
-→ **3** (`baal-spec.md §9` is the redesigned source — provision-that-recovers, NOT withhold/markdown; the
-`.sol` stubs on disk under `contracts/src/loss/` are scaffold placeholders, not built)
+→ **~2 net new** (M2-01 custody is `8-Bx`; `reports/design/baal-spec.md §9` is the redesigned source — provision-that-recovers,
+NOT withhold/markdown; the `.sol` stubs on disk under `contracts/src/loss/` are scaffold placeholders, not built)
 
 ### Designer
 - euler-lite branded fork — setup task, not a cold-build ticket → **0–1**
 
 **Estimated total: ~15 tickets** across the remaining tracks, plus the ~3 DEC items that resolve gates
-rather than ship code. Treasury *economics* stays a decision doc (`treasury.md`).
+rather than ship code. Treasury *economics* stays a decision (its `treasury.md` doc was removed 2026-06-09 — re-author post-M1).
 
 ---
 
