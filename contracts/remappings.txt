@@ -1,0 +1,12 @@
+evc/=../reference/ethereum-vault-connector/src/
+evk/=../reference/euler-vault-kit/src/
+euler-price-oracle/=../reference/euler-price-oracle/src/
+euler-earn/=../reference/euler-earn/src/
+ethereum-vault-connector/=../reference/ethereum-vault-connector/src/
+openzeppelin-contracts/=../reference/euler-vault-kit/lib/openzeppelin-contracts/contracts/
+@openzeppelin/contracts/=../reference/euler-vault-kit/lib/openzeppelin-contracts/contracts/
+forge-std/=../reference/euler-vault-kit/lib/forge-std/src/
+permit2/=../reference/euler-vault-kit/lib/permit2/
+@gnosis-guild/zodiac-core/=../reference/zodiac-core/contracts/
+x402-cre-price-alerts/=../reference/x402-cre-price-alerts/contracts/
+@solady/=../reference/euler-price-oracle/lib/solady/src/

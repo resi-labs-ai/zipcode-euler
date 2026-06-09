@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity 0.8.24;
+
+import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
+import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
+
+import {IICHIVault} from "../../interfaces/ichi/IICHIVault.sol";
+import {IGauge} from "../../interfaces/hydrex/IGauge.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+/// @title LpStrategyModule
+/// @notice The on-chain seam of the 8-B6 LP strategy (§4.5.1): the third engine Zodiac Module (after the 8-B14
+///         buy-and-burn and the 8-B5 reservoir loop), CRE-operator-gated, enabled on the szipUSD engine Safe
+///         (`avatar == target == engineSafe`). It owns the LP's whole lifecycle: build the zipUSD/xALPHA ICHI LP
+///         (`addLiquidity` → `IICHIVault.deposit`), gauge-stake it to farm oHYDX (`stake` → `IGauge.deposit`), and
+///         unstake/re-stake slices for the 8-B5 harvest loop (`unstake` → `IGauge.withdraw`). The LP token IS the
+///         ICHI vault contract; the gauge custodies the staked LP.
+///
+/// @dev SECURITY BOUNDARY (§10.1, the module's whole reason for shape): the operator supplies ONLY scalar amounts
+///      (`deposit0`/`deposit1`/`minShares`/`lpAmount`). The module builds ALL calldata to the set-once wired targets
+///      (`ichiVault`/`gauge`/`token0`/`token1`), the deposit `to` is the literal set-once `engineSafe`, and every
+///      balance read is `engineSafe`. NO generic call/exec passthrough, NO delegatecall, `value == 0` on every
+///      `exec`. There is no EVC leg (the module never borrows) — the gauge/vault calls credit/debit the Safe purely
+///      because the Safe is the `exec` msg.sender. The module writes NO storage in any mutating path (no live-bid
+///      analog) and holds no custody — the Safe holds the tokens, the LP, and the staked position.
+///
+/// @dev CLONE FACT (§18.6, proven on 8-B14/8-B5): a `ModuleProxyFactory` clone shares the mastercopy's runtime
+///      bytecode, so `immutable` is identical for every clone — it CANNOT carry per-clone `setUp` config. EVERY
+///      per-clone wired address is plain set-once storage written in `setUp` under `initializer`, NOT `immutable`.
+///      The mastercopy is init-locked at deploy.
+contract LpStrategyModule is Module {
+    // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
+    /// @notice The engine Safe (`avatar == target == engineSafe`); the deposit `to` + every balance read.
+    address public engineSafe;
+    /// @notice The single CRE operator (gates `addLiquidity`/`stake`/`unstake`).
+    address public operator;
+    /// @notice The ICHI managed vault for zipUSD/xALPHA. The vault contract IS the LP share token (an 18-dp ERC20).
+    address public ichiVault;
+    /// @notice The Hydrex gauge over our pool (staking the LP here is what earns oHYDX; the claim is 8-B7).
+    address public gauge;
+    /// @notice The ICHI vault's `token0()` (read live in `setUp`) — the approval target for the `deposit0` leg.
+    address public token0;
+    /// @notice The ICHI vault's `token1()` (read live in `setUp`) — the approval target for the `deposit1` leg.
+    address public token1;
+
+    // --------------------------------------------------------------------- errors
+    error NotOperator();
+    error ZeroAddress();
+    error OwnerIsOperator();
+    error ZeroAmount();
+    /// @notice `minShares == 0` — the slippage floor must be a real bound (a zero floor would no-op the only
+    ///         sandwich protection on a direct ICHI deposit; the CRE robot always sizes a non-zero floor).
+    error ZeroMinShares();
+    /// @notice The ICHI `deposit` minted fewer shares than the operator-supplied `minShares` floor (sandwiched / thin).
+    error Slippage();
+    /// @notice An `exec` through the Safe returned `false` (the Safe swallows inner reverts) with no revert data.
+    error ExecFailed();
+
+    // --------------------------------------------------------------------- events
+    event LiquidityAdded(uint256 deposit0, uint256 deposit1, uint256 shares);
+    event Staked(uint256 lpAmount);
+    event Unstaked(uint256 lpAmount);
+
+    // --------------------------------------------------------------------- setUp (initializer; NO immutable)
+    /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
+    ///         `initializer`. Decodes `(owner, engineSafe, operator, ichiVault, gauge)`; reads `token0`/`token1` LIVE
+    ///         off the vault. ORDER is load-bearing: validate the five addresses nonzero FIRST (so an `ichiVault == 0`
+    ///         reverts `ZeroAddress`, not the live `token0()` staticcall), then read + assert the tokens nonzero.
+    function setUp(bytes memory initParams) public override initializer {
+        (address owner_, address engineSafe_, address operator_, address ichiVault_, address gauge_) =
+            abi.decode(initParams, (address, address, address, address, address));
+
+        if (
+            owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || ichiVault_ == address(0)
+                || gauge_ == address(0)
+        ) revert ZeroAddress();
+        if (owner_ == operator_) revert OwnerIsOperator();
+
+        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
+        avatar = engineSafe_;
+        target = engineSafe_;
+
+        engineSafe = engineSafe_;
+        operator = operator_;
+        ichiVault = ichiVault_;
+        gauge = gauge_;
+
+        // Read the LP legs LIVE off the wired vault (the SzipBuyBurnModule.setUp pattern) — guarantees the approved
+        // tokens match the vault and removes two setUp args.
+        address t0 = IICHIVault(ichiVault_).token0();
+        address t1 = IICHIVault(ichiVault_).token1();
+        if (t0 == address(0) || t1 == address(0)) revert ZeroAddress();
+        token0 = t0;
+        token1 = t1;
+
+        _transferOwnership(owner_);
+    }
+
+    // --------------------------------------------------------------------- gates
+    modifier onlyOperator() {
+        if (msg.sender != operator) revert NotOperator();
+        _;
+    }
+
+    // @dev `setAvatar`/`setTarget` are inherited from zodiac-core `Module` as `onlyOwner`. The CRE `operator` (the
+    //      hot key) CANNOT call them — only `owner` (the Timelock) can, and a redirect by governance is a deliberate
+    //      timelocked act, not an attack path. We do NOT hard-lock them (that would require marking the vendored
+    //      zodiac-core setters `virtual` — reference deps stay pristine). Tested: a non-owner caller reverts.
+
+    // --------------------------------------------------------------------- the LP lifecycle (operator-only)
+    /// @dev Drive the Safe via the inherited `execAndReturnData` (Operation.Call, value 0) and HARD-REVERT if it
+    ///      returns false — BUBBLING the inner revert data so the original ICHI/gauge error surfaces (the Gnosis Safe
+    ///      `execTransactionFromModuleReturnData` catches inner reverts and returns `(false, revertData)` rather than
+    ///      bubbling, so an unchecked `exec` would silently swallow a failed deposit/stake and the step would wrongly
+    ///      report success). Returns the inner return data (the ICHI `deposit` share-return is decoded from it).
+    function _exec(address to, bytes memory data) private returns (bytes memory) {
+        (bool ok, bytes memory ret) = execAndReturnData(to, 0, data, Operation.Call);
+        if (!ok) {
+            if (ret.length == 0) revert ExecFailed();
+            assembly {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        return ret;
+    }
+
+    /// @notice Build the zipUSD/xALPHA ICHI LP: approve + deposit (single-sided ⇒ one side 0; balanced ⇒ both > 0,
+    ///         the 8-B13 Mode-C path) + reset the approvals. The minted LP lands in the engine Safe.
+    /// @param deposit0   token0 amount to add (0 to skip the token0 leg).
+    /// @param deposit1   token1 amount to add (0 to skip the token1 leg).
+    /// @param minShares  the non-zero slippage floor — revert `Slippage` if the deposit mints fewer LP shares.
+    /// @return shares    the LP shares minted to the Safe.
+    function addLiquidity(uint256 deposit0, uint256 deposit1, uint256 minShares)
+        external
+        onlyOperator
+        returns (uint256 shares)
+    {
+        if (deposit0 == 0 && deposit1 == 0) revert ZeroAmount();
+        if (minShares == 0) revert ZeroMinShares();
+
+        // approve the non-zero legs (token0 then token1) — exact amount, reset below (no standing approval).
+        if (deposit0 != 0) {
+            _exec(token0, abi.encodeWithSelector(IERC20.approve.selector, ichiVault, deposit0));
+        }
+        if (deposit1 != 0) {
+            _exec(token1, abi.encodeWithSelector(IERC20.approve.selector, ichiVault, deposit1));
+        }
+
+        // deposit single-sided or balanced; the vault's allowToken0/1 gates leg legality fail-closed. to == Safe.
+        bytes memory ret = _exec(ichiVault, abi.encodeCall(IICHIVault.deposit, (deposit0, deposit1, engineSafe)));
+        shares = abi.decode(ret, (uint256));
+
+        // reset the residual approvals to 0 (token0 then token1) — deposit consumes the exact amount, reset defensively.
+        if (deposit0 != 0) {
+            _exec(token0, abi.encodeWithSelector(IERC20.approve.selector, ichiVault, uint256(0)));
+        }
+        if (deposit1 != 0) {
+            _exec(token1, abi.encodeWithSelector(IERC20.approve.selector, ichiVault, uint256(0)));
+        }
+
+        if (shares < minShares) revert Slippage();
+
+        emit LiquidityAdded(deposit0, deposit1, shares);
+    }
+
+    /// @notice Gauge-stake an LP slice to (resume) earning oHYDX (the build/stake step + the 8-B5 loop step 7
+    ///         re-stake). Exactly 3 `exec`s (approve / deposit / reset). The LP token == `ichiVault`.
+    function stake(uint256 lpAmount) external onlyOperator {
+        if (lpAmount == 0) revert ZeroAmount();
+        _exec(ichiVault, abi.encodeWithSelector(IERC20.approve.selector, gauge, lpAmount));
+        _exec(gauge, abi.encodeCall(IGauge.deposit, (lpAmount)));
+        _exec(ichiVault, abi.encodeWithSelector(IERC20.approve.selector, gauge, uint256(0)));
+        emit Staked(lpAmount);
+    }
+
+    /// @notice Un-stake an LP slice from the gauge back to the Safe (the 8-B5 loop step 1, before `postCollateral`).
+    ///         Exactly 1 `exec`. The gauge returns the LP to the Safe (= the gauge call's msg.sender).
+    function unstake(uint256 lpAmount) external onlyOperator {
+        if (lpAmount == 0) revert ZeroAmount();
+        _exec(gauge, abi.encodeCall(IGauge.withdraw, (lpAmount)));
+        emit Unstaked(lpAmount);
+    }
+
+    // --------------------------------------------------------------------- views (8-B5/8-B11/8-B12 back-pressure)
+    /// @notice The gauge-staked LP balance (read live from the gauge; 8-B5 sizes the unstake slice off it).
+    function stakedBalance() external view returns (uint256) {
+        return IGauge(gauge).balanceOf(engineSafe);
+    }
+
+    /// @notice The unstaked LP sitting in the Safe (read live from the vault share token).
+    function lpBalance() external view returns (uint256) {
+        return IICHIVault(ichiVault).balanceOf(engineSafe);
+    }
+}

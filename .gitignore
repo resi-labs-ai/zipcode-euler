@@ -1,2 +1,14 @@
 # Cloned upstream repos kept as read-only reference (each has its own .git)
 reference/
+
+# Foundry build artifacts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Local env / secrets (the .example template stays tracked)
+.env
+*.env
+!.env.example
+!*.env.example
+contracts/.env

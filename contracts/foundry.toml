@@ -1,0 +1,31 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+script = "script"
+libs = []
+
+solc = "0.8.24"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 20_000
+
+# forge must be allowed to read source that lives outside the project root
+# (all deps remap into ../reference). Without this, forge rejects with
+# "File outside of allowed directories".
+allow_paths = ["../reference"]
+
+[profile.default.fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+quote_style = "double"
+number_underscore = "preserve"
+
+[rpc_endpoints]
+# Base mainnet (8453) is BOTH the deploy target AND the fork/integration-test
+# target. PRIMARY.
+base = "${BASE_RPC_URL}"
+# Optional secondary (CRE + Euler exist there; the farm/vault deps do not).
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
