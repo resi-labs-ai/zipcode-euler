@@ -114,6 +114,7 @@ contract SzipBuyBurnModule is Module {
     event BidCancelled(bytes uid);
     event DiscountSet(uint16 dBps);
     event BuybackCapSet(uint256 buybackCap);
+    event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, which is then init-locked). One-shot via the
@@ -182,6 +183,57 @@ contract SzipBuyBurnModule is Module {
     function setBuybackCap(uint256 buybackCap_) external onlyOwner {
         buybackCap = buybackCap_;
         emit BuybackCapSet(buybackCap_);
+    }
+
+    // --- Timelock-settable wiring (build phase, §17) ---
+
+    /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
+    function setOperator(address operator_) external onlyOwner {
+        if (operator_ == address(0)) revert ZeroAddress();
+        operator = operator_;
+        emit WiringSet("operator", operator_);
+    }
+
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
+    }
+
+    /// @notice Re-point `navOracle` (build phase, §17). onlyOwner (Timelock).
+    function setNavOracle(address navOracle_) external onlyOwner {
+        if (navOracle_ == address(0)) revert ZeroAddress();
+        navOracle = navOracle_;
+        emit WiringSet("navOracle", navOracle_);
+    }
+
+    /// @notice Re-point `szipUSD` (build phase, §17). onlyOwner (Timelock).
+    function setSzipUSD(address szipUSD_) external onlyOwner {
+        if (szipUSD_ == address(0)) revert ZeroAddress();
+        szipUSD = szipUSD_;
+        emit WiringSet("szipUSD", szipUSD_);
+    }
+
+    /// @notice Re-point `usdc` (build phase, §17). onlyOwner (Timelock).
+    function setUsdc(address usdc_) external onlyOwner {
+        if (usdc_ == address(0)) revert ZeroAddress();
+        usdc = usdc_;
+        emit WiringSet("usdc", usdc_);
+    }
+
+    /// @notice Re-point `settlement` (build phase, §17). onlyOwner (Timelock).
+    function setSettlement(address settlement_) external onlyOwner {
+        if (settlement_ == address(0)) revert ZeroAddress();
+        settlement = settlement_;
+        emit WiringSet("settlement", settlement_);
+    }
+
+    /// @notice Re-point `vaultRelayer` (build phase, §17). onlyOwner (Timelock).
+    function setVaultRelayer(address vaultRelayer_) external onlyOwner {
+        if (vaultRelayer_ == address(0)) revert ZeroAddress();
+        vaultRelayer = vaultRelayer_;
+        emit WiringSet("vaultRelayer", vaultRelayer_);
     }
 
     // --------------------------------------------------------------------- the bid (§7.2)

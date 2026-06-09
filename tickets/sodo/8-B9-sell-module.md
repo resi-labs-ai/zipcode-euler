@@ -90,7 +90,7 @@ Two files under the supply/engine tree, plus one new minimal interface and one n
   upstream by 8-B8's exercise size so the repay sell always fits the cap — exactly as 8-B8's strike/cutoff/regime are
   CRE-layer). The on-chain safety bound is the operator-supplied **`minOut`** slippage floor (the analog of 8-B8's
   `maxPayment`).
-- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one CRE operator = `onlyOperator`, mutate
+- `reports/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one CRE operator = `onlyOperator`, mutate
   the Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via `ModuleProxyFactory`, init in
   `setUp` under `initializer`, Call-only / no delegatecall) + **§10.8 / 8-B9** (the swap description: market-sells
   HYDX→USDC for the 8-B5 repay leg **and** zipUSD→xALPHA on our POL for the Mode B/C buy leg, via the Hydrex

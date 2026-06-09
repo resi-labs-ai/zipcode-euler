@@ -1,4 +1,4 @@
-# reports/design/baal-spec.md — full DRAFT spec for the szipUSD junior vault (spec-ready, staging for claude-zipcode.md)
+# reports/baal-spec.md — full DRAFT spec for the szipUSD junior vault (spec-ready, staging for claude-zipcode.md)
 
 > **What this file is.** A **complete, spec-ready draft** of the szipUSD junior-vault subsystem, written in
 > `claude-zipcode.md` section form so it can be approved item-by-item and then integrated section-by-section into the
@@ -40,7 +40,7 @@
 | What | Path |
 |---|---|
 | Canonical spec (integration target) | `claude-zipcode.md` |
-| This draft spec | `reports/design/baal-spec.md` (repo root) |
+| This draft spec | `reports/baal-spec.md` (repo root) |
 | Builder reference index (file:line map) | `reference/BAAL-ZODIAC-REFERENCE-MAP.md` |
 | Baal contracts (canonical) | `reference/Baal/` |
 | Zodiac base contracts (inherit) | `reference/zodiac-core/` |
@@ -1049,15 +1049,18 @@ decision.
 
 | Item | Component | Status |
 |---|---|---|
-| 8-B1 | Substrate scaffold — Baal MAIN Safe **+ sidecar** via deployed `BaalAndVaultSummoner` (Base `0x2eF2…`); a summon SCRIPT (Baal is 0.8.7, deployed) | **SPEC CLOSED** (see "Substrate scaffold — 8-B1") |
-| **SzipNavOracle** | §3 hybrid NAV oracle (`is ReceiverTemplate`) | NET-NEW |
-| **Exit Gate + szipUSD** | §4/§5 — Loot custody, manager(2) mint/burn, szipUSD ERC20, sole RQ, queue+windows, paired burn | NET-NEW |
-| 8-B5…8-B10 | engine modules — strike loop / LP-stake / harvest-vote / exercise / sell / recycle (§10.8, per-module); 8-B11 CRE-op + 8-B12 monitor are off-chain. **8-B13 REMOVED** (absorbed into 8-B10) | **SPEC CLOSED** |
-| **8-B14** | haircut buy-and-burn (§7) | NET-NEW, **in scope** |
+| 8-B1 | Substrate scaffold — Baal MAIN Safe **+ sidecar** via deployed `BaalAndVaultSummoner` (Base `0x2eF2…`); a summon SCRIPT (Baal is 0.8.7, deployed) | **BUILT-VERIFIED 2026-06-07** (8/8 fork; `SummonSubstrate.s.sol`) |
+| **SzipNavOracle** | §3 hybrid NAV oracle (`is ReceiverTemplate`) | **BUILT-VERIFIED 2026-06-07** (8-B4; 39/39 incl. fork) |
+| **Exit Gate + szipUSD** | §4/§5 — Loot custody, manager(2) mint/burn, szipUSD ERC20, sole RQ, queue+windows, paired burn | **BUILT-VERIFIED 2026-06-08** (17/17 fork) |
+| 8-B5…8-B10 | engine modules — strike loop / LP-stake / harvest-vote / exercise / sell / recycle (§10.8, per-module); 8-B11 CRE-op + 8-B12 monitor are off-chain. **8-B13 REMOVED** (absorbed into 8-B10) | **BUILT-VERIFIED 2026-06-08** (engine on-chain DONE; 8-B11/B12 off-chain TODO) |
+| **8-B14** | haircut buy-and-burn (§7) | **BUILT-VERIFIED 2026-06-08** (33/33 fork) |
 | 8-Bw | CreditWarehouse + Roles (§11) | **BUILT-VERIFIED 2026-06-09** (`WarehouseAdminModule` is ReceiverTemplate Roles-v2 member; 23/23 fork, 424/424 total; `tickets/sodo/8-Bw-credit-warehouse.md`) |
-| DefaultCoordinator / LienXAlphaEscrow / **Foreclosure Proof oracle(s)** | loss side (§9) — bounded markdown + recovery waterfall + foreclosure-milestone attestation | spec'd (M2), TODO |
-| ZipRedemptionQueue | senior queue (§12) | spec'd, TODO |
-| WOOF-06 / INFLOW-06 | deposit zap + interface (§15) | **RE-AUTHOR** |
+| LienXAlphaEscrow | per-lien xALPHA first-loss bond custody (8-Bx, §4.6) | **BUILT-VERIFIED 2026-06-09** (44/44; `tickets/loss/8-Bx-lien-xalpha-escrow.md`) |
+| ZipRedemptionQueue | senior queue (§12) | **BUILT-VERIFIED 2026-06-09** (item 9; 44/44 incl. fork) |
+| DefaultCoordinator | loss side (§9) — bounded markdown + recovery waterfall; IS escrow coordinator + oracle's set-once `defaultCoordinator` | **BUILT-VERIFIED 2026-06-09** (68/68; `DefaultCoordinator.sol`; `tickets/loss/DefaultCoordinator.md`) |
+| **Foreclosure Proof oracle(s)** | M2 loss — foreclosure-milestone attestation feeding the recovery waterfall | spec'd, TODO (M2) |
+| WOOF-06 | deposit zap (§15) | **BUILT-VERIFIED 2026-06-08** (29/29 incl. real-Gate fork; `ZipDepositModule.sol`) |
+| INFLOW-06 | deposit-module interface (§15) | TODO — frontend track (built last, dedicated pass) |
 
 **Build order:** (1) 8-B1 substrate (MAIN+sidecar via `BaalAndVaultSummoner`); (2) **SzipNavOracle** (§3 — issuance
 depends on it); (3) **Exit Gate + szipUSD** (§4/§5, incl. the §7 paired-burn hooks); (4) **re-author WOOF-06 +

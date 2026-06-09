@@ -26,15 +26,16 @@ contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
     ///         CRE-§8 ratifies it later — see the 8-B5 cross-ticket obligation).
     uint8 public constant LP_MARK = 7;
 
-    /// @notice The unit of account (USDC).
-    address public immutable quote;
-    /// @notice The single priced key: the ICHI LP share token (18-dp).
-    address public immutable lpToken;
+    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
+    /// @notice The unit of account (USDC). Timelock-settable.
+    address public quote;
+    /// @notice The single priced key: the ICHI LP share token (18-dp). Timelock-settable.
+    address public lpToken;
     /// @notice The generous engine-cadence read-staleness window (CRE re-pushes each epoch). A stale mark fails the
-    ///         borrow closed (the safe direction), never opens an unsafe one.
-    uint256 public immutable validityWindow;
-    /// @notice The immutable scale: baseDecimals=18 (LP), quoteDecimals=feedDecimals=quote's decimals.
-    Scale internal immutable scale;
+    ///         borrow closed (the safe direction), never opens an unsafe one. Timelock-settable.
+    uint256 public validityWindow;
+    /// @notice The scale: baseDecimals=18 (LP), quoteDecimals=feedDecimals=quote's decimals. Re-derived on `setQuote`.
+    Scale internal scale;
 
     /// @notice The cached per-LP-share mark (quote-native units). `timestamp == 0` ⇒ unset.
     struct Cache {
@@ -49,9 +50,15 @@ contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
     error InvalidReportType(uint8 reportType);
     /// @notice A pushed `ts` is dated after `block.timestamp` (timestamp-sanity, not a value band).
     error FutureTimestamp();
+    /// @notice A zero address in a Timelock re-point.
+    error ZeroAddress();
 
     /// @notice The LP mark was updated by the Forwarder.
     event LpMarkUpdated(uint256 mark, uint32 timestamp);
+    /// @notice A Timelock re-point of an address wiring slot (build phase).
+    event WiringSet(bytes32 indexed slot, address value);
+    /// @notice A Timelock re-set of the read-staleness window.
+    event ValidityWindowSet(uint256 window);
 
     /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`); the only writer.
     /// @param quote_ The unit of account (USDC).
@@ -65,6 +72,29 @@ contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
         validityWindow = validityWindow_;
         uint8 quoteDecimals = _getDecimals(quote_);
         scale = ScaleUtils.calcScale(LP_DECIMALS, quoteDecimals, quoteDecimals);
+    }
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    /// @notice Re-point the unit of account (re-derives `scale`). `onlyOwner` (Timelock).
+    function setQuote(address quote_) external onlyOwner {
+        if (quote_ == address(0)) revert ZeroAddress();
+        quote = quote_;
+        uint8 qd = _getDecimals(quote_);
+        scale = ScaleUtils.calcScale(LP_DECIMALS, qd, qd);
+        emit WiringSet("quote", quote_);
+    }
+
+    /// @notice Re-point the priced LP share token. `onlyOwner` (Timelock).
+    function setLpToken(address lpToken_) external onlyOwner {
+        if (lpToken_ == address(0)) revert ZeroAddress();
+        lpToken = lpToken_;
+        emit WiringSet("lpToken", lpToken_);
+    }
+
+    /// @notice Re-set the read-staleness window. `onlyOwner` (Timelock).
+    function setValidityWindow(uint256 validityWindow_) external onlyOwner {
+        validityWindow = validityWindow_;
+        emit ValidityWindowSet(validityWindow_);
     }
 
     /// @notice CRE push (reportType `LP_MARK`): the Forwarder writes the fresh per-LP-share mark. Only writer.

@@ -95,7 +95,7 @@ It is the **second engine Zodiac Module** (after 8-B14): it reuses the `is Modul
   `GenericFactory`-governor-retained wiring, the CRE-fed `LP_MARK` collateral oracle as a deploy prerequisite, the
   verified call signatures for loop steps 2–6, the lender-side invariant). *(The §4.5.1 oracle + borrow-pin notes
   were clarified this window — see the spec edits.)*
-- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
+- `reports/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
   `onlyOperator`, mutate the Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via
   `ModuleProxyFactory`, init in `setUp` under `initializer`, Call-only/no-delegatecall) + **§10.8 / 8-B5** (the
   strike-loop description) + **§14** (`borrowCap` = governed param).

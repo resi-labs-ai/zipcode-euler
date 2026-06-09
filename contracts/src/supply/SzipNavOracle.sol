@@ -161,35 +161,33 @@ contract SzipNavOracle is ReceiverTemplate {
         lastUpdate = nowTs;
     }
 
-    // --------------------------------------------------------------------- set-once wiring
-    /// @notice Wire the szipUSD share token (the supply denominator). Set-once, `onlyOwner`, renounce-frozen.
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase)
+    // NOTE (2026-06-09, §17): re-pointable by the Timelock, NOT set-once — build-phase flexibility so a redeployed
+    // share token / LP / engine Safe / coordinator is a one-call re-point, not a redeploy cascade. Lock down pre-prod.
+    /// @notice Wire/re-point the szipUSD share token (the supply denominator). `onlyOwner` (Timelock).
     function setShareToken(address szipUSD_) external onlyOwner {
-        if (shareToken != address(0)) revert AlreadyWired();
         if (szipUSD_ == address(0)) revert ZeroAddress();
         shareToken = szipUSD_;
         emit ShareTokenSet(szipUSD_);
     }
 
-    /// @notice Wire the ICHI vault + its Hydrex gauge (the LP position). Set-once, `onlyOwner`, renounce-frozen.
+    /// @notice Wire/re-point the ICHI vault + its Hydrex gauge (the LP position). `onlyOwner` (Timelock).
     function setLpPosition(address ichiVault_, address gauge_) external onlyOwner {
-        if (ichiVault != address(0)) revert AlreadyWired();
         if (ichiVault_ == address(0) || gauge_ == address(0)) revert ZeroAddress();
         ichiVault = ichiVault_;
         gauge = gauge_;
         emit LpPositionSet(ichiVault_, gauge_);
     }
 
-    /// @notice Wire the engine Safe (its transient pre-burn szipUSD is excluded from the denominator). Set-once.
+    /// @notice Wire/re-point the engine Safe (its transient pre-burn szipUSD is excluded). `onlyOwner` (Timelock).
     function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe != address(0)) revert AlreadyWired();
         if (engineSafe_ == address(0)) revert ZeroAddress();
         engineSafe = engineSafe_;
         emit EngineSafeSet(engineSafe_);
     }
 
-    /// @notice Wire the sole impairment-provision writer (M2). Set-once, `onlyOwner`, renounce-frozen.
+    /// @notice Wire/re-point the sole impairment-provision writer (M2). `onlyOwner` (Timelock).
     function setDefaultCoordinator(address dc_) external onlyOwner {
-        if (defaultCoordinator != address(0)) revert AlreadyWired();
         if (dc_ == address(0)) revert ZeroAddress();
         defaultCoordinator = dc_;
         emit DefaultCoordinatorSet(dc_);
@@ -261,6 +259,44 @@ contract SzipNavOracle is ReceiverTemplate {
         if (ichiVault != address(0)) {
             uint256 heldShares = IICHIVault(ichiVault).balanceOf(mainSafe) + IICHIVault(ichiVault).balanceOf(sidecar)
                 + IGauge(gauge).balanceOf(mainSafe) + IGauge(gauge).balanceOf(sidecar);
+            if (heldShares != 0) {
+                uint256 supplyLp = IICHIVault(ichiVault).totalSupply();
+                if (supplyLp != 0) {
+                    (uint256 total0, uint256 total1) = IICHIVault(ichiVault).getTotalAmounts();
+                    uint256 amt0 = total0 * heldShares / supplyLp;
+                    uint256 amt1 = total1 * heldShares / supplyLp;
+                    value += _tokenValue(IICHIVault(ichiVault).token0(), amt0);
+                    value += _tokenValue(IICHIVault(ichiVault).token1(), amt1);
+                }
+            }
+        }
+    }
+
+    /// @notice The committed (sidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
+    ///         DurationFreezeModule bounds `release` against. ADDITIVE: `grossBasketValue()` is unchanged; this is
+    ///         an INDEPENDENT per-Safe re-computation. For the five plain legs `committedValue() + freeValue()`
+    ///         equals `grossBasketValue()` EXACTLY; for a split LP it is within ≤2 wei (the per-Safe pro-rata floors
+    ///         twice vs once). The module only ever moves the five plain legs, so gross is exactly rotation-invariant.
+    function committedValue() external view returns (uint256) {
+        return _grossValueOf(sidecar);
+    }
+
+    /// @notice The free (main-only) basket value, 18-dp USD. ADDITIVE; see `committedValue`.
+    function freeValue() external view returns (uint256) {
+        return _grossValueOf(mainSafe);
+    }
+
+    /// @dev Value ONE Safe's holdings (18-dp USD), mirroring `grossBasketValue` per-leg + LP marks but reading a
+    ///      single Safe's balances. Same `supplyLp == 0` / `ichiVault == address(0)` guards. NOT used by any
+    ///      existing function — purely the per-Safe back-pressure the freeze module reads.
+    function _grossValueOf(address safe) internal view returns (uint256 value) {
+        value += IERC20(zipUSD).balanceOf(safe); // 18-dp $1
+        value += IERC20(usdc).balanceOf(safe) * 1e12; // 6-dp -> 18-dp $1
+        value += IERC20(xAlpha).balanceOf(safe) * _xAlphaUSD() / 1e18;
+        value += IERC20(hydx).balanceOf(safe) * legCache[LEG_HYDX_USD].price / 1e18;
+        value += IERC20(oHydx).balanceOf(safe) * _oHydxUSD() / 1e18;
+        if (ichiVault != address(0)) {
+            uint256 heldShares = IICHIVault(ichiVault).balanceOf(safe) + IGauge(gauge).balanceOf(safe);
             if (heldShares != 0) {
                 uint256 supplyLp = IICHIVault(ichiVault).totalSupply();
                 if (supplyLp != 0) {

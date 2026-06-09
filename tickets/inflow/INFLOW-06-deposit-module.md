@@ -20,7 +20,7 @@ view needs. This is the **interface half** of PROGRESS item 7; it **back-pressur
 **viem + wagmi-vue + @tanstack/vue-query**, verified. This ticket names the **real** euler-lite files to model.)
 
 **Spec §**
-`reports/design/baal-spec.md` §4 (`ZipDepositModule` — `deposit`/`zap`, value-1:1 18-dp zipUSD, the on-behalf **szipUSD** deposit via
+`reports/baal-spec.md` §4 (`ZipDepositModule` — `deposit`/`zap`, value-1:1 18-dp zipUSD, the on-behalf **szipUSD** deposit via
 the Gate's `depositFor`, NAV-proportional) + §5 (the Exit Gate) + §3 (`SzipNavOracle` — the NAV/share the position is
 valued at) + §6 (the two exits the position links to). The contract surface it wires is **WOOF-06**'s public ABI
 (re-authored).

@@ -80,6 +80,8 @@ contract RecycleModule is Module {
     event FreeValueCredited(uint256 amount, uint256 newAccrued);
     event FreeValueSpent(uint256 amount, uint256 newAccrued);
     event Recycled(uint256 usdcAmount, uint256 zipMinted);
+    /// @notice A Timelock-settable wiring slot was re-pointed (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). Decodes 5 addresses
@@ -120,6 +122,35 @@ contract RecycleModule is Module {
     // @dev `setAvatar`/`setTarget` are inherited from zodiac-core `Module` as `onlyOwner`. The CRE `operator` (the hot
     //      key) CANNOT call them — only `owner` (the Timelock). We do NOT hard-lock them (that would dirty the vendored
     //      zodiac-core setters by marking them `virtual`). Tested: a non-owner caller reverts.
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
+    }
+
+    /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
+    function setOperator(address operator_) external onlyOwner {
+        if (operator_ == address(0)) revert ZeroAddress();
+        operator = operator_;
+        emit WiringSet("operator", operator_);
+    }
+
+    /// @notice Re-point `zipDepositModule` (build phase, §17). onlyOwner (Timelock).
+    function setZipDepositModule(address zipDepositModule_) external onlyOwner {
+        if (zipDepositModule_ == address(0)) revert ZeroAddress();
+        zipDepositModule = zipDepositModule_;
+        emit WiringSet("zipDepositModule", zipDepositModule_);
+    }
+
+    /// @notice Re-point `usdc` (build phase, §17). onlyOwner (Timelock).
+    function setUsdc(address usdc_) external onlyOwner {
+        if (usdc_ == address(0)) revert ZeroAddress();
+        usdc = usdc_;
+        emit WiringSet("usdc", usdc_);
+    }
 
     // --------------------------------------------------------------------- the accumulator (CRE-written)
     /// @notice Increment the free-value ledger. `onlyOperator`. The operand is the USDC realized by the 8-B9 sell

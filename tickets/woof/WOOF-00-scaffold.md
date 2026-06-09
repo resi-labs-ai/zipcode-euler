@@ -36,7 +36,7 @@ A green-building Foundry project under `contracts/`, matching `README.md` §7:
 **Spec §**
 `README.md` §7 (layout + Foundry conventions) · `claude-zipcode.md` §16 (reference-repo map = dep sources).
 Inherited decisions: `reference/` is read-only and is the *only* dep source; one contract per file named as
-the symbol; `loss/` is M2-sketch. **[EXT]** §4.5 (Baal/Zodiac/ICHI/Hydrex), `reports/research/zodiac-warehouse-research.md`
+the symbol; `loss/` is M2-sketch. **[EXT]** §4.5 (Baal/Zodiac/ICHI/Hydrex)
 (Roles v2), `tickets/bridge/8x-01-szalpha-wrapper-cct.md` (CCIP/Subtensor) define the interface+fork dependency surface.
 
 **Model from**

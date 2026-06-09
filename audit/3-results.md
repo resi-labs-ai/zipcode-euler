@@ -1,5 +1,9 @@
 # 3-results.md — Authority & gating wiring sweep (verdict)
 
+> **PLAIN NAME: the who-touches-money check** — the list of who's allowed to touch what.
+> Quarantined build scaffolding. Dies once item 10 + per-component tests cover the same ground (see `deathnote.md`).
+
+
 > **What this is (provenance).** The standalone authority & gating wiring audit of the M1 contract surface:
 > every privileged state mutation, who is authorized to call it, how it is gated, and the spec § that rules
 > it — plus critical-path traces, a failure-mode checklist, and an orphan-caller sweep. It **absorbs and

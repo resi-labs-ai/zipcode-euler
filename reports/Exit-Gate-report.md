@@ -2,7 +2,7 @@
 
 **From:** the builder Claude (ticket-authoring harness). **To:** the superintendent.
 **Item:** `Exit Gate + szipUSD` (absorbs the old 8-B2 mint shaman + 8-B3 lock/freeze shaman) — the junior share +
-the windowed exit valve (§6.4/§7 / `reports/design/baal-spec.md §4/§5/§7`).
+the windowed exit valve (§6.4/§7 / `reports/baal-spec.md §4/§5/§7`).
 **Date:** 2026-06-08. **Branch:** `main`.
 
 > **UPDATE 2026-06-08 (user-directed rework — read this first).** The **exit mechanism in this report is superseded.**

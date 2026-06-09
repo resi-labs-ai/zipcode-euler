@@ -27,7 +27,7 @@ The full junior leave path (the Gate does only step 1):
   in this path.
 
 **Model from (verify at build)**
-- The engine **sell module 8-B9** (`reports/design/baal-spec.md §10.8`) — `SwapRouter.exactInputSingle` on Hydrex; this module is
+- The engine **sell module 8-B9** (`reports/baal-spec.md §10.8`) — `SwapRouter.exactInputSingle` on Hydrex; this module is
   the same swap machinery pointed at the exit's xALPHA leg. `SwapRouter 0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e`.
 - `reference/zodiac-core` `Module` (`is Module`, `onlyOperator`) — the CRE-operator pattern, like the engine modules.
 - The live zipUSD/xALPHA ICHI pool (created at deploy; the gauge whitelist is the Hydrex-governance dependency).

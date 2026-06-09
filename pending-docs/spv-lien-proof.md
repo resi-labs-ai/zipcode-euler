@@ -13,7 +13,7 @@ The protocol prices and lends against a 1/1 `LienCollateralToken` (`claude-zipco
 mint, the price (the oracle equity mark), and the gating are all verifiable. But whether a **real,
 enforceable lien** stands behind that token — and what it is worth, and whether it is insured — are
 **off-chain facts**. The whole collateral premise, and the "default is a timing problem, recovery pays it
-back" thesis (`vision.md`), rests on them. This doc is how **Proof** (a notarization service over the SPV's
+back" thesis (the README Vision), rests on them. This doc is how **Proof** (a notarization service over the SPV's
 document set) shrinks that trust to a verifiable attestation.
 
 ## 2. The bridge — the Proof family (two layers: fact-feed + Proof wrapper)

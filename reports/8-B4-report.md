@@ -1,7 +1,7 @@
 # 8-B4 — authoring-window report to the superintendent
 
 **From:** the builder Claude (ticket-authoring harness). **To:** the superintendent.
-**Item:** `SzipNavOracle` (historically "8-B4") — the szipUSD NAV-per-share oracle (§7 / `reports/design/baal-spec.md §3`).
+**Item:** `SzipNavOracle` (historically "8-B4") — the szipUSD NAV-per-share oracle (§7 / `reports/baal-spec.md §3`).
 **Date:** 2026-06-07. **Branch:** `main`.
 
 ## TL;DR
@@ -17,7 +17,7 @@
 - **Build-process caveat — please note (below):** I authored AND built it in one window (the build-subagent
   dropped on a socket error mid-run and couldn't be resumed), so the formal *fresh-subagent zero-guess* gate
   wasn't run independently.
-- **NEXT = the Exit Gate + szipUSD** (`reports/design/baal-spec.md §4/§5`).
+- **NEXT = the Exit Gate + szipUSD** (`reports/baal-spec.md §4/§5`).
 
 ## Spec edits this window (please sanity-check — spec-fidelity critic confirmed all 3 faithful, no §17 reopened)
 1. **§4.4** — added **`reportType 7` NAV leg price** `(uint8[] legs, uint256[] prices, uint32 ts)` (→ `SzipNavOracle`)
@@ -96,5 +96,5 @@ standing decision on version control applies).
 ## Status
 `SzipNavOracle` **DONE** (built-verified on disk, not committed). PROGRESS + LEDGER updated; 3 spec gaps fixed in
 `claude-zipcode.md` (§4.4/§7/§12); `IOptionToken.discount()` added; 5 downstream obligations recorded. **NEXT =
-the Exit Gate + szipUSD** (`reports/design/baal-spec.md §4/§5`) — it reads `navEntry`/`navExit`, `poke()`s the accumulator, and
+the Exit Gate + szipUSD** (`reports/baal-spec.md §4/§5`) — it reads `navEntry`/`navExit`, `poke()`s the accumulator, and
 is wired into the oracle via `setShareToken`.

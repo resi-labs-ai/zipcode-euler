@@ -1,6 +1,6 @@
 # WOOF-06 — `ZipDepositModule` (the zap) (§4.5) — RE-AUTHORED (two-token / Exit Gate)
 
-> **RE-AUTHORED 2026-06-07 to the two-token / Exit-Gate model (`reports/design/baal-spec.md` §2/§3/§4/§5). Build from THIS ticket.**
+> **RE-AUTHORED 2026-06-07 to the two-token / Exit-Gate model (`reports/baal-spec.md` §2/§3/§4/§5). Build from THIS ticket.**
 > This supersedes the 2026-06-06 re-author (Baal + `CreditWarehouse`, which minted **Loot on-behalf to the user**).
 >
 > **Surgical change — only the junior seam flips:**
@@ -51,7 +51,7 @@ The module is called by *users* (permissionless `deposit`/`zap`), not by the CRE
 Forwarder, no `onReport`.)
 
 **Spec §**
-`reports/design/baal-spec.md` §4 (the generalized issuance core — `Gate.depositFor(asset, amount, receiver) → shares`, NAV-
+`reports/baal-spec.md` §4 (the generalized issuance core — `Gate.depositFor(asset, amount, receiver) → shares`, NAV-
 proportional, round-down, the USDC-zap wrapper) + §5 (the Exit Gate) + §3 (`SzipNavOracle` — the share price) + §11
 (the `CreditWarehouse`). Cross (target: `claude-zipcode.md` §4.5/§6.4/§7 after integration):
 - **`CreditWarehouse` Safe (§11 / 8-Bw)** — the senior-backing Gnosis Safe that holds the `EulerEarn` shares backing

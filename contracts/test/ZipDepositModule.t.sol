@@ -451,9 +451,11 @@ contract ZipDepositModuleTest is ZipModuleBase {
         m.setGate(address(gate));
         assertEq(m.gate(), address(gate));
         assertEq(zip.allowance(address(m), address(gate)), 0, "setGate grants no standing allowance (D1)");
-        // set-once
-        vm.expectRevert(ZipDepositModule.AlreadyWired.selector);
-        m.setGate(address(gate));
+        // re-settable (build phase, §17): a second call re-points, still no standing allowance
+        address gate2 = makeAddr("gate2");
+        m.setGate(gate2);
+        assertEq(m.gate(), gate2);
+        assertEq(zip.allowance(address(m), gate2), 0, "re-point grants no standing allowance (D1)");
     }
 
     function test_zap_before_wiring_reverts_NotWired() public {

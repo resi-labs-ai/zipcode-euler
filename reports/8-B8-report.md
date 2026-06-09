@@ -83,7 +83,7 @@ exercise(uint256 amount, uint256 maxPayment, uint256 deadline) → paymentAmount
 - **`claude-zipcode.md §4.5.1` 8-B8 "State" line** — the only spec touch, cosmetic: "pending-exercise accounting; the
   in-flight strike-borrow (tracked by 8-B5)" → "no module state (stateless beyond set-once wiring, like the sibling
   engine modules); the in-flight strike-borrow is tracked by 8-B5 (`debtOf`) and the pending-exercise sequencing by
-  the 8-B11 robot." No §17 reopened. (`reports/design/baal-spec.md §10.8` 8-B8 already described the module faithfully — untouched.)
+  the 8-B11 robot." No §17 reopened. (`reports/baal-spec.md §10.8` 8-B8 already described the module faithfully — untouched.)
 - No `audit/2.md` / `audit/3-results.md` edits (the engine-integration audit sweep is the deferred item-10 pass,
   logged as an obligation — matching 8-B5/8-B6/8-B7/Exit-Gate).
 
@@ -92,5 +92,5 @@ exercise(uint256 amount, uint256 maxPayment, uint256 deadline) → paymentAmount
   Code: `contracts/src/supply/szipUSD/ExerciseModule.sol` + `contracts/test/ExerciseModule.t.sol` + `IOptionToken`
   adds. Run it: `forge test --fork-url $BASE_RPC_URL --match-contract ExerciseModule` (25/25); full suite 351/351.
 - **NEXT = 8-B9** (sell module — HYDX→USDC via `SwapRouter.exactInputSingle` market-sell to repay the 8-B5 borrow
-  immediately + the zipUSD→xALPHA POL buy leg; soft-bleed caps = the loop size gate; `reports/design/baal-spec.md §10.8` 8-B9,
+  immediately + the zipUSD→xALPHA POL buy leg; soft-bleed caps = the loop size gate; `reports/baal-spec.md §10.8` 8-B9,
   depends 8-B8). It consumes exactly the HYDX this module mints to the Safe.

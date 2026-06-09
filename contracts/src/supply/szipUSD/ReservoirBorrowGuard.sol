@@ -22,18 +22,61 @@ interface IGenericFactory {
 ///      verbatim on `src/CREGatingHook.sol` with the gate body swapped.
 contract ReservoirBorrowGuard is IHookTarget {
     /// @notice The EVK vault factory; used to validate the caller is a factory proxy (vault).
-    IGenericFactory public immutable eVaultFactory;
+    IGenericFactory public eVaultFactory;
     /// @notice The engine Safe — the ONLY account permitted to borrow the reservoir's resting USDC.
-    address public immutable engineSafe;
+    address public engineSafe;
+    /// @notice The Timelock admin (build phase, §17). NOT OZ `Ownable` — the inherited `Context._msgSender()` would
+    ///         collide with this hook's EVK trailing-data `_msgSender()` decoder; `onlyOwner` checks `msg.sender`
+    ///         DIRECTLY (the admin is never an EVK on-behalf call).
+    address public owner;
 
     /// @notice Thrown when the appended on-behalf account is not the engine Safe.
     error NotEngineSafe();
+    /// @notice Thrown when a wiring re-point is given the zero address.
+    error ZeroAddress();
+    /// @notice Thrown when a non-owner calls an admin function.
+    error NotOwner();
+
+    /// @notice A Timelock-settable wiring field was re-pointed (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
+    /// @notice Ownership transferred (build phase admin).
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /// @dev Admin gate — checks the RAW `msg.sender`, never the hook `_msgSender()` decoder.
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
 
     /// @param eVaultFactory_ The EVK GenericFactory that deployed the reservoir vaults.
     /// @param engineSafe_ The szipUSD engine Safe (the sole legal borrower).
     constructor(address eVaultFactory_, address engineSafe_) {
         eVaultFactory = IGenericFactory(eVaultFactory_);
         engineSafe = engineSafe_;
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
+
+    /// @notice Transfer the build-phase admin (to the Timelock). `onlyOwner`.
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+
+    // --- Timelock-settable wiring (build phase, §17) ---
+    /// @notice Re-point `eVaultFactory` (build phase, §17). onlyOwner (Timelock).
+    function setEVaultFactory(address eVaultFactory_) external onlyOwner {
+        if (eVaultFactory_ == address(0)) revert ZeroAddress();
+        eVaultFactory = IGenericFactory(eVaultFactory_);
+        emit WiringSet("eVaultFactory", eVaultFactory_);
+    }
+
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
     }
 
     /// @inheritdoc IHookTarget

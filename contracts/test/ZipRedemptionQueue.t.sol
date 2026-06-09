@@ -995,15 +995,16 @@ contract ZipRedemptionQueueForkTest is ForkConfig {
 
     /// @notice KR-2 negative — assert no transferOwnership/sweep/pause/owner selector exists on the queue ABI.
     function test_fork_noSweepSelectors() public {
-        bytes4[] memory forbidden = new bytes4[](5);
-        forbidden[0] = bytes4(keccak256("transferOwnership(address)"));
-        forbidden[1] = bytes4(keccak256("owner()"));
-        forbidden[2] = bytes4(keccak256("sweep(address,uint256)"));
+        // Build phase (§17): a Timelock admin exists (owner/transferOwnership for re-pointing wiring), but there is
+        // still NO direct fund-extraction path — no sweep/rescue/pause.
+        bytes4[] memory forbidden = new bytes4[](4);
+        forbidden[0] = bytes4(keccak256("sweep(address,uint256)"));
+        forbidden[1] = bytes4(keccak256("sweep(address)"));
+        forbidden[2] = bytes4(keccak256("rescue(address,uint256)"));
         forbidden[3] = bytes4(keccak256("pause()"));
-        forbidden[4] = bytes4(keccak256("renounceOwnership()"));
         for (uint256 i = 0; i < forbidden.length; i++) {
             (bool ok,) = address(queue).call(abi.encodeWithSelector(forbidden[i]));
-            assertFalse(ok, "forbidden selector resolved (sweep surface exists)");
+            assertFalse(ok, "fund-extraction surface exists");
         }
     }
 }

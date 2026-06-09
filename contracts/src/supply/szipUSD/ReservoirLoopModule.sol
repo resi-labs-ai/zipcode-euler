@@ -74,6 +74,8 @@ contract ReservoirLoopModule is Module {
     event Repaid(uint256 usdcAmount);
     event CollateralWithdrawn(uint256 lpAmount);
     event BorrowCapSet(uint256 borrowCap);
+    /// @notice Emitted when the Timelock owner re-points a component wiring slot (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
@@ -134,6 +136,62 @@ contract ReservoirLoopModule is Module {
     function setBorrowCap(uint256 borrowCap_) external onlyOwner {
         borrowCap = borrowCap_;
         emit BorrowCapSet(borrowCap_);
+    }
+
+    // --- Timelock-settable wiring (build phase, §17) ---
+    // Re-point cross-component wiring for build-phase flexibility. `onlyOwner` (the Timelock) ONLY; the CRE `operator`
+    // hot key CANNOT call these. NOT operator-settable, NOT a fund-extraction surface.
+
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in lockstep so
+    ///         the borrower-of-record + every receiver/owner invariant holds (avatar == target == engineSafe).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        avatar = engineSafe_;
+        target = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
+    }
+
+    /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock). The CRE hot key.
+    function setOperator(address operator_) external onlyOwner {
+        if (operator_ == address(0)) revert ZeroAddress();
+        operator = operator_;
+        emit WiringSet("operator", operator_);
+    }
+
+    /// @notice Re-point `evc` (build phase, §17). onlyOwner (Timelock).
+    function setEvc(address evc_) external onlyOwner {
+        if (evc_ == address(0)) revert ZeroAddress();
+        evc = evc_;
+        emit WiringSet("evc", evc_);
+    }
+
+    /// @notice Re-point `borrowVault` (build phase, §17). onlyOwner (Timelock).
+    function setBorrowVault(address borrowVault_) external onlyOwner {
+        if (borrowVault_ == address(0)) revert ZeroAddress();
+        borrowVault = borrowVault_;
+        emit WiringSet("borrowVault", borrowVault_);
+    }
+
+    /// @notice Re-point `escrowVault` (build phase, §17). onlyOwner (Timelock).
+    function setEscrowVault(address escrowVault_) external onlyOwner {
+        if (escrowVault_ == address(0)) revert ZeroAddress();
+        escrowVault = escrowVault_;
+        emit WiringSet("escrowVault", escrowVault_);
+    }
+
+    /// @notice Re-point `lpToken` (build phase, §17). onlyOwner (Timelock).
+    function setLpToken(address lpToken_) external onlyOwner {
+        if (lpToken_ == address(0)) revert ZeroAddress();
+        lpToken = lpToken_;
+        emit WiringSet("lpToken", lpToken_);
+    }
+
+    /// @notice Re-point `usdc` (build phase, §17). onlyOwner (Timelock).
+    function setUsdc(address usdc_) external onlyOwner {
+        if (usdc_ == address(0)) revert ZeroAddress();
+        usdc = usdc_;
+        emit WiringSet("usdc", usdc_);
     }
 
     // --------------------------------------------------------------------- the loop (operator-only)

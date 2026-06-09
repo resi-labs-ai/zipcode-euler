@@ -60,6 +60,8 @@ contract LpStrategyModule is Module {
     event LiquidityAdded(uint256 deposit0, uint256 deposit1, uint256 shares);
     event Staked(uint256 lpAmount);
     event Unstaked(uint256 lpAmount);
+    /// @notice A Timelock-settable wiring field was re-pointed (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
@@ -94,6 +96,57 @@ contract LpStrategyModule is Module {
         token1 = t1;
 
         _transferOwnership(owner_);
+    }
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    // Re-point cross-component wiring during the build phase. onlyOwner == the Timelock (a deliberate timelocked act,
+    // never the hot CRE `operator`). These mirror the set-once `setUp` wiring; numeric/format params (minShares floors,
+    // decimals) are NOT settable. `avatar`/`target` (also onlyOwner via zodiac-core) track `engineSafe`.
+
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in lockstep
+    ///         (the module is enabled ON the engine Safe and only ever mutates it).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        avatar = engineSafe_;
+        target = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
+    }
+
+    /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
+    function setOperator(address operator_) external onlyOwner {
+        if (operator_ == address(0)) revert ZeroAddress();
+        if (operator_ == owner) revert OwnerIsOperator();
+        operator = operator_;
+        emit WiringSet("operator", operator_);
+    }
+
+    /// @notice Re-point `ichiVault` (build phase, §17). onlyOwner (Timelock).
+    function setIchiVault(address ichiVault_) external onlyOwner {
+        if (ichiVault_ == address(0)) revert ZeroAddress();
+        ichiVault = ichiVault_;
+        emit WiringSet("ichiVault", ichiVault_);
+    }
+
+    /// @notice Re-point `gauge` (build phase, §17). onlyOwner (Timelock).
+    function setGauge(address gauge_) external onlyOwner {
+        if (gauge_ == address(0)) revert ZeroAddress();
+        gauge = gauge_;
+        emit WiringSet("gauge", gauge_);
+    }
+
+    /// @notice Re-point `token0` (build phase, §17). onlyOwner (Timelock).
+    function setToken0(address token0_) external onlyOwner {
+        if (token0_ == address(0)) revert ZeroAddress();
+        token0 = token0_;
+        emit WiringSet("token0", token0_);
+    }
+
+    /// @notice Re-point `token1` (build phase, §17). onlyOwner (Timelock).
+    function setToken1(address token1_) external onlyOwner {
+        if (token1_ == address(0)) revert ZeroAddress();
+        token1 = token1_;
+        emit WiringSet("token1", token1_);
     }
 
     // --------------------------------------------------------------------- gates

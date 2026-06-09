@@ -38,7 +38,7 @@ Two files under the supply/engine tree:
   staked-LP balance (read from the gauge). Invariants: LP must be gauge-staked to earn oHYDX; the zipUSD leg is
   **backed** (minted only via 8-B10's free-value path, never unbacked); the **staked/collateral exclusivity** (a
   staked LP is custodied by the gauge → cannot simultaneously be EVK collateral → the loop must unstake first).
-- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
+- `reports/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, one immutable CRE operator =
   `onlyOperator`, mutate the Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via
   `ModuleProxyFactory`, init in `setUp` under `initializer`, Call-only / no delegatecall) + **§10.8 / 8-B6** (the
   LP/stake module description) + **§10.2** (the steady-state target — the basket converges toward mostly the

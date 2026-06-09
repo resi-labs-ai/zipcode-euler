@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IZipUSD} from "../interfaces/euler/IZipUSD.sol";
 
 /// @title ZipRedemptionQueue (item 9 — the senior exit)
@@ -56,20 +57,22 @@ import {IZipUSD} from "../interfaces/euler/IZipUSD.sol";
 ///         (`reservedAssets − Σ credited`, bounded < 1e-6 USDC per requester-realize) stays locked permanently
 ///         (NEVER swept — that would break KR-2); `availableAssets` is understated by the accumulated dust over
 ///         time (bounded, sub-cent across the protocol lifetime; acceptable for M1).
-contract ZipRedemptionQueue is ReentrancyGuard {
+contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
-    // --------------------------------------------------------------------- immutables
+    // --------------------------------------------------------------------- wiring (Timelock-settable; build phase)
+    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility (redeploy a
+    // token/controller and re-point with one call). Re-freezing to immutable is DEFERRED to pre-prod.
     /// @notice zipUSD — the $1 utility synth (`ESynth`, 18-dp); escrowed on request, burned on settle.
-    address public immutable zipUSD;
+    address public zipUSD;
     /// @notice USDC — the redemption asset (6-dp); delivered by the warehouse REPAY, paid out at par on claim.
-    address public immutable usdc;
+    address public usdc;
     /// @notice `10 ** (zipDecimals - usdcDecimals)` — the SAME par scale as the WOOF-06 mint (`1e12` for 18/6),
-    ///         derived in the ctor from the tokens' own `decimals()` (guarantees mint/redeem are exact inverses).
-    uint256 public immutable scaleUp;
-    /// @notice The CRE redemption-settle operator (CRE-02) — the sole caller of `settleEpoch`. Immutable, non-zero,
-    ///         NEVER renounced (it must keep settling each epoch). NOT the 7540 `requester` nor the `operator`.
-    address public immutable controller;
+    ///         derived from the tokens' own `decimals()` (mint/redeem stay exact inverses). Re-derived on `setTokens`.
+    uint256 public scaleUp;
+    /// @notice The CRE redemption-settle operator (CRE-02) — the sole caller of `settleEpoch`. Timelock-settable,
+    ///         non-zero. NOT the 7540 `requester` nor the `operator`.
+    address public controller;
 
     // --------------------------------------------------------------------- constants
     /// @notice High-precision RAY for `cumRemaining` (so many small partial fills don't lose resolution).
@@ -144,10 +147,12 @@ contract ZipRedemptionQueue is ReentrancyGuard {
     );
     /// @notice EIP-7540 operator approval set/cleared.
     event OperatorSet(address indexed controller, address indexed operator, bool approved);
+    event TokensSet(address indexed zipUSD, address indexed usdc);
+    event ControllerSet(address indexed controller);
 
     /// @param zipUSD_     The zipUSD `ESynth` (18-dp). @param usdc_ USDC (6-dp). @param controller_ the CRE
     ///                    redemption-settle operator (the sole `settleEpoch` caller).
-    constructor(address zipUSD_, address usdc_, address controller_) {
+    constructor(address zipUSD_, address usdc_, address controller_) Ownable(msg.sender) {
         if (zipUSD_ == address(0) || usdc_ == address(0) || controller_ == address(0)) revert ZeroAddress();
         uint8 zipDec = IERC20Metadata(zipUSD_).decimals();
         uint8 usdcDec = IERC20Metadata(usdc_).decimals();
@@ -158,6 +163,26 @@ contract ZipRedemptionQueue is ReentrancyGuard {
         controller = controller_;
         cumRemaining = PREC; // never 0 (KR-4a)
         lastEpochTime = block.timestamp; // anchor the first 30-day window
+    }
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    /// @notice Re-point the zipUSD + USDC tokens (re-derives `scaleUp`). `onlyOwner` (Timelock), build-phase.
+    function setTokens(address zipUSD_, address usdc_) external onlyOwner {
+        if (zipUSD_ == address(0) || usdc_ == address(0)) revert ZeroAddress();
+        uint8 zipDec = IERC20Metadata(zipUSD_).decimals();
+        uint8 usdcDec = IERC20Metadata(usdc_).decimals();
+        if (zipDec < usdcDec) revert DecimalsTooFew();
+        zipUSD = zipUSD_;
+        usdc = usdc_;
+        scaleUp = 10 ** (uint256(zipDec) - uint256(usdcDec));
+        emit TokensSet(zipUSD_, usdc_);
+    }
+
+    /// @notice Re-point the settle controller (CRE-02). `onlyOwner` (Timelock), build-phase.
+    function setController(address controller_) external onlyOwner {
+        if (controller_ == address(0)) revert ZeroAddress();
+        controller = controller_;
+        emit ControllerSet(controller_);
     }
 
     // --------------------------------------------------------------------- internal realize (O(1) lazy fill)

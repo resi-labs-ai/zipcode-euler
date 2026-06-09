@@ -151,9 +151,9 @@ governed knob (§6.4). *(Supersedes the 2026-06-06 soulbound-claim / withhold-no
 | Subordination **floor** (model; cap NOT used) | `sUSD3 :: availableWithdrawLimit (:277, floor)` — kept but **re-anchored to outstanding loan exposure** (§2/§6.4); the **cap** (`availableDepositLimit :249` / `maxSubordinationRatio :408`) is **not used** (junior is the dominant capital, §2) | `reference/moneymarket-contracts/src/usd3/sUSD3.sol` (AGPL — concept only) |
 | Junior exit (ragequit + lock) | **Baal `ragequit`** (Loot → pro-rata **in-kind** basket slice) + a custom **lock-shaman** (`lockUntil`, ~30d) — the junior exit (§6.4); **replaces** the old `sUSD3` cooldown model | `reference/Baal/contracts/Baal.sol` (`ragequit` `:619`) |
 | **Duration Bond** (freeze) | **structural** via the **Exit Gate + sidecar** (§6.4): the **utilization-committed slice** (sized to credit-warehouse utilization) is **held in the non-ragequittable sidecar Safe** (frozen-but-earning, objective release) so window exits reach only the free equity — the §11 Duration Bond (default OR duration squeeze) | net-new (Exit-Gate custody + sidecar; **not** a Baal-ragequit gate; **owned by the Exit Gate** — `DefaultCoordinator` only writes the NAV markdown + runs the xALPHA recovery waterfall, §4.6) |
-| xALPHA bond slash (proportional, in-kind) | `MarkdownController :: slashJaneProportional (:146) / slashJaneFull (:187)` | `reference/moneymarket-contracts/src/MarkdownController.sol` (concept only) |
-| xALPHA escrow custody | `InsuranceFund :: bring (:33)` | `reference/moneymarket-contracts/src/InsuranceFund.sol` (concept only) |
-| Pro-rata in-kind bonus distribution | `RewardsDistributor :: claim (:131) / claimMultiple (:141)` | `reference/moneymarket-contracts/src/jane/RewardsDistributor.sol` (concept only) |
+| xALPHA bond slash (capital + in-kind premium) | **NOT a proportional slash** — `slashXAlphaToCapital`/`slashXAlphaToCohort` are dumb routers; the capital-vs-premium split is computed off-chain by `DefaultCoordinator` and passed in (`MarkdownController :: slashJaneProportional (:146)` was the concept template, **rejected** — see §4.6 / `LienXAlphaEscrow`) | `reference/moneymarket-contracts/src/MarkdownController.sol` (concept only — not the as-built model) |
+| xALPHA escrow custody | `InsuranceFund :: bring (:33)` — the single-immutable-caller + gated-`safeTransfer` model, as built in `LienXAlphaEscrow` (§4.6) | `reference/moneymarket-contracts/src/InsuranceFund.sol` (concept only) |
+| Pro-rata in-kind premium to the frozen cohort | **NO distributor built** — the premium is routed into the non-ragequittable sidecar Safe (`slashXAlphaToCohort`) and the socialized pro-rata is automatic via NAV ("no per-position index, no SBT", §4.6/§6.4/§11); `RewardsDistributor`/SBT claim distributors are **not built** | `reference/moneymarket-contracts/src/jane/RewardsDistributor.sol` (concept only — superseded by route-to-sidecar) |
 | Settle / write-off (recovery shortfall) | `MorphoCredit :: settleAccount (:834) / _applySettlement (:874)` | `reference/moneymarket-contracts/src/MorphoCredit.sol` (concept only) |
 | Delinquency state machine (lock trigger) | `MorphoCredit :: getRepaymentStatus (:526)` (Current/Grace/Delinquent/Default) | `reference/moneymarket-contracts/src/MorphoCredit.sol` (concept only) |
 | CRE schedule | Go CRE `cron.Trigger` (`capabilities/scheduler/cron/trigger_sdk_gen.go:16`) + controller as privileged caller | `reference/cre-sdk-go` |
@@ -194,11 +194,11 @@ reads the **same cache** (§4.7) — the cache itself is venue-neutral.
   `uint8 constant LIEN_DECIMALS = 18` (it cannot read `LienTokenFactory.LIEN_DECIMALS()` — the factory
   deploys *after* the registry, §9 S3<S4 — so the constant is duplicated and the per-write guard ties every
   priced key to it).
-- **Origination seed (controller path) + set-once controller.** Origination (§4.4a) is seeded **inside the
+- **Origination seed (controller path) + controller pointer.** Origination (§4.4a) is seeded **inside the
   controller's atomic batch** by a controller-gated `seedPrice(address lien, uint256 price)` that writes
   `cache[lien] = {price, block.timestamp}` (same guards as `_processReport`) and emits `RegistryPriceSeed`.
-  Its authority is a `controller` pointer set **once** via `setController(address)` (`onlyOwner`, at wiring,
-  §9) and then frozen by the deploy renounce — **not** a constructor immutable, because the registry deploys
+  Its authority is a `controller` pointer set via `setController(address)` (`onlyOwner` = the Timelock; build
+  phase = **re-pointable**, §17) — **not** a constructor immutable, because the registry deploys
   *before* the controller (whose own constructor takes `oracleRegistry`, §4.4) — a registry-held controller
   immutable would be a deploy-order circularity (same shape as the §4.2 factory). This is the only seam
   between §4.1's atomic seed and the controller; revaluation (events 2–3) instead goes Forwarder-direct (below).
@@ -246,7 +246,8 @@ reads the **same cache** (§4.7) — the cache itself is venue-neutral.
   it**. **The oracle key stays `LIEN_i`** (the registry still serves `cache[LIEN_i]` — §4.2 unchanged). This
   supersedes the earlier single-shared-router-fallback design (validation pass "F4"): per-line routers wired
   atomically at origination are strictly stronger than a timelock-governed shared fallback (a line's price
-  wiring can **never** be re-pointed — immutable, like the renounced CRE Forwarder), and there is **no
+  wiring can **never** be re-pointed — `transferGovernance(address(0))`-immutable, strictly stronger than the
+  CRE Forwarder, which §17 now keeps **Timelock-re-pointable** for workflow upgrades), and there is **no
   per-lien timelock call** (origination stays atomic). The OZ `TimelockController` is retained for §17
   **parameter** governance (szipUSD floor / `f` / cooldown), **not** as a router governor. Trade-off: a
   mis-wired or compromised registry can't be re-pointed for an already-open line — recovery is "open a new
@@ -358,16 +359,16 @@ hook** authorizes for borrow + liquidate (repay ungated). The OZ `TimelockContro
 **Immutable Forwarder (enforced by the subclass, not inherited):** `ReceiverTemplate` ships a
 `setForwarderAddress` `onlyOwner` setter (`x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol:127`)
 and is `Ownable` — but that setter and `onReport` are **non-virtual** (verified), so they **cannot be
-overridden**. Immutability is instead enforced by **renouncing `Ownable` ownership** after wiring (the
-alternative — implementing `IReceiver` directly with an `immutable s_forwarderAddress` — is also valid but
-not used in M1): once `owner() == address(0)` every `onlyOwner` setter (`setForwarderAddress`,
-`setExpectedAuthor`, `setExpectedWorkflowId`) reverts `OwnableUnauthorizedAccount`, permanently freezing the
-constructor-set Forwarder and the wired identity. Renounce **only after** setting the workflow-identity
-expectations (`setExpectedAuthor`, `setExpectedWorkflowId`, §9) — the deploy script MUST assert
-`getExpectedWorkflowId() != 0` immediately before `renounceOwnership()` and abort otherwise, or the identity
-check is permanently bypassed and **any** workflow the Forwarder relays could call `onReport`. (The base
-constructor reverts on `address(0)` (`:45`), so the "permissionless on zero-Forwarder" path `:82-85` is
-unreachable once ownership is renounced.) **The controller is the on-chain borrower of
+overridden**, so the Forwarder + workflow identity are **owner-mutable behind the OZ `TimelockController`**:
+ownership is **transferred to the Timelock** after wiring, **not renounced** (revised 2026-06-09, §17 — so CRE
+workflows can be rebuilt / upgraded / modified). The Timelock (≈2-day veto) is the sole caller of
+`setForwarderAddress`/`setExpectedAuthor`/`setExpectedWorkflowId`; a bare EOA can never touch them. The deploy
+script MUST set the workflow-identity expectations (`setExpectedAuthor`, `setExpectedWorkflowId`, §9) **and
+assert `getExpectedWorkflowId() != 0` before going live** (else the identity check is bypassed and **any**
+workflow the Forwarder relays could call `onReport`), then `transferOwnership(timelock)` as the final wiring
+op. **Governance MUST never set the Forwarder to `address(0)`** (the base disables validation at zero). (The
+base constructor reverts on `address(0)` (`:45`), so the "permissionless on zero-Forwarder" path `:82-85` is
+never entered at deploy.) **The controller is the on-chain borrower of
 record:** the originator is not an on-chain actor — they apply and draw via API; the adapter performs every
 on-chain `borrow` as the **EVC operator** of the line's fresh borrower account (the controller drives it
 on-behalf), and the dollar leg (USD wire to the originator, USD collection on repayment) is handled off-chain
@@ -424,13 +425,14 @@ the same "controller is the only borrower" invariant its own way behind `IZipcod
 **Report ABI (shared by the Go workflow's `GenerateReport` and the on-chain `_processReport` decode).**
 Every report is `abi.encode(uint8 reportType, bytes payload)`; `reportType` selects the branch and the
 `payload` decode. The CRE workflow targets the correct `Receiver` per type (controller for 1/2/4/5/6,
-registry direct for 3, `SzipNavOracle` direct for 7, `DefaultCoordinator` for default/recovery, §8):
+registry direct for 3, `SzipNavOracle` direct for 7, `DefaultCoordinator` direct for 8, §8):
 - `1` Origination — `payload = (bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint16 borrowLTV, uint16 liqLTV, uint256 drawAmount, uint256 cap)`
 - `2` Draw — `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount)`
 - `3` Revaluation — `(address[] liens, uint256[] prices, uint32 ts)` (→ registry)
 - `4` Close — `(bytes32 lienId)`
 - `5` Default / `6` Liquidation — `(bytes32 lienId, uint8 status)`
 - `7` NAV leg price — `(uint8[] legs, uint256[] prices, uint32 ts)` (→ `SzipNavOracle`, §7) — the off-chain junior-basket leg marks (the xALPHA `alphaUSD` leg; HYDX/USDC if the pool is thin) the NAV oracle cannot read on Base; every **quantity** and every on-chain leg price (zipUSD/USDC $1, the xALPHA LST exchange rate, oHYDX intrinsic, the ICHI LP reserves) is read trustlessly on-chain, never pushed.
+- `8` Default / recovery — `payload = (uint8 action, bytes actionData)` (→ `DefaultCoordinator`, §4.6/§8.4) — the loss-side orchestrator's action family; `actionData` decodes per `action`: `0 LOCK (bytes32 lienId, address originator, uint256 amount)` · `1 RELEASE (bytes32 lienId)` · `2 DEFAULT (bytes32 lienId, uint256 atRisk)` · `3 RECOVERY (bytes32 lienId, uint256 recoveryProceeds)` · `4 RESOLVE (bytes32 lienId, uint256 capitalSlashAmount)` · `5 WRITEOFF (bytes32 lienId, uint256 capitalSlashAmount)`. `atRisk`/`recoveryProceeds` are 18-dp USD (`1e18 = $1`); `capitalSlashAmount` is in xALPHA (18-dp). LOCK/RELEASE are the M1-live bond custody half; DEFAULT/RECOVERY/RESOLVE/WRITEOFF are the M2 default flow (built + mock-tested). The **markdown size is `atRisk`-derived here**, distinct from the bare `5` default-status report that goes to the controller (§4.4d marks status + emits the event only; the provision is the coordinator's, §8.4).
 
 `equityMark` is the **Proof of Value** mark (home value − senior debt, §4.1). `proofRef` is a commitment to
 the Proof attestation bundle (lien-perfected + value + insurance) for on-chain provenance; the lien and
@@ -482,7 +484,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   `IZipcodeVenue.liquidate` method stays in the interface (venue-completeness / future secondary acquisition)
   but is a **controller-only stub in M1**. (Secondary acquisition / MBS absorption — the §4.1 "secondary
   acquisition" price event where a takeout buys the debt and the position transfers to the buyer — is
-  deferred, `vision.md` stage THREE.)
+  deferred, the README Vision "stage THREE".)
 
 ### 4.5 Supply-side contracts
 - **`CreditWarehouse` — the senior-backing custody Safe (CRE-administered via the Zodiac Roles Modifier v2).** A
@@ -502,7 +504,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
     the production-canonical pattern for scoped keeper/treasury automation, run by karpatkey/ENS/Gnosis/Balancer).
     It is `enableModule`'d on the Safe and **scoped by an owner-applied permissions policy** to exactly the
     warehouse op-set — **no bespoke privileged contract is authored.** **Hard truth driving the choice
-    (decided 2026-06-06, user-ratified; `reports/research/zodiac-warehouse-research.md`):** no external guard can contain
+    (decided 2026-06-06, user-ratified):** no external guard can contain
     an enabled module (a Safe Transaction Guard covers only the owner `execTransaction` path pre-Safe-1.5.0;
     Zodiac's `GuardableModule` is voluntary self-policing), so the scope **must** live inside the enabled
     contract — we use the *audited* Roles engine rather than fresh bespoke bytecode guarding all senior backing.
@@ -520,7 +522,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
     the Safe **owner** (GOD-EOA → multisig). Policy authored "as code" via `reference/permissions-starter-kit`
     and applied as an owner-signed diff. (Optional `WithinAllowance` rate-limits per op are available.)
   - **The CRE seam (role member + encoding adapter).** A thin **`is ReceiverTemplate` CRE receiver** — immutable
-    KeystoneForwarder-gated (`onReport`, set-once then renounce-immutable, exactly as §4.1/§4.4) — is
+    KeystoneForwarder-gated (`onReport`, Timelock-owned — not renounced, exactly as §4.1/§4.4/§17) — is
     `assignRoles`'d as the role's member (`Roles.sol:69`; an immutable-contract member is supported). On a report
     it decodes the §4.4 envelope `abi.encode(uint8 opType, bytes payload)`, ABI-encodes the corresponding
     permitted Safe call, and invokes `Roles.execTransactionWithRole(to, 0, data, Call, roleKey, true)`
@@ -565,7 +567,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
 - **`szipUSD` — the junior NAV vault, the main product (§6/§11).**
 
   > **MODEL LOCKED 2026-06-07 — the current spec is the two-token model above (§2/§4.5/§6.4/§7/§11) +
-  > `reports/design/baal-spec.md`.** The narrative below predates that lock. **CURRENT (build from it):** the Baal+Zodiac substrate,
+  > `reports/baal-spec.md`.** The narrative below predates that lock. **CURRENT (build from it):** the Baal+Zodiac substrate,
   > the multi-asset basket held natively in the Safe, the windows + sidecar-freeze, the auto-sodomizer engine.
   > **SUPERSEDED (do NOT build from the phrasing below):** *NAV-display-only* → NAV is the pricing primitive (§7);
   > *withhold-with-no-markdown* → pari-passu conservative provision-that-recovers (§11); *soulbound szipUSD claim* →
@@ -606,7 +608,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   >   via the CRE module against the real ICHI/gauge/oHYDX/NFPM/EulerEarn with **stand-in pool/gauge addresses**
   >   (our zipUSD/xALPHA gauge whitelist is pending the Hydrex OTC); production = swap addresses.
   > - **Decomposes into the 8-B build tickets** (substrate 8-B1, `SzipNavOracle`, the Exit Gate, engine 8-B5…8-B14;
-  >   see `reports/design/baal-spec.md` §13 + `tickets/PROGRESS.md` item 8). **The §2/§5/§6.4/§7/§11/§12/§17 money-model text was
+  >   see `reports/baal-spec.md` §13 + `tickets/PROGRESS.md` item 8). **The §2/§5/§6.4/§7/§11/§12/§17 money-model text was
   >   rewritten to the two-token / NAV-oracle / provision-that-recovers model (2026-06-07); `audit/1` I1–I4 still need
   >   a re-derivation pass.** Tickets are now authorable against the rewritten mechanism.
 
@@ -643,7 +645,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   **ragequit** (in-kind, pro-rata). The "strategies that must be built on the Zodiac side" — each a Zodiac
   module (`execTransactionFromModule` on the Safe) or a Baal shaman, all driven by the CRE strategy-admin
   robot — are the ticket-level components:
-  0. **Safe authority — two-tier admin/operator (RATIFIED 2026-06-07; `reports/design/baal-spec.md` 8-B1).** The summoner forces
+  0. **Safe authority — two-tier admin/operator (RATIFIED 2026-06-07; `reports/baal-spec.md` 8-B1).** The summoner forces
      each Safe owned **1/1 by the Baal**, and with **zero Shares the Baal is governance-inert** (no proposal can
      pass), so the substrate must be made driveable at summon. **Admin = the team multisig added as a Safe
      owner/signer** on both Safes (cold; governs the module set — enable/disable/swap = "change what the CRE can
@@ -711,9 +713,9 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
 The auto-sodomizer loop (the engine inventory above) decomposes into the build tickets **8-B5…8-B14**. Each is
 raised here to zero-guess detail; **the substrate is referenced, not re-spec'd here** (8-B1 Baal + main-Safe +
 **sidecar** scaffold; the **Exit Gate** — holds `manager`, absorbs the mint/TVL + lock/freeze shamans + the
-buy-and-burn; and **`SzipNavOracle`**; see `reports/design/baal-spec.md §13`).
+buy-and-burn; and **`SzipNavOracle`**; see `reports/baal-spec.md §13`).
 
-> **2026-06-07 additions (`reports/design/baal-spec.md` §10):** (1) **8-B14 — szipUSD buy-and-burn** — engine USDC posts discounted
+> **2026-06-07 additions (`reports/baal-spec.md` §10):** (1) **8-B14 — szipUSD buy-and-burn** — engine USDC posts discounted
 > `BUY szipUSD` CoW bids *below* NAV, then **burns** the fills (the impatient-exit liquidity floor + the
 > haircut-to-stayers mechanism, §6.2/§6.4). (2) The **xALPHA emission program / POL-as-liquidity-mining** — the
 > protocol deposits its monthly xALPHA emissions **in-kind** (NAV-proportional, §4.5) and the engine pairs them with
@@ -1073,12 +1075,18 @@ leg). There is one sink (recycle → NAV), not three modes; the engine's on-chai
 
 ### 4.6 Loss-side contracts (Milestone-2 detail)
 
-> **Loss-side detail is Milestone-2 scope — with one carve-out.** `DefaultCoordinator`'s default/recovery state
-> machine is M2 (no default occurs in M1). **`LienXAlphaEscrow` is pulled forward as buildable now (M1-adjacent):**
-> its **custody half** — `lockXAlpha` (bond posted by the protocol at launch, §2) + `releaseXAlpha` on repayment —
-> is exercised in M1 (originator bonds are posted at launch), and the **slash half** (`slashXAlphaToCapital` /
-> `slashXAlphaToCohort`) is built + tested against mocks now, going live with the M2 default flow. The
-> `DefaultCoordinator` sketch below is the markdown-writer-only shape after the freeze moved to the Exit Gate (§6.4).
+> **Both loss-side contracts are built in M1; the live default DEMO is Milestone-2 (2026-06-09 build-scope pull).**
+> No default *occurs* in M1, so the default/recovery DEMO is M2 (§15) — but both loss-side contracts are **built now**,
+> their M2 paths exercised against mocks (the proven `LienXAlphaEscrow` pattern, BUILT-VERIFIED 2026-06-09).
+> **`LienXAlphaEscrow`**: the **custody half** (`lockXAlpha`/`releaseXAlpha`) is M1-live (originator bonds posted at launch,
+> §2); the **slash half** (`slashXAlphaToCapital`/`slashXAlphaToCohort`) is mock-tested now, live with the M2 default flow.
+> **`DefaultCoordinator`** (bullet below, build-grade): the single loss-side orchestrator. Because `LienXAlphaEscrow.coordinator`
+> is **immutable** and is the sole caller of *all four* escrow state-changers, the coordinator **is** that wired
+> `coordinator` from deploy — so it owns the **full** bond lifecycle (lock/release M1-live, slash M2), custodies the
+> protocol's launch xALPHA reserve, and approves the escrow. It is **also** the oracle's set-once `defaultCoordinator`
+> (the sole `writeProvision` caller, enforcing the bound the oracle deliberately omits). Its M1-live surface is the bond
+> lock/release driving; the default→provision→recovery→slash paths are built + mock-tested now, live with the M2 flow.
+> The freeze moved to the Exit Gate (§6.4) — the coordinator is a markdown-writer + bond-router only, never a freeze engine.
 
 - **`LienXAlphaEscrow` — per-lien xALPHA bond custody (the loss-escrow/share-move half is GONE — the markdown is a
   recoverable NAV provision, §7/§11).** `lockXAlpha(lienId, amount)` at origination — **posted by the protocol on the
@@ -1089,35 +1097,58 @@ leg). There is one sink (recycle → NAV), not three modes; the engine's on-chai
   **not** peg defense) up to the shortfall; the USDC repays the loan / fills the hole; (2) the **remainder is
   the premium**, `slashXAlphaToCohort` — **in-kind**, **priced** (CRE xALPHA feed, §7), never market-sold —
   distributed pro-rata to the frozen cohort. Custody models `InsuranceFund.bring:33`. **Caveat:**
-  `MarkdownController.slashJaneProportional:146` is a *proportional-slash concept template*, not a drop-in; the
-  in-kind pro-rata cohort distributor (snapshot → per-holder xALPHA share) is net-new
-  (`RewardsDistributor:131,:141`-style). To detail for M2: cohort storage + the capital-vs-premium split.
+  `MarkdownController.slashJaneProportional:146` is a *proportional-slash concept template*, not a drop-in — the
+  capital-vs-premium amount is computed **off-chain by the `DefaultCoordinator`** (the shortfall after foreclosure +
+  insurance) and passed as a parameter; the escrow only **routes** it. **The in-kind premium is delivered by routing
+  the remaining bond into the non-ragequittable sidecar Safe (`slashXAlphaToCohort`); the socialized pro-rata is
+  automatic via NAV — every frozen holder's slice of the sidecar basket grows equally (§6.4/§11, "no per-position
+  index, no SBT"). NO snapshot, NO per-holder index, NO `RewardsDistributor`/SBT claim distributor**
+  (`HaircutLockAccountant` / `RecoveryClaimSBT` are **not built**, §11). To detail for M2: the capital-vs-premium
+  **split policy** in the coordinator (the escrow itself stays a dumb router — see `tickets/loss/8-Bx-lien-xalpha-escrow.md`).
   **(There is NO `escrowLoss`/`releaseLoss`/`finalizeLoss` venue-pool-share machinery — the loss is a recoverable
   **provision on `SzipNavOracle`** (§7), not an escrow/share-move; this contract holds only the xALPHA bond.)**
-- **`DefaultCoordinator` — the NAV markdown writer + the xALPHA recovery waterfall (the freeze is NOT its job).** The
-  single loss-side orchestrator, gated to the CRE receiver (immutable Forwarder). Receives the CRE default/recovery
-  report (§8). **It does NOT engage the freeze** — the freeze is **structural and owned by the Exit Gate**: the junior
-  equity committed to live credit lines already sits in the non-ragequittable sidecar Safe, sized to credit-warehouse
-  **utilization** (§6.4), so a default changes **nothing** about the freeze (utilization stays high → the committed
-  slice stays in the sidecar by default, until the line repays). The coordinator's two real jobs are: On a **default**
-  report — (1) **size the at-risk amount** from the deviation-event Proof re-mark (§4.1/§4.4d) and **write a
-  conservative provision into `SzipNavOracle`** (§7; small, because the underlying is insured/collateralized →
-  duration-risk, `recoveryFloor` HIGH; **no `_realizeMarkdown`/escrow/share-move/ragequit gate** — the markdown is a
-  **recoverable NAV provision**, the at-risk amount sizes the *markdown*, **not** the freeze); (2) **lock the xALPHA
-  bond** for resolution (held, routed into the sidecar via `LienXAlphaEscrow`). On a **recovery** report (carrying
-  **foreclosure + insurance + xALPHA + HYDX-vamped** USDC, Proof-attested): the external USDC repays the loan
-  (`repay` → debt 0 → the controller closes the lien), the **provision writes back up** as recovery lands (§7), the
-  xALPHA bond resolves (premium to the cohort via `slashXAlphaToCohort`, or sell-to-cover-the-hole-first
-  `slashXAlphaToCapital` then premium), and the committed slice **rotates back to the main Safe** as the line closes —
-  the structural freeze **releasing on its own** (the Exit Gate's utilization accounting, §6.4; the coordinator does
-  not lift it). Recovery above the debt → **originator → homeowner** (locked decision 6, §17). On a confirmed
-  **permanent shortfall** (waterfall exhausted), the **provision settles permanently** — `SzipNavOracle` carries the
-  realized loss, so junior `navPerShare` drops **pari passu** (every holder bears it equally) and the senior stays
-  $1-backed against the reduced junior NAV; the junior's own basket assets + the slashed xALPHA bond fill the senior's
-  USDC hole. **No share-burn / "cut zipUSD supply" lever — the loss is the marked NAV.** To detail for M2: per-lien
-  default state, the provision sizing/staircase true-up, and the capital-vs-premium xALPHA split. **(The freeze cohort
-  storage / `lockedFraction` / objective release are NOT here — they are the Exit Gate's structural sidecar
-  accounting, §6.4.)**
+- **`DefaultCoordinator` — the NAV markdown writer + the xALPHA bond router (the freeze is NOT its job).** The single
+  loss-side orchestrator: a **CRE-gated `ReceiverTemplate`** (Forwarder + workflow-identity **Timelock-owned, not
+  renounced** — like the controller/registry/oracle, §4.4/§13/§17). It holds **two immutable authority bindings** set
+  at deploy: it **is** the immutable `LienXAlphaEscrow.coordinator` (the sole caller of `lockXAlpha`/`releaseXAlpha`/
+  `slashXAlphaToCapital`/`slashXAlphaToCohort`), and it is wired as the oracle's set-once `defaultCoordinator` (the sole
+  `SzipNavOracle.writeProvision` caller). It custodies the protocol's **launch xALPHA reserve** and `approve`s the escrow
+  so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull succeeds. Everything flows through the CRE report path
+  (reportType 8, action-discriminated, §4.4/§8.4) — there is **no live governance owner** (the one governed value,
+  `recoveryFloor`, is an **immutable ctor param**, set at deploy).
+  - **It does NOT engage the freeze** — the freeze is **structural and owned by the Exit Gate** (§6.4): the junior equity
+    committed to live credit lines already sits in the non-ragequittable sidecar Safe, sized to credit-warehouse
+    **utilization**, so a default changes **nothing** about the freeze (utilization stays high → the committed slice stays
+    in the sidecar until the line repays). The at-risk amount sizes the **markdown**, **not** the freeze.
+  - **Per-lien loss ledger + the bound (the load-bearing on-chain logic).** It keeps a per-lien `(status, provision)` and a
+    running `totalProvision = Σ provision`, pushed to `SzipNavOracle.writeProvision(totalProvision)` after each change. The
+    oracle stores the value **unbounded**; the coordinator is what enforces the §7 bound: **down only by**
+    `provision = atRisk × (1 − recoveryFloor)` at default recognition (small, because the underlying is insured/
+    collateralized → duration-risk, `recoveryFloor` HIGH), **up only by realized receipts** (each recovery reduces a lien's
+    provision by ≤ the reported recovery proceeds, floored at 0) — **never an arbitrary NAV**. **No `_realizeMarkdown`/
+    escrow/share-move/ragequit gate** — the markdown is a **recoverable NAV provision**.
+  - **Report actions (reportType 8, §8.4):** **LOCK** `(lienId, originator, amount)` → `escrow.lockXAlpha` (M1-live launch
+    bonding); **RELEASE** `(lienId)` → `escrow.releaseXAlpha` (M1-live clean repay, full bond → originator); **DEFAULT**
+    `(lienId, atRisk)` → set the lien's provision to `atRisk × (1 − recoveryFloor)`, status `Defaulted`, push
+    `totalProvision`; **RECOVERY** `(lienId, recoveryProceeds)` → reduce the lien's provision (write back up toward 0,
+    clamped), push `totalProvision`; **RESOLVE** `(lienId, capitalSlashAmount)` → zero the lien's provision (healed), then
+    if `capitalSlashAmount > 0` `slashXAlphaToCapital(lienId, capitalSlashAmount)` else skip, then `slashXAlphaToCohort(lienId)`
+    (the in-kind premium → sidecar; coordinator skips cohort iff a full-bond capital slash already cleared it); **WRITEOFF**
+    `(lienId, capitalSlashAmount)` → the **provision settles permanently** (the residual stays; status `WrittenOff`, no
+    further recovery accepted), then `slashXAlphaToCapital`/`slashXAlphaToCohort` per the report. The capital-vs-premium
+    **split is computed off-chain** by the CRE (the shortfall after foreclosure + insurance) and passed as `capitalSlashAmount`
+    — the escrow enforces only `amount ≤ bond`; the **split + timing + default-state policy live off-chain** (the §13 trust
+    boundary: the coordinator guarantees the bound + the routing, not authorization correctness of when/how much).
+  - On a **recovery/resolve** report, the external foreclosure + insurance USDC has already repaid the loan permissionlessly
+    (`repay` → debt 0 → the controller closes the lien); the coordinator's on-chain jobs are the provision write-up + the
+    xALPHA bond resolution. The committed slice **rotates back to the main Safe** as the line closes — the structural freeze
+    **releasing on its own** (the Exit Gate's utilization accounting, §6.4; the coordinator does not lift it). Recovery
+    above the debt → **originator → homeowner** (locked decision 6, §17). On a confirmed **permanent shortfall**, the
+    **provision settles permanently** — `SzipNavOracle` carries the realized loss, so junior `navPerShare` drops **pari
+    passu** (every holder bears it equally) and the senior stays $1-backed against the reduced junior NAV; the junior's own
+    basket assets + the slashed xALPHA bond fill the senior's USDC hole. **No share-burn / "cut zipUSD supply" lever — the
+    loss is the marked NAV.** **(The freeze cohort storage / `lockedFraction` / objective release are NOT here — they are
+    the Exit Gate's structural sidecar accounting, §6.4.)**
 
 ### 4.7 `IZipcodeVenue` + `EulerVenueAdapter` — the venue boundary
 The administrative core (CRE receiver, `ZipcodeOracleRegistry`, the controller's decision logic) is
@@ -1263,8 +1294,9 @@ instrument, do not conflate. The protocol's **8-B14 buy-and-burn** posts discoun
 below NAV) and burns the szipUSD it fills (§4.5.1).
 
 ### 6.3 The real constraint: redemption vs. draw contention
-`settleEpoch()` can only fill up to the USDC the venue pool can free at that moment, which depends on the
-lien markets having repaid. **Redemptions compete with new draws for the pool's free cash.** That
+`settleEpoch()` can only fill up to the USDC the warehouse can free at that moment (via **REDEEM → REPAY**,
+§6.1/§8.5), which depends on the EulerEarn pool's liquidity / the lien markets having repaid. **Redemptions
+compete with new draws for that free cash.** That
 contention — not the queue mechanics — is the binding limiter (and the same contention a **duration squeeze**
 stresses, §11), and it is why par redemption is an epoch queue rather than instant. Policy levers: the **cash-reserve ratio** (§8.2), epoch length, and pacing
 draws against pending redemptions. This contention is exactly what the **systemic Duration Bond (§11 trigger
@@ -1438,7 +1470,7 @@ two trust modes; every workflow below is one or the other.
 2. **The operator path — the single immutable CRE operator → the engine modules' `onlyOperator` entrypoints.**
    The auto-sodomizer engine (8-B5…8-B10, §4.5/§4.5.1) is driven by **one immutable operator identity** calling
    plain `msg.sender == operator` entrypoints on the engine Zodiac modules — **not** DON-signed reports
-   (`reports/design/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
+   (`reports/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
    `RecycleModule.creditFreeValue` is unbounded), and that trust is exactly what makes the revolving reservoir
    borrow safe (it kills the external-oracle-manipulation exploit, §4.5.1). Full surface: §8.7.
 The two paths are independent identities by construction (the engine `operator` is asserted `!= owner` at module
@@ -1466,7 +1498,7 @@ as required; no contract change.
 | `7` NAV_LEG | `SzipNavOracle` | `(uint8[] legs, uint256[] prices, uint32 ts)` — `legs ∈ {0 ALPHA_USD, 1 HYDX_USD}` | Share-price feeds (§8.6) | CRE-03 |
 | `7` LP_MARK | `SzipReservoirLpOracle` | `(uint256 mark, uint32 ts)` | Share-price feeds (§8.6) | CRE-03 |
 | SUPPLY/APPROVE/REDEEM/REPAY | `CreditWarehouse` CRE-receiver | `(uint8 opType, bytes payload)` → re-encoded Safe call (§8.5) | Warehouse ops (§8.5) | CRE-04 |
-| default/recovery | `DefaultCoordinator` (M2) | `(bytes32 lienId, uint8 status, uint256 recoveryProceeds)` (sketch, §8.4) | Default/recovery (§8.4) | CRE-01 (M2 fields deferred) |
+| default/recovery (reportType 8) | `DefaultCoordinator` | `(uint8 action, bytes actionData)` — LOCK/RELEASE/DEFAULT/RECOVERY/RESOLVE/WRITEOFF (§8.4) | Default/recovery (§8.4) | CRE-01 (LOCK/RELEASE M1-live; default actions go live with the M2 demo) |
 
 `equityMark` = the Proof-of-Value mark (home value − senior debt, §4.1); `proofRef` = a commitment to the Proof
 attestation bundle (lien-perfected + value + insurance); the lien/insurance **gates** are off-chain
@@ -1521,13 +1553,24 @@ deterministic actions:
   reading state via `evmClient.CallContract`), no RNG, no annealing. A dynamic ratio (scaling with the
   pending redemption queue) is a later parameter swap, not a redesign (§17).
 - **Duration-squeeze response (the on-chain trigger host).** The same `cron.Trigger` / `evmClient.CallContract`
-  rebalance reads utilization `U = borrowed/totalAssets`; on a `U ≥ U_lock` breach it (i) **paces new draws
+  rebalance reads utilization `U`; on a `U ≥ U_lock` breach it (i) **paces new draws
   against pending redemptions** and (ii) engages the **§11 trigger-B** systemic junior lock. This is the
   on-chain host for the squeeze trigger (the optional CRE "secondaries-down" report can trip it earlier, §8.4).
+  **`U` is the illiquid fraction of the senior backing, read donation-immune from the EulerEarn senior pool:**
+  `U = 1 − maxWithdraw(CreditWarehouse) / convertToAssets(balanceOf(CreditWarehouse))` (clamped to `[0,1]`) — i.e.
+  one minus the fraction of the warehouse's senior position that can be withdrawn *right now* given how much USDC the
+  credit-line strategies have lent out. This reads the **controller-gated borrow side** (loans the homeowners drew,
+  §4.3 — the only thing that moves it), **not** a stray-balance "idle" figure: EulerEarn's `totalAssets()` is
+  `Σ expectedSupplyAssets(strategy)` (it ignores USDC merely transferred to the pool address), and `maxWithdraw`
+  measures real strategy liquidity, so the §11-B "**not outsider-manipulable**" guarantee holds (a USDC donation to
+  the pool address moves neither term). **`U` must NOT be derived from `IERC20(asset).balanceOf(eulerEarn)`** — that
+  is donatable + is ~0 for a pure-allocator EulerEarn (it would pin `U≈1` and brick releases). The residual
+  manipulation surface (donating into a *strategy* vault's cash to raise `maxWithdraw`) is bounded, costly, and an
+  item-10 live-pool verification, not a free public lever.
 
 ### 8.3 Redemption settlement
-A `cron.Trigger` on the 30-day boundary calls `settleEpoch()` (§6.1) against the venue pool's freeable USDC.
-When the freeable USDC sitting in the venue pool is short of the epoch's fulfillable claims, the same cron
+A `cron.Trigger` on the 30-day boundary calls `settleEpoch()` (§6.1), which settles against the queue's own
+REPAY-delivered USDC balance. When that balance is short of the epoch's fulfillable claims, the same cron
 **first** funds the queue via the warehouse **REDEEM** op (§8.5 — `EE_POOL.redeem(shares, receiver==SAFE, owner==SAFE)`
 through the Roles adapter, USDC into the Safe) **then** a **REPAY** to the queue sink, **then** calls `settleEpoch()`. Sizing the REDEEM (how
 many shares to release) is the producer's job; the on-chain Roles policy only pins the call shape, not the
@@ -1535,12 +1578,29 @@ amount. (`ZipRedemptionQueue.settleEpoch` is controller-gated, not renounced —
 each epoch, §4.5.)
 
 ### 8.4 Default / recovery
-Delinquency status and recovery amounts are **off-chain truths** that arrive as DON-signed reports. This
-path reports `(lienId, delinquency status, recovery proceeds = foreclosure + insurance on resolution)` via
-`runtime.GenerateReport → evmClient.WriteReport(runtime, {receiver: DefaultCoordinator})`. **Markdown is not
-in this report** — it comes from the **deviation-event Proof re-mark** (§4.1); the report triggers the
-**Duration Bond** and carries the recovery proceeds. The coordinator verifies the report (immutable CRE
-Forwarder + workflow identity) before acting.
+Delinquency status and recovery amounts are **off-chain truths** that arrive as DON-signed reports, **reportType 8**
+to the `DefaultCoordinator` (§4.4/§4.6) via `runtime.GenerateReport → evmClient.WriteReport(runtime, {receiver:
+DefaultCoordinator})`. The coordinator verifies the report (immutable CRE Forwarder + workflow identity) before acting.
+The report is **action-discriminated**: `payload = abi.encode(uint8 action, bytes actionData)`, with `actionData`
+decoded per action (the on-chain decode mirrors this exactly):
+- `0 LOCK (bytes32 lienId, address originator, uint256 amount)` — post the launch xALPHA bond (M1-live; pulls `amount`
+  xALPHA from the coordinator's reserve into the escrow).
+- `1 RELEASE (bytes32 lienId)` — clean repay: return the full bond to the recorded originator (M1-live).
+- `2 DEFAULT (bytes32 lienId, uint256 atRisk)` — recognition: the coordinator sets the lien's provision to
+  `atRisk × (1 − recoveryFloor)` and pushes `totalProvision` to `SzipNavOracle`. **The markdown `atRisk` IS in this report**
+  (the off-chain re-appraisal computes it from the §4.1 deviation re-mark + the outstanding debt); the bare reportType-5
+  default-status report still goes to the **controller** (§4.4d) to mark status + emit the legal-action event — two
+  receivers for one real-world default.
+- `3 RECOVERY (bytes32 lienId, uint256 recoveryProceeds)` — partial heal: reduce the lien's provision by ≤ the reported
+  18-dp-USD `recoveryProceeds` (clamped to 0), push `totalProvision` (writes back up).
+- `4 RESOLVE (bytes32 lienId, uint256 capitalSlashAmount)` — clean resolution: zero the lien's provision, then route the
+  xALPHA bond (`slashXAlphaToCapital(capitalSlashAmount)` if `> 0`, then `slashXAlphaToCohort`).
+- `5 WRITEOFF (bytes32 lienId, uint256 capitalSlashAmount)` — confirmed permanent shortfall: the provision **settles**
+  (residual stays, no further recovery accepted), then route the xALPHA bond as in RESOLVE.
+
+`atRisk`/`recoveryProceeds` are **18-dp USD**; `capitalSlashAmount` is **xALPHA (18-dp)**. The **capital-vs-premium split**
+(`capitalSlashAmount`) is computed **off-chain** (the shortfall after foreclosure + insurance) — the escrow enforces only
+`amount ≤ bond`; the split + timing + default-state policy live in the workflow (the §13 trust boundary).
 
 **Secrets/config & scaffolding:** project + secrets config; DON-only `GetSecret` (no PII in node-mode
 consensus). For the concrete Go scaffold a fresh engineer should clone the trigger→node-mode-fetch→
@@ -1551,9 +1611,9 @@ simulate/deploy are cre-cli mechanics documented in those references.
 
 ### 8.5 Senior-warehouse ops (SUPPLY / REDEEM / REPAY — the Roles-gated path)
 The `CreditWarehouse` is a plain Gnosis Safe custodying the protocol's `EulerEarn` shares; CRE drives it
-**only** through the audited Zodiac **Roles Modifier v2**, never by a bespoke privileged contract (§4.5,
-`reports/research/zodiac-warehouse-research.md`). The CRE seam is a thin **`is ReceiverTemplate`** receiver
-(immutable-Forwarder-gated, set-once then renounce, exactly as §4.1/§4.4) that is `assignRoles`'d as the role
+**only** through the audited Zodiac **Roles Modifier v2**, never by a bespoke privileged contract (§4.5).
+The CRE seam is a thin **`is ReceiverTemplate`** receiver
+(Forwarder-gated, Timelock-owned — not renounced, exactly as §4.1/§4.4/§17) that is `assignRoles`'d as the role
 member. On a report it decodes the warehouse envelope `abi.encode(uint8 opType, bytes payload)`, **re-encodes
 the corresponding pinned Safe call**, and invokes `Roles.execTransactionWithRole(to, 0, data, Call, roleKey,
 true)` (`reference/zodiac-modifier-roles` `Roles.sol:153`); the Roles checker validates against the
@@ -1610,7 +1670,7 @@ cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
 ### 8.7 Engine strategy-admin operator (8-B11 — the operator path, NOT a report)
 The auto-sodomizer engine (§4.5/§4.5.1, 8-B5…8-B10) is driven by the **single immutable CRE operator** calling
 the engine Zodiac modules' `onlyOperator` (`msg.sender == operator`) entrypoints — a **different write path
-from every §8.0 report** (`reports/design/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This is the off-chain
+from every §8.0 report** (`reports/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This is the off-chain
 orchestrator whose **on-chain surface is 8-B11** (a plain `onlyOperator` modifier + an immutable operator
 address on each module); the workflow itself is this CRE build. It is **not** Forwarder-gated and emits **no
 DON-signed report** — the operator submits ordinary transactions (it may still run as a CRE workflow using
@@ -1694,13 +1754,14 @@ model estimates) — and raw PII never enters consensus (§8.1).
 
 Cred Protocol / Blockchain Bureau add on-chain-address credit scoring on top of off-chain VantageScore.
 
-### 8.11 CRE build-ticket map (reconciles PHASE2 CRE-00…CRE-03; the workflows above are now authorable)
-Each workflow above is a CRE-NN ticket basis. The PHASE2 stubs are updated to the §8.0 surface (not duplicated):
+### 8.11 CRE build-ticket map (the workflows above are now authorable)
+Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (the live status pane is in
+`tickets/PROGRESS.md`):
 
 | Ticket | Scope (§) | Path | Gate |
 |---|---|---|---|
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) | — | none |
-| `CRE-01` | Origination / draw / close / status reports → controller (1/2/4/5,6); revaluation → registry (3, **gas-bounded sharded**, §8.1); default/recovery → `DefaultCoordinator` (§8.4, M2 fields sketch) | report | DEC-01 (§8.9) |
+| `CRE-01` | Origination / draw / close / status reports → controller (1/2/4/5,6); revaluation → registry (3, **gas-bounded sharded**, §8.1); default/recovery → `DefaultCoordinator` (8, action family §8.4) | report | DEC-01 (§8.9) |
 | `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REPAY** ops via the Roles adapter (§8.5) | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) |
@@ -1924,12 +1985,13 @@ Gate, §6.4; no per-position index, no SBT) fires on **either**:
   performing**. The danger is a junior **run** that depegs zipUSD; because the at-risk equity is **committed in the
   sidecar** (utilization high → it isn't rotated back to the redeemable Safe) and depositors hold no raw Loot (Exit
   Gate custody, §6.4), the run's instant-exit escape hatch is **structurally closed** — no ragequit gate needed.
-  - **Trigger:** an **on-chain utilization floor**. `U = borrowed / totalAssets` (readable from EulerEarn,
-    §8.2; the §12 metric-4 early-warning) breaching a governed `U_lock` engages the lock automatically.
-    Borrowing is controller-gated (§4.3), so `U` is not outsider-manipulable — it moves only via real
-    originations and real redemption pressure. An optional CRE "secondaries-down" report (a new `reportType`,
-    modeled on the §8.4 default/recovery report) may trip it **earlier**, but cannot un-trip a live on-chain
-    breach.
+  - **Trigger:** an **on-chain utilization floor**. `U` = the illiquid fraction of the senior backing
+    (`U = 1 − maxWithdraw(CreditWarehouse)/convertToAssets(balanceOf(CreditWarehouse))` off the EulerEarn senior
+    pool, §8.2; the §12 metric-4 early-warning) breaching a governed `U_lock` engages the lock automatically.
+    Borrowing is controller-gated (§4.3) and the read is donation-immune (§8.2), so `U` is not outsider-manipulable
+    — it moves only via real originations and real redemption pressure. An optional CRE "secondaries-down" report (a
+    new `reportType`, modeled on the §8.4 default/recovery report) may trip it **earlier**, but cannot un-trip a live
+    on-chain breach.
   - **Sizing:** `lockFraction = maxLockFraction × clamp((U − U_lock) / (U_max − U_lock), 0, 1)` — anchored to
     utilization, the squeeze's stress variable (cf. trigger A's `atRisk/juniorNAV`).
   - **Stacking with (A):** a position's effective lock is `max(φ_A, φ_B)`, capped at `1.0` — the same shares
@@ -1937,6 +1999,17 @@ Gate, §6.4; no per-position index, no SBT) fires on **either**:
     backstops both.
   - **Release:** auto-releases when free liquidity recovers — `U` falls below `U_lock − releaseHysteresis`
     (the hysteresis prevents flap).
+  - **M1 realization (the continuous structural floor, §6.4).** The above describes the *binary-lock* abstraction;
+    the M1 build (`DurationFreezeModule`) realizes it as the §6.4 **continuous structural floor** — the freeze is
+    *whatever fraction of basket value sits in the non-RQ sidecar*, and the on-chain guard is that a CRE-driven
+    **release** cannot drop the sidecar below `requiredFraction(U) × grossBasketValue`, where `requiredFraction =
+    min(1, max(U, lockFraction))` is recomputed live each release. Under this continuous floor, **`maxDuration` and
+    `releaseHysteresis` are subsumed** (M1 carries neither): there is no discrete "engaged" edge to debounce or
+    time-bound — the floor tracks `U` continuously and releases exactly as `U` falls when lines repay, and `U` is
+    non-manipulable so there is no flap to prevent. `commit` (raising the freeze) is always peg-safe and ungated by
+    value; `maxLockFraction` caps only the `lockFraction` escalation term (the effective lock is still capped only at
+    `1.0`), so there is no separate redeemability cap. (Re-introduce the binary-lock params only if a future design
+    replaces the continuous floor.)
   - **Compensation: none beyond the continuing yield.** The Duration Bond premium *is* the slashed xALPHA bond;
     a squeeze slashes nothing, so it pays **no premium** — and needs none: the loans are performing and
     accruing at the fixed credit-line rate (§3 IRM; §10 "the line simply accrues"), with the perf-fee routed
@@ -2205,10 +2278,29 @@ would add its own reference repos behind the `IZipcodeVenue` boundary (§4.7).
   key unchanged, §4.1/§4.2) with **no per-lien `govSetConfig` on a shared/timelocked router** and **no timelock
   conflict** with the atomic origination batch (§4.1/§4.4a). Stronger than the old shared fallback: a line's
   price wiring can never be re-pointed.
-- **Immutable Forwarder is enforced by the subclass** — the base `setForwarderAddress`/`onReport` are
-  **non-virtual** (not overridable), so immutability is sealed by **renouncing `Ownable`** after identity
-  wiring (assert `getExpectedWorkflowId() != 0` before renounce), §4.4; renounce neutralizes the otherwise
-  owner-mutable setter.
+- **Build phase: ONE Timelock admin, ALL wiring Timelock-settable (NOT immutable / NOT renounced)** *(revised
+  2026-06-09, user-ratified — supersedes the earlier "seal the immutable Forwarder by renouncing `Ownable`" lock
+  AND the per-contract set-once `AlreadyWired` freezes).* While the system is a rough draft on mock data, **every
+  contract carries a single Timelock owner and every cross-component wiring slot is re-pointable by that owner**
+  — the CRE `setForwarderAddress` + workflow-identity (`setExpectedAuthor`/`setExpectedWorkflowId`), the oracle
+  pointers, the safe addresses, the inter-component pointers (controller/venue/escrow/gate/coordinator/oracle/
+  tokens), the engine-module `operator` + vault/gauge wiring, and governed values (`recoveryFloor`). **Rationale:**
+  the oracles/safes are still being built (e.g. the NAV oracle may take several redeploys) — making wiring settable
+  turns a component redeploy into a **one Timelock call re-point** instead of a cascade of dependent redeploys (a
+  NAV-oracle redeploy otherwise cascades through coordinator → escrow → gate → szipUSD → zap; §17 trace). The
+  engine modules already had this shape (Timelock owner + CRE operator); this generalizes it. **The single
+  exception:** `LienCollateralToken.controller` stays immutable — it is a per-line disposable token, not
+  re-pointable infrastructure (open a new line to change it). **No fund-extraction path was added anywhere** — no
+  `sweep`/`rescue`/`pause`; the only new power is re-pointing wiring, gated by the 2-day Timelock veto. The EVK
+  hooks (`CREGatingHook`, `ReservoirBorrowGuard`) use a **manual `owner`/`onlyOwner`** (checking raw `msg.sender`),
+  NOT OZ `Ownable`, because the inherited `Context._msgSender()` would collide with the hook's EVK trailing-data
+  `_msgSender()` decoder. **Governance MUST never set a CRE Forwarder to `address(0)`** (`ReceiverTemplate`
+  disables Forwarder validation at zero and emits a `SecurityWarning`).
+  - **DEFERRED to the pre-production lock-down (a future §17 decision):** re-freezing wiring to `immutable`/set-once
+    where appropriate and deciding the final owner posture per contract (renounce vs keep the Timelock). Until then
+    the **Timelock + 2-day veto is the safety boundary**, not code-level immutability. The build reports + the
+    `LienXAlphaEscrow` destination-integrity / `SzipNavOracle` provision-bound theses note where re-freezing
+    restores a stronger guarantee.
 - **Per-line price routers are immutable (frozen at origination), NOT timelock-governed** *(revised this
   session — supersedes "Router governor = OZ `TimelockController`")*: each line's `EulerRouter` is minted by
   the venue adapter, wired to the registry, and `transferGovernance(address(0))`-frozen inside `openLine`
@@ -2352,6 +2444,6 @@ Only the **MIT** `erc7540-reference` is forked directly; all other external repo
 
 ---
 
-*Plain-language narrative: [`vision.md`](./pending-docs/vision.md). Build plan / per-team task map: [`README.md`](./README.md).
+*Plain-language narrative: the [Vision](./README.md#vision) section of `README.md`. Build plan / per-team task map: [`README.md`](./README.md).
 Off-chain leg (SPV custody + Proof attestation): [`spv-lien-proof.md`](./pending-docs/spv-lien-proof.md). The venue-agnostic
 boundary is §4.7.*

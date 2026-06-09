@@ -201,8 +201,10 @@ contract SzipNavOracleTest is Test {
         emit ShareTokenSet(address(szip));
         oracle.setShareToken(address(szip));
         assertEq(oracle.shareToken(), address(szip));
-        vm.expectRevert(SzipNavOracle.AlreadyWired.selector);
-        oracle.setShareToken(address(szip));
+        // re-settable (build phase, §17): a second call re-points
+        address szip2 = makeAddr("szip2");
+        oracle.setShareToken(szip2);
+        assertEq(oracle.shareToken(), szip2);
         // non-owner
         SzipNavOracle fresh = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
@@ -219,8 +221,10 @@ contract SzipNavOracleTest is Test {
         oracle.setLpPosition(address(iv), address(g));
         assertEq(oracle.ichiVault(), address(iv));
         assertEq(oracle.gauge(), address(g));
-        vm.expectRevert(SzipNavOracle.AlreadyWired.selector);
-        oracle.setLpPosition(address(iv), address(g));
+        // re-settable (build phase, §17): a second call re-points
+        MockICHIVault iv2 = new MockICHIVault();
+        oracle.setLpPosition(address(iv2), address(g));
+        assertEq(oracle.ichiVault(), address(iv2));
         SzipNavOracle fresh = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
             address(ohydx), mainSafe, sidecar, W, MAX_AGE, DEV_BPS
@@ -232,12 +236,15 @@ contract SzipNavOracleTest is Test {
     function test_setEngineSafe_and_setDefaultCoordinator_setOnce() public {
         oracle.setEngineSafe(engineSafe);
         assertEq(oracle.engineSafe(), engineSafe);
-        vm.expectRevert(SzipNavOracle.AlreadyWired.selector);
-        oracle.setEngineSafe(engineSafe);
+        // re-settable (build phase, §17)
+        address es2 = makeAddr("es2");
+        oracle.setEngineSafe(es2);
+        assertEq(oracle.engineSafe(), es2);
         oracle.setDefaultCoordinator(dc);
         assertEq(oracle.defaultCoordinator(), dc);
-        vm.expectRevert(SzipNavOracle.AlreadyWired.selector);
-        oracle.setDefaultCoordinator(dc);
+        address dc2 = makeAddr("dc2");
+        oracle.setDefaultCoordinator(dc2);
+        assertEq(oracle.defaultCoordinator(), dc2);
     }
 
     // ----------------------------------------------------------------- genesis

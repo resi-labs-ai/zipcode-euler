@@ -1,7 +1,7 @@
 # 8-B1 — authoring-window report to the superintendent
 
 **From:** the builder Claude (ticket-authoring harness). **To:** the superintendent.
-**Item:** 8-B1 — szipUSD Baal substrate scaffold (summon script) (§4.5 / `reports/design/baal-spec.md` 8-B1).
+**Item:** 8-B1 — szipUSD Baal substrate scaffold (summon script) (§4.5 / `reports/baal-spec.md` 8-B1).
 **Date:** 2026-06-07. **Branch:** `main`.
 
 ## TL;DR
@@ -35,7 +35,7 @@ The team owner is injected **at summon** (the only authority-injection window) v
 mainSafe, 0, execTransactionFromModule(mainSafe, 0, addOwnerWithThreshold(team,1), Call))` — `executeAsBaal` calls
 AS the Baal so it must route through the Safe's self-authorized owner-management (a direct `addOwnerWithThreshold`
 would revert). The sidecar is created after summon, so the team (now a main-Safe owner) adds itself to the sidecar
-through the main Safe. **Spec updated:** `claude-zipcode.md §4.5 item-0` + `reports/design/baal-spec.md 8-B1` (Authority model +
+through the main Safe. **Spec updated:** `claude-zipcode.md §4.5 item-0` + `reports/baal-spec.md 8-B1` (Authority model +
 recipe rewritten). I considered the two alternatives I offered the user (bootstrap-shares; CRE-module-via-precompute)
 and the user chose the Safe-signer model — it keeps Shares at 0 (true to §17) and needs no proposal machinery.
 
@@ -86,7 +86,7 @@ All HIGH findings are about DOWNSTREAM wiring, not 8-B1's substrate (low real ex
 
 ## Git state (please decide)
 **Nothing in this window is git-committed.** The whole repo working-tree is **untracked** — `git ls-files contracts/`
-returns 0 files; `contracts/`, `tickets/`, `reports/`, `reports/design/baal-spec.md`, `audit/` are all `??`. The prior
+returns 0 files; `contracts/`, `tickets/`, `reports/`, `reports/baal-spec.md`, `audit/` are all `??`. The prior
 "BUILT-VERIFIED … committed under contracts/" claims in PROGRESS are **working-tree only** — git is not tracking the
 build. I did NOT commit: it's a large ambiguous action (whole untracked tree) on the default branch `main`, and the
 keep-the-build proof is the green `forge test` on disk, not a commit. **Recommend you decide how to bring the repo
@@ -95,5 +95,5 @@ under version control** (e.g. an initial commit of the whole build tree, or a `.
 
 ## Status
 8-B1 **DONE** (built-verified on disk, not committed). PROGRESS + LEDGER updated; spec gap fixed in
-`claude-zipcode.md` + `reports/design/baal-spec.md`; memory `[[szipusd-safe-authority-model]]` written. **NEXT = `SzipNavOracle`**
-(`reports/design/baal-spec.md §3`).
+`claude-zipcode.md` + `reports/baal-spec.md`; memory `[[szipusd-safe-authority-model]]` written. **NEXT = `SzipNavOracle`**
+(`reports/baal-spec.md §3`).

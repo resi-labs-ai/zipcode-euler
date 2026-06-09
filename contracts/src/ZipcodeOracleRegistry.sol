@@ -23,12 +23,13 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @notice The `reportType` (§4.4 report ABI) the registry accepts.
     uint8 public constant REVALUATION = 3;
 
-    /// @notice The unit of account (USDC).
-    address public immutable quote;
-    /// @notice The long, line-term read-staleness window (no upper-bound cap; the mark is event-driven).
-    uint256 public immutable validityWindow;
-    /// @notice The immutable scale: baseDecimals=18, quoteDecimals=feedDecimals=quote's decimals.
-    Scale internal immutable scale;
+    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
+    /// @notice The unit of account (USDC). Timelock-settable.
+    address public quote;
+    /// @notice The long, line-term read-staleness window (no upper-bound cap; the mark is event-driven). Timelock-settable.
+    uint256 public validityWindow;
+    /// @notice The scale: baseDecimals=18, quoteDecimals=feedDecimals=quote's decimals. Re-derived on `setQuote`.
+    Scale internal scale;
 
     /// @notice A cached Proof-of-Value mark for a lien. `timestamp == 0` ⇒ unset.
     struct Cache {
@@ -43,8 +44,8 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
 
     /// @notice The caller of `seedPrice` is not the controller.
     error NotController();
-    /// @notice The controller has already been set (set-once).
-    error ControllerAlreadySet();
+    /// @notice A zero address in a Timelock re-point.
+    error ZeroAddress();
     /// @notice The report's `reportType` is not `REVALUATION` (3).
     error InvalidReportType(uint8 reportType);
     /// @notice The revaluation `liens`/`prices` arrays have different lengths.
@@ -54,12 +55,16 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @notice A revaluation `ts` is dated after `block.timestamp` (timestamp-sanity, not a value band).
     error FutureTimestamp();
 
-    /// @notice The set-once controller was wired.
+    /// @notice The controller was wired (Timelock-settable, build phase).
     event ControllerSet(address indexed controller);
     /// @notice A lien's mark was seeded by the controller at origination.
     event RegistryPriceSeed(address indexed lien, uint256 price);
     /// @notice A lien's mark was revalued by the Forwarder.
     event RegistryPriceUpdated(address indexed lien, uint256 price, uint48 timestamp);
+    /// @notice A Timelock re-point of an address wiring slot (build phase).
+    event WiringSet(bytes32 indexed slot, address value);
+    /// @notice A Timelock re-set of the read-staleness window.
+    event ValidityWindowSet(uint256 window);
 
     /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`); frozen by deploy-time renounce.
     /// @param quote_ The unit of account (USDC).
@@ -71,12 +76,28 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
         scale = ScaleUtils.calcScale(LIEN_DECIMALS, quoteDecimals, quoteDecimals);
     }
 
-    /// @notice Wire the set-once origination-seed authority. `onlyOwner`, frozen by the deploy-time renounce.
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    /// @notice Wire the origination-seed authority. Timelock-settable (build phase, §17): re-pointable, `onlyOwner`.
     /// @param c The controller address.
     function setController(address c) external onlyOwner {
-        if (controller != address(0)) revert ControllerAlreadySet();
+        if (c == address(0)) revert ZeroAddress();
         controller = c;
         emit ControllerSet(c);
+    }
+
+    /// @notice Re-point the unit of account (re-derives `scale`). `onlyOwner` (Timelock).
+    function setQuote(address quote_) external onlyOwner {
+        if (quote_ == address(0)) revert ZeroAddress();
+        quote = quote_;
+        uint8 quoteDecimals = _getDecimals(quote_);
+        scale = ScaleUtils.calcScale(LIEN_DECIMALS, quoteDecimals, quoteDecimals);
+        emit WiringSet("quote", quote_);
+    }
+
+    /// @notice Re-set the read-staleness window. `onlyOwner` (Timelock).
+    function setValidityWindow(uint256 validityWindow_) external onlyOwner {
+        validityWindow = validityWindow_;
+        emit ValidityWindowSet(validityWindow_);
     }
 
     /// @notice Origination seed (§4.4a): the controller writes a single lien's mark inside its atomic batch.

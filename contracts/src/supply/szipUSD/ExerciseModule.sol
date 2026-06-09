@@ -60,6 +60,8 @@ contract ExerciseModule is Module {
 
     // --------------------------------------------------------------------- events
     event Exercised(uint256 amount, uint256 paymentAmount);
+    /// @notice A Timelock-settable wiring field was re-pointed (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
@@ -104,6 +106,44 @@ contract ExerciseModule is Module {
     //      hot key) CANNOT call them — only `owner` (the Timelock) can, and a redirect by governance is a deliberate
     //      timelocked act, not an attack path. We do NOT hard-lock them (that would require marking the vendored
     //      zodiac-core setters `virtual` — reference deps stay pristine). Tested: a non-owner caller reverts.
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in sync since the
+    ///         module is enabled ON, and only mutates, the engine Safe (avatar == target == engineSafe).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        avatar = engineSafe_;
+        target = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
+    }
+
+    /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
+    function setOperator(address operator_) external onlyOwner {
+        if (operator_ == address(0)) revert ZeroAddress();
+        operator = operator_;
+        emit WiringSet("operator", operator_);
+    }
+
+    /// @notice Re-point `oHYDX` (build phase, §17). onlyOwner (Timelock). Re-reads `paymentToken` LIVE off the new
+    ///         option (fail-closed) so the `approve` target can never drift from the option's actual payment token.
+    function setOHYDX(address oHYDX_) external onlyOwner {
+        if (oHYDX_ == address(0)) revert ZeroAddress();
+        oHYDX = oHYDX_;
+        address paymentToken_ = IOptionToken(oHYDX_).paymentToken();
+        if (paymentToken_ == address(0)) revert ZeroAddress();
+        paymentToken = paymentToken_;
+        emit WiringSet("oHYDX", oHYDX_);
+        emit WiringSet("paymentToken", paymentToken_);
+    }
+
+    /// @notice Re-point `paymentToken` (build phase, §17). onlyOwner (Timelock). Normally derived LIVE from `oHYDX` (and
+    ///         re-derived by `setOHYDX`); exposed for a direct override should the option's payment token need pinning.
+    function setPaymentToken(address paymentToken_) external onlyOwner {
+        if (paymentToken_ == address(0)) revert ZeroAddress();
+        paymentToken = paymentToken_;
+        emit WiringSet("paymentToken", paymentToken_);
+    }
 
     // --------------------------------------------------------------------- the paid exercise (operator-only)
     /// @dev Drive the Safe via the inherited `execAndReturnData` (Operation.Call, value 0) and HARD-REVERT if it

@@ -200,19 +200,21 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         assertEq(IBaal(sub.baal).shamans(address(gate)), 2, "gate is manager");
     }
 
-    function test_setters_setOnce_and_auth() public {
+    function test_setters_repoint_and_auth() public {
         // a fresh Gate with nothing wired
         ExitGate g = new ExitGate(sub.baal, address(oracle), address(zip), address(xa), TVL_CAP);
         // non-owner cannot wire
         vm.prank(alice);
         vm.expectRevert();
         g.setShareToken(address(szip));
-        // owner wires once; second reverts AlreadyWired
+        // owner wires; build phase (§17) re-settable — a second call re-points
         g.setShareToken(address(szip));
-        vm.expectRevert(ExitGate.AlreadyWired.selector);
-        g.setShareToken(address(szip));
+        assertEq(g.shareToken(), address(szip));
+        address szip2 = makeAddr("szip2");
+        g.setShareToken(szip2);
+        assertEq(g.shareToken(), szip2);
         // zero-address rejected
-        vm.expectRevert(ExitGate.AlreadyWired.selector); // already wired now
+        vm.expectRevert(ExitGate.ZeroAddress.selector);
         g.setShareToken(address(0));
     }
 

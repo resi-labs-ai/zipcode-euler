@@ -42,16 +42,16 @@ import {SzipUSD} from "./SzipUSD.sol";
 contract ExitGate is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // --------------------------------------------------------------------- immutables
-    IBaal public immutable baal;
-    SzipNavOracle public immutable navOracle;
-    address public immutable zipUSD; // 18-dp, $1 — a deposit asset + a basket leg (ragequit pays it in-kind)
-    address public immutable xAlpha; // 18-dp — in-kind (POL-as-LM) deposit asset + a basket leg (ragequit pays it in-kind)
-    uint256 public immutable tvlCap; // 18-dp USD gross-basket cap (governed; see 8-B12 overlap note)
-    address public immutable loot; // baal.lootToken()
-    address public immutable mainSafe; // baal.avatar() — the ragequit target / the basket
-
-    // --------------------------------------------------------------------- set-once wiring (frozen by renounce at item-10)
+    // --------------------------------------------------------------------- wiring (Timelock-settable; build phase)
+    // NOTE (2026-06-09, §17): all wiring below is Timelock-settable, NOT immutable — build-phase flexibility so a
+    // redeployed Baal substrate / oracle / token / safe is a one-call re-point, not a redeploy cascade. Lock pre-prod.
+    IBaal public baal;
+    SzipNavOracle public navOracle;
+    address public zipUSD; // 18-dp, $1 — a deposit asset + a basket leg (ragequit pays it in-kind)
+    address public xAlpha; // 18-dp — in-kind (POL-as-LM) deposit asset + a basket leg (ragequit pays it in-kind)
+    uint256 public tvlCap; // 18-dp USD gross-basket cap (governed; see 8-B12 overlap note)
+    address public loot; // baal.lootToken()
+    address public mainSafe; // baal.avatar() — the ragequit target / the basket
     address public shareToken; // szipUSD (deployed after the Gate — its ctor takes the Gate)
     address public windowController; // the CRE operator/keeper that opens windows
     address public engineSafe; // the 8-B14 buy-and-burn Safe whose szipUSD `burnFor` retires
@@ -91,6 +91,10 @@ contract ExitGate is Ownable, ReentrancyGuard {
     event ShareTokenSet(address indexed szipUSD);
     event WindowControllerSet(address indexed controller);
     event EngineSafeSet(address indexed engineSafe);
+    event BaalSet(address indexed baal, address loot, address mainSafe);
+    event NavOracleSet(address indexed navOracle);
+    event TokensSet(address indexed zipUSD, address indexed xAlpha);
+    event TvlCapSet(uint256 tvlCap);
 
     constructor(address baal_, address navOracle_, address zipUSD_, address xAlpha_, uint256 tvlCap_)
         Ownable(msg.sender)
@@ -108,29 +112,57 @@ contract ExitGate is Ownable, ReentrancyGuard {
         mainSafe = IBaal(baal_).avatar();
     }
 
-    // --------------------------------------------------------------------- set-once wiring
-    /// @notice Wire the szipUSD share token (the Gate is its immutable minter). Set-once, `onlyOwner`, renounce-frozen.
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase)
+    /// @notice Wire/re-point the szipUSD share token. `onlyOwner` (Timelock), build-phase flexibility.
     function setShareToken(address szipUSD_) external onlyOwner {
-        if (shareToken != address(0)) revert AlreadyWired();
         if (szipUSD_ == address(0)) revert ZeroAddress();
         shareToken = szipUSD_;
         emit ShareTokenSet(szipUSD_);
     }
 
-    /// @notice Wire the window controller (the CRE operator/keeper). Set-once, `onlyOwner`, renounce-frozen.
+    /// @notice Wire/re-point the window controller (the CRE operator/keeper). `onlyOwner` (Timelock).
     function setWindowController(address controller_) external onlyOwner {
-        if (windowController != address(0)) revert AlreadyWired();
         if (controller_ == address(0)) revert ZeroAddress();
         windowController = controller_;
         emit WindowControllerSet(controller_);
     }
 
-    /// @notice Wire the engine Safe (the 8-B14 buy-and-burn target). Set-once, `onlyOwner`, renounce-frozen.
+    /// @notice Wire/re-point the engine Safe (the 8-B14 buy-and-burn target). `onlyOwner` (Timelock).
     function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe != address(0)) revert AlreadyWired();
         if (engineSafe_ == address(0)) revert ZeroAddress();
         engineSafe = engineSafe_;
         emit EngineSafeSet(engineSafe_);
+    }
+
+    /// @notice Re-point the Baal substrate (re-derives `loot` + `mainSafe`). `onlyOwner` (Timelock), build-phase.
+    function setBaal(address baal_) external onlyOwner {
+        if (baal_ == address(0)) revert ZeroAddress();
+        baal = IBaal(baal_);
+        loot = IBaal(baal_).lootToken();
+        mainSafe = IBaal(baal_).avatar();
+        emit BaalSet(baal_, loot, mainSafe);
+    }
+
+    /// @notice Re-point the NAV oracle. `onlyOwner` (Timelock), build-phase.
+    function setNavOracle(address navOracle_) external onlyOwner {
+        if (navOracle_ == address(0)) revert ZeroAddress();
+        navOracle = SzipNavOracle(navOracle_);
+        emit NavOracleSet(navOracle_);
+    }
+
+    /// @notice Re-point the zipUSD + xALPHA basket-leg/deposit tokens. `onlyOwner` (Timelock), build-phase.
+    function setTokens(address zipUSD_, address xAlpha_) external onlyOwner {
+        if (zipUSD_ == address(0) || xAlpha_ == address(0)) revert ZeroAddress();
+        zipUSD = zipUSD_;
+        xAlpha = xAlpha_;
+        emit TokensSet(zipUSD_, xAlpha_);
+    }
+
+    /// @notice Re-set the governed gross-basket TVL cap. `onlyOwner` (Timelock).
+    function setTvlCap(uint256 tvlCap_) external onlyOwner {
+        if (tvlCap_ == 0) revert ZeroAmount();
+        tvlCap = tvlCap_;
+        emit TvlCapSet(tvlCap_);
     }
 
     // --------------------------------------------------------------------- issuance

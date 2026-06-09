@@ -16,10 +16,10 @@ Read this, then orient.
 >   windowed ragequit at `min(spot,twap)` NAV (partial-fill) + a **CoW** secondary + 8-B14 buy-and-burn; first-loss =
 >   a **conservative provision-that-recovers** marked on `SzipNavOracle`, **NOT** withhold-no-markdown. **Author /
 >   build against IT.**
-> - **`reports/design/baal-spec.md` = the build-grade companion** for the **8-B** tickets — the contract-cited recipes
+> - **`reports/baal-spec.md` = the build-grade companion** for the **8-B** tickets — the contract-cited recipes
 >   for the **substrate scaffold (8-B1), `SzipNavOracle`, the Exit Gate, and engine 8-B5…8-B14 + 8-Bw warehouse**, plus
 >   the **Base address book** (`BaalAndVaultSummoner 0x2eF2fC8a18A914818169eFa183db480d31a90c5D`, `BaalSummoner`,
->   Loot/Shares singletons). **MOVED to `reports/design/` (2026-06-09) — it is the design trail now, not a root spec:**
+>   Loot/Shares singletons). **MOVED to `reports/` (2026-06-09) — it is the design trail now, not a root spec:**
 >   nearly all of it is consumed (8-B1 / `SzipNavOracle` / Exit Gate / 8-B5…B10 / B14 / 8-Bw all BUILT-VERIFIED), so
 >   it is **mostly historical**. Its only remaining live "Model from" duty is **item 9 (`§12 ZipRedemptionQueue`)** +
 >   the **loss side (`§9`, M2)**; author those FROM it, then **DELETE it once they consume it** (staging, not permanent).
@@ -51,7 +51,7 @@ Read this, then orient.
    then Phase L L1→L12 loop) + the source of each ticket's "Done when". `audit/3-results.md` is the authority
    map. (Note: some item-8 acceptance rows carry `EXCISED / 8-B` markers — the Baal junior acceptance is
    re-authored at the 8-B build tickets, **not** a hole.)
-7. **`pending-docs/`** — the *why* + open legs (`vision.md`, `spv-lien-proof.md`), not build spec. *(The post-M1 `treasury.md` economics doc was removed 2026-06-09 — to be re-authored.)*
+7. **`pending-docs/`** — the open off-chain leg (`spv-lien-proof.md`), not build spec. *(The *why* now lives in `README.md`'s Vision section.)* *(The post-M1 `treasury.md` economics doc was removed 2026-06-09 — to be re-authored.)*
 
 Project memory (auto-loaded) holds the locked decisions + the authoring method. Trust it; the docs are authoritative.
 
@@ -68,9 +68,16 @@ Conclude).
 **Per item, run the harness** (`audit/adversarial-spec/README.md`):
 draft the ticket(s) — build always, **interface only for user-facing items** (most WOOF contracts are
 build-only) → fan out the critic subagents → **synthesize + triage** (spec-gap → fix `claude-zipcode.md`
-FIRST; ticket-gap → fix the ticket) → **build it for real + KEEP it** (`forge test` green, commit under
-`contracts/`; the discard/reset rule is **RETIRED** — keep-the-build doctrine, `kickoff.md`) → file in
-`tickets/<team>/` → **conclude** (update `PROGRESS.md`, commit the code, report) → **STOP**.
+FIRST; ticket-gap → fix the ticket) → **build it for real + KEEP it** → file in `tickets/<team>/` →
+**conclude** (update `PROGRESS.md`, commit the code, write `reports/<ITEM>-report.md`) → **STOP**.
+
+> **Keep-the-build doctrine (2026-06-06).** Materialize the contract + its tests, get `forge build`/`forge
+> test` green, and **commit the code under `contracts/`** — the code is the proof, the ticket is the intent.
+> The old "reset `contracts/` to skeleton / discard the byproduct" rule is **RETIRED**: it produced
+> unverifiable rotted claims (WOOF-00, once kept and re-checked, exposed a selector contradiction, 10/25 wrong
+> interface signatures, and 2 "CONFIRMED" addresses that were the wrong contract). For anything verifiable —
+> **signatures, addresses, does-it-compile — the code is the source of truth, not the ticket**; verify every
+> external signature + hardcoded address **against the live chain** (`cast`/Basescan), not merely "it compiles."
 
 **Cadence: one item per context window, then conclude and start fresh.** NOT mass-produced. The critics are
 subagents (their token use stays out of this context), so one item per window is feasible — but always end in

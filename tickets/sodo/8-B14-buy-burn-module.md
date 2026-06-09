@@ -29,13 +29,13 @@ It is the **first engine Zodiac Module** (8-B5…B13 follow). Establish the `is 
 `initializer` + `onlyOperator` + `exec(...,Operation.Call)` pattern the rest of the engine inherits (§10.1).
 
 **Spec §**
-`reports/design/baal-spec.md` **§7** (the buy-and-burn module — what/mechanics/trace/bounds, **edited this window**), cross:
-- `reports/design/baal-spec.md` **§6** (CoW over szipUSD/USDC; `SigningScheme.PRESIGN` lets a Safe place CoW orders on-chain; never
+`reports/baal-spec.md` **§7** (the buy-and-burn module — what/mechanics/trace/bounds, **edited this window**), cross:
+- `reports/baal-spec.md` **§6** (CoW over szipUSD/USDC; `SigningScheme.PRESIGN` lets a Safe place CoW orders on-chain; never
   read the szipUSD market price for accounting, §6.3/§3.4).
-- `reports/design/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, **one immutable CRE operator** =
+- `reports/baal-spec.md` **§10.1** (engine modules: `is Module`, `enableModule`'d, **one immutable CRE operator** =
   `onlyOperator`, mutate the Safe only via inherited `exec(to,value,data,Operation.Call)`, CREATE2 clones via
   `ModuleProxyFactory`, init in `setUp` under `initializer`) + **§14** (`d`, `buybackCap` = governed params).
-- `reports/design/baal-spec.md` **§3** (NAV oracle = the pricing primitive — `navExit()` / `twapNavPerShare()` / `fresh()`, 18-dp
+- `reports/baal-spec.md` **§3** (NAV oracle = the pricing primitive — `navExit()` / `twapNavPerShare()` / `fresh()`, 18-dp
   USD/share) and **§18.2** (`burnLoot` = pure supply reduction, NO asset payout — the retire path).
 - `claude-zipcode.md` **§4.5.1** (engine module architecture; 8-B14 = "engine USDC posts discounted standing bids
   below NAV and burns") / **§17** locked: the protocol **never reads the szipUSD market (CoW) price for accounting**;

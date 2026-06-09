@@ -25,17 +25,37 @@ interface IEVC {
 /// calldata extraction. The gate is operator-authorization, NOT an owner / haveCommonOwner check: the
 /// per-line borrow account has its own owner-prefix and shares no prefix with the borrowDriver.
 contract CREGatingHook is IHookTarget {
-    /// @notice The EVK vault factory; used to validate the caller is a factory proxy (vault).
-    IGenericFactory public immutable eVaultFactory;
-    /// @notice The Ethereum Vault Connector; queried for operator authorization.
-    IEVC public immutable evc;
-    /// @notice The EVC operator that drives the borrow (the venue adapter / `EVC.call` caller).
+    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
+    /// @notice The EVK vault factory; used to validate the caller is a factory proxy (vault). Timelock-settable.
+    IGenericFactory public eVaultFactory;
+    /// @notice The Ethereum Vault Connector; queried for operator authorization. Timelock-settable.
+    IEVC public evc;
+    /// @notice The EVC operator that drives the borrow (the venue adapter / `EVC.call` caller). Timelock-settable.
     /// @dev NOT the controller — the address EVC authenticates as the operator of each per-line account.
-    address public immutable borrowDriver;
+    address public borrowDriver;
+    /// @notice The Timelock admin (build phase, §17). NOT OZ `Ownable` — its inherited `Context._msgSender()` would
+    ///         collide with this hook's EVK trailing-data `_msgSender()` decoder; `onlyOwner` checks `msg.sender`
+    ///         DIRECTLY (the admin is never an EVK on-behalf call).
+    address public owner;
 
     /// @notice Thrown when the appended on-behalf account has not authorized `borrowDriver` as its
     /// EVC operator. Named so it does NOT imply the controller specifically.
     error NotAuthorizedOperator();
+    /// @notice Thrown when a wiring re-point is given the zero address.
+    error ZeroAddress();
+    /// @notice Thrown when a non-owner calls an admin function.
+    error NotOwner();
+
+    /// @notice A Timelock-settable wiring field was re-pointed (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
+    /// @notice Ownership transferred (build-phase admin).
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /// @dev Admin gate — checks the RAW `msg.sender`, never the hook `_msgSender()` decoder.
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
 
     /// @param eVaultFactory_ The EVK GenericFactory that deployed the lien vaults.
     /// @param evc_ The Ethereum Vault Connector.
@@ -44,6 +64,37 @@ contract CREGatingHook is IHookTarget {
         eVaultFactory = IGenericFactory(eVaultFactory_);
         evc = IEVC(evc_);
         borrowDriver = borrowDriver_;
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
+
+    /// @notice Transfer the build-phase admin (to the Timelock). `onlyOwner`.
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+
+    // --- Timelock-settable wiring (build phase, §17) ---
+    /// @notice Re-point the EVK vault factory. `onlyOwner` (Timelock).
+    function setEVaultFactory(address eVaultFactory_) external onlyOwner {
+        if (eVaultFactory_ == address(0)) revert ZeroAddress();
+        eVaultFactory = IGenericFactory(eVaultFactory_);
+        emit WiringSet("eVaultFactory", eVaultFactory_);
+    }
+
+    /// @notice Re-point the EVC. `onlyOwner` (Timelock).
+    function setEvc(address evc_) external onlyOwner {
+        if (evc_ == address(0)) revert ZeroAddress();
+        evc = IEVC(evc_);
+        emit WiringSet("evc", evc_);
+    }
+
+    /// @notice Re-point the borrow driver (EVC operator). `onlyOwner` (Timelock).
+    function setBorrowDriver(address borrowDriver_) external onlyOwner {
+        if (borrowDriver_ == address(0)) revert ZeroAddress();
+        borrowDriver = borrowDriver_;
+        emit WiringSet("borrowDriver", borrowDriver_);
     }
 
     /// @inheritdoc IHookTarget

@@ -119,5 +119,5 @@ is the loop, especially for a user-facing item. The fanout was run and is the re
 - **Still open:** INFLOW-06 (the frontend interface half) is still PENDING cold-build (a Vue/euler-lite item, not a
   contract — author when the frontend track is reached). Item-10 deploy/wiring obligations for the module remain
   OPEN (carried by the `audit/2` Baal sweep).
-- **NEXT (per `reports/design/baal-spec.md §13` + the banner): 8-B14 — szipUSD buy-and-burn** (`burnFor`, the impatient-exit
+- **NEXT (per `reports/baal-spec.md §13` + the banner): 8-B14 — szipUSD buy-and-burn** (`burnFor`, the impatient-exit
   liquidity floor; the Gate's `burnFor` seam already exists), then the engine `8-B5…B13`.

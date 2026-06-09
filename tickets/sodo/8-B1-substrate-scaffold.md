@@ -1,4 +1,4 @@
-# 8-B1 — szipUSD Baal substrate scaffold (summon script) (§4.5 / `reports/design/baal-spec.md` 8-B1)
+# 8-B1 — szipUSD Baal substrate scaffold (summon script) (§4.5 / `reports/baal-spec.md` 8-B1)
 
 > **BUILT-VERIFIED 2026-06-07 (keep-the-build doctrine).** Materialized + kept on disk; `forge build` green +
 > **8/8 fork tests pass on a live Base-mainnet fork** (115/115 total, no regression — run it yourself:
@@ -56,14 +56,14 @@ substrate is driveable. Files:
 
 **Spec §**
 `claude-zipcode.md` §4.5 (the substrate; the new §4.5 item-0 "Safe authority — two-tier admin/operator" note) +
-`reports/design/baal-spec.md` 8-B1 (the authoritative build recipe + the Authority model block, both rewritten 2026-06-07). Cross:
+`reports/baal-spec.md` 8-B1 (the authoritative build recipe + the Authority model block, both rewritten 2026-06-07). Cross:
 - §4.5.1 (the substrate is referenced by the engine modules), §6.4 (Exit Gate consumes `baal`+`loot`+`manager`),
   §7/§12 (`SzipNavOracle` sums balances across **both** Safes), §11 (the sidecar = the freeze).
 - `BAAL-ZODIAC-REFERENCE-MAP.md` §2.1 (bitmask: manager=2), §2.2 (ragequit can't be gated → Exit-Gate custody),
   §2.3 (the freeze is ONE structural sidecar), §3 "8-B1".
 Locked §17 (honored, not reopened): Baal/Zodiac substrate; **Shares = 0** (ragequit pro-rata pure-Loot); the
 junior is the main product; collateral mocked. The **authority model** (team-admin signer + CRE operator module) is
-the §4.5 item-0 / `reports/design/baal-spec.md` resolution of the old (un-reachable) "post-deploy `setShamans`" seam — user-ratified
+the §4.5 item-0 / `reports/baal-spec.md` resolution of the old (un-reachable) "post-deploy `setShamans`" seam — user-ratified
 2026-06-07; it does not reopen a §17 token-model decision (Shares still 0; authority is Safe ownership, not votes).
 
 **Model from (verified against `reference/`)**

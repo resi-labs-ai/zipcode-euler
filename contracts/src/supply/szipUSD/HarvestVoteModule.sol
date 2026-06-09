@@ -64,6 +64,8 @@ contract HarvestVoteModule is Module {
     event Voted(address[] poolVote, uint256[] weights);
     event VoteReset();
     event RebaseClaimed(uint256[] tokenIds);
+    /// @notice A Timelock re-point of a wired component address (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
@@ -119,6 +121,59 @@ contract HarvestVoteModule is Module {
     //      hot key) CANNOT call them — only `owner` (the Timelock) can, and a redirect by governance is a deliberate
     //      timelocked act, not an attack path. We do NOT hard-lock them (that would require marking the vendored
     //      zodiac-core setters `virtual` — reference deps stay pristine). Tested: a non-owner caller reverts.
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    // Re-point cross-component wiring during the build phase. onlyOwner == the Timelock; the CRE `operator` (hot key)
+    // cannot reach these. A redirect is a deliberate timelocked governance act, not an attack path.
+
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
+    }
+
+    /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
+    function setOperator(address operator_) external onlyOwner {
+        if (operator_ == address(0)) revert ZeroAddress();
+        operator = operator_;
+        emit WiringSet("operator", operator_);
+    }
+
+    /// @notice Re-point `gauge` (build phase, §17). onlyOwner (Timelock).
+    function setGauge(address gauge_) external onlyOwner {
+        if (gauge_ == address(0)) revert ZeroAddress();
+        gauge = gauge_;
+        emit WiringSet("gauge", gauge_);
+    }
+
+    /// @notice Re-point `voter` (build phase, §17). onlyOwner (Timelock).
+    function setVoter(address voter_) external onlyOwner {
+        if (voter_ == address(0)) revert ZeroAddress();
+        voter = voter_;
+        emit WiringSet("voter", voter_);
+    }
+
+    /// @notice Re-point `rewardsDistributor` (build phase, §17). onlyOwner (Timelock).
+    function setRewardsDistributor(address rewardsDistributor_) external onlyOwner {
+        if (rewardsDistributor_ == address(0)) revert ZeroAddress();
+        rewardsDistributor = rewardsDistributor_;
+        emit WiringSet("rewardsDistributor", rewardsDistributor_);
+    }
+
+    /// @notice Re-point `oHYDX` (build phase, §17). onlyOwner (Timelock).
+    function setOHYDX(address oHYDX_) external onlyOwner {
+        if (oHYDX_ == address(0)) revert ZeroAddress();
+        oHYDX = oHYDX_;
+        emit WiringSet("oHYDX", oHYDX_);
+    }
+
+    /// @notice Re-point `ve` (build phase, §17). onlyOwner (Timelock).
+    function setVe(address ve_) external onlyOwner {
+        if (ve_ == address(0)) revert ZeroAddress();
+        ve = ve_;
+        emit WiringSet("ve", ve_);
+    }
 
     // --------------------------------------------------------------------- the harvest/vote leg (operator-only)
     /// @dev Drive the Safe via the inherited `execAndReturnData` (Operation.Call, value 0) and HARD-REVERT if it

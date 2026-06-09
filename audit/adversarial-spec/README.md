@@ -154,7 +154,9 @@ ticket in the next window. Never carry unfinished state only in conversation con
 - Every "Model from" resolved by inspection/compile.
 - "Done when" self-checkable (a passing unit test) **and** mapped to an `audit/2.md` step / `audit/3-results.md`
   row for the integration layer.
-- Byproduct discarded; `contracts/` back to skeleton.
+- **The built code is KEPT + committed under `contracts/src/...` with its tests** (`forge test` green) — NOT
+  discarded (the old "back to skeleton" rule is retired, see step 4). The code is the proof; every external
+  interface signature + hardcoded address is verified against the live chain.
 
 ## Prerequisite (one-time, repo-wide)
 The `reference/` Euler dep repos' submodules must be initialized (`git submodule update --init` in each) or no

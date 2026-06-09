@@ -7,7 +7,8 @@ things are per-track: the **cold-build equivalent** (the zero-guess proof that r
 Everything else — one-item-per-window, spec-gap-vs-ticket-gap triage, the obligations table, the
 LEDGER digest, "Model from = verified not cited," the superintendent review — transfers 1:1.
 
-Use this only at the **Phase-2 re-scoping checkpoint** (`tickets/PHASE2.md`), never before.
+Use this when authoring the **non-WOOF tracks** (CRE, subgraph, frontend) — the per-track
+cold-build gate that replaces `forge build`/`forge test` for non-Solidity work.
 
 ---
 
@@ -16,13 +17,13 @@ Use this only at the **Phase-2 re-scoping checkpoint** (`tickets/PHASE2.md`), ne
 For WOOF, "cold-build to zero-guess" means: a fresh Claude, given the ticket alone, builds the
 contract + tests and `forge build`/`forge test` pass with **no load-bearing guess** — every
 structural choice, every Model-from resolve, every Done-when assertion is justified by the ticket
-text, then the byproduct is discarded. The equivalent for each other track must preserve the same
-three properties:
+text, then the code is **KEPT + committed** (the old discard rule is retired — see README step 4).
+The equivalent for each other track must preserve the same three properties:
 
 - **Buildable from the ticket alone** (no tribal knowledge, no "ask the author").
 - **Verified against real artifacts** (the reference corpus, and — critically — the *already-filed*
   contract ABIs/interfaces this track binds to), not against prose.
-- **Byproduct discarded** — the ticket is the only keepsake; the build proof is evidence, not product.
+- **Built code KEPT + committed** — the ticket is the intent, the code is the proof; they live together.
 
 A cold-build verdict is **"yes"**, never "yes-with-guesses." If the builder must guess, the gap is
 folded back into the ticket and the build re-run.
@@ -32,8 +33,8 @@ folded back into the ticket and the build re-run.
 ## Per-track gate
 
 ### Solidity tracks — Bridge · M2 loss · sdVAULT contracts
-**Gate: the existing one, verbatim.** `forge build` + `forge test` against live deps; byproduct
-reset to the `.gitkeep` skeleton. No change.
+**Gate: the existing one, verbatim.** `forge build` + `forge test` against live deps; the built code
+is **KEPT + committed** under `contracts/src/...` (not reset to skeleton — retired rule). No other change.
 - **Reference corpus:** `reference/subtensor` + `reference/evm-bittensor` (precompiles), `reference/ccip-starter-kit-foundry` + `reference/chainlink-ccip` (CCT pool), `reference/euler-vault-kit` / `reference/euler-earn` (vault + escrow), OZ.
 - **Critic tier:** cheap-three (junior-developer + spec-fidelity + reference-verifier) **+ qa + security** — these are authority/custody-bearing (bond slashing, CCT mint/burn, vault strike financing).
 - **Note:** the bridge's "Model from" must verify the Subtensor precompile addresses (`0x805` StakingV2, `0x802` Metagraph, `0x800` BalanceTransfer, `0x80c` AddressMapping) against the Rust impl in `reference/subtensor`, exactly as a WOOF ticket verifies an EVK signature.
@@ -55,7 +56,7 @@ reset to the `.gitkeep` skeleton. No change.
 - **Critic tier:** cheap-three **+ security** — the load-bearing rule is **no PII in node-mode
   consensus** (`GetSecret` is DON-Runtime-only); the security critic verifies raw PII never enters
   a consensus observation, only proofs/derived bounds do.
-- **Byproduct discarded:** the built Go module is reset; the ticket is the keepsake.
+- **Built code KEPT + committed:** the Go module is committed alongside the ticket (not reset).
 
 ### Frontend (Inflow — Nuxt/Vue/viem)
 **Cold-build equivalent** (the `INFLOW-06` ticket is the working model):
@@ -72,7 +73,13 @@ reset to the `.gitkeep` skeleton. No change.
 - **Critic tier:** cheap-three **+ frontend-integration**.
 
 ### Subgraph (TS / AssemblyScript manifest)
-**Cold-build equivalent:**
+> **DEFERRED — no subgraph spec exists yet.** §9 (events) and §12 (on-chain NAV model) are *raw material*, NOT a
+> subgraph recipe (no entities, no manifest, no mapping/derivation formulas). This gate is unrunnable until a
+> **subgraph spec pass** (the §8-for-CRE analog) is authored — which happens at the **head of the frontend track,
+> after item 10 freezes the §9 event ABIs**. The subgraph LEADS the frontend (the UI queries its GraphQL schema).
+> The gate below is the *target* once that spec exists; do not author GRAPH-01/02 against §9/§12 alone.
+
+**Cold-build equivalent (once the subgraph spec exists):**
 1. `graph codegen` + `graph build` succeed against a manifest whose event handlers are generated
    from the **real event ABIs** of the filed contracts (§9 event list — `LienCreated`, `Borrow`/
    `Repay`, `Deposited`/`Zapped`, `EpochSettled`, `RegistryPriceSeed`, …). A handler for an event
@@ -106,9 +113,8 @@ weaker by necessity (no live DON to run against in-repo):
   traces to an under-defined mechanism edits `claude-zipcode.md` (and, only as a consequence, the
   spec-derived `audit/*`) before the ticket is written — exactly as the zap pass did for §4.5.
 - **The obligations table is the seam ledger.** Cross-track obligations (CRE↔controller report ABI,
-  Inflow↔contract surface, subgraph↔event signatures) are tracked in `PROGRESS.md` + the cross-track
-  view in `PHASE2.md`, discharged by the receiving ticket, verified by the spec-fidelity critic,
-  confirmed by the superintendent.
+  Inflow↔contract surface, subgraph↔event signatures) are tracked in `PROGRESS.md`, discharged by the
+  receiving ticket, verified by the spec-fidelity critic, confirmed by the superintendent.
 - **One item per window; conclude on disk; STOP.** The builder window stays disposable; the
   superintendent stays persistent and runs the same per-cycle review, now including the cross-track
   seam step.

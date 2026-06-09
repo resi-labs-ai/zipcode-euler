@@ -43,15 +43,18 @@ contract ZipcodeController is ReceiverTemplate {
     uint8 internal constant RT_DEFAULT = 5;
     uint8 internal constant RT_LIQUIDATION = 6;
 
-    // ----- immutables (5-arg ctor; NO EVC) -----
-    /// @notice The venue adapter — every on-chain venue effect goes through this `IZipcodeVenue` seam.
-    address public immutable venue;
-    /// @notice The lien-token factory (the controller is the canonical `create`/`burn` caller, §4.2).
-    address public immutable lienFactory;
-    /// @notice The shared Proof-of-Value registry (the controller is the set-once `seedPrice` caller, §4.2/§4.4).
-    address public immutable oracleRegistry;
-    /// @notice The ONLY legal draw receiver — the Erebor off-ramp (the venue backstops `receiver == erebor`, F2).
-    address public immutable erebor;
+    // ----- cross-component wiring (5-arg ctor; NO EVC) -----
+    // NOTE (2026-06-09, §17): the wiring below is Timelock-settable, NOT immutable — build-phase flexibility so a
+    // redeployed venue/factory/registry/off-ramp is a one-call re-point, not a redeploy cascade. The Timelock is the
+    // owner (via ReceiverTemplate's Ownable). Lock down pre-production.
+    /// @notice The venue adapter — every on-chain venue effect goes through this `IZipcodeVenue` seam. Timelock-settable.
+    address public venue;
+    /// @notice The lien-token factory (the controller is the canonical `create`/`burn` caller, §4.2). Timelock-settable.
+    address public lienFactory;
+    /// @notice The shared Proof-of-Value registry (the controller is the set-once `seedPrice` caller, §4.2/§4.4). Timelock-settable.
+    address public oracleRegistry;
+    /// @notice The ONLY legal draw receiver — the Erebor off-ramp (the venue backstops `receiver == erebor`, F2). Timelock-settable.
+    address public erebor;
 
     /// @notice Per-lien state. `lien` = LIEN_i (collateral token / oracle key); `lineRef` = the opaque venue line
     ///         handle returned by `openLine`. The controller stores no borrowAccount/subId — the per-line borrow
@@ -66,6 +69,7 @@ contract ZipcodeController is ReceiverTemplate {
     mapping(bytes32 => LienRecord) public liens;
 
     // ----- errors (identity/sender/owner reverts reuse ReceiverTemplate/Ownable; no EVC errors) -----
+    error ZeroAddress();
     error LienExists(bytes32 lienId);
     error UnknownLien(bytes32 lienId);
     error PrecomputeMismatch();
@@ -84,6 +88,7 @@ contract ZipcodeController is ReceiverTemplate {
     event LienDrawn(bytes32 indexed lienId, uint256 equityMark, uint256 drawAmount);
     event LienReleased(bytes32 indexed lienId);
     event LienStatusUpdated(bytes32 indexed lienId, uint8 status);
+    event WiringSet(bytes32 indexed slot, address value);
 
     /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`); frozen by deploy renounce.
     /// @param venue_ The `IZipcodeVenue` adapter (every venue effect).
@@ -105,6 +110,36 @@ contract ZipcodeController is ReceiverTemplate {
         lienFactory = lienFactory_;
         oracleRegistry = oracleRegistry_;
         erebor = erebor_;
+    }
+
+    // --- Timelock-settable wiring (build phase, §17) ---
+
+    /// @notice Re-point `venue` (build phase, §17). onlyOwner (Timelock).
+    function setVenue(address venue_) external onlyOwner {
+        if (venue_ == address(0)) revert ZeroAddress();
+        venue = venue_;
+        emit WiringSet("venue", venue_);
+    }
+
+    /// @notice Re-point `lienFactory` (build phase, §17). onlyOwner (Timelock).
+    function setLienFactory(address lienFactory_) external onlyOwner {
+        if (lienFactory_ == address(0)) revert ZeroAddress();
+        lienFactory = lienFactory_;
+        emit WiringSet("lienFactory", lienFactory_);
+    }
+
+    /// @notice Re-point `oracleRegistry` (build phase, §17). onlyOwner (Timelock).
+    function setOracleRegistry(address oracleRegistry_) external onlyOwner {
+        if (oracleRegistry_ == address(0)) revert ZeroAddress();
+        oracleRegistry = oracleRegistry_;
+        emit WiringSet("oracleRegistry", oracleRegistry_);
+    }
+
+    /// @notice Re-point `erebor` (build phase, §17). onlyOwner (Timelock).
+    function setErebor(address erebor_) external onlyOwner {
+        if (erebor_ == address(0)) revert ZeroAddress();
+        erebor = erebor_;
+        emit WiringSet("erebor", erebor_);
     }
 
     /// @notice Struct getter (the public mapping auto-getter returns a tuple, not a struct).

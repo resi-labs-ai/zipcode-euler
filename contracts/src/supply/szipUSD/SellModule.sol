@@ -74,6 +74,8 @@ contract SellModule is Module {
     // --------------------------------------------------------------------- events
     event Sold(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
     event MaxSellHydxSet(uint256 maxSellHydx);
+    /// @notice A Timelock-settable wiring slot was re-pointed (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
@@ -132,6 +134,63 @@ contract SellModule is Module {
         if (newMax == 0) revert ZeroAmount();
         maxSellHydx = newMax;
         emit MaxSellHydxSet(newMax);
+    }
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    // Re-point any cross-component wired address for build-phase flexibility. `onlyOwner` (the Timelock, NOT the hot CRE
+    // operator) so every redirect is a deliberate timelocked act. Numeric/format params (e.g. `maxSellHydx`) are NOT
+    // here — only address wiring. Each rejects address(0) and emits `WiringSet`.
+
+    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in sync since the
+    ///         module is enabled ON the engine Safe and only ever mutates it (`avatar == target == engineSafe`).
+    function setEngineSafe(address engineSafe_) external onlyOwner {
+        if (engineSafe_ == address(0)) revert ZeroAddress();
+        engineSafe = engineSafe_;
+        avatar = engineSafe_;
+        target = engineSafe_;
+        emit WiringSet("engineSafe", engineSafe_);
+    }
+
+    /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
+    function setOperator(address operator_) external onlyOwner {
+        if (operator_ == address(0)) revert ZeroAddress();
+        operator = operator_;
+        emit WiringSet("operator", operator_);
+    }
+
+    /// @notice Re-point `swapRouter` (build phase, §17). onlyOwner (Timelock).
+    function setSwapRouter(address swapRouter_) external onlyOwner {
+        if (swapRouter_ == address(0)) revert ZeroAddress();
+        swapRouter = swapRouter_;
+        emit WiringSet("swapRouter", swapRouter_);
+    }
+
+    /// @notice Re-point `hydx` (build phase, §17). onlyOwner (Timelock).
+    function setHydx(address hydx_) external onlyOwner {
+        if (hydx_ == address(0)) revert ZeroAddress();
+        hydx = hydx_;
+        emit WiringSet("hydx", hydx_);
+    }
+
+    /// @notice Re-point `usdc` (build phase, §17). onlyOwner (Timelock).
+    function setUsdc(address usdc_) external onlyOwner {
+        if (usdc_ == address(0)) revert ZeroAddress();
+        usdc = usdc_;
+        emit WiringSet("usdc", usdc_);
+    }
+
+    /// @notice Re-point `zipUSD` (build phase, §17). onlyOwner (Timelock).
+    function setZipUSD(address zipUSD_) external onlyOwner {
+        if (zipUSD_ == address(0)) revert ZeroAddress();
+        zipUSD = zipUSD_;
+        emit WiringSet("zipUSD", zipUSD_);
+    }
+
+    /// @notice Re-point `xAlpha` (build phase, §17). onlyOwner (Timelock).
+    function setXAlpha(address xAlpha_) external onlyOwner {
+        if (xAlpha_ == address(0)) revert ZeroAddress();
+        xAlpha = xAlpha_;
+        emit WiringSet("xAlpha", xAlpha_);
     }
 
     // --------------------------------------------------------------------- gates

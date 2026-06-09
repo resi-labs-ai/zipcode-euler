@@ -33,18 +33,20 @@ contract WarehouseAdminModule is ReceiverTemplate {
     /// @notice Operation.Call as the IRoles `uint8` operation arg (Zodiac core Operation: 0=Call,1=DelegateCall).
     uint8 private constant OP_CALL = 0;
 
+    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility (redeploy a
+    // Roles instance / safe / pool / repay sink and re-point with one call). Re-freeze to immutable is DEFERRED to pre-prod.
     /// @notice The deployed Zodiac Roles-modifier-v2 instance this adapter forwards through (role member).
-    IRoles public immutable roles;
+    IRoles public roles;
     /// @notice The role key this adapter is `assignRoles`'d to (must be non-zero — zero is the NoMembership sentinel).
-    bytes32 public immutable roleKey;
+    bytes32 public roleKey;
     /// @notice The warehouse Safe — the Roles `avatar`/`target`; the EE-share + USDC custodian.
-    address public immutable safe;
+    address public safe;
     /// @notice The `EulerEarn` pool the warehouse supplies into / redeems from.
-    address public immutable eePool;
+    address public eePool;
     /// @notice USDC (the EE asset; the APPROVE/REPAY token).
-    address public immutable usdc;
+    address public usdc;
     /// @notice The single configured REPAY sink (M1 = the `ZipRedemptionQueue`); pinned in the scope (tree D).
-    address public immutable repaySink;
+    address public repaySink;
 
     /// @notice A zero address constructor arg.
     error ZeroAddress();
@@ -58,6 +60,10 @@ contract WarehouseAdminModule is ReceiverTemplate {
 
     /// @notice A warehouse op was forwarded to the Roles modifier.
     event WarehouseOp(uint8 indexed opType, address to, bytes data);
+    /// @notice A Timelock re-point of a wiring slot (build phase).
+    event WiringSet(bytes32 indexed slot, address value);
+    /// @notice A Timelock re-set of the role key.
+    event RoleKeySet(bytes32 roleKey);
 
     /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`).
     /// @param roles_ The deployed Roles-modifier-v2 instance.
@@ -88,6 +94,49 @@ contract WarehouseAdminModule is ReceiverTemplate {
         eePool = eePool_;
         usdc = usdc_;
         repaySink = repaySink_;
+    }
+
+    // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
+    /// @notice Re-point the Roles-modifier instance. `onlyOwner` (Timelock).
+    function setRoles(address roles_) external onlyOwner {
+        if (roles_ == address(0)) revert ZeroAddress();
+        roles = IRoles(roles_);
+        emit WiringSet("roles", roles_);
+    }
+
+    /// @notice Re-set the assigned role key (must stay non-zero). `onlyOwner` (Timelock).
+    function setRoleKey(bytes32 roleKey_) external onlyOwner {
+        if (roleKey_ == bytes32(0)) revert ZeroRoleKey();
+        roleKey = roleKey_;
+        emit RoleKeySet(roleKey_);
+    }
+
+    /// @notice Re-point the warehouse Safe (Roles avatar/custodian). `onlyOwner` (Timelock).
+    function setSafe(address safe_) external onlyOwner {
+        if (safe_ == address(0)) revert ZeroAddress();
+        safe = safe_;
+        emit WiringSet("safe", safe_);
+    }
+
+    /// @notice Re-point the EulerEarn pool. `onlyOwner` (Timelock).
+    function setEePool(address eePool_) external onlyOwner {
+        if (eePool_ == address(0)) revert ZeroAddress();
+        eePool = eePool_;
+        emit WiringSet("eePool", eePool_);
+    }
+
+    /// @notice Re-point USDC. `onlyOwner` (Timelock).
+    function setUsdc(address usdc_) external onlyOwner {
+        if (usdc_ == address(0)) revert ZeroAddress();
+        usdc = usdc_;
+        emit WiringSet("usdc", usdc_);
+    }
+
+    /// @notice Re-point the REPAY sink. `onlyOwner` (Timelock).
+    function setRepaySink(address repaySink_) external onlyOwner {
+        if (repaySink_ == address(0)) revert ZeroAddress();
+        repaySink = repaySink_;
+        emit WiringSet("repaySink", repaySink_);
     }
 
     /// @notice The §4.4/§8.5 envelope handler. Gated upstream by the immutable-Forwarder check in

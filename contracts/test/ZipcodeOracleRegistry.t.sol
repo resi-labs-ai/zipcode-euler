@@ -148,21 +148,29 @@ contract ZipcodeOracleRegistryTest is Test {
         assertEq(ts, uint48(t1 + 100));
     }
 
-    // --- set-once controller ---------------------------------------------
+    // --- controller re-point (Timelock-settable, §17) --------------------
 
-    function test_SetControllerSetOnce() public {
+    function test_SetControllerRepoint() public {
         vm.expectRevert(
             abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0xBAD))
         );
         vm.prank(address(0xBAD));
         reg.setController(CTRL);
 
+        // zero-address rejected.
+        vm.expectRevert(ZipcodeOracleRegistry.ZeroAddress.selector);
+        reg.setController(address(0));
+
         vm.expectEmit(true, false, false, false);
         emit ControllerSet(CTRL);
         reg.setController(CTRL);
+        assertEq(reg.controller(), CTRL);
 
-        vm.expectRevert(ZipcodeOracleRegistry.ControllerAlreadySet.selector);
+        // §17: a second call RE-POINTS (no set-once freeze) to the new owner-supplied value.
+        vm.expectEmit(true, false, false, false);
+        emit ControllerSet(address(0xDEAD));
         reg.setController(address(0xDEAD));
+        assertEq(reg.controller(), address(0xDEAD));
     }
 
     // --- Revaluation (Forwarder path), garbage metadata ------------------

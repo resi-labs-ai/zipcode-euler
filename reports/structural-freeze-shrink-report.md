@@ -47,8 +47,9 @@ provision-that-recovers). This edit removes a stale *residual framing*, it does 
 - **`LienXAlphaEscrow` → new backlog item 8-Bx, pulled forward** (M1-adjacent): custody half (`lockXAlpha`/
   `releaseXAlpha`) is M1; slash half (`slashXAlphaToCapital`/`slashXAlphaToCohort`, routing xALPHA into the sidecar)
   built + mock-tested now, live in M2. Authorable after the Exit Gate (the sidecar is its slash-target).
-- **`DefaultCoordinator` stays M2**, now the smaller markdown-writer shape (its `SzipNavOracle.writeProvision` seam
-  already exists — `SzipNavOracle` wires it as the set-once bounded provision writer).
+- **`DefaultCoordinator`** — now the smaller markdown-writer shape (its `SzipNavOracle.writeProvision` seam
+  already exists — `SzipNavOracle` wires it as the set-once bounded provision writer). **(Correction: was M2 here;
+  pulled into M1 scope 2026-06-09 when the M1/M2 split collapsed — see PROGRESS.)**
 - **The Exit Gate (NEXT)** owns the free-vs-committed / sidecar accounting and the structural freeze — this edit
   sharpens that scope but does not add to it (§6.4 already specified it).
 

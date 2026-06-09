@@ -11,7 +11,7 @@
 > adapter holds **no custody and enforces no scope itself**. Internal senior plumbing driven by the CRE →
 > **build-only** (no INFLOW ticket). **No bespoke privileged contract is authored** beyond the ~80-line
 > `WarehouseAdminModule`; the scope lives in the audited Roles engine, not in fresh bytecode (decided 2026-06-06,
-> user-ratified; `reports/research/zodiac-warehouse-research.md`).
+> user-ratified).
 >
 > **`EulerEarn` is MOCKED** (it pins solc 0.8.26 ≠ our 0.8.24, the WOOF-04/05 precedent — those tickets mocked
 > EulerEarn and fork-tested the live EVK/EVC). The **novel infra is fork-real**: the deployed Roles-v2 mastercopy +
@@ -154,7 +154,7 @@ One authored contract, two extended/new interfaces, one deploy/wire library, one
 opType bytes / pinned-call table, the post-spec-edit version this window); §4.4 (report envelope `abi.encode(uint8,
 bytes)` `:424-426` + the immutable-Forwarder / `setExpectedWorkflowId` / renounce seam `:358-369`); §4.5
 `ZipDepositModule` (the zap deposits with the **warehouse Safe as the EE-share `receiver`**, `:537-545`); §6.1/§8.3
-senior queue (draws via REDEEM→REPAY); §11/§4.6 recovery (via REPAY). `reports/design/baal-spec.md §11` (8-Bw build-grade companion)
+senior queue (draws via REDEEM→REPAY); §11/§4.6 recovery (via REPAY). `reports/baal-spec.md §11` (8-Bw build-grade companion)
 + §13 (build order). **No §17 decision reopened** (CRE-permissioned single writer; senior/junior Safes never
 conflated; venue-agnostic; no on-chain economic liquidation; Roles-v2-over-bespoke; GOD-EOA→multisig owner).
 

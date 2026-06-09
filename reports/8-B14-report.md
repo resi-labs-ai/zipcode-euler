@@ -18,7 +18,7 @@ Gate's `manager(2)`). This is the **first engine Zodiac Module**, so it sets the
 4. Cold-built from the ticket alone (fresh subagent): zero load-bearing guesses; 33/33 fork tests; 238/238 total.
 
 ## Authoritative-doc edits (spec gaps fixed FIRST)
-All three in **`reports/design/baal-spec.md §7.2 / §7.4`** (the build-grade companion; `claude-zipcode §4.5.1` only says "below NAV"
+All three in **`reports/baal-spec.md §7.2 / §7.4`** (the build-grade companion; `claude-zipcode §4.5.1` only says "below NAV"
 generically, no contradiction, untouched):
 1. **Price reference = `navExit = min(spot, twap) × (1 − d)`**, NOT bare `twapNAV`. *Why:* the protocol is a **buyer**
    here — it must mark at the *lower* of spot/twap or it overpays off a stale-high twap when NAV is trending down

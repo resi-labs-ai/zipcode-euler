@@ -12,6 +12,7 @@ import {IEVC} from "evc/interfaces/IEthereumVaultConnector.sol";
 import {IEulerEarn, MarketAllocation} from "euler-earn/interfaces/IEulerEarn.sol";
 import {IERC4626 as IOZERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title EulerVenueAdapter
 /// @notice Config one (§4.7 #10): a per-line isolated-market FACTORY. For each credit line it mints + aligns, in one
@@ -21,32 +22,35 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         the lien token. Holds the per-line market governor role + each line's EVC operator bit (granted by the
 ///         line's own `LineAccount` at origination). Modeled inline on the verified `EdgeFactory.deploy()` (NOT
 ///         imported — evk-periphery is un-remapped).
-contract EulerVenueAdapter is IZipcodeVenue {
+contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     // ----- EVK op bitmask constants (§3 line 133) -----
     uint32 internal constant OP_BORROW = 1 << 6;
     uint32 internal constant OP_LIQUIDATE = 1 << 11;
 
-    // ----- immutables (constructor-wired; §9/item 10 grants roles separately) -----
+    // ----- wiring (constructor-seeded; §9/item 10 grants roles separately) -----
+    // NOTE (build phase, §17 2026-06-09): every cross-component / external-infra address below is plain MUTABLE
+    // storage (not immutable) and re-pointable by the owner (Timelock) via the `setX` setters grouped under
+    // "Timelock-settable wiring" — addresses will change during the build. No numeric constant is mutable.
     /// @notice The sole authority that may call the mutating venue methods.
-    address public immutable controller;
+    address public controller;
     /// @notice The Ethereum Vault Connector.
-    IEVC public immutable evc;
+    IEVC public evc;
     /// @notice The EulerEarn pool the lines fund out of (allocator + curator role held by this adapter).
-    IEulerEarn public immutable eulerEarn;
+    IEulerEarn public eulerEarn;
     /// @notice The EVK GenericFactory used to mint per-line vaults (caller becomes vault governor via initialize).
-    GenericFactory public immutable eVaultFactory;
+    GenericFactory public eVaultFactory;
     /// @notice The shared `ZipcodeOracleRegistry` — each line's price source, keyed on the lien token.
-    address public immutable oracleRegistry;
+    address public oracleRegistry;
     /// @notice The `CREGatingHook` installed on every borrow vault at OP_BORROW | OP_LIQUIDATE.
-    address public immutable gatingHook;
+    address public gatingHook;
     /// @notice The interest rate model installed on every borrow vault.
-    address public immutable irm;
+    address public irm;
     /// @notice The USDC token (borrow asset + unit-of-account, prices 1:1 with no feed).
-    address public immutable usdc;
+    address public usdc;
     /// @notice The ONLY legal draw receiver (the Erebor off-ramp, §4.4a/§9).
-    address public immutable erebor;
+    address public erebor;
     /// @notice The no-borrow base USDC market at the EE supply-queue head that `fund` withdraws from.
-    address public immutable baseUsdcMarket;
+    address public baseUsdcMarket;
 
     /// @notice Per-line record. `lineRef` = the borrow vault address.
     struct Line {
@@ -70,6 +74,11 @@ contract EulerVenueAdapter is IZipcodeVenue {
     error BadReceiver();
     error ZeroCap();
     error InvalidCollateralAmount();
+    error ZeroAddress();
+
+    // ----- events -----
+    /// @notice Emitted when an owner (Timelock) re-points a wiring slot (build phase, §17).
+    event WiringSet(bytes32 indexed slot, address value);
 
     modifier onlyController() {
         if (msg.sender != controller) revert NotController();
@@ -87,7 +96,7 @@ contract EulerVenueAdapter is IZipcodeVenue {
         address usdc_,
         address erebor_,
         address baseUsdcMarket_
-    ) {
+    ) Ownable(msg.sender) {
         controller = controller_;
         evc = IEVC(evc_);
         eulerEarn = IEulerEarn(eulerEarn_);
@@ -98,6 +107,78 @@ contract EulerVenueAdapter is IZipcodeVenue {
         usdc = usdc_;
         erebor = erebor_;
         baseUsdcMarket = baseUsdcMarket_;
+    }
+
+    // --- Timelock-settable wiring (build phase, §17) ---
+
+    /// @notice Re-point `controller` (build phase, §17). onlyOwner (Timelock).
+    function setController(address controller_) external onlyOwner {
+        if (controller_ == address(0)) revert ZeroAddress();
+        controller = controller_;
+        emit WiringSet("controller", controller_);
+    }
+
+    /// @notice Re-point `evc` (build phase, §17). onlyOwner (Timelock).
+    function setEvc(address evc_) external onlyOwner {
+        if (evc_ == address(0)) revert ZeroAddress();
+        evc = IEVC(evc_);
+        emit WiringSet("evc", evc_);
+    }
+
+    /// @notice Re-point `eulerEarn` (build phase, §17). onlyOwner (Timelock).
+    function setEulerEarn(address eulerEarn_) external onlyOwner {
+        if (eulerEarn_ == address(0)) revert ZeroAddress();
+        eulerEarn = IEulerEarn(eulerEarn_);
+        emit WiringSet("eulerEarn", eulerEarn_);
+    }
+
+    /// @notice Re-point `eVaultFactory` (build phase, §17). onlyOwner (Timelock).
+    function setEVaultFactory(address eVaultFactory_) external onlyOwner {
+        if (eVaultFactory_ == address(0)) revert ZeroAddress();
+        eVaultFactory = GenericFactory(eVaultFactory_);
+        emit WiringSet("eVaultFactory", eVaultFactory_);
+    }
+
+    /// @notice Re-point `oracleRegistry` (build phase, §17). onlyOwner (Timelock).
+    function setOracleRegistry(address oracleRegistry_) external onlyOwner {
+        if (oracleRegistry_ == address(0)) revert ZeroAddress();
+        oracleRegistry = oracleRegistry_;
+        emit WiringSet("oracleRegistry", oracleRegistry_);
+    }
+
+    /// @notice Re-point `gatingHook` (build phase, §17). onlyOwner (Timelock).
+    function setGatingHook(address gatingHook_) external onlyOwner {
+        if (gatingHook_ == address(0)) revert ZeroAddress();
+        gatingHook = gatingHook_;
+        emit WiringSet("gatingHook", gatingHook_);
+    }
+
+    /// @notice Re-point `irm` (build phase, §17). onlyOwner (Timelock).
+    function setIrm(address irm_) external onlyOwner {
+        if (irm_ == address(0)) revert ZeroAddress();
+        irm = irm_;
+        emit WiringSet("irm", irm_);
+    }
+
+    /// @notice Re-point `usdc` (build phase, §17). onlyOwner (Timelock).
+    function setUsdc(address usdc_) external onlyOwner {
+        if (usdc_ == address(0)) revert ZeroAddress();
+        usdc = usdc_;
+        emit WiringSet("usdc", usdc_);
+    }
+
+    /// @notice Re-point `erebor` (build phase, §17). onlyOwner (Timelock).
+    function setErebor(address erebor_) external onlyOwner {
+        if (erebor_ == address(0)) revert ZeroAddress();
+        erebor = erebor_;
+        emit WiringSet("erebor", erebor_);
+    }
+
+    /// @notice Re-point `baseUsdcMarket` (build phase, §17). onlyOwner (Timelock).
+    function setBaseUsdcMarket(address baseUsdcMarket_) external onlyOwner {
+        if (baseUsdcMarket_ == address(0)) revert ZeroAddress();
+        baseUsdcMarket = baseUsdcMarket_;
+        emit WiringSet("baseUsdcMarket", baseUsdcMarket_);
     }
 
     /// @notice Struct getter (a public mapping of a struct returns a tuple, not the struct).

@@ -97,11 +97,11 @@ contract ZipDepositModule is ReentrancyGuard {
     }
 
     // --------------------------------------------------------------------- set-once wiring (the Exit Gate seam)
-    /// @notice Wire the Exit Gate (deployed after this module). Deployer-gated, set-once, grants NO standing allowance
-    ///         (D1 — the zap approves the Gate exact-amount per call). After this the module has no admin surface.
+    /// @notice Wire/re-point the Exit Gate. Deployer(admin)-gated, re-settable (build phase, §17 — so the zap
+    ///         survives a Gate redeploy), grants NO standing allowance (D1 — the zap approves the Gate exact-amount
+    ///         per call). Re-freezing to set-once is DEFERRED to pre-prod.
     function setGate(address gate_) external {
         if (msg.sender != deployer) revert NotDeployer();
-        if (gate != address(0)) revert AlreadyWired();
         if (gate_ == address(0)) revert ZeroAddress();
         gate = gate_;
         emit GateWired(gate_);
