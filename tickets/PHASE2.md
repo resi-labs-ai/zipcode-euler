@@ -70,13 +70,16 @@ file → superintendent review, with composable integrity held by the cross-tick
 Each stub is a placeholder to be promoted to a real ticket via the harness + the per-track gate in
 `track-gates.md`. A track is not authorable until its gate clears.
 
-### CRE — off-chain robot (gated: run `spec-clear-CRE.md` first, then DEC-01)
-- `CRE-00` project/secrets scaffold
-- `CRE-01` origination/underwriting workflow (§8.1)
-- `CRE-02` redemption-settle `cron` (§8.3)
-- `CRE-03` xALPHA-APR feed (§7 / `bridge/xALPHA-apr.md`)
-→ **~4** (blocked until `spec-clear-CRE.md` raises §8 to the producer-spec level matching every on-chain
-report surface — incl. the warehouse opTypes + the Exit-Gate/shaman ops — and DEC-01 clears)
+### CRE — off-chain robot (**§8 spec gate CLEARED 2026-06-09**; CRE-01 live build still gated on DEC-01)
+`spec-clear-CRE.md` raised §8 to the producer level (`claude-zipcode.md §8.0…§8.11`; `reports/design/CRE-spec-report.md`).
+Stubs updated to the §8.0 surface + the two new tracks:
+- `CRE-00` project/secrets scaffold (§8 intro / scaffolding note)
+- `CRE-01` origination / draw / close / status → controller + revaluation (sharded) → registry + default/recovery → `DefaultCoordinator` (§8.1/§8.4) — **gated on DEC-01** (§8.9; builds against mock Proof until then)
+- `CRE-02` redemption-settle `cron` + warehouse REDEEM funding call (§8.3/§8.5)
+- `CRE-03` szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle`, `LP_MARK`(7)→`SzipReservoirLpOracle` — + xALPHA-APR feed (§8.6/§8.8)
+- `CRE-04` (new) senior-warehouse SUPPLY/APPROVE/REPAY via the Roles adapter (§8.5) — **must reconcile the 8-Bw `WarehouseAdminModule` decode before finalizing**
+- `CRE-05` (new) engine strategy-admin **operator** orchestrator (§8.7 — the operator path, drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation)
+→ **~6** (the §8 producer gate is cleared; CRE-01's *live* origination still waits on DEC-01, CRE-04 on the 8-Bw build)
 
 ### Subnet — Bittensor (gated: DEC-01; sketch-level, no spec pull scheduled)
 - `SUBNET-01` validator/miner container scaffold (§7)
@@ -117,8 +120,8 @@ obligations live in `PROGRESS.md`, not here.)
 
 | Obligation | From | Discharged by | Status |
 |---|---|---|---|
-| Report ABI `abi.encode(uint8 reportType, bytes payload)` per §4.4 table (1/2/4/5/6→controller, 3→registry) | WOOF-05 | `CRE-01` | OPEN |
-| Revaluation report sharded by gas-bounded batch count, no malformed/dup entry (atomic batch) | WOOF-02 | `CRE-01` | OPEN |
+| Report ABI `abi.encode(uint8 reportType, bytes payload)` per §4.4 table (1/2/4/5/6→controller, 3→registry) | WOOF-05 | `CRE-01` | **DISCHARGED-IN-SPEC** (CRE §8.0 per-`(receiver,reportType)` table, 2026-06-09; build = CRE-01) |
+| Revaluation report sharded by gas-bounded batch count, no malformed/dup entry (atomic batch) | WOOF-02 | `CRE-01` | **DISCHARGED-IN-SPEC** (CRE §8.1 sharding rule, 2026-06-09; build = CRE-01) |
 
 No stub may reopen a locked §17 decision (event-driven Proof, fresh-per-line borrower model, yield-routing =
 protocol's, the zipUSD/szipUSD/xALPHA token model, venue-agnosticism, immutable-Forwarder-via-renounce, and the

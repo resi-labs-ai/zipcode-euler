@@ -62,20 +62,56 @@ to pin before collateral moves from **mocked → real**:
 - the **Proof-of-Insurance** policy terms (what is covered, by whom, claim timing — itself a duration leg);
 - the per-jurisdiction **Proof schema** and the CRE integration of each Proof endpoint.
 This is off-chain/legal + integration work, not a Solidity blocker; `claude-zipcode.md` §15
-proof-of-operations runs on mocked Proof inputs until the integrations land.
+proof-of-operations runs on mocked Proof inputs until the integrations land. **(These items are formalized as
+the DEC-01 clearance checklist in §6.1 — that is the authoritative gate.)**
 
 ## 6. Open risks to address (surfaced in the design review — not yet closed)
 These are the load-bearing assumptions the design *names but has not verified*. They are off-chain/real-world
 risks, and any of them could reshape the protocol if reality says no. Ordered by stakes.
 
-### 6.1 Proof — verify the capability is actually real
-We assert a notarization service ("Proof") can attest, **per lien**, in a form a CRE/zkTLS workflow can
-consume: (a) the lien exists + its recording position, (b) **we own / have valid claim** to it, (c) the
-**appraised value** (the origination appraisal), and (d) an **insurance policy covers it**. *We have not
-confirmed Proof can deliver all four.* The entire collateral premise rests on it.
-- **To do:** obtain Proof's actual API spec; confirm each attestation is producible as a per-lien, signed
-  response zkTLS can prove over; identify which it *cannot* do and the fallback source for that field (e.g.
-  value from a different appraisal feed, insurance from the carrier directly).
+### 6.1 DEC-01 — the Proof capability gate (the one external dependency the off-chain half rests on)
+**Status: UNCONFIRMED.** We *assert* a notarization service ("Proof") can attest the collateral facts; we
+have **not** confirmed it can. DEC-01 is that confirmation. It gates three tracks — **CRE** (live origination,
+`claude-zipcode.md §8.9`), the **subnet** (Proof-family fetch + zk-verify, §8.10), and **M2-loss** (recovery
+oracles) — and until it clears, all three build against **mock Proof inputs** (the contracts already test
+against mock reports, so this is not a Solidity blocker; `claude-zipcode.md §15` runs on mocks).
+
+**The binding constraint — "CRE-consumable form."** It is not enough that Proof *knows* a fact; the CRE
+workflow must be able to fetch it in a way the DON can agree on. Per `claude-zipcode.md §8.1`, each attestation
+must be:
+- **Per-lien** — a discrete response keyed to one lien, not a portfolio score.
+- **zkTLS-provable** — fetched in node mode (`http.Client.SendRequest`) and verified at the subnet/node layer
+  (Reclaim/EigenLayer or subnet-native), so raw PII never enters consensus; only the proof / derived bound does
+  (`runtime.GetSecret` is DON-only).
+- **Identical-consensus-able** — because the value is a notarized *fact* (one appraisal), the DON aggregates
+  with `ConsensusIdenticalAggregation` (`reference/cre-sdk-go/cre/consensus_aggregators.go:33`), **not** a
+  median. Every node must fetch the **same bytes** — so Proof's response must be **deterministic and signed**, not
+  a freshly-timestamped or non-reproducible payload. A fuzzy/streaming/clock-stamped API breaks identical
+  consensus and would force a redesign of the aggregation model.
+
+**The attestation family — what each is, how CRE consumes it, where it surfaces, and the fallback if Proof can't.**
+
+| Attestation | Asserts | CRE form | On-chain surface (`§8.0`) | Status | Fallback if Proof can't |
+|---|---|---|---|---|---|
+| **Proof of Lien** | lien exists + recorded position + SPV owns/has valid claim | identical-consensus **boolean gate** | precondition only; `proofRef` commitment in origination/draw (types 1/2). No gate → no report → no mint | UNCONFIRMED | a different recorder/title feed per jurisdiction; without it there is **no mint path** (hard block, no graceful degrade) |
+| **Proof of Value** | the institution-grade origination appraisal (home value − senior debt) | identical-consensus **value** → `equityMark` | `equityMark` in types 1/2 + revaluation type 3 (→registry, §8.1) | UNCONFIRMED | a separate appraisal/AVM feed surfaced through the same identical-consensus path; the conservatism then lives in the LTV gap (§4.2), not the mark |
+| **Proof of Insurance** | a policy covers the position | identical-consensus **boolean gate** + a coverage figure | precondition at origination; coverage figure at recovery feeds the §11 waterfall | UNCONFIRMED + **no product** (see §6.2) | direct-from-carrier attestation — but the product itself may not exist; if so, re-decide the backstop stack (§6.2) |
+| **Recovery milestones** (M2) | default status + foreclosure/force-sale proceeds | DON-signed status/recovery report | type 5/6 → controller; `recoveryProceeds` → `DefaultCoordinator` (M2) | UNCONFIRMED | manual/oracle-attested recovery receipts via Erebor; gates M2-loss only, not M1 origination |
+
+**The DEC-01 clearance checklist (what concretely closes the gate):**
+1. Obtain Proof's **actual API spec**; confirm each row above is producible as a **per-lien, signed,
+   deterministic, zkTLS-provable** response (the identical-consensus bar above).
+2. For each field Proof **cannot** do, pin the named fallback feed (column 6) and confirm it meets the same bar.
+3. Resolve the **insurance product** question (§6.2) — or re-decide the backstop ordering if no product exists.
+4. Pin the **SPV / custody partner** and the on-chain↔legal handoff: mint authorization tied to Proof of Lien;
+   release/`burn` tied to a **verifiable SPV release** (§3, `claude-zipcode.md §4.4c`).
+5. Author the **per-jurisdiction Proof schema** + the **CRE integration of each endpoint** (the per-endpoint
+   fetch/zk-verify/aggregate wiring that becomes part of CRE-01 / the subnet track).
+
+**What DEC-01 does NOT remove (residual trust, even when cleared):** (a) Proof's own notarization integrity
+(shrunk to a notarization-service trust, not eliminated); (b) the **SPV's legal execution on recovery**
+(irreducibly trusted, mitigated only by **secondaries-first** originator selection, §5/§4). These are noted, not
+closed by DEC-01.
 
 ### 6.2 Insurance — no carrier, no product, no terms
 We made **off-chain insurance the PRIMARY capital backstop for the senior** (junior → insurance → xALPHA). But

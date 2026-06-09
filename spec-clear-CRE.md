@@ -1,5 +1,34 @@
 # spec-clear-CRE.md — §8 CRE workflow spec (the off-chain robot)
 
+> ## HANDOFF — read before you start (superintendent, 2026-06-09)
+> **You can start now; this runs CONCURRENTLY with the 8-Bw `CreditWarehouse` build.** It's a spec window (edits
+> `claude-zipcode.md §8` only — no `contracts/`), so it cannot collide with the 8-Bw agent. Current state + the
+> three things this plan does NOT yet reflect:
+>
+> 1. **The engine's on-chain contracts are DONE** — 8-B1 substrate, `SzipNavOracle`, Exit Gate + szipUSD, the
+>    WOOF-06 zap, **8-B5…8-B10**, 8-B14. The full suite is **401/401 green** (committed: branch
+>    `snapshot/recycle-rework`). So every report surface you spec a producer for already exists on-chain to read.
+>
+> 2. **8-B10 was reworked to a SINGLE recycle sink (2026-06-08/09) — the engine report surface SHRANK. The plan body
+>    below is stale on this; trust `claude-zipcode.md §4.5.1` (now recycle-only).** 8-B10 is now `RecycleModule`:
+>    `creditFreeValue(net)` + `recycle(usdc)` only. **DELETE from your §8 scope:** the Mode-A USDC payout workflow,
+>    the Mode-B xALPHA boost distribution, the **`SzipRewardsDistributor` Merkle-root-posting / per-holder-allocation
+>    workflow** (that contract was DELETED — no distributor exists), and the **8-B13 `compound` workflow** (8-B13 was
+>    REMOVED — absorbed into 8-B10). The engine-ops workflow is just: sell (8-B9) → repay (8-B5) →
+>    `creditFreeValue(max(0,realized−borrowRepaid))` → `recycle(usdc)` → 8-B6 single-side LP. Depositor return is
+>    **NAV accretion**, so there is **no holder-payout producer** to spec.
+>
+> 3. **The warehouse opTypes (SUPPLY/REDEEM/REPAY) are being defined RIGHT NOW by the concurrent 8-Bw agent.** Do
+>    NOT independently invent the warehouse report envelope. **Spec the settled surfaces first** — the §4.4 controller
+>    types (1/2/4/5/6 + 3→registry), the engine `LP_MARK` reportType (see below), the szipUSD Gate/oracle ops — then
+>    **reconcile the warehouse op-set against the 8-Bw build output** (its `WarehouseAdminModule` + the
+>    `reports/8-Bw-report.md` it will write) before finalizing. Coordinate; don't duplicate.
+>
+> **Must-discharge this window (logged CRE-track obligations):** register **`LP_MARK`** as its own reportType in the
+> §8 ABI (8-B5 pinned the placeholder `7` in `SzipReservoirLpOracle`, distinct from the registry's `REVALUATION=3`,
+> fail-closed on staleness — ratify it); the WOOF-05 report-ABI envelope per-type table; the WOOF-02 gas-bounded
+> revaluation sharding. Conclude with `reports/design/CRE-spec-report.md` + a `tickets/PROGRESS.md` update, then STOP.
+
 **What this is.** A SPEC-EDIT window (like Phase 8-S): no `tickets/`, no `contracts/`, no cold-build. You edit
 `claude-zipcode.md` §8 (+ `bridge/xALPHA-apr.md` if touched). **Run it in a FRESH context.** Output = §8 raised
 to the level where the **CRE-00…CRE-03 build tickets** (the Go workflows) are authorable, with every on-chain

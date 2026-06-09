@@ -39,7 +39,7 @@ backed-mint is proven both fork-free (against a real `ESynth`) and on a Base for
    `auto-sodomizer.md §6/§8/§11` / the §3 `RewardsDistributor` reference. Verified the dependency signatures
    (`SellModule._exec`, `ZipDepositModule.deposit`, the reference distributor leaf, OZ/zodiac paths).
 2. **Fixed 2 §4.5.1 spec-gaps FIRST** (triage order). See "Spec edits".
-3. **Drafted** `tickets/sodo/8-B10-recycle-payout.md`.
+3. **Drafted** `tickets/sodo/8-B10-recycle.md` (reconciled 2026-06-08 to the as-built single-sink recipe; originally drafted as `8-B10-recycle-payout.md`).
 4. **Fanned out 5 critics** (junior-developer, spec-fidelity, reference-verifier, qa-engineer, security-engineer — the
    full set; foundational module owning the engine accumulator + a net-new distributor).
 5. **Synthesized + triaged:** spec-fidelity found **zero** spec/ticket gaps of substance + confirmed both fixes correct

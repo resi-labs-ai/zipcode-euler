@@ -6,6 +6,20 @@ pragma solidity 0.8.24;
 /// Only the methods Zipcode calls are declared. Signatures matched to the
 /// Basescan-verified SafeL2 ABI (operation is the Safe Enum.Operation: 0=call,1=delegatecall).
 interface ISafe {
+    /// @notice The Safe initializer (SafeL2 1.4.1). Signature matched to the Basescan-verified ABI.
+    /// @dev Passed as the `initializer` to `ISafeProxyFactory.createProxyWithNonce`; the proxy delegatecalls
+    ///      it into the singleton at construction (owners/threshold/module-set/fallback all set atomically).
+    function setup(
+        address[] calldata owners,
+        uint256 threshold,
+        address to,
+        bytes calldata data,
+        address fallbackHandler,
+        address paymentToken,
+        uint256 payment,
+        address payable paymentReceiver
+    ) external;
+
     function enableModule(address module) external;
 
     function isModuleEnabled(address module) external view returns (bool);

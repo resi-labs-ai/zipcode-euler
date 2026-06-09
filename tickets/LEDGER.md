@@ -859,8 +859,36 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   funding-precedes-claim + the NAV-XOR-accumulator + the CRE net-computation obligations. **45/45 (22 unit + 3
   integrated-no-fork against a REAL ZipDepositModule/ESynth + 2 Base-fork against a REAL summoned Safe + 18 distributor),
   427/427 total, ZERO load-bearing guesses.** Code `contracts/src/supply/szipUSD/{RecyclePayoutModule,SzipRewardsDistributor}.sol`
-  + `contracts/test/{RecyclePayoutModule,SzipRewardsDistributor}.t.sol`. `tickets/sodo/8-B10-recycle-payout.md`;
+  + `contracts/test/{RecyclePayoutModule,SzipRewardsDistributor}.t.sol`. `tickets/sodo/8-B10-recycle.md`;
   `reports/8-B10-report.md`. NEXT engine contract = 8-B13 (Mode C compounder; deps 8-B6+8-B10 done).
+- **8-Bw · `CreditWarehouse` + `WarehouseAdminModule` (§4.5/§8.5/§11, `baal-spec §11`) — BUILT-VERIFIED + KEPT
+  2026-06-09.** The **SENIOR** custody: a plain **Gnosis Safe** holds the `EulerEarn` shares backing all zipUSD float
+  (the "protocol's holding"); a deployed **Zodiac Roles-modifier-v2** (`enableModule`'d on the Safe) is the audited
+  access-control engine; and the authored **`WarehouseAdminModule is ReceiverTemplate`** (the SOLE Roles role member,
+  `assignRoles`'d — NOT an enabled Module) decodes the §8.5 envelope `(uint8 opType, bytes payload)` → one of 4 scoped
+  ops → `Roles.execTransactionWithRole(to, 0, data, Call, roleKey, true)`. **Locked shape:** the **scope IS the security
+  boundary** (params pinned `EqualToAvatar`/`EqualTo`, Call-only `ExecutionOptions.None`) — the adapter holds no custody
+  and enforces no scope; it injects receiver/spender/owner (belt-and-suspenders) and passes only REPAY's `to` through
+  (scope-guarded). Op-set: SUPPLY=1 `deposit(amount, Safe)`, APPROVE=2 `approve(EE_POOL, amount)`, REDEEM=3
+  `redeem(shares, Safe, Safe)`, REPAY=4 `transfer(repaySink, amount)`. **EulerEarn MOCKED** (solc 0.8.26, WOOF-04/05
+  precedent); the **real Roles mastercopy `0x9646…D337` + ModuleProxyFactory + Safe factory/singleton + USDC** are
+  live-fork. **Holes surfaced → resolution:** the 3 §4.5/§8.5 "open items" RESOLVED + folded to spec (redeem owner-3rd;
+  redeemed USDC→Safe-then-REPAY; APPROVE scope-free + CRE exact-amount; `LOANBOOK`→pinned `repaySink`; opType bytes);
+  `ISafe.setup` was ABSENT (added); `IRoles` lacked `scopeFunction`+`ConditionFlat` (extended); the 4 `ConditionFlat[]`
+  trees pass `Integrity.enforce` as authored. **2 build-discovered on-chain corrections** (deployed mastercopy newer
+  than the vendored ref): non-member → `NotAuthorized` (the `moduleOnly` gate fires before `NoMembership`), non-owner →
+  `OwnableUnauthorizedAccount` (zodiac-core OZ-5 custom error, not an OZ-4 string); + the deployer is the **transient**
+  Safe/Roles owner during wiring then hands off to GOD-EOA. **Cross-ticket:** *inbound* — the §4.5 open-items DISCHARGED
+  (folded to spec); the 8-B5 "reservoir vault = warehouse resting vault" row ROUTED to item-10 (it is EE
+  curator/allocator config, not an adapter op). *Created* — the item-10 audit sweep; the item-10/8-B11 seal +
+  drain-defense (HIGH: `repaySink` SPOF must be immutable; `WithinAllowance`/Delay Modifier elevated to recommended;
+  exact-amount APPROVE; don't-fund-before-sealed; distinct workflowId; non-commingling asserts); the item-9 REDEEM/REPAY
+  seam; the CRE-04 envelope reconcile. **23/23 on a live Base fork, 424/424 total, ZERO load-bearing guesses.** Code
+  `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol` + `contracts/script/CreditWarehouseDeployer.sol` +
+  `contracts/test/WarehouseAdminModule.t.sol` + `contracts/test/mocks/MockEulerEarn.sol` + NEW
+  `src/interfaces/euler/IEulerEarn.sol` + EXTENDED `src/interfaces/zodiac/IRoles.sol`/`src/interfaces/safe/ISafe.sol`.
+  `tickets/sodo/8-Bw-credit-warehouse.md`; `reports/8-Bw-report.md`. Run `forge test --fork-url $BASE_RPC_URL
+  --match-contract WarehouseAdminModule` — green, run it yourself.
 - **9 · `ZipRedemptionQueue` (§4.5/§6.1)** — senior par redemption: 30-day epoch queue, pro-rata, no mid-epoch cancel.
 - **10 · Deploy + wiring script (§9)** — vanilla Euler/OZ/CRE config; covers audit/2.md S1–S12 (deploys + installs
   the hook, wires + freezes each per-line `ROUTER_i` inside `openLine` [no shared router / no `govSetFallbackOracle`],

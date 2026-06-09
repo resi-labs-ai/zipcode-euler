@@ -1054,7 +1054,7 @@ decision.
 | **Exit Gate + szipUSD** | §4/§5 — Loot custody, manager(2) mint/burn, szipUSD ERC20, sole RQ, queue+windows, paired burn | NET-NEW |
 | 8-B5…8-B10 | engine modules — strike loop / LP-stake / harvest-vote / exercise / sell / recycle (§10.8, per-module); 8-B11 CRE-op + 8-B12 monitor are off-chain. **8-B13 REMOVED** (absorbed into 8-B10) | **SPEC CLOSED** |
 | **8-B14** | haircut buy-and-burn (§7) | NET-NEW, **in scope** |
-| 8-Bw | CreditWarehouse + Roles (§11) | spec'd, TODO |
+| 8-Bw | CreditWarehouse + Roles (§11) | **BUILT-VERIFIED 2026-06-09** (`WarehouseAdminModule` is ReceiverTemplate Roles-v2 member; 23/23 fork, 424/424 total; `tickets/sodo/8-Bw-credit-warehouse.md`) |
 | DefaultCoordinator / LienXAlphaEscrow / **Foreclosure Proof oracle(s)** | loss side (§9) — bounded markdown + recovery waterfall + foreclosure-milestone attestation | spec'd (M2), TODO |
 | ZipRedemptionQueue | senior queue (§12) | spec'd, TODO |
 | WOOF-06 / INFLOW-06 | deposit zap + interface (§15) | **RE-AUTHOR** |

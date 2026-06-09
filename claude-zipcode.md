@@ -143,7 +143,7 @@ governed knob (§6.4). *(Supersedes the 2026-06-06 soulbound-claim / withhold-no
 | **Signed-report oracle pattern** | `RedstoneCoreOracle` — state-changing `updatePrice() (:78)` caches `{price, timestamp}`; view `_getQuote` reads cache + enforces `maxStaleness`. We adopt the cache→stale-checked-view *pattern* but set a home-appropriate validity window, **not** its 5-min `MAX_STALENESS_UPPER_BOUND (:24)` (§4.1/§7) | `reference/euler-price-oracle/src/adapter/redstone/RedstoneCoreOracle.sol` |
 | Connector | `EVC :: setAccountOperator (:364) / setOperator (:343) / call (:553) / batch(BatchItem{target,onBehalfOfAccount,value,data}) (:600) / getCurrentOnBehalfOfAccount (:206)`; single-controller + `checkAccountStatus` | `reference/ethereum-vault-connector/src/EthereumVaultConnector.sol` |
 | CRE inbound | `ReceiverTemplate :: onReport(metadata, report) (:78) → _processReport (:119)`; `_decodeMetadata → (workflowId, workflowName, workflowOwner)`; gated on the **immutable** CRE Forwarder (`s_forwarderAddress` set once at construction `:48` — we drop the setter; a zero address makes `onReport` permissionless `:82-85`) | `reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol` |
-| Data Streams (optional transport) | `VerifierProxy :: verify` (state-changing, charges LINK/native fee via `FeeManager`), RWA report v4/v8. Not required: the regional HPI bound arrives as a CRE HTTP input (§4.1/§8.5), not via DS | `reference/chainlink-evm/contracts/src/v0.8/llo-feeds/v0.5.1/VerifierProxy.sol` |
+| Data Streams (optional transport) | `VerifierProxy :: verify` (state-changing, charges LINK/native fee via `FeeManager`), RWA report v4/v8. Not required: the regional HPI bound arrives as a CRE HTTP input (§4.1/§8.10), not via DS | `reference/chainlink-evm/contracts/src/v0.8/llo-feeds/v0.5.1/VerifierProxy.sol` |
 | IRM | set via `setInterestRateModel`. **Uses a flat/fixed rate** — `IRMLinearKink(baseRate, 0, 0, kink)` (`baseRate` immutable line 14; the two slope args 0 → constant APR; constructor line 22 — a negotiated credit-line rate, not utilization-floating) | `reference/euler-vault-kit/src/InterestRateModels/IRMLinearKink.sol`, `reference/evk-periphery/src` (IRM) |
 | Async redeem base | `BaseERC7540 is ERC4626, Owned, IERC7540Operator` (`:12`, `setOperator :34`), `ControlledAsyncRedeem` (`requestRedeem :39`, `fulfillRedeem onlyOwner :65`, pending/claimable `:22-32`) | `reference/erc7540-reference/src/{BaseERC7540,ControlledAsyncRedeem}.sol` (**MIT — fork**) |
 | Epoch + pro-rata (concept) | `MapleWithdrawalManager :: getRedeemableAmounts` (`:367-387`, `redeemable = locked × available/totalRequested`), carry-forward (`:262-271`) | `reference/maple-withdrawal-manager/contracts/MapleWithdrawalManager.sol` (**BSL/GPL — clean-room concept only**) |
@@ -168,7 +168,7 @@ deliberately not used** — our markdown is recovery-aware and continuous (§11)
 ### 4.1 `ZipcodeOracleRegistry` — `is ReceiverTemplate, BaseAdapter`
 A **single** multi-asset adapter that prices every lien token, fed by the DON (the Zipcode subnet validators
 via CRE, §7/§8). The cached price is the lien's **honest equity mark** — `Proof-notarized appraised value −
-senior debt ahead of the lien`, in the unit of account (Proof of Value, §8.5 / `spv-lien-proof.md`). It is a
+senior debt ahead of the lien`, in the unit of account (Proof of Value, §8.10 / `spv-lien-proof.md`). It is a
 verified underwriting attestation, not a market quote (a 1/1 lien has no market). It reports `bid==ask==mid`;
 the appraisal-error + value-staleness cushion lives in the LTV gap (§4.2/§4.4), not here. **Venue note:** the
 `BaseAdapter`/`IPriceOracle` face is the **Euler read-adapter**; on another venue a sibling read-adapter
@@ -256,7 +256,7 @@ reads the **same cache** (§4.7) — the cache itself is venue-neutral.
 ### 4.2 `LienCollateralToken` + `LienTokenFactory`
 - ERC-20, one instance per lien (EVK collateral must be ERC-20-shaped; no native NFT collateral).
 - **Fixed total supply of exactly `1e18` (one whole token at 18 decimals), minted once to the controller
-  at creation — only after the Proof of Lien + Proof of Insurance gates pass at origination (§4.4a/§8.5);
+  at creation — only after the Proof of Lien + Proof of Insurance gates pass at origination (§4.4a/§8.10);
   `mint`/`burn` restricted to `ZipcodeController`.** "1/1" = one token, one lien. The unit
   total supply makes the borrowing identity clean: with the registry pricing `1 lien → equityMark` (§4.1),
   the collateral value of the whole position is `equityMark`, so **max borrow ≈ `equityMark × borrowLTV`**.
@@ -435,7 +435,7 @@ registry direct for 3, `SzipNavOracle` direct for 7, `DefaultCoordinator` for de
 `equityMark` is the **Proof of Value** mark (home value − senior debt, §4.1). `proofRef` is a commitment to
 the Proof attestation bundle (lien-perfected + value + insurance) for on-chain provenance; the lien and
 insurance **gates** themselves are off-chain preconditions — the CRE only emits the report if they pass
-(§8.5). `regionalHPI` is **removed** from every payload (no on-chain drift, §4.1).
+(§8.10). `regionalHPI` is **removed** from every payload (no on-chain drift, §4.1).
 
 `_processReport` branches on `reportType` (venue effects go through `IZipcodeVenue`, §4.4 part 1):
 - **(a) Origination** → `LienTokenFactory.create` (mint 1/1 token, after the Proof gates, §4.2) →
@@ -510,12 +510,12 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
     condition tree (`reference/zodiac-modifier-roles/packages/evm/contracts/PermissionBuilder.sol:133`), the role
     is restricted to exactly these calls, all **Call-only** (`ExecutionOptions=None` — no `delegatecall`, no
     value; `PermissionChecker.sol:187-211`), with params **pinned** (`EqualTo` / `EqualToAvatar`):
-    | op | Permitted call (params pinned) | purpose |
+    | opType | Permitted call (params pinned) | purpose |
     |---|---|---|
-    | SUPPLY | `EE_POOL.deposit(amount, receiver==SAFE)` | put routed USDC to work |
-    | APPROVE | `USDC.approve(spender==EE_POOL, amount)` | the allowance `deposit` pulls against |
-    | REDEEM | `EE_POOL.redeem(shares, receiver==<pinned>, owner==SAFE)` | fund the epoch queue / recovery |
-    | REPAY | `USDC.transfer(to==LOANBOOK, amount)` | waterfall — fill a capital hole |
+    | `SUPPLY = 1` | `EE_POOL.deposit(amount, receiver==SAFE)` | put routed USDC to work |
+    | `APPROVE = 2` | `USDC.approve(spender==EE_POOL, amount)` | the allowance `deposit` pulls against |
+    | `REDEEM = 3` | `EE_POOL.redeem(shares, receiver==SAFE, owner==SAFE)` | redeem shares → USDC **into the Safe** (then REPAY distributes) |
+    | `REPAY = 4` | `USDC.transfer(to==<pinned sink>, amount)` | distribute Safe USDC to the pinned sink — the `ZipRedemptionQueue` (§6.1, M1) or a recovery sink (§4.6/§11, M2) |
     Anything outside the policy reverts in the Roles checker **before** the Safe is touched; widening it requires
     the Safe **owner** (GOD-EOA → multisig). Policy authored "as code" via `reference/permissions-starter-kit`
     and applied as an owner-signed diff. (Optional `WithinAllowance` rate-limits per op are available.)
@@ -529,11 +529,17 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
     itself (the audited Roles engine does), so its surface is minimal.
   - **Senior NAV mark (§12):** `EE_POOL.convertToAssets(EE_POOL.balanceOf(SAFE))`. **Wiring:** the zap
     (`ZipDepositModule`, re-authored) deposits with the warehouse Safe as the EE-share `receiver`; the redemption
-    queue (§6.1) draws via REDEEM; the recovery waterfall (§11/§4.6) via REPAY. **Open items for the 8-Bw ticket**
-    (`reports/research/zodiac-warehouse-research.md`): confirm EulerEarn `redeem(shares, receiver, owner)` arg order +
-    whether redeemed USDC lands in the Safe (`receiver==SAFE`, then REPAY distributes) or directly at a sink; the
-    APPROVE standing-infinite-vs-exact-amount choice. Optional defense-in-depth: a **Delay Modifier** behind the
-    role (owner-cancellable cooldown on a compromised-CRE action).
+    queue (§6.1) draws via REDEEM; the recovery waterfall (§11/§4.6) via REPAY. **Open items RESOLVED at 8-Bw**
+    (`tickets/sodo/8-Bw-credit-warehouse.md`, `reports/8-Bw-report.md`): EulerEarn `redeem(shares, receiver, owner)` —
+    owner is the **3rd** arg (verified `EulerEarn.sol:596`); redeemed USDC lands in the **Safe** (`receiver==owner==SAFE`,
+    fully avatar-pinned), then REPAY distributes to the pinned sink (NOT redeemed directly to a sink); APPROVE `amount`
+    is **scope-free** (it varies per deposit — cannot be a static pin), `spender` pinned to `EE_POOL`, and the CRE
+    passes **exact-amount** per deposit (defense-in-depth, never a standing infinite — an 8-B11/CRE policy obligation,
+    not a contract cap). **Defense-in-depth (item-10 recommended, not optional):** because this single Safe backs ALL
+    zipUSD float and a compromised CRE could `REDEEM`-then-`REPAY` to the pinned sink, the drain-capable ops
+    (REDEEM/REPAY) SHOULD carry a Roles `WithinAllowance` rate-limit and/or a **Delay Modifier** (owner-cancellable
+    cooldown), and the `<pinned sink>` (`ZipRedemptionQueue`) MUST be immutable/non-sweepable (it is the residual
+    chokepoint).
 - **`ZipDepositModule` — mint at $1, with a zap.** `deposit(uint256 usdc)`: pull USDC, **mint zipUSD 1:1 by
   value** (zipUSD = `ESynth`, the module is the capacity-granted minter), deposit the USDC into the venue pool
   (`EulerEarn` for config one). Peg held by the 1:1 mint, not a swap. **`zap(uint256 usdc)` is the default
@@ -1382,7 +1388,7 @@ spreads; (2) a **long validity window refreshed by event-driven Proof re-marks**
 acquisition / deviation, §4.1), not a 5-min staleness clock or a daily heartbeat; (3) liquidation driven by
 **delinquency status** (§4.4e), so a stale/fake price alone cannot liquidate. The genuine threat is the
 write path, hardened by the **timelocked router governor** and **immutable Forwarder** (§4.4/§13). The value
-is the **Proof-notarized origination appraisal** (§4.1/§8.5) — there is no model AVM to de-bias, so there is
+is the **Proof-notarized origination appraisal** (§4.1/§8.10) — there is no model AVM to de-bias, so there is
 no HPI band, and HPI is not an on-chain input. Data Streams remains an optional transport, not required.
 
 **Subnet ↔ CRE integration (resolved: Shape B for M1, Shape A as endgame).** The decentralized
@@ -1413,12 +1419,61 @@ RNG), but the Go SDK's consensus-safe `runtime.Rand()` (`cre/runtime.go:25`) is 
 validators produce the zk-verified inputs, and a standard Chainlink CRE DON aggregates them and signs the
 report for the Keystone Forwarder.
 
+**Two on-chain write paths (the whole producer surface decomposes into these).** CRE touches chain in exactly
+two trust modes; every workflow below is one or the other.
+1. **The report path — DON-signed reports through the immutable KeystoneForwarder → `ReceiverTemplate.onReport`.**
+   The `f+1`-DON-signed, workflow-identity-gated path (§4.4/§17). Every report is the shared envelope
+   `abi.encode(uint8 reportType, bytes payload)`; the workflow targets one `Receiver` per `WriteReport` and the
+   `(receiver, reportType)` pair selects the on-chain decode. The receivers: `ZipcodeController` (origination/
+   draw/close/status), `ZipcodeOracleRegistry` (revaluation), `SzipNavOracle` (NAV legs), `SzipReservoirLpOracle`
+   (LP mark), the `CreditWarehouse` CRE-receiver/Roles-adapter (senior-custody ops), and `DefaultCoordinator`
+   (default/recovery, M2). Full per-type table: §8.0.
+2. **The operator path — the single immutable CRE operator → the engine modules' `onlyOperator` entrypoints.**
+   The auto-sodomizer engine (8-B5…8-B10, §4.5/§4.5.1) is driven by **one immutable operator identity** calling
+   plain `msg.sender == operator` entrypoints on the engine Zodiac modules — **not** DON-signed reports
+   (`baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
+   `RecycleModule.creditFreeValue` is unbounded), and that trust is exactly what makes the revolving reservoir
+   borrow safe (it kills the external-oracle-manipulation exploit, §4.5.1). Full surface: §8.7.
+The two paths are independent identities by construction (the engine `operator` is asserted `!= owner` at module
+`setUp`, and is never the controller/registry Forwarder). §17 locks both: immutable Forwarder via renounce; one
+immutable engine operator.
+
+### 8.0 Report envelope + per-type producer table (the WOOF-05 discharge)
+The on-chain convention is `abi.encode(uint8 reportType, bytes payload)`; **`reportType` is scoped per
+receiver** — the workflow ABI-encodes the payload, calls `runtime.GenerateReport(req)` → `evmClient.WriteReport(
+runtime, {Receiver, Report, GasConfig})` (`cre/runtime.go:58`, `client_sdk_gen.go:293`), and the receiver's
+`_processReport` decodes `payload` by its own type constant. Because each `WriteReport` names one `Receiver`, the
+**type-number space is keyed by `(receiver, reportType)`, not globally** — so `SzipNavOracle.NAV_LEG == 7` and
+`SzipReservoirLpOracle.LP_MARK == 7` are the **same numeral on two different receivers and never collide** (each
+push targets exactly one). This is the ratification the 8-B5 placeholder asked for: **`LP_MARK = 7` stands**
+(`SzipReservoirLpOracle.sol:27`), distinct from the registry's `REVALUATION = 3` (`ZipcodeOracleRegistry.sol:24`)
+as required; no contract change.
+
+| reportType | Receiver | payload ABI (on-chain decode, exact) | Producing workflow (§) | CRE ticket |
+|---|---|---|---|---|
+| `1` Origination | `ZipcodeController` | `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint16 borrowLTV, uint16 liqLTV, uint256 drawAmount, uint256 cap)` | Underwriting/origination (§8.1) | CRE-01 |
+| `2` Draw | `ZipcodeController` | `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount)` | Draw (§8.1) | CRE-01 |
+| `3` Revaluation | `ZipcodeOracleRegistry` | `(address[] liens, uint256[] prices, uint32 ts)` | Revaluation, gas-bounded sharded (§8.1) | CRE-01 |
+| `4` Close | `ZipcodeController` | `(bytes32 lienId)` | Close/release (§8.1) | CRE-01 |
+| `5`/`6` Default/Liquidation | `ZipcodeController` | `(bytes32 lienId, uint8 status)` | Default/recovery (§8.4) | CRE-01 |
+| `7` NAV_LEG | `SzipNavOracle` | `(uint8[] legs, uint256[] prices, uint32 ts)` — `legs ∈ {0 ALPHA_USD, 1 HYDX_USD}` | Share-price feeds (§8.6) | CRE-03 |
+| `7` LP_MARK | `SzipReservoirLpOracle` | `(uint256 mark, uint32 ts)` | Share-price feeds (§8.6) | CRE-03 |
+| SUPPLY/APPROVE/REDEEM/REPAY | `CreditWarehouse` CRE-receiver | `(uint8 opType, bytes payload)` → re-encoded Safe call (§8.5) | Warehouse ops (§8.5) | CRE-04 |
+| default/recovery | `DefaultCoordinator` (M2) | `(bytes32 lienId, uint8 status, uint256 recoveryProceeds)` (sketch, §8.4) | Default/recovery (§8.4) | CRE-01 (M2 fields deferred) |
+
+`equityMark` = the Proof-of-Value mark (home value − senior debt, §4.1); `proofRef` = a commitment to the Proof
+attestation bundle (lien-perfected + value + insurance); the lien/insurance **gates** are off-chain
+preconditions — the workflow emits a report **only if they pass** (§8.9/§8.10). `regionalHPI` is in no payload
+(§4.1). The on-chain decoders are the source of truth: the workflow's report struct + `consensus_aggregation`
+tags MUST match these exactly (§4.4 / `ZipcodeOracleRegistry.sol:93` / `SzipNavOracle.sol:201` /
+`SzipReservoirLpOracle.sol:72`).
+
 ### 8.1 Underwriting / origination / revaluation
 - **Trigger:** `http.Trigger(*Config)` (`capabilities/networking/http/trigger_sdk_gen.go:16`, originator
   submits an application) for origination; **event-driven re-pricing** on **secondary acquisition / deviation
   / draw** events (revaluation, writes **direct** to the registry, §4.1/§4.4b). **No cron heartbeat** — the
   mark is event-driven Proof (§4.1).
-- **Inputs (fetched per-node, zk-verified, then aggregated; the full source→surfacing map is §8.5):** the
+- **Inputs (fetched per-node, zk-verified, then aggregated; the full source→surfacing map is §8.10):** the
   **Proof attestations** — **Proof of Lien** (perfected + ownership), **Proof of Value** (the appraisal),
   **Proof of Insurance** — plus identity/income/credit/title proofs (Plaid, Credit Karma, Pippin/DART) and
   Block Analitica LTV/risk params, via `http.Client.SendRequest(nodeRuntime, *Request)`
@@ -1433,7 +1488,20 @@ report for the Keystone Forwarder.
 - **Output:** ABI-encode the payload into a `cre.ReportRequest`, `runtime.GenerateReport(req)`
   (`cre/runtime.go:58`) → `evmClient.WriteReport(runtime, &evm.WriteCreReportRequest{Receiver: …, Report:
   report, GasConfig: …})` (`capabilities/blockchain/evm/client_sdk_gen.go:293`). Receiver is the
-  `ZipcodeController` (origination/draw, atomic price seed) or the `ZipcodeOracleRegistry` (revaluation).
+  `ZipcodeController` (origination/draw, reportType 1/2 — atomic price seed) or the `ZipcodeOracleRegistry`
+  (revaluation, reportType 3).
+- **Revaluation sharding (the WOOF-02 discharge).** `ZipcodeOracleRegistry._processReport` applies the whole
+  `(liens, prices, ts)` arrays in **one atomic loop** (`ZipcodeOracleRegistry.sol:93-111`): equal lengths are
+  enforced (`LengthMismatch`, `:98`), and any single bad entry (`price==0`, `ts>now`, wrong-decimals lien)
+  reverts the **entire** report (`:107-110`). So the producer rule is: (i) **shard** a multi-lien re-mark into
+  **gas-bounded batches** — size each batch's `liens.length` so the worst-case `_processReport` gas stays under
+  a conservative block-gas fraction (the loop is O(n) with a per-entry `decimals()` staticcall; size to a fixed
+  `MAX_LIENS_PER_REPORT` constant calibrated on the target chain, log the shard count); (ii) emit **one
+  `WriteReport` per shard** (each batch is independently atomic — a poison entry only fails its own shard, not
+  the sweep); (iii) **dedup across the full sweep** so no `lien` appears in two shards in the same epoch
+  (on-chain it is last-write-wins, so a dup is a silent-correctness footgun the producer must prevent) and
+  enforce equal-length `liens`/`prices` **before** encoding (don't rely on the on-chain revert to catch a
+  malformed batch). No malformed/dup entry, atomic per batch.
 
 ### 8.2 Funding / cash-reserve (no optimizer)
 There is **no cross-market yield optimizer** — the lien markets are credit lines funded to demand, not
@@ -1452,6 +1520,12 @@ deterministic actions:
 
 ### 8.3 Redemption settlement
 A `cron.Trigger` on the 30-day boundary calls `settleEpoch()` (§6.1) against the venue pool's freeable USDC.
+When the freeable USDC sitting in the venue pool is short of the epoch's fulfillable claims, the same cron
+**first** funds the queue via the warehouse **REDEEM** op (§8.5 — `EE_POOL.redeem(shares, receiver==SAFE, owner==SAFE)`
+through the Roles adapter, USDC into the Safe) **then** a **REPAY** to the queue sink, **then** calls `settleEpoch()`. Sizing the REDEEM (how
+many shares to release) is the producer's job; the on-chain Roles policy only pins the call shape, not the
+amount. (`ZipRedemptionQueue.settleEpoch` is controller-gated, not renounced — the controller keeps calling it
+each epoch, §4.5.)
 
 ### 8.4 Default / recovery
 Delinquency status and recovery amounts are **off-chain truths** that arrive as DON-signed reports. This
@@ -1468,7 +1542,115 @@ and the project layout from `reference/cre-templates`; the report struct + `cons
 must match the on-chain report ABI in §4.4; secrets-declaration format, `GasConfig`, and `cre-cli`
 simulate/deploy are cre-cli mechanics documented in those references.
 
-### 8.5 Off-chain underwriting & proof layer
+### 8.5 Senior-warehouse ops (SUPPLY / REDEEM / REPAY — the Roles-gated path)
+The `CreditWarehouse` is a plain Gnosis Safe custodying the protocol's `EulerEarn` shares; CRE drives it
+**only** through the audited Zodiac **Roles Modifier v2**, never by a bespoke privileged contract (§4.5,
+`reports/research/zodiac-warehouse-research.md`). The CRE seam is a thin **`is ReceiverTemplate`** receiver
+(immutable-Forwarder-gated, set-once then renounce, exactly as §4.1/§4.4) that is `assignRoles`'d as the role
+member. On a report it decodes the warehouse envelope `abi.encode(uint8 opType, bytes payload)`, **re-encodes
+the corresponding pinned Safe call**, and invokes `Roles.execTransactionWithRole(to, 0, data, Call, roleKey,
+true)` (`reference/zodiac-modifier-roles` `Roles.sol:153`); the Roles checker validates against the
+owner-applied permissions policy and forwards to the Safe — anything outside the policy reverts **in the Roles
+checker before the Safe is touched**. The producer emits one op per report, each mapping to one pinned call
+(§4.5 op-set):
+
+| opType (byte) | producer emits | Safe call the adapter re-encodes (params pinned) | when the workflow emits it |
+|---|---|---|---|
+| `SUPPLY = 1` | `(uint256 amount)` | `EE_POOL.deposit(amount, receiver==SAFE)` | put routed/recovered USDC to work as senior backing |
+| `APPROVE = 2` | `(uint256 amount)` | `USDC.approve(spender==EE_POOL, amount)` | the allowance `deposit` pulls against (precedes SUPPLY); exact-amount, not infinite |
+| `REDEEM = 3` | `(uint256 shares)` | `EE_POOL.redeem(shares, receiver==SAFE, owner==SAFE)` | redeem shares → USDC **into the Safe** (then REPAY); fund the epoch queue (§8.3) / recovery |
+| `REPAY = 4` | `(address to, uint256 amount)` | `USDC.transfer(to==<pinned sink>, amount)` | distribute Safe USDC to the pinned sink — the `ZipRedemptionQueue` (§6.1) or a recovery sink (§4.6/§11) |
+
+**The producer sizes the scalars; the policy pins identities** — the workflow computes `amount`/`shares` (e.g.
+the epoch shortfall, the recovery draw) off the live NAV (`EE_POOL.convertToAssets(EE_POOL.balanceOf(SAFE))`,
+read via `evmClient.CallContract`), but cannot widen the call set (that needs the Safe owner: GOD-EOA → multisig).
+The `to` of REPAY is the one field the producer carries (the scope pins it `EqualTo(<sink>)`, so a re-scope, not a
+redeploy, retargets it); every other identity is adapter-injected AND scope-pinned (belt-and-suspenders).
+**RECONCILED WITH THE BUILD (8-Bw, `WarehouseAdminModule`, `tickets/sodo/8-Bw-credit-warehouse.md`):** the opType
+bytes above (1/2/3/4), the `abi.encode(uint8 opType, bytes payload)` envelope, and the open 8-Bw choices are now
+resolved against the built adapter (EulerEarn `redeem(shares, receiver, owner)` — owner 3rd; redeemed USDC →
+Safe-then-REPAY, not direct-to-sink; APPROVE exact-amount with `spender` pinned). CRE-04 builds against THIS table +
+the built `WarehouseAdminModule` decode; the warehouse adapter uses a **distinct Forwarder identity / workflowId**
+from the controller/registry/oracle receivers.
+
+### 8.6 szipUSD share-price feeds (NAV legs + LP mark — the push-cache producers)
+The szipUSD share price and the engine's LP-collateral price are **hybrid push-cache oracles** (§7): the
+contracts read every on-chain quantity/leg themselves, and CRE pushes **only** the off-chain leg marks it
+cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
+- **`SzipNavOracle` (reportType `NAV_LEG = 7`, `SzipNavOracle.sol:49`).** Payload `(uint8[] legs, uint256[]
+  prices, uint32 ts)` with `legs ∈ {LEG_ALPHA_USD=0, LEG_HYDX_USD=1}` (`:43/:45`). The workflow pushes the
+  **xALPHA `alphaUSD` leg** (leg 0 — the subnet TAO/alpha AMM TWAP × TAO/USD, two-layer mark per §7/input 2;
+  the on-chain `xAlpha.exchangeRate()` is read trustlessly and multiplied in, `:345`) and **HYDX/USD** (leg 1,
+  pushed only if the pool is thin; the contract derives oHYDX intrinsic from it, `:350`). **All quantities and
+  every on-chain leg (zipUSD/USDC=$1, the staked-ICHI-LP reserves, the LST exchange rate) are read on-chain —
+  never pushed.** On-chain guards the producer must respect: equal `legs`/`prices` lengths (`LengthMismatch`),
+  `ts<=now` (`FutureTimestamp`), non-zero prices (`ZeroPrice`), and a per-push **deviation circuit-break**
+  `maxDeviationBps` vs. the prior cached leg (`DeviationExceeded`, `:219`) — so the producer must **not** jump a
+  leg more than the governed band in one push (push intermediate marks, or the band rejects it). Cadence:
+  push on the engine epoch and on a material leg move; the `fresh()` issuance guard (`:328`) pauses **issuance**
+  if either required leg ages past `maxAge`, while exit prices off the last good mark (asymmetric by design).
+- **`SzipReservoirLpOracle` (reportType `LP_MARK = 7`, `SzipReservoirLpOracle.sol:27`).** Payload `(uint256
+  mark, uint32 ts)` — a **single fixed key** (the ICHI LP share, quote USDC; no per-key map, no controller
+  seed, the Forwarder is the only writer). The workflow computes the mark off-chain as
+  `(reserve_xALPHA × priceXAlpha + reserve_zipUSD × priceZipUSD) / ICHI_LP_totalSupply` (the same reserve-value
+  LP math `SzipNavOracle` runs for the basket's staked-LP leg, so the two feeds stay coherent — produce them
+  from one computation) and pushes per engine epoch. **Fail-closed by design:** a stale/missing mark reverts
+  `_getQuote` → the reservoir borrow's EVC account-status check reverts (`:100-103`), never opening an unsafe
+  borrow. So the producer's only obligation is **liveness** — re-push within `validityWindow` (generous,
+  engine-cadence); a missed push is safe (closes the borrow), an over-stale one blocks new strike-loop draws
+  until refreshed. `mark!=0`, `mark<=uint208.max`, `ts<=now` are enforced on-chain (`:82-84`).
+
+### 8.7 Engine strategy-admin operator (8-B11 — the operator path, NOT a report)
+The auto-sodomizer engine (§4.5/§4.5.1, 8-B5…8-B10) is driven by the **single immutable CRE operator** calling
+the engine Zodiac modules' `onlyOperator` (`msg.sender == operator`) entrypoints — a **different write path
+from every §8.0 report** (`baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This is the off-chain
+orchestrator whose **on-chain surface is 8-B11** (a plain `onlyOperator` modifier + an immutable operator
+address on each module); the workflow itself is this CRE build. It is **not** Forwarder-gated and emits **no
+DON-signed report** — the operator submits ordinary transactions (it may still run as a CRE workflow using
+`evmClient.WriteReport`'s sibling write surface / a keeper identity, but the on-chain gate is the operator
+address, not the Forwarder identity). **Trust model:** the operator is **TRUSTED** — `RecycleModule.creditFreeValue`
+is unbounded (`RecycleModule.sol`), so the single-immutable-operator permissioning (set at module `setUp`,
+asserted `operator != owner`) is the security boundary that makes the revolving reservoir borrow safe (§4.5.1).
+
+Per epoch + on triggers the operator runs the loop (each leg an `onlyOperator` call, the operator supplying
+**only scalar amounts** — never addresses/calldata — so its blast radius is bounded, `LpStrategyModule.sol:19`):
+1. **claim** oHYDX + fees and **vote** (8-B7 harvest/vote — `Voter.vote` each epoch, `exerciseVe` to defend the
+   floor); **classify regime** (price vs. short EMA: UP/FLAT/DOWN, `hydrex.md §9.2`).
+2. **strike loop:** post LP collateral → CRE-only **borrow** USDC from the reservoir (8-B5
+   `ReservoirLoopModule`, gated by `LP_MARK` being live, §8.6) → **exercise** oHYDX (8-B8) → **sell** HYDX→USDC
+   via NFPM range orders with retrace-guard + soft-bleed caps (8-B9).
+3. **credit + recycle the free value:** `RecycleModule.creditFreeValue(net)` (the operator-trusted accumulator
+   write) then `recycle(usdc)` → `ZipDepositModule.deposit` (USDC → `CreditWarehouse` senior backing → backed
+   zipUSD minted into the MAIN Safe basket) → **8-B6 single-sides** it into the gauge-staked LP → **NAV-per-share
+   accretes for every holder** (8-B10, the single sink — no payout, no xALPHA distribution; 8-B13 is absorbed
+   here, §4.5.1). **Free-value-only invariant:** only HYDX-extracted USDC is recycled — never depositor USDC,
+   never unbacked mint.
+4. **LP lifecycle:** `LpStrategyModule.addLiquidity/stake/unstake` (8-B6) to re-post and gauge-stake; each call
+   carries a `minShares`/slippage floor the producer computes (the module reverts on a sandwiched/thin mint).
+5. **rotate** free↔committed equity main↔sidecar per credit-warehouse utilization (the §6.4 freeze sizing).
+The split/regime/caps are **CRE-workflow policy** (8-B10's allocation weights are the only open economic knob,
+deferred to the treasury module, §17); no additional on-chain mechanism is invented here. **This path is the
+junior's pay + self-insurance** (the loop vamps net-new USDC, compounding the basket = "frozen but earning",
+waterfall leg (e), §11). It is bounded — TVL-capped, front-loaded, trailing-realized (`hydrex.md`).
+
+### 8.8 xALPHA-APR feed
+The trailing-realized xALPHA APR is CRE-published on-chain on the same push-cache pattern as the leg marks
+(`bridge/xALPHA-apr.md`; reuse the §8.6 producer shape). It is **trailing-realized, never projected** (§12).
+The xALPHA `alphaUSD` mark it depends on is the §8.6 `NAV_LEG` leg-0 push; the APR figure feeds §12 / the
+depositor UI and the engine regime gates (8-B12 → 8-B11). (CRE-03 pairs this with the §8.6 share-price feeds —
+one bridge/oracle workflow family.)
+
+### 8.9 The Proof capability gate (DEC-01 — the external blocker)
+Every report in §8.0 that carries a credit fact (origination type 1, draw type 2, revaluation type 3, the §8.4
+recovery proceeds) is **gated on the Proof-of-Value/Lien/Insurance capability (DEC-01)**: can "Proof" attest
+**lien-perfected + ownership + value + insurance per-lien** in a CRE-consumable form (a zkTLS/notarization
+attestation the node-mode fetch can verify and reach identical consensus on)? **This spec assumes DEC-01 and
+specs against it** (the §8.10 proof-layer sources are the input map), but it is the **one external dependency that
+blocks a live origination build** — until Proof exposes a per-lien attestation API, CRE-01 builds + simulates
+against **mock Proof attestations** (the contracts already test against mock reports, §8 intro) and the
+origination path cannot go live. Flagged, not resolved here (it is a capability decision, not a §8 mechanism).
+
+### 8.10 Off-chain underwriting & proof layer
 The CRE workflow (§8.1) fans these in per-node (zk-verified at the subnet/node layer) and aggregates them
 into the origination report's gates and the equity mark. Each off-chain truth becomes a **zk-verified
 attestation** — a boolean gate or a value reached by **identical consensus** (the inputs are facts, not
@@ -1487,6 +1669,22 @@ model estimates) — and raw PII never enters consensus (§8.1).
 | Optimal LTV / risk params | Block Analitica | report params → `setLTV` bounds (the borrow/liquidation LTV gap carries the conservatism cushion) |
 
 Cred Protocol / Blockchain Bureau add on-chain-address credit scoring on top of off-chain VantageScore.
+
+### 8.11 CRE build-ticket map (reconciles PHASE2 CRE-00…CRE-03; the workflows above are now authorable)
+Each workflow above is a CRE-NN ticket basis. The PHASE2 stubs are updated to the §8.0 surface (not duplicated):
+
+| Ticket | Scope (§) | Path | Gate |
+|---|---|---|---|
+| `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) | — | none |
+| `CRE-01` | Origination / draw / close / status reports → controller (1/2/4/5,6); revaluation → registry (3, **gas-bounded sharded**, §8.1); default/recovery → `DefaultCoordinator` (§8.4, M2 fields sketch) | report | DEC-01 (§8.9) |
+| `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
+| `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 (xALPHA lane), else stand-in |
+| `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REPAY** ops via the Roles adapter (§8.5) | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) |
+| `CRE-05` (new) | Engine strategy-admin **operator** orchestrator (§8.7 — the operator path, drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy) | operator | none (operator-trusted; engine modules built) |
+
+**Discharged this window:** the WOOF-05 report-ABI envelope per-type table (§8.0) and the WOOF-02 gas-bounded
+revaluation sharding (§8.1). **Open before the live CRE-01 build:** DEC-01 (§8.9). **Open before CRE-04
+finalizes:** the 8-Bw `WarehouseAdminModule` decode reconcile (§8.5).
 
 ---
 
@@ -1782,16 +1980,16 @@ bears (the freeze keeps it "frozen but earning").
    **Duration Bond premium APR** on frozen positions.
 4. **Utilization / free liquidity** — the duration-squeeze early warning.
 5. **Insurance coverage** — the **xALPHA fund** in escrow (`LienXAlphaEscrow`, via the CRE xALPHA feed) + the
-   **off-chain insurance** coverage (Proof of Insurance, §8.5).
+   **off-chain insurance** coverage (Proof of Insurance, §8.10).
 
 Both pricing inputs feed this (§7): the **Proof of Value** equity mark → the zipUSD dollar NAV; the xALPHA
 price feed → the **Duration Bond premium** NAV and the szipUSD bonus APR (metric 3). Off-chain insurance
-coverage is attested separately (Proof of Insurance, §8.5), not via a price feed. All are required for
+coverage is attested separately (Proof of Insurance, §8.10), not via a price feed. All are required for
 solvency reporting.
 
 These metrics are aggregates over §9 events + pool state, served to the frontend via an off-chain indexer
 (the subgraph workstream, `README.md` §4) — not computed per-request on-chain. The peg is the secondary-AMM
-price (§6.2); off-chain insurance coverage is a CRE-published figure (§8.5).
+price (§6.2); off-chain insurance coverage is a CRE-published figure (§8.10).
 
 ---
 
@@ -1885,7 +2083,7 @@ after insurance + xALPHA. Split out because it needs an engineered default to de
 | `centrifuge-liquidity-pools` (AGPL) | epoch/pro-rata **concept only** (off-chain in upstream; no copy) |
 | `moneymarket-contracts` (3Jane) | senior/junior waterfall, subordination **floor** (cap not used), xALPHA slash, settle — structural reference / concept only |
 | `chainlink-datastreams-consumer`, `chainlink-evm` | Data Streams (optional transport, not required) |
-| `cre-templates` | Go CRE workflow project layout / scaffold (build aid, §8.5) |
+| `cre-templates` | Go CRE workflow project layout / scaffold (build aid, §8) |
 | `euler-interfaces` | EVK/EVC/oracle interface definitions (build aid) |
 | `euler-lite` (Nuxt/Vue) | the frontend — forked + branded for zipcode; the convergence point for all teams (the demo + product UI) |
 | `docs` | Base chain deployment specifics |
