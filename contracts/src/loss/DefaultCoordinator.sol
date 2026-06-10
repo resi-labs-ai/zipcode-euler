@@ -11,7 +11,7 @@ import {ILienXAlphaEscrow} from "../interfaces/loss/ILienXAlphaEscrow.sol";
 /// @notice The single loss-side orchestrator: the immutable `LienXAlphaEscrow.coordinator` (owns the full xALPHA
 ///         bond lifecycle) AND the set-once `SzipNavOracle.defaultCoordinator` (the sole `writeProvision` caller).
 ///         A CRE-gated `ReceiverTemplate`: every action flows through `_processReport` (reportType 8,
-///         action-discriminated, §4.4/§8.4) gated by the immutable Forwarder. Ownership is TRANSFERRED to the
+///         action-discriminated, §4.4/§8.4) gated by the Timelock-pinned Forwarder. Ownership is TRANSFERRED to the
 ///         Timelock at deploy (NOT renounced — the same admin that owns the engine Zodiac modules' CRE flows,
 ///         user-directed 2026-06-09): the owner governs `recoveryFloor` (`setRecoveryFloor`) and may redirect the
 ///         CRE Forwarder/workflow identity in an emergency, but holds no theft / NAV-inflation power. It custodies
@@ -20,7 +20,7 @@ import {ILienXAlphaEscrow} from "../interfaces/loss/ILienXAlphaEscrow.sol";
 ///
 /// @dev RESIDUAL-TRUST BOUNDARY (§13 — stated plainly so it is never mistaken for a solvency guard):
 ///      This contract BOUNDS and ROUTES; it does NOT validate that a default is real. Under §13 the CRE
-///      (DON-consensus, behind the immutable Forwarder + renounce-frozen workflow identity) is trusted for: the
+///      (DON-consensus, behind the Forwarder + the Timelock-pinned workflow identity) is trusted for: the
 ///      MAGNITUDE of `atRisk`/`recoveryProceeds`/`capitalSlashAmount`, the TIMING of each action, the
 ///      capital-vs-premium SPLIT, and the `originator` address (which becomes the RELEASE recipient). The
 ///      on-chain guarantees are narrow and exact: (a) a provision is written down only by
@@ -92,8 +92,8 @@ contract DefaultCoordinator is ReceiverTemplate {
     ///         admin that owns the engine Zodiac modules' CRE flows, user-directed 2026-06-09).
     uint256 public recoveryFloor;
 
-    /// @notice The xALPHA bond escrow this coordinator drives. Set-once (the escrow↔coordinator deploy is circular),
-    ///         frozen by deploy-time `renounceOwnership()`.
+    /// @notice The xALPHA bond escrow this coordinator drives. Wired post-deploy (the escrow↔coordinator deploy is
+    ///         circular); re-pointable by the Timelock owner via `setEscrow` (§17 build phase — NOT renounce-frozen).
     ILienXAlphaEscrow public escrow;
 
     // --------------------------------------------------------------------- errors (no string reverts)
@@ -131,12 +131,12 @@ contract DefaultCoordinator is ReceiverTemplate {
         recoveryFloor = recoveryFloor_;
     }
 
-    // --------------------------------------------------------------------- set-once wiring (frozen by renounce)
+    // --------------------------------------------------------------------- escrow wiring (Timelock-re-pointable, §17)
     /// @notice Wire the bond escrow (the escrow-side of the circular dependency) and grant it the MAX xALPHA
-    ///         allowance so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull succeeds. Set-once (frozen by the
-    ///         `AlreadyWired` guard, NOT by renounce — the Timelock owner cannot re-wire it), `onlyOwner`. The escrow
-    ///         is fully immutable + non-sweepable, so a max allowance to it is safe — it can only pull into its own
-    ///         gated custody.
+    ///         allowance so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull succeeds. **Re-pointable by the
+    ///         Timelock owner** (`onlyOwner`, §17 build phase — NOT set-once, NOT renounce-frozen). The escrow is
+    ///         non-sweepable (it can only pull into its own gated custody), so the max allowance is safe; re-pointing
+    ///         the escrow or its sinks is a Timelock action (grief/redirect, not drain — §17).
     function setEscrow(address escrow_) external onlyOwner {
         if (escrow_ == address(0)) revert ZeroAddress();
         escrow = ILienXAlphaEscrow(escrow_);

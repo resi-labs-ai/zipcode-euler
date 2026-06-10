@@ -130,11 +130,19 @@ abstract contract QueueBase is Test {
         zip.setCapacity(address(this), type(uint128).max); // owner == this -> can mint zipUSD to requesters
     }
 
-    /// @dev Mint `zipAmt` zipUSD to `to` and have `to` approve the queue for it.
+    /// @dev Mint `zipAmt` zipUSD to `to`, have `to` approve the queue, AND authorize `to` as the redeemController
+    ///      (C4: `requestRedeem` is hard-gated; in the legacy unit flows the caller == owner == requester == the
+    ///      authorized rq-Safe stand-in, so wiring it to `to` preserves the open-queue behavior these tests assert).
     function _giveZip(address to, uint256 zipAmt) internal {
         zip.mint(to, zipAmt);
         vm.prank(to);
         zip.approve(address(queue), zipAmt);
+        queue.setRedeemController(to); // owner == this (deployed the queue)
+    }
+
+    /// @dev Authorize `c` as the C4 redeemController (the sole `requestRedeem` caller). owner == this.
+    function _authRedeem(address c) internal {
+        queue.setRedeemController(c);
     }
 
     /// @dev Deliver `usdcAmt` USDC to the queue as if the warehouse REPAY transferred it in.
@@ -204,6 +212,7 @@ contract ZipRedemptionQueueTest is QueueBase {
     }
 
     function test_requestRedeem_zero_reverts() public {
+        _authRedeem(alice); // C4: authorize so the ZeroShares guard (not the redeem gate) is the binding revert
         vm.prank(alice);
         vm.expectRevert(ZipRedemptionQueue.ZeroShares.selector);
         queue.requestRedeem(0, alice, alice);
@@ -218,14 +227,18 @@ contract ZipRedemptionQueueTest is QueueBase {
 
     function test_requestRedeem_nonOwnerNonOperator_reverts() public {
         _giveZip(alice, 1000e18);
+        // C4: bob is NOT the redeemController (alice is, via _giveZip) -> the redeem-controller gate trips FIRST,
+        // before the legacy owner/operator authorization check.
         vm.prank(bob);
-        vm.expectRevert(ZipRedemptionQueue.NotAuthorized.selector);
-        queue.requestRedeem(1000e18, bob, alice); // bob is not owner nor operator of alice
+        vm.expectRevert(ZipRedemptionQueue.NotRedeemController.selector);
+        queue.requestRedeem(1000e18, bob, alice);
     }
 
     function test_operator_can_request_and_claim_on_behalf() public {
         uint256 q = 1000e18;
         _giveZip(alice, q);
+        // C4: authorize bob as the redeemController so he can drive requestRedeem on alice's behalf.
+        _authRedeem(bob);
         // alice approves bob as operator
         vm.prank(alice);
         queue.setOperator(bob, true);
@@ -257,6 +270,50 @@ contract ZipRedemptionQueueTest is QueueBase {
         vm.prank(alice);
         queue.setOperator(bob, true);
         assertTrue(queue.isOperator(alice, bob));
+    }
+
+    // -------------------------------------------------------------- C4: redeemController hard-gate
+    function test_requestRedeem_notRedeemController_reverts() public {
+        // a random EOA, the (would-be) module address, and an old-style owner==msg.sender caller all revert.
+        _giveZip(alice, 1000e18); // sets redeemController = alice
+        address module = makeAddr("offRampModule");
+        // a random EOA
+        vm.prank(bob);
+        vm.expectRevert(ZipRedemptionQueue.NotRedeemController.selector);
+        queue.requestRedeem(1000e18, bob, bob);
+        // the module address itself (the C4 critical: the gate authorizes the SAFE, not the module) — not wired here
+        vm.prank(module);
+        vm.expectRevert(ZipRedemptionQueue.NotRedeemController.selector);
+        queue.requestRedeem(1000e18, module, module);
+        // an old-style owner==msg.sender caller that ISN'T the redeemController
+        vm.prank(carol);
+        vm.expectRevert(ZipRedemptionQueue.NotRedeemController.selector);
+        queue.requestRedeem(1000e18, carol, carol);
+    }
+
+    function test_setRedeemController_discipline() public {
+        // onlyOwner: a non-owner cannot set it
+        vm.prank(alice);
+        vm.expectRevert(); // OwnableUnauthorizedAccount
+        queue.setRedeemController(alice);
+        // ZeroAddress guarded
+        vm.expectRevert(ZipRedemptionQueue.ZeroAddress.selector);
+        queue.setRedeemController(address(0));
+        // re-pointable (build phase, §17, NOT set-once) + emits
+        vm.expectEmit(true, false, false, true, address(queue));
+        emit ZipRedemptionQueue.RedeemControllerSet(alice);
+        queue.setRedeemController(alice);
+        assertEq(queue.redeemController(), alice);
+        queue.setRedeemController(bob);
+        assertEq(queue.redeemController(), bob, "re-pointed");
+    }
+
+    function test_requestRedeem_succeeds_when_authorized() public {
+        // the authorized redeemController (here = alice) can escrow; the CLAIM path stays open afterward.
+        _giveZip(alice, 1000e18);
+        vm.prank(alice);
+        queue.requestRedeem(1000e18, alice, alice);
+        assertEq(queue.totalPending(), 1000e18);
     }
 
     // -------------------------------------------------------------- settle: full / partial / over / exact / zero
@@ -377,8 +434,10 @@ contract ZipRedemptionQueueTest is QueueBase {
         // alice 1000, bob 3000; deliver 1000 USDC -> 25% fill each
         _giveZip(alice, 1000e18);
         _giveZip(bob, 3000e18);
+        _authRedeem(alice);
         vm.prank(alice);
         queue.requestRedeem(1000e18, alice, alice);
+        _authRedeem(bob);
         vm.prank(bob);
         queue.requestRedeem(3000e18, bob, bob);
         _deliverUsdc(1000e6); // 25% of 4000 capacity
@@ -479,8 +538,10 @@ contract ZipRedemptionQueueTest is QueueBase {
         // then B (never realized) claims its full era-0 fill with no div-by-zero.
         _giveZip(alice, 1000e18);
         _giveZip(bob, 1000e18);
+        _authRedeem(alice);
         vm.prank(alice);
         queue.requestRedeem(1000e18, alice, alice);
+        _authRedeem(bob);
         vm.prank(bob);
         queue.requestRedeem(1000e18, bob, bob);
 
@@ -659,6 +720,7 @@ contract ZipRedemptionQueueTest is QueueBase {
         zip.mint(alice, q);
         vm.prank(alice);
         zip.approve(address(q2), q);
+        q2.setRedeemController(alice); // C4: authorize (owner == this deployed q2)
         vm.prank(alice);
         q2.requestRedeem(q, alice, alice);
 
@@ -750,6 +812,7 @@ contract QueueHandler is Test {
     ESynth public zip;
     MockERC20 public usdc;
     address public controller;
+    address public queueOwner; // the address that can call setRedeemController (the test contract)
     address[] public actors;
 
     uint256 public ghost_totalDelivered;
@@ -757,11 +820,12 @@ contract QueueHandler is Test {
 
     uint256 internal constant SCALE = 1e12;
 
-    constructor(ZipRedemptionQueue q, ESynth z, MockERC20 u, address c, address[] memory a) {
+    constructor(ZipRedemptionQueue q, ESynth z, MockERC20 u, address c, address owner_, address[] memory a) {
         queue = q;
         zip = z;
         usdc = u;
         controller = c;
+        queueOwner = owner_;
         actors = a;
     }
 
@@ -776,6 +840,9 @@ contract QueueHandler is Test {
         zip.mint(a, q); // test contract is the minter (capacity granted in setUp)
         vm.prank(a);
         zip.approve(address(queue), q);
+        // C4: authorize this actor as the redeemController (caller == owner == requester in this flow).
+        vm.prank(queueOwner);
+        queue.setRedeemController(a);
         vm.prank(a);
         queue.requestRedeem(q, a, a);
     }
@@ -834,7 +901,7 @@ contract ZipRedemptionQueueInvariantTest is Test {
         actors[2] = makeAddr("a2");
         actors[3] = makeAddr("a3");
 
-        handler = new QueueHandler(queue, zip, usdc, controller, actors);
+        handler = new QueueHandler(queue, zip, usdc, controller, address(this), actors);
         // the minter is THIS test contract; the handler mints via the test's capacity by being granted too
         zip.setCapacity(address(handler), type(uint128).max);
 
@@ -932,6 +999,8 @@ contract ZipRedemptionQueueForkTest is ForkConfig {
         zip.mint(requester, Q);
         vm.prank(requester);
         zip.approve(address(queue), Q);
+        // C4: authorize the requester as the redeemController (owner == this deployed the queue).
+        queue.setRedeemController(requester);
         vm.prank(requester);
         queue.requestRedeem(Q, requester, requester);
         assertEq(queue.totalPending(), Q, "request escrowed");

@@ -1,4 +1,4 @@
-# auto-sodomizer.md — Structured-product vault: oHYDX→yield abstraction (design narrative)
+# auto-compounder.md — Structured-product vault: oHYDX→yield abstraction (design narrative)
 
 > **What this builds:** the depositor-facing vault that makes the Hydrex leg usable. Surface: **"deposit
 > single-sided (xALPHA or zipUSD), earn a [trailing-realized] yield"** — depositors **never see an oHYDX, a

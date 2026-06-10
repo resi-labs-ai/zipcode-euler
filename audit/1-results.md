@@ -104,9 +104,9 @@ Establishes I1–I3 in calm operation: a senior deposit, the junior **zap**, a d
 - **P4 (xALPHA subsidy — the junior's pay, leg 1).** The seeded szipUSD xALPHA emission (§17/`treasury.md`)
   drops 60,000 of xALPHA into the Safe: `b_xa = 60,000`, `B → 160,000`. xALPHA is an external token — **not** in
   `NAV_s` — so `C`, `D`, `Z`, `σ`, `R` are all untouched. Only the junior's `B/Loot` grows (1.0 → 1.6).
-- **P5 (HYDX vamp — the junior's pay, leg 2).** The auto-sodomizer vamps **net-new external USDC** out of the
+- **P5 (HYDX vamp — the junior's pay, leg 2).** The auto-compounder vamps **net-new external USDC** out of the
   HYDX/USDC pool (farm → exercise → sell HYDX → USDC), and the **free-value-only invariant** (§4.5,
-  `auto-sodomizer.md` §8) routes it: 50,000 external USDC in → mint 50,000 zipUSD → re-LP into the basket. So
+  `auto-compounder.md` §8) routes it: 50,000 external USDC in → mint 50,000 zipUSD → re-LP into the basket. So
   `C +50,000`, `Z +50,000` (the mint is fully backed — `σ`, `R` essentially flat: `R` 1.014545 → 1.013913,
   still ≥ 1 since `NAV_s > Z`), and `b_yld = 50,000`, `B → 210,000`. The basket grew with **no new Loot** →
   `B/Loot` 1.6 → 2.1. This is "frozen but earning" — the junior's compensation, sourced externally, senior-neutral.

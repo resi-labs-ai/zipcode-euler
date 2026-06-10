@@ -12,8 +12,8 @@ the windowed exit valve (§6.4/§7 / `reports/baal-spec.md §4/§5/§7`).
 > `ragequit(exiter, 0, shares, [zipUSD, xALPHA] sorted)` straight to the leaver (their pro-rata slice of the free
 > basket, in-kind) + burn the loot. **No oracle, cap, numeraire, sweep, or fundability check on exit** — the slice
 > self-prices to NAV. JC1 (and its "M1 zipUSD-sufficiency" caveat) is **dissolved**; the `NavZero` guard is removed;
-> `valueOf` stays (issuance only). The xALPHA→zipUSD dump is a separate new ticket (`tickets/sodo/8-B-exit-autodump.md`);
-> zipUSD→USDC is the existing `ZipRedemptionQueue`. Code reworked, `forge test` **174/174 still green**. The sections
+> `valueOf` stays (issuance only). zipUSD→USDC is the existing `ZipRedemptionQueue`. *(The xALPHA→zipUSD auto-dump
+> module was REMOVED 2026-06-09 — the impatient exit relies on CoW, not an auto-dump.)* Code reworked, `forge test` **174/174 still green**. The sections
 > below that describe the zipUSD-numeraire exit (TL;DR exit bullet, §6.4 edit, "what's fork-proven" exit lines, JC1)
 > are the old design — kept for the audit trail, corrected by this note.
 

@@ -14,7 +14,7 @@ import {IERC20} from "forge-std/interfaces/IERC20.sol";
 ///         with the controller's batch) and a Forwarder-gated revaluation (`_processReport`, reportType 3, batch). One
 ///         stale-checked view (`_getQuote`) serves it. The mark is event-driven (no heartbeat): a long, line-term
 ///         validity window, fail-closed guards, and no on-chain plausibility band (integrity is upstream: Proof + DON
-///         consensus + immutable Forwarder).
+///         consensus + the Timelock-pinned Forwarder).
 contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @notice The pinned lien-token decimals (= `LienTokenFactory.LIEN_DECIMALS`). Every priced key is guarded to it.
     uint8 public constant LIEN_DECIMALS = 18;
@@ -39,7 +39,7 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
 
     /// @notice The push-cache, keyed on the lien token address. The registry never stores a `lienId`.
     mapping(address => Cache) public cache;
-    /// @notice The set-once origination-seed authority (`ZipcodeController`).
+    /// @notice The origination-seed authority (`ZipcodeController`). Timelock-settable (build phase, §17).
     address public controller;
 
     /// @notice The caller of `seedPrice` is not the controller.
@@ -66,7 +66,7 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @notice A Timelock re-set of the read-staleness window.
     event ValidityWindowSet(uint256 window);
 
-    /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`); frozen by deploy-time renounce.
+    /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`); Timelock-re-pointable (§17), not renounce-frozen.
     /// @param quote_ The unit of account (USDC).
     /// @param validityWindow_ The long, line-term read-staleness window.
     constructor(address forwarder, address quote_, uint256 validityWindow_) ReceiverTemplate(forwarder) {

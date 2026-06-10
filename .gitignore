@@ -1,5 +1,11 @@
-# Cloned upstream repos kept as read-only reference (each has its own .git)
-reference/
+# Cloned upstream repos kept as read-only reference (~5 GB, each has its own .git) — ignored,
+# but the upstream-URL + pinned-commit manifest IS tracked so the refs are reproducible.
+reference/*
+!reference/MANIFEST.md
+
+# The frontend canvas is a clone of euler-xyz/euler-lite (its own .git) — ignored like reference/;
+# provenance is in reference/MANIFEST.md. The dedicated frontend sweep will commit the Zipcode UI it paints.
+frontend/euler-lite/
 
 # Foundry build artifacts
 contracts/out/

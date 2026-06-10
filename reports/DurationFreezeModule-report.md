@@ -1,7 +1,14 @@
 # Report — `DurationFreezeModule` (Duration-Bond trigger B) — BUILT-VERIFIED + KEPT
 
 **Window:** 2026-06-09 · build-only · **full harness loop completed** (ticket → 5 critics → spec fix → cold-build →
-independently re-verified green). 48/48 module · 633/633 total no regression · zero load-bearing guesses.
+independently re-verified green). **40/40 module · 628 total no regression · zero load-bearing guesses.**
+
+> **UPDATE (post-conclusion, superintendent-directed 2026-06-09): the model is now DEAD-SIMPLE — `requiredFraction(U)
+> = U`, i.e. freeze% = utilization%.** The §11-B escalation (`U_lock`/`U_max`/`maxLockFraction`, which would freeze
+> *above* utilization during a squeeze) was **stripped from the built contract** (post-M1 refinement). Re-verified
+> green: **40/40 module, 628 total**, escalation gone from the code (NatSpec-only mention). Spec §11-B updated to the
+> dead-simple identity. The body below describes the as-first-built (escalation) version; the final, kept contract is
+> the dead-simple one. The CRITICAL utilization fix and the whitelist below still stand unchanged.
 
 ## TL;DR
 You picked the duration-squeeze freeze. After clarifying what it actually is (the **rotation/floor actuator** for the
@@ -11,9 +18,9 @@ verified and fixed**: my first-draft on-chain utilization read was both *wrong* 
 *exploitable* (a public donation could lower the freeze floor and open the run hatch) — a genuine **spec correction**
 (§8.2's "idle" framing was the spec's own error). You then released the cold-build: a fresh subagent built it from the
 corrected ticket with **zero load-bearing guesses**, and I **independently re-ran it green from `forge clean`** —
-**48/48 module** (incl. a 128k-call invariant / 0 reverts + 2 Base-fork tests against the real substrate) and
-**633/633 total, no regression**, with the **`SzipNavOracle` 42-test suite + `grossBasketValue` pins unchanged** (the
-oracle extension is additive).
+**40/40 module** (incl. a 128k-call invariant / 0 reverts + 2 Base-fork tests against the real substrate) and
+**628 total, no regression**, with the **`SzipNavOracle` 42-test suite + `grossBasketValue` pins unchanged** (the
+oracle extension is additive). *(Counts are the final dead-simple build; see the UPDATE banner above.)*
 
 ## What this window produced
 - **`contracts/src/supply/szipUSD/DurationFreezeModule.sol`** + `contracts/src/interfaces/{euler/IEulerEarnUtil,
@@ -112,7 +119,7 @@ decision) or an in-progress edit that needs reconciling before item-10.
   the escrow/coordinator sweeps).
 
 ## Status + NEXT
-- **`DurationFreezeModule`: BUILT-VERIFIED + KEPT** (48/48 module, 633/633 total, independently re-run from clean).
+- **`DurationFreezeModule`: BUILT-VERIFIED + KEPT** (40/40 module, 628 total, independently re-run from clean).
   Inbound obligation (PROGRESS row 289) **DISCHARGED** (structural fail-closed + fork-proven enable-on-both + item-10
   wiring). Obligations created: item-10 wiring + the live-pool U donation-immunity verification; CRE-05 drives the
   rotation; governed `uLock/uMax/maxLockFraction`; the audit/2+3 sweep.

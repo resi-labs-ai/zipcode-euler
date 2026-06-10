@@ -262,6 +262,37 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.spotNavPerShare(), 1e18);
     }
 
+    // ----------------------------------------------------------------- xALPHA rate-oracle staleness gate (8x-02)
+    /// @notice When the Base rate oracle is wired, a STALE cross-chain rate halts ISSUANCE (`navEntry`/`fresh`) but
+    ///         NOT exit (`navExit` prices off the last rate — the §7 asymmetry). Unwired = unchanged (the 42 pins).
+    function test_xAlphaRateOracle_gates_issuance_not_exit() public {
+        MockRateOracle rateOracle = new MockRateOracle();
+        rateOracle.setRate(1e18);
+        rateOracle.setFresh(true);
+        oracle.setXAlphaRateOracle(address(rateOracle));
+        _pushBoth(1e18, 1e18); // legs fresh
+
+        // fresh rate: issuance works, fresh() true, exit works
+        oracle.navEntry();
+        assertTrue(oracle.fresh());
+        oracle.navExit();
+
+        // stale rate: issuance halts, exit still prices off the last rate
+        rateOracle.setFresh(false);
+        assertFalse(oracle.fresh());
+        vm.expectRevert(SzipNavOracle.StaleRate.selector);
+        oracle.navEntry();
+        oracle.navExit(); // no revert — exit is unaffected by rate staleness
+    }
+
+    function test_xAlphaRateOracle_unset_uses_fallback() public {
+        // not wired ⇒ reads IXAlphaRate(xAlpha) directly; navEntry behaves exactly as before (no StaleRate path).
+        assertEq(oracle.xAlphaRateOracle(), address(0));
+        _pushBoth(1e18, 1e18);
+        oracle.navEntry(); // succeeds via the fallback rate read — unchanged
+        assertTrue(oracle.fresh());
+    }
+
     // ----------------------------------------------------------------- push path (reportType 7)
     function test_push_updates_cache_and_emits() public {
         vm.expectEmit(true, false, false, true);
@@ -732,5 +763,27 @@ contract SzipNavOracleTest is Test {
         oracle.valueOf(address(usdc), 1e6);
         vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.UnknownLpToken.selector, address(hydx)));
         oracle.valueOf(address(hydx), 1e18);
+    }
+}
+
+/// @notice Minimal stand-in for `SzAlphaRateOracle` — exposes `exchangeRate()` + `fresh()` for the gate test.
+contract MockRateOracle {
+    uint256 public r;
+    bool public f;
+
+    function setRate(uint256 x) external {
+        r = x;
+    }
+
+    function setFresh(bool x) external {
+        f = x;
+    }
+
+    function exchangeRate() external view returns (uint256) {
+        return r;
+    }
+
+    function fresh() external view returns (bool) {
+        return f;
     }
 }

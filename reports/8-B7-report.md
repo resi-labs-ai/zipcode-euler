@@ -1,7 +1,7 @@
 # 8-B7 report — Harvest/vote module (`HarvestVoteModule`)
 
 **TL;DR.** Authored + built + KEPT the 4th engine Zodiac Module — the per-epoch emissions+governance leg of the
-auto-sodomizer. It claims the gauge's oHYDX, takes the free `exerciseVe` vote-floor slice, re-votes our gauge, and
+auto-compounder. It claims the gauge's oHYDX, takes the free `exerciseVe` vote-floor slice, re-votes our gauge, and
 claims the rebase. **26/26 green** (21 unit + 5 Base-fork), **326/326 total no-regression**, **ZERO load-bearing
 guesses**. The window's real work was **reverse-verifying the un-open-sourced Hydrex host on live Base** and fixing
 **5 spec mis-citations** in §4.5.1 / `baal-spec §10.8` before drafting — the most important being that **Hydrex's

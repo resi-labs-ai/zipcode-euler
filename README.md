@@ -362,16 +362,16 @@ Full text + rationale: **§17**.
 > *economics* (treasury buyback / peg-arb / POL / depositor incentive budget) — **post-M1; the `treasury.md` decision doc was removed 2026-06-09, to be re-authored**;
 > it consumes the protocol, not the reverse.
 - [ ] ~~**`sdVAULT` — separate szipUSD/xALPHA autocompounder**~~ **FOLDED INTO item 8 (2026-06-06).** The
-      auto-sodomizer engine (ICHI-LP-on-Hydrex + the oHYDX farm/exercise/range-sell/recycle loop + the CRE harvest
+      auto-compounder engine (ICHI-LP-on-Hydrex + the oHYDX farm/exercise/range-sell/recycle loop + the CRE harvest
       robot) is **no longer a separate post-MVP `sdVAULT`** — it **IS** the `szipUSD` vault's core strategy set
       (Baal shamans + Zodiac modules), now specced in `claude-zipcode.md` §4.5 and decomposed into the **8-B
-      ticket chain** (WOOF item 8 above; full design `pending-docs/auto-sodomizer.md`). **Yield routing is
+      ticket chain** (WOOF item 8 above; full design `pending-docs/auto-compounder.md`). **Yield routing is
       RESOLVED** (real lending yield is the protocol's → treasury → buys xALPHA; depositors subsidized by xALPHA +
       the HYDX/USDC pool, §17). **SCOPE RESOLVED (2026-06-06):** the **full Hydrex farm loop is IN the M1 staking
       vault** — the whole 8-B chain (incl. 8-B5…8-B11: reservoir/borrow, LP, harvest, exercise, range-sell,
       recycle, CRE robot) is M1, not deferred. **xALPHA source RESOLVED (2026-06-06):** the **CCIP bridge is
       pulled INTO M1** (it feeds the basket + the bond), and **dev validates builds against a stand-in test xALPHA
-      token** — plan the real lane, don't block on CCT registration. §4.5 / `auto-sodomizer.md`
+      token** — plan the real lane, don't block on CCT registration. §4.5 / `auto-compounder.md`
 - [ ] Decide canonical xAlpha vs self-built `szALPHA` fork (economic call — post-M1 treasury economics, doc TBD; `DEC-03`).
 - [ ] Resolve the open CCT-registration gate on chain 964 (testnet-945 attempt or Chainlink ping) — **plan it, don't block; dev validates against a stand-in test xALPHA token meanwhile.** `tickets/bridge/8x-01-szalpha-wrapper-cct.md`
 - [ ] Build per the chosen path: wrapper over public Subtensor precompiles + CCT pool (964↔8453). `tickets/bridge/8x-01-szalpha-wrapper-cct.md`
@@ -483,7 +483,7 @@ patient liquidity can sell *into* those spikes at far better prices than dumping
   `INonfungiblePositionManager` interface already exists in the repo (Algebra `deployer` field verified). This is a
   **new Zodiac module** (NFPM-driven, recipient-pinned to the engine Safe) **plus a new CRE automator** to manage
   deposit timing + the +50% withdrawal trigger. (Reconciles the superseded "UP-regime range-rest of the residual"
-  note in `pending-docs/auto-sodomizer.md §9.1` / `hydrex.md §9.1` — that ladder is THIS module, now specced.)
+  note in `pending-docs/auto-compounder.md §9.1` / `hydrex.md §9.1` — that ladder is THIS module, now specced.)
 
 **The tension that keeps it a COMPLEMENT, not a replacement.** The strike-repay leg carries an **open borrow accruing
 interest** (8-B5) and an unstaked LP slice (no emissions) — it cannot wait 6–8 weeks for a spike, so it MUST stay the

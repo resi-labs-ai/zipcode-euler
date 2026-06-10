@@ -48,7 +48,7 @@
 | Roles modifier v2 (warehouse) + **CoW swap SDK** | `reference/zodiac-modifier-roles/` (`packages/sdk/src/swaps/`) |
 | **xALPHA LST + CCIP bridge spec** | `tickets/bridge/8x-01-szalpha-wrapper-cct.md` (+ `reference/evm-bittensor/`, `reference/subtensor/precompiles/`) |
 | ERC-7540 senior queue fork | `reference/erc7540-reference/` (+ `reference/maple-withdrawal-manager/`) |
-| Engine design narrative | `pending-docs/auto-sodomizer.md` (+ `hydrex.md`, `treasury.md`, `monitoring.md`) |
+| Engine design narrative | `pending-docs/auto-compounder.md` (+ `hydrex.md`, `treasury.md`, `monitoring.md`) |
 | Deposit module ticket (RE-AUTHOR — §15) | `tickets/woof/WOOF-06-deposit-module.md` |
 | Deposit interface ticket (RE-AUTHOR — §15) | `tickets/inflow/INFLOW-06-deposit-module.md` |
 | Deposit report (UPDATE — §15) | `reports/WOOF-06-report.md` |
@@ -81,7 +81,7 @@ Two tokens:
  │   │ MAIN Safe (RQ target) =│  CRE    │ SIDECAR Safe (NOT RQ      │  basket → mostly staked ICHI LP        │
  │   │ FREE equity            │◄───────►│ target) = COMMITTED equity│  (zipUSD~70% / xALPHA~30%) + working    │
  │   │ (redeemable in windows)│ rotate  │ (= utilization); FREEZE;  │  USDC/HYDX/oHYDX                        │
- │   └──────────┬─────────────┘ on line │ runs auto-sodomizer       │                                         │
+ │   └──────────┬─────────────┘ on line │ runs auto-compounder       │                                         │
  │              │ real Loot      open/  └──────────────────────────┘                                         │
  │              ▼                close                                                                         │
  │   ┌──────────────────────────────────────┐   mints 1:1   ┌───────────────────────────────┐                │
@@ -91,7 +91,7 @@ Two tokens:
  │   └──────────────────────────────────────┘                                                                │
  │   §3 NAV oracle (hybrid push/read/compose + on-chain TWAP) — prices issuance & exit.                        │
  │   §7 8-B14 buy-and-burn: engine USDC ──CoW BUY szipUSD @ TWAP-NAV−d──► burn szipUSD + paired burnLoot.      │
- │   §10 engine 8-B5…8-B14 (auto-sodomizer): one immutable CRE operator; emission program + HYDX extraction.   │
+ │   §10 engine 8-B5…8-B14 (auto-compounder): one immutable CRE operator; emission program + HYDX extraction.   │
  └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
  SENIOR side (separate, never conflate): CreditWarehouse Safe (EulerEarn shares; senior backing for zipUSD)
@@ -237,7 +237,7 @@ Example: NAV $1.20, deposit $12 → 10 shares. NAV $0.80 → 15 shares (comparat
   productive. So: $100k xALPHA deposit → 100k shares at $1; engine then pairs that xALPHA with ~$233k resting zipUSD
   into the 70/30 LP (forward HYDX for *all* holders). Non-dilutive at issuance, accretive forward.
 - This is **POL as liquidity mining**: the emission is captured as protocol equity + owned LP instead of paid to
-  mercenaries; the windowed/soulbound structure (§2/§5) makes it **non-dumpable**; the auto-sodomizer (§10) turns it
+  mercenaries; the windowed/soulbound structure (§2/§5) makes it **non-dumpable**; the auto-compounder (§10) turns it
   into HYDX extraction.
 
 ### 4.4 Interactions
@@ -474,7 +474,7 @@ A **CRE-operated Zodiac module** (the rotation lives in the engine / CRE-op surf
   the Gate's manager grant). Once enabled, the module moves funds with no further authorization.
 
 ### 8.4 Frozen-but-earning (the boost)
-The sidecar **runs the auto-sodomizer** (item 10), so committed equity keeps earning while reserved; that yield is
+The sidecar **runs the auto-compounder** (item 10), so committed equity keeps earning while reserved; that yield is
 the **duration-risk boost** (§9.2 / §10.6 #6) accruing to whoever holds through the freeze. On rotation back to main
 at line close, committed principal + accrued boost returns to free/redeemable.
 
@@ -494,12 +494,12 @@ retention**; a holder who wants out *now* (incl. the frozen slice) sells szipUSD
 
 ### 8.7 Interactions
 Item 8 (the two Safes); item 3 (exits consume free/committed state — partial-fill refinement, §8.5); item 10
-(auto-sodomizer = the boost, and hosts the rotation module); §9 (default keeps the slice frozen); §11/§12
+(auto-compounder = the boost, and hosts the rotation module); §9 (default keeps the slice frozen); §11/§12
 (`atRiskAmount`/utilization source); item 2 (NAV sums both Safes).
 
 ### 8.8 Source + params (settled here)
 `BaalSummoner.configureSafe`/`deployAndSetupSafe` (sidecar = Baal-owned 1/1 + Baal-as-module); Zodiac `Module.exec` →
-Safe `execTransactionFromModule` for cross-Safe transfers; CRE-operator pattern (`auto-sodomizer.md §8`); utilization
+Safe `execTransactionFromModule` for cross-Safe transfers; CRE-operator pattern (`auto-compounder.md §8`); utilization
 from §11/§12. **Params (governed defaults — set by governance with real utilization data; do NOT change the build):**
 `U_lock` (trigger-B escalation point), `U_max` (hard ceiling on committed/lent fraction), `maxLockFraction` (cap so
 ≥ `(1−maxLockFraction)` always stays redeemable); `lockedFraction` is a formula, not a knob; `coverageFloor` is
@@ -540,7 +540,7 @@ foreclosure recovers < principal) — the rare tail, via the staircase. The spec
   buy at the post-loss price and **don't inherit** old losses (only go-forward recovery risk on what you bought).
   Waiting until resolution would dump pre-existing losses onto fresh deposits.
 - **Duration premium falls out of pari-passu:** szipUSD claims the *whole* basket (MAIN+SIDECAR), so the frozen
-  slice's boost (§10.6 #6 slash yield + auto-sodomizer) + recovery accrue to **whoever holds through the freeze**;
+  slice's boost (§10.6 #6 slash yield + auto-compounder) + recovery accrue to **whoever holds through the freeze**;
   impatient sellers exit on §6 (CoW) and forgo it. No per-holder boost machinery.
 
 ### 9.3 The recovery waterfall (each realized tier writes the provision UP)
@@ -573,13 +573,13 @@ permanent-loss levers). M2 scope.
 
 ---
 
-## 10. [→ §4.5.1] The yield engine — auto-sodomizer + the emission program
+## 10. [→ §4.5.1] The yield engine — auto-compounder + the emission program
 
 ### 10.1 The modules (8-B5…8-B14)
 Each is a **Zodiac Module** (`is Module`, inherit `reference/zodiac-core/contracts/core/Module.sol`) `enableModule`'d
 on the Safe(s), mutating the Safe only via inherited `exec(to,value,data,Operation.Call)` (`Module.sol:43`). Deploy
 as CREATE2 clones via `ModuleProxyFactory.deployModule`; init in `setUp(bytes)` under `initializer`. **One immutable
-CRE operator** is the only caller (`onlyOperator`; `auto-sodomizer.md §8` invariant 1).
+CRE operator** is the only caller (`onlyOperator`; `auto-compounder.md §8` invariant 1).
 
 | Module | Role |
 |---|---|
@@ -607,7 +607,7 @@ short W, §3.3).
   appropriate").
 - **Deployment:** the protocol **deposits the monthly emissions in-kind** (§4.3) for fair-value shares; the engine
   then **auto-pairs that xALPHA with resting vault zipUSD into the 70/30 ICHI LP** (a value-neutral rebalance) and
-  **stakes it in the Hydrex gauge for HYDX** — the auto-sodomizer drains HYDX and recycles it back in.
+  **stakes it in the Hydrex gauge for HYDX** — the auto-compounder drains HYDX and recycles it back in.
 - **Net:** the emission becomes owned LP + protocol equity (not mercenary rewards), activates resting depositor
   capital into yield, and deepens LP — all at once. End-state scale target ≈ $15M USDC deposited for zipUSD; ~$100k/mo
   xALPHA activates ~$250k/mo of resting zipUSD into LP.
@@ -621,7 +621,7 @@ short W, §3.3).
   harvested HYDX clears IL + xALPHA risk — the engine's core bet, tracked in §12.
 
 ### 10.5 Source
-`pending-docs/auto-sodomizer.md` (+ §11 the compounding flywheel) + `hydrex.md`; xALPHA mark/source
+`pending-docs/auto-compounder.md` (+ §11 the compounding flywheel) + `hydrex.md`; xALPHA mark/source
 `tickets/bridge/8x-01-szalpha-wrapper-cct.md`. Hydrex/engine addresses in `claude-zipcode.md §4.5.1` + `pending-docs/hydrex.md §2.5`.
 
 ### 10.6 The yield stack — what covers IL (junior NAV sources)
@@ -721,7 +721,7 @@ re-stake `gauge.deposit` (8-B5 steps a/e).
 rebuild), §10.3 (the emission program's xALPHA is paired into this LP), item 9 (the staked LP is the basket's core
 asset across main/sidecar), item 2 (NAV marks the staked LP via reserves×TWAP, reading the staked position).
 
-**Source + addresses (verify on-chain at build).** `auto-sodomizer.md §4/§9`; `hydrex.md §2.5`: ICHI Vault Factory
+**Source + addresses (verify on-chain at build).** `auto-compounder.md §4/§9`; `hydrex.md §2.5`: ICHI Vault Factory
 `0x2b52c416F723F16e883E53f3f16435B51300280a`, Deposit Guard `0x9A0EBEc47c85fD30F1fdc90F57d2b178e84DC8d8`, Voter
 `0xc69E3eF39E3fFBcE2A1c570f8d3ADF76909ef17b`; gauge type **ALM_ICHI_UNIV3** (memory `hydrex-gauge-architecture`);
 `reference/zodiac-core` `Module`.
@@ -756,7 +756,7 @@ rebase (7%→0% by ~wk64). `exerciseVe` is **free** (permalock, no strike).
 basket), item 2 (NAV: **veHYDX is permalocked/non-redeemable → marked at ~0 principal; only the realized oHYDX +
 fees it produces count, as claimed** — §3.2 note).
 
-**Source + addresses (on-chain-verified Base 8453, 2026-06-08).** `hydrex.md §4/§8/§9.2/§2.6`; `auto-sodomizer.md §4
+**Source + addresses (on-chain-verified Base 8453, 2026-06-08).** `hydrex.md §4/§8/§9.2/§2.6`; `auto-compounder.md §4
 (steps 1/3a/6) / §8 inv 8`. Voter `0xc69E3eF39E3fFBcE2A1c570f8d3ADF76909ef17b` (account-keyed
 `vote(address[],uint256[])` `0x6f816a20` / `reset()` `0xd826f88f` / `getEpochDuration()` = 604800 / `ve()`), veHYDX
 `0x25B2ED7149fb8A05f6eF9407d9c8F878f59cd1e1` (`getVotes(address)` account-aggregate floor, `tokenOfOwnerByIndex`,
@@ -790,7 +790,7 @@ intrinsic pre-exercise, §3.2).
 `0xA1136031150E50B015b41f1ca6B2e99e49D8cB78`: `exercise(amount,maxPayment,recipient)` **and**
 `exercise(amount,maxPayment,recipient,deadline)` (prefer deadline), `getDiscountedPrice(amount)`,
 `getTimeWeightedAveragePrice(amount)`, **`getMinPaymentAmount()` — no args**, `discount()` (= 30).
-`auto-sodomizer.md §4(c)/§9`; `reference/zodiac-core` `Module`.
+`auto-compounder.md §4(c)/§9`; `reference/zodiac-core` `Module`.
 
 **Params (settled — no open economic decision).** Strike = `max(30%·TWAP, $0.01)` read from oHYDX (`discount()`=30 +
 `getDiscountedPrice`/`getMinPaymentAmount`), not a knob; profitability cutoff **$0.015** (governed, `hydrex.md §2.4`; $0.018 = amber/taper-start, $0.01 = mechanical dead floor);
@@ -815,7 +815,7 @@ leg), 8-B12 (caps/regime/profitability-halt), the HYDX/USDC **exit pool** (`0x51
 **Source + addresses (verify at build).** `SwapRouter` `0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e`
 (`exactInputSingle`); HYDX/USDC pool `0x51f0B932855986B0E621c9D4DB6Eee1f4644D3D2`; USDC
 `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`; HYDX `0x00000e7efa313F4E11Bfff432471eD9423AC6B30`.
-`auto-sodomizer.md §4(d)/§5/§9`; `hydrex.md §9.3`; `reference/zodiac-core` `Module`.
+`auto-compounder.md §4(d)/§5/§9`; `hydrex.md §9.3`; `reference/zodiac-core` `Module`.
 
 **Params (settled — governed caps, surfaced in 8-B12).** Soft-bleed caps (`hydrex.md §9.3`): per-order slippage
 ≤2–3%, per-epoch volume ≤1–2% of pool USDC, never faster than the 2h-TWAP, taper $0.033 → amber-taper ~$0.018 → halt $0.015. No open
@@ -840,19 +840,19 @@ allocation policy — **Mode A (clean USDC pro-rata)** and **Mode B (boosted xAL
 
 **Load-bearing invariant (§8 inv 3).** The Mode-B boost buy-side is funded **ONLY by HYDX-extracted (free) value** —
 never reserves, never unbacked mint (the Mode-B zipUSD is deposit-backed by construction). Payouts are **realized
-distributions, not NAV** (`auto-sodomizer.md §7`).
+distributions, not NAV** (`auto-compounder.md §7`).
 
 **What it touches.** 8-B9 (zipUSD→xALPHA buy leg), 8-B5 (source of free value), 8-B13 (Mode C — the sibling sink),
 the warehouse/loan book + `ZipDepositModule` (Mode B deposits USDC → senior backing → backed zipUSD mint), 8-B11
 (allocation policy/weights), item 2 (payouts are realized, not marked into NAV).
 
-**Source (verify at build).** `auto-sodomizer.md §6/§11.2/§8 inv 3`; `treasury.md §4.7`; `ZipDepositModule`
+**Source (verify at build).** `auto-compounder.md §6/§11.2/§8 inv 3`; `treasury.md §4.7`; `ZipDepositModule`
 (WOOF-06); `SwapRouter` (8-B9); `reference/zodiac-core` `Module`.
 
 **Params — OPEN Treasury policy (the engine's one genuinely-open decision; weight-agnostic mechanism, NOT a build
 blocker).** The concrete **A/B/C default weights**, the **taper schedule** (compound-weighted in the growth window →
 boost/clean as the HYDX bleed degrades), and whether the vote-floor `exerciseVe` slice (§4 step 3) is taken
-before/after the Mode-C budget. `auto-sodomizer.md §11.2`: "the mechanism is weight-agnostic; only the numbers are
+before/after the Mode-C budget. `auto-compounder.md §11.2`: "the mechanism is weight-agnostic; only the numbers are
 open — pin when engine economics are finalized (`treasury.md`)." **Owned by Treasury, deferred to `treasury.md`.**
 
 ### 8-B11 — CRE op surface
@@ -861,7 +861,7 @@ CRE workflow** drives every engine module (harvest/exercise/borrow/sell/payout/c
 rotation (item 9 / §8.3). The orchestration seam + the regime classifier + the split policy live here.
 
 **Where it lives.** A custom **`onlyOperator`** modifier + the immutable operator address on each module (Zodiac's
-`onlyOwner` is admin-only, so it can't be the op gate — `auto-sodomizer.md §8 inv 1`). The **off-chain CRE workflow**
+`onlyOwner` is admin-only, so it can't be the op gate — `auto-compounder.md §8 inv 1`). The **off-chain CRE workflow**
 (the orchestrator; same trust pattern as `tickets/bridge/8x-02-xalpha-apr-cre.md`) computes regime/splits/sizes and calls these
 entrypoints. **The CRE workflow itself is a separate build** (`claude-zipcode.md §8.7`; CRE-05 build, not yet run);
 8-B11 is the *on-chain surface* it calls.
@@ -871,14 +871,14 @@ entrypoints. **The CRE workflow itself is a separate build** (`claude-zipcode.md
 → route free value (8-B10/8-B13) → re-vote + rebalance (8-B7) → rotate main↔sidecar per utilization (item 9). Every
 mutating call is `onlyOperator`.
 
-**Invariant (`auto-sodomizer.md §8 inv 1`).** **ONE immutable CRE operator** is the only writer of
+**Invariant (`auto-compounder.md §8 inv 1`).** **ONE immutable CRE operator** is the only writer of
 harvest/exercise/borrow/sell/payout/compound/rotation. Immutable = set at deploy. This permissioning is what makes
 the revolving borrow (8-B5) safe — it kills the external oracle-manipulation exploit.
 
 **What it touches.** Every module 8-B5…8-B13 (it is their only caller); item 9 (hosts the rotation); 8-B12 (consumes
 its regime/caps/halts); the CRE workflow (`claude-zipcode.md §8.7`).
 
-**Source (verify at build).** `auto-sodomizer.md §3/§8 inv 1`; `hydrex.md §10` (bot pipeline: Watcher → Rebalancer →
+**Source (verify at build).** `auto-compounder.md §3/§8 inv 1`; `hydrex.md §10` (bot pipeline: Watcher → Rebalancer →
 Voter); `claude-zipcode.md §8.7`; `reference/zodiac-core` `Module`; `reference/cre-*` for the workflow.
 
 **Params (settled).** Operator = the single immutable CRE workflow address (deploy-time). Regime classifier, split
@@ -909,7 +909,7 @@ read-only dashboard (multicall + archive + event indexer) — **full spec in `mo
 **What it touches.** §12; item 2 (NAV/APR feed); 8-B11 (gates consume regime/caps/halt); 8-B5/8-B9 (TVL + soft-bleed
 caps size the loop); WOOF-06 (`maxDeposit` TVL gate); the depositor UI (trailing-realized only).
 
-**Source (verify at build).** `auto-sodomizer.md §7/§8 inv 6&7`; `hydrex.md §10`; **`monitoring.md` (full
+**Source (verify at build).** `auto-compounder.md §7/§8 inv 6&7`; `hydrex.md §10`; **`monitoring.md` (full
 surveillance spec)**; `tickets/bridge/8x-02-xalpha-apr-cre.md` (the on-chain APR/NAV publish pattern); `reference/cre-*`.
 
 **Params (settled).** TVL cap = a **measured formula** (re-derived each epoch, not a static knob); trailing-realized
@@ -939,7 +939,7 @@ engine's on-chain contracts end at 8-B10. See `claude-zipcode.md §4.5.1`.
 **The flywheel.** dump HYDX → free-value USDC → warehouse (credit capacity↑) → mint backed zipUSD → grow staked LP
 (emissions↑) → dump more HYDX. Bounded by the TVL cap (§7/8-B12), soft-bleed caps (§4), free-value-only (§8 inv 3).
 
-**Invariants (`auto-sodomizer.md §11.3` + §8 inv 3).** **Free-value-only** (spends only `freeValueAccrued`; the
+**Invariants (`auto-compounder.md §11.3` + §8 inv 3).** **Free-value-only** (spends only `freeValueAccrued`; the
 zipUSD it mints is backed 1:1 by the just-deposited USDC — deposit precedes mint; never depositor USDC/reserves/
 unbacked mint); **swap is buy-side + per-order slippage-capped**; **no idle-xALPHA accumulation** (convert on demand,
 use on-hand xALPHA first — the `xHave ≥ xNeeded` branch is where the §10.3 emission/depositor xALPHA gets paired);
@@ -950,7 +950,7 @@ LP-growth legs are the **same capital, never double-counted**).
 `CreditWarehouse`/`EE_POOL` + `ZipDepositModule` (deposit→backing→backed mint, same as Mode B/WOOF-06), §10.2 (holds
 the 70/30 steady-state), §10.3 (pairs the emission-program xALPHA via the `xHave` branch).
 
-**Source (verify at build).** `auto-sodomizer.md §6/§11/§11.1/§11.3`; ICHI `deposit` + gauge (8-B6); `EE_POOL`/
+**Source (verify at build).** `auto-compounder.md §6/§11/§11.1/§11.3`; ICHI `deposit` + gauge (8-B6); `EE_POOL`/
 `CreditWarehouse` (§11/8-Bw, `reference/euler-earn`); `ZipDepositModule` (WOOF-06); `SwapRouter` (8-B9);
 `reference/zodiac-core` `Module`.
 

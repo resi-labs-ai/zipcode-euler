@@ -91,7 +91,7 @@ perfected lien, **Proof** notarizes the lien / value / insurance attestations (`
 | Token | Role | Form |
 |---|---|---|
 | **zipUSD** | The **$1 utility dollar** — minted 1:1 on USDC deposit, redeemed for USDC (epoch queue, §6.1) or sold (secondary, §6.2). The protocol's dollar plumbing: the **exit hatch** out of szipUSD and a composable USDC-pegged asset other markets can lend against (vs szipUSD, a future **zipCRED** RWA, or other RWAs) — not an investment tranche. Mechanically still **insulated from loss until the junior is exhausted** (loss waterfall, §11). | mintable/burnable ERC-20 (`ESynth`) |
-| **szipUSD** | The junior, **the main product** — a **transferable ERC-20 share** (18-dp) over a **Baal/Moloch-v3 Gnosis Safe basket** (zipUSD + xALPHA + the zipUSD/xALPHA ICHI LP gauge-farmed on Hydrex, §4.5). The **Exit Gate** mints szipUSD **1:1 against soulbound Baal Loot it custodies** — Loot is the ragequit-bearing layer, held + ragequitted **only** by the gate (no raw-ragequit footgun), while the user share is **freely transferable**. Deposit → **NAV-proportional** szipUSD (`shares = value / navPerShare`, priced via `SzipNavOracle`, §7). **Two exits:** *patient* = the gate's intent-queue + liquidity-window ragequit at NAV (**partial-fill per window**, §6.4); *impatient* = **sell szipUSD on a CoW book** (§6.2). Duration-Bond **freeze structural via the sidecar** (§6.4/§11). **Depositor return = NAV accretion** — the HYDX-vamp free value is recycled into the basket (8-B10) lifting NAV-per-share weekly, realized on exit at NAV (+ the Duration-Bond premium + any post-M1 xALPHA emission incentive). (Real lending APR/fees are the **protocol's** → they over-collateralize zipUSD in the `CreditWarehouse` now; future treasury buybacks, §17.) **NAV is the issuance/exit pricing primitive** (`SzipNavOracle`, §7/§12). Bears **residual** first loss as a **pari-passu conservative provision-that-recovers** (§11): a default is **freeze-dominant** (duration-risk — insured/collateralized HELOC), the day-one markdown is small and writes back up on verified recovery. | transferable ERC-20 share; gate mints 1:1 vs soulbound Loot; NAV-priced; window-RQ / CoW exits |
+| **szipUSD** | The junior, **the main product** — a **transferable ERC-20 share** (18-dp) over a **Baal/Moloch-v3 Gnosis Safe basket** (zipUSD + xALPHA + the zipUSD/xALPHA ICHI LP gauge-farmed on Hydrex, §4.5). The **Exit Gate** mints szipUSD **1:1 against soulbound Baal Loot it custodies** — Loot is the ragequit-bearing layer, held + ragequitted **only** by the gate (no raw-ragequit footgun), while the user share is **freely transferable**. Deposit → **NAV-proportional** szipUSD (`shares = value / navPerShare`, priced via `SzipNavOracle`, §7). **Exit:** **sell szipUSD on the CoW book** (§6.4/§6.2) — NAV-discovery priced (treasury discounted buyer-of-last-resort + external buyers; no windowed ragequit). Duration-Bond **freeze structural via the sidecar** (§6.4/§11). **Depositor return = NAV accretion** — the HYDX-vamp free value is recycled into the basket (8-B10) lifting NAV-per-share weekly, realized on exit at NAV (+ the Duration-Bond premium + any post-M1 xALPHA emission incentive). (Real lending APR/fees are the **protocol's** → they over-collateralize zipUSD in the `CreditWarehouse` now; future treasury buybacks, §17.) **NAV is the issuance/exit pricing primitive** (`SzipNavOracle`, §7/§12). Bears **residual** first loss as a **pari-passu conservative provision-that-recovers** (§11): a default is **freeze-dominant** (duration-risk — insured/collateralized HELOC), the day-one markdown is small and writes back up on verified recovery. | transferable ERC-20 share; gate mints 1:1 vs soulbound Loot; NAV-priced; CoW-book exit |
 | **xALPHA** | **ONE token — the liquid-staked Zipcode-subnet alpha (LST), bridged to Base via CCIP** (`tickets/bridge/8x-01-szalpha-wrapper-cct.md`). It does **six jobs**: per-lien **first-loss bond** (protocol-posted at launch, originators self-fund via OTC as they scale, §4.6); the **Duration-Bond premium** (in-kind, priced via the CRE feed, never market-sold, §11); the **szipUSD incentive emission** (post-M1); the **zipUSD/xALPHA POL pair leg** (post-M1, §4.5); a **last-resort capital backstop** — liquidated **alpha → TAO → USDC on Bittensor** to cover a realized loss after insurance (§11); and the **treasury buyback target** (real USDC lending yield → buy xALPHA, the closed loop — post-M1, §17). Yield-bearing because it is the LST. | external ERC-20 — the bridged subnet LST (xALPHA) |
 
 The peg is **"minted 1:1,"** not a NAV. zipUSD stays $1; the pool's growth accrues to `szipUSD`, and any
@@ -104,8 +104,9 @@ senior-claim role, szipUSD the `sUSD3` first-loss role.
 (the zap) → receive **transferable szipUSD** (an ERC-20 share), minted **NAV-proportionally** by the Exit Gate,
 which custodies the soulbound **Loot** (the ragequit-bearing layer) 1:1 against your share. A **Gnosis Safe** (+ a
 non-ragequittable **sidecar**) holds the junior basket (zipUSD + xALPHA + the zipUSD/xALPHA ICHI LP). **Exit:**
-*patient* = the gate's windowed ragequit at NAV (**partial-fill per window**, §6.4); *impatient* = sell szipUSD on a
-CoW book (§6.2). **NAV (`SzipNavOracle`, §7) is the pricing primitive** — issuance is NAV-proportional, exit is at
+**exit** = sell szipUSD on the **CoW book** (§6.4/§6.2), NAV-discovery priced — the treasury is the discounted
+buyer-of-last-resort (buys `≤ navExit×(1−d)`, burns) and external buyers fill the same book (no windowed ragequit).
+**NAV (`SzipNavOracle`, §7) is the pricing primitive** — issuance is NAV-proportional, exit is at
 `min(spot, twap)`. **The depositor's return is the HYDX-vamp yield + the xALPHA subsidy** (§4.5/§5/§17), not the
 lending yield (which is the protocol's → treasury). **First-loss is a pari-passu conservative provision-that-recovers
 (§11):** on default the at-risk equity **freezes** (sidecar; keeps earning) while the recovery waterfall runs; a
@@ -149,8 +150,8 @@ governed knob (§6.4). *(Supersedes the 2026-06-06 soulbound-claim / withhold-no
 | Epoch + pro-rata (concept) | `MapleWithdrawalManager :: getRedeemableAmounts` (`:367-387`, `redeemable = locked × available/totalRequested`), carry-forward (`:262-271`) | `reference/maple-withdrawal-manager/contracts/MapleWithdrawalManager.sol` (**BSL/GPL — clean-room concept only**) |
 | Senior/junior loss waterfall | `USD3 :: _postReportHook (:502) / _burnSharesFromSusd3 (:567)` (junior absorbs first loss; senior protected first — **concept only**: our junior NAV = `basketNAV/supply` via `SzipNavOracle` §7, and first-loss is a recoverable **provision** on `navPerShare`, **not** a share-burn, §11) | `reference/moneymarket-contracts/src/usd3/USD3.sol` (AGPL — concept only) |
 | Subordination **floor** (model; cap NOT used) | `sUSD3 :: availableWithdrawLimit (:277, floor)` — kept but **re-anchored to outstanding loan exposure** (§2/§6.4); the **cap** (`availableDepositLimit :249` / `maxSubordinationRatio :408`) is **not used** (junior is the dominant capital, §2) | `reference/moneymarket-contracts/src/usd3/sUSD3.sol` (AGPL — concept only) |
-| Junior exit (ragequit + lock) | **Baal `ragequit`** (Loot → pro-rata **in-kind** basket slice) + a custom **lock-shaman** (`lockUntil`, ~30d) — the junior exit (§6.4); **replaces** the old `sUSD3` cooldown model | `reference/Baal/contracts/Baal.sol` (`ragequit` `:619`) |
-| **Duration Bond** (freeze) | **structural** via the **Exit Gate + sidecar** (§6.4): the **utilization-committed slice** (sized to credit-warehouse utilization) is **held in the non-ragequittable sidecar Safe** (frozen-but-earning, objective release) so window exits reach only the free equity — the §11 Duration Bond (default OR duration squeeze) | net-new (Exit-Gate custody + sidecar; **not** a Baal-ragequit gate; **owned by the Exit Gate** — `DefaultCoordinator` only writes the NAV markdown + runs the xALPHA recovery waterfall, §4.6) |
+| Junior exit (CoW book + gate-internal burn) | depositors hold **no raw Loot** (the gate is sole Loot-holder, so raw `ragequit` is impossible); exit = a **resting CoW sell order** filled by the treasury's 8-B14 buy-and-burn or an external buyer → `ExitGate.burnFor` (gate-internal `burnLoot`, pure supply reduction) — the junior exit (§6.4); **replaces** the old `sUSD3` cooldown + the in-kind-ragequit/lock-shaman model | `reference/Baal/contracts/Baal.sol` (`burnLoot`; `ragequit` `:619` unused by depositors) |
+| **Duration Bond** (freeze) | **structural** via the **Exit Gate + sidecar** (§6.4): the **utilization-committed slice** (sized to credit-warehouse utilization) is **held in the non-ragequittable sidecar Safe** (frozen-but-earning, objective release) so CoW fills reach only the free equity — the §11 Duration Bond (default OR duration squeeze) | net-new (Exit-Gate custody + sidecar; **not** a Baal-ragequit gate; **owned by the Exit Gate** — `DefaultCoordinator` only writes the NAV markdown + runs the xALPHA recovery waterfall, §4.6) |
 | xALPHA bond slash (capital + in-kind premium) | **NOT a proportional slash** — `slashXAlphaToCapital`/`slashXAlphaToCohort` are dumb routers; the capital-vs-premium split is computed off-chain by `DefaultCoordinator` and passed in (`MarkdownController :: slashJaneProportional (:146)` was the concept template, **rejected** — see §4.6 / `LienXAlphaEscrow`) | `reference/moneymarket-contracts/src/MarkdownController.sol` (concept only — not the as-built model) |
 | xALPHA escrow custody | `InsuranceFund :: bring (:33)` — the single-immutable-caller + gated-`safeTransfer` model, as built in `LienXAlphaEscrow` (§4.6) | `reference/moneymarket-contracts/src/InsuranceFund.sol` (concept only) |
 | Pro-rata in-kind premium to the frozen cohort | **NO distributor built** — the premium is routed into the non-ragequittable sidecar Safe (`slashXAlphaToCohort`) and the socialized pro-rata is automatic via NAV ("no per-position index, no SBT", §4.6/§6.4/§11); `RewardsDistributor`/SBT claim distributors are **not built** | `reference/moneymarket-contracts/src/jane/RewardsDistributor.sol` (concept only — superseded by route-to-sidecar) |
@@ -568,7 +569,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
 
   > **MODEL LOCKED 2026-06-07 — the current spec is the two-token model above (§2/§4.5/§6.4/§7/§11) +
   > `reports/baal-spec.md`.** The narrative below predates that lock. **CURRENT (build from it):** the Baal+Zodiac substrate,
-  > the multi-asset basket held natively in the Safe, the windows + sidecar-freeze, the auto-sodomizer engine.
+  > the multi-asset basket held natively in the Safe, the windows + sidecar-freeze, the auto-compounder engine.
   > **SUPERSEDED (do NOT build from the phrasing below):** *NAV-display-only* → NAV is the pricing primitive (§7);
   > *withhold-with-no-markdown* → pari-passu conservative provision-that-recovers (§11); *soulbound szipUSD claim* →
   > transferable szipUSD share (the soulbound is on the Loot); *ERC-4626 / convert-on-stake / `J×p` / pool-shares* →
@@ -590,9 +591,10 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   >   (`execTransactionFromModule` on the Safe) running the loop (post LP → gauge-stake → claim oHYDX → pull LP →
   >   reservoir collateral → borrow USDC → exercise oHYDX → sell HYDX→USDC → repay → mint zipUSD → swap to xALPHA
   >   → re-LP). Multiple modules = multiple strategies.
-  > - **TWO distinct exit gates (both via the Exit Gate, §6.4 — depositors hold no raw Loot, so raw `ragequit`
-  >   is impossible; the gate is the sole Loot-holder):** (1) **WINDOWS** — exits are an intent queue processed
-  >   only in liquidity windows (the harvest ICHI-unstake cadence). (2) **FREEZE
+  > - **TWO distinct exit mechanisms (both via the Exit Gate, §6.4 — depositors hold no raw Loot, so raw `ragequit`
+  >   is impossible; the gate is the sole Loot-holder):** (1) **THE COW BOOK** — a holder rests a szipUSD sell order
+  >   (that resting order *is* the queue); the treasury fills it just-in-time via 8-B14 buy-and-burn (or an external
+  >   buyer fills). No on-chain intent queue or liquidity window. (2) **FREEZE
   >   (duration bond)** — structural: a pro-rata NAV amount sized to however much
   >   must stay backed to cover the hole / duration issue**, while the frozen capital **keeps earning** from the
   >   underlying strategies ("frozen but earning"); released on the objective resolution trigger.
@@ -631,15 +633,15 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   end user`; a direct depositor passes itself). The gate pulls `zipAmount` zipUSD by `transferFrom` into the **Safe
   basket**, **values it via `SzipNavOracle` (NAV-proportional, §7)**, mints **Loot to itself**, and mints
   **transferable szipUSD to `receiver`** (round-down). szipUSD holds the multi-asset basket (zipUSD + xALPHA + the
-  ICHI LP), **never EE pool shares**. **Exit:** *patient* = the gate's windowed ragequit at `min(spot,twap)` NAV
-  (partial-fill, §6.4); *impatient* = sell szipUSD on a CoW book (§6.2). **First loss = a pari-passu conservative
+  ICHI LP), **never EE pool shares**. **Exit:** sell szipUSD on the **CoW book** (§6.4/§6.2) — the treasury buys
+  `≤ navExit×(1−d)` and burns; external buyers fill too. **First loss = a pari-passu conservative
   provision-that-recovers** (§11): the freeze handles the duration; the `DefaultCoordinator` writes a **small
   conservative markdown** at recognition (the underlying is insured/collateralized → duration-risk) that re-marks on
   verified facts and writes back up — **not** withhold-with-no-markdown. The depositor's return is the **HYDX-vamp +
   xALPHA subsidy** (the lending fee routes protocol-side, §5/§17) + the in-kind **xALPHA Duration-Bond premium**
   (§11). **No subordination cap; pari passu inside the junior.** The **coverage floor is the freeze itself** (§6.4),
   not a separate cooldown/floor knob.
-- **The auto-sodomizer engine = the szipUSD vault's CORE strategies (Baal shamans + Zodiac modules), NOT a
+- **The auto-compounder engine = the szipUSD vault's CORE strategies (Baal shamans + Zodiac modules), NOT a
   post-M1 bolt-on.** szipUSD is a **Baal/Moloch-v3 + Zodiac** vault (§4.5 guardrail): the depositor share is
   **Loot**; the **Gnosis Safe** holds the basket (zipUSD + xALPHA + the zipUSD/xALPHA ICHI LP); exit is
   **ragequit** (in-kind, pro-rata). The "strategies that must be built on the Zodiac side" — each a Zodiac
@@ -662,12 +664,13 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   2. **Exit Gate + sidecar (the exit/freeze mechanism — NOT a ragequit gate).** The **Exit Gate** is the canonical
      Loot custodian + szipUSD minter (it holds `manager`, absorbing the mint shaman): a deposit mints Loot **to the
      gate** and mints the depositor **transferable szipUSD** 1:1 against it (the soulbound is on the Loot, not the
-     share → raw `ragequit` is impossible → no footgun, yet the share trades on CoW); exits are an **intent queue**
-     processed in **liquidity windows**
-     (the harvest loop's ICHI-unstake cadence) so they pay full pro-rata. The **FREEZE** is **structural**: the
-     **utilization-committed** equity sits in a **non-ragequittable sidecar Safe** (`BaalAndVaultSummoner`)
-     running the auto-sodomizer (frozen-but-earning, sized to credit-warehouse **utilization**), so window exits reach
-     only the free main-Safe equity; objective release; **owned by the Exit Gate** — `DefaultCoordinator` only writes
+     share → raw `ragequit` is impossible → no footgun, yet the share trades on CoW); exit = a **resting CoW sell
+     order** (that order *is* the queue), filled just-in-time by the treasury's 8-B14 buy-and-burn (priced
+     `≤ navExit×(1−d)`) or an external buyer — **no on-chain intent queue or liquidity window**. The **FREEZE** is
+     **structural**: the **utilization-committed** equity sits in a **non-ragequittable sidecar Safe**
+     (`BaalAndVaultSummoner`) running the auto-compounder (frozen-but-earning, sized to credit-warehouse
+     **utilization**), so CoW fills reach only the free main-Safe equity; objective release; **owned by the Exit
+     Gate** — `DefaultCoordinator` only writes
      the NAV markdown (§4.6/§11). Full mechanism: §6.4.
   3. **LP strategy module.** Take zipUSD + xALPHA from the Safe → post the **ICHI single-sided zipUSD/xALPHA
      LP** → **gauge-stake** it (gauge-staking is required to earn oHYDX — holding the LP alone earns only swap
@@ -683,7 +686,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
      MAIN Safe) → 8-B6 single-sides it into the gauge-staked LP → **NAV-per-share accretes for every holder.** No
      payout, no xALPHA distribution (the compounder/Mode-C 8-B13 is **absorbed here** — single-sided LP needs no
      balanced add). **Free-value-only invariant:** only HYDX-extracted USDC is recycled — never depositor USDC,
-     never unbacked mint (`auto-sodomizer.md` §8).
+     never unbacked mint (`auto-compounder.md` §8).
   8. **NAV + APR oracle module (read-only / dashboard).** Compute/publish **basket NAV from multiple oracle
      sources** + the **trailing-realized** APR (never projected).
   *(The former separate "Compounder / LP-rebalance module (Mode C / 8-B13)" is **removed — absorbed into item 7's
@@ -692,7 +695,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
   **Why this is the junior's pay + self-insurance:** the loop vamps net-new USDC out of the HYDX/USDC pool, so
   the basket compounds — that is what compensates the junior for duration risk ("frozen but earning") and is
   **waterfall leg (e)** (partial self-insurance, §11). **Bounded** (`hydrex.md`): TVL-capped, front-loaded,
-  trailing-realized + degrading over ~6 months. **Full design: `pending-docs/auto-sodomizer.md`** (economics:
+  trailing-realized + degrading over ~6 months. **Full design: `pending-docs/auto-compounder.md`** (economics:
   post-M1 treasury economics (TBD); the xALPHA CCIP leg: `tickets/bridge/8x-01-szalpha-wrapper-cct.md`). **Gating dependency:** the Hydrex gauge
   **whitelist** for our zipUSD/xALPHA pool (`hydrex.md` §9.4, via the OTC) — until it lands, **build + fork-test
   against live Base with stand-in pool/gauge addresses**, swap for production.
@@ -710,7 +713,7 @@ insurance **gates** themselves are off-chain preconditions — the CRE only emit
 
 #### 4.5.1 Yield-engine strategy modules (8-B5…8-B14) — build-grade
 
-The auto-sodomizer loop (the engine inventory above) decomposes into the build tickets **8-B5…8-B14**. Each is
+The auto-compounder loop (the engine inventory above) decomposes into the build tickets **8-B5…8-B14**. Each is
 raised here to zero-guess detail; **the substrate is referenced, not re-spec'd here** (8-B1 Baal + main-Safe +
 **sidecar** scaffold; the **Exit Gate** — holds `manager`, absorbs the mint/TVL + lock/freeze shamans + the
 buy-and-burn; and **`SzipNavOracle`**; see `reports/baal-spec.md §13`).
@@ -721,7 +724,7 @@ buy-and-burn; and **`SzipNavOracle`**; see `reports/baal-spec.md §13`).
 > protocol deposits its monthly xALPHA emissions **in-kind** (NAV-proportional, §4.5) and the engine pairs them with
 > resting zipUSD into the 70/30 ICHI LP; the lending spread + arbs accrue to **treasury, not the junior** (§17). (3)
 > The **strike loop borrows the warehouse `USDC Resting Vault`** (un-utilized USDC, LP-collateralized), **not** a
-> treasury vault (8-B5). Full design narrative: `pending-docs/auto-sodomizer.md` +
+> treasury vault (8-B5). Full design narrative: `pending-docs/auto-compounder.md` +
 `hydrex.md` + `monitoring.md`; economics post-M1 (TBD). **§5/§17 yield routing is honored, not reopened** (lending
 APR = the protocol's → xALPHA; depositor pay = the HYDX-vamp + the xALPHA subsidy; bounded, TVL-capped,
 trailing-realized). None of these modules changes a §11/§12 money-model invariant (the strike is borrowed from the warehouse
@@ -729,7 +732,7 @@ trailing-realized). None of these modules changes a §11/§12 money-model invari
 depositor principal is protected by the collateral, never the counterparty; §11/§12 untouched).
 
 **The harvest cycle, end to end (how the sub-routines chain).** One CRE-driven pass per epoch (+ on triggers,
-`auto-sodomizer.md` §4). Read top to bottom — each module is one step of the same loop:
+`auto-compounder.md` §4). Read top to bottom — each module is one step of the same loop:
 1. **8-B6 LP** — the basket's zipUSD + xALPHA sit as a single-sided ICHI LP, **gauge-staked** (staking is what
    earns oHYDX; the bare LP earns only swap fees).
 2. **8-B7 Harvest/vote** — claim the gauge's **oHYDX + fees**; take the **vote-floor `exerciseVe` slice first**
@@ -762,7 +765,7 @@ depositor principal is protected by the collateral, never the counterparty; §11
   vendored — WOOF-00). The module holds **no custody**; the Safe holds the basket.
 - **The CRE strategy-admin robot (8-B11) is the only caller** of every module entrypoint: a single immutable
   **CRE operator address**, set-once-then-immutable exactly as the §4.4 receivers (assert non-zero, then seal),
-  gates each entrypoint (`onlyCRE`). This is `auto-sodomizer.md` §8 invariant 1 (permissioned writer).
+  gates each entrypoint (`onlyCRE`). This is `auto-compounder.md` §8 invariant 1 (permissioned writer).
 - **The Safe is itself an EVC account owner.** The reservoir borrow (8-B5/8-B8) runs on the **Safe's own** EVC
   account (not a fresh per-line `LineAccount`, §4.7) — the module drives the Safe to `enableController` /
   `enableCollateral` / borrow on-behalf. Distinct from the senior lien borrowers (§4.4).
@@ -798,7 +801,7 @@ self-collateralizing harvest loop; the LP is its own working capital).
   ~30% strike in USDC (8-B8), so the harvest needs a source of USDC. That source is the **LP itself**: you
   **unstake** the LP slice from the gauge, **post it as collateral**, **borrow** the ~30% strike, **exercise**
   the oHYDX, **sell** the resulting HYDX, **repay** the borrow, and **re-stake** the slice to resume emissions.
-  This is `auto-sodomizer.md` §5's "self-collateralizing — borrow 30% to unlock 100%": the borrow funds the
+  This is `auto-compounder.md` §5's "self-collateralizing — borrow 30% to unlock 100%": the borrow funds the
   strike, the HYDX sale repays the borrow, the LP returns to the gauge. The unstake→re-stake is an inherent step
   of every harvest, **not** a fallback to a standing USDC buffer.
 - **What it is.** An EVK isolated market: a treasury-supplied **USDC borrow vault** + an **escrow collateral
@@ -833,12 +836,12 @@ self-collateralizing harvest loop; the LP is its own working capital).
   abi.encodePacked(asset, oracle, unitOfAccount))` (`reference/euler-vault-kit/src/GenericFactory/GenericFactory.sol:116`)
   with a dedicated `EulerRouter`, set the gap with `Governance.setLTV`
   (`reference/euler-vault-kit/src/EVault/modules/Governance.sol:281`) so a 30%-strike borrow sits well inside
-  `liquidationLTV` (self-collateralizing, `auto-sodomizer.md` §5) and cap with `setCaps (:369)`; **governor = the
+  `liquidationLTV` (self-collateralizing, `auto-compounder.md` §5) and cap with `setCaps (:369)`; **governor = the
   §17 OZ `TimelockController` (retained, not renounced)** — distinct from the **frozen** per-line lien routers
   (§4.7), because LTV/caps/oracle must stay tunable under the 2-day veto as the LP economics shift.
 - **Collateral oracle — a DEPLOY PREREQUISITE, not a deferrable flag.** The router needs the LP-mark adapter
   **at wiring time** (`govSetConfig`). Because the whole borrow is **CRE-permissioned** (which kills external
-  oracle-manipulation, `auto-sodomizer.md` §5), the mark is a **CRE-fed conservative mark** — the same push-cache
+  oracle-manipulation, `auto-compounder.md` §5), the mark is a **CRE-fed conservative mark** — the same push-cache
   adapter shape as the lien registry (`BaseAdapter`/`IPriceOracle`, §4.1/§7), keyed on the LP token, written by the
   robot from the 8-B4 basket NAV; the retained timelock can re-point it (via `router.govSetConfig`, not an
   oracle-local owner). **RESOLVED 2026-06-08 (was a build flag): CRE-fed push-cache** (not a fixed-haircut
@@ -865,7 +868,7 @@ self-collateralizing harvest loop; the LP is its own working capital).
 - **Failure modes:** reservoir under-funded → harvest paused that epoch (no strike financing); if a loop's repay
   market-sell wouldn't fit the soft-bleed cap (thin pool) → **size the loop smaller** (exercise less, 8-B8), don't
   leave the borrow open; worst case is a *stall* (CRE holds over-collateralized HYDX awaiting liquidity), **not**
-  depositor bad debt (`auto-sodomizer.md` §5).
+  depositor bad debt (`auto-compounder.md` §5).
 
 **8-B6 — LP strategy module** (owns the LP's whole lifecycle: build it, stake it, and unstake/re-stake for the loop).
 - **External calls `[EXT]`:** ICHI vault `deposit(uint256 deposit0, uint256 deposit1, address to) → shares`
@@ -921,7 +924,7 @@ self-collateralizing harvest loop; the LP is its own working capital).
   (`ve.tokenOfOwnerByIndex`); claiming only credits each veNFT's own lock (cannot redirect), so an imperfect array is
   harmless.
 - **CRE op seq (per epoch):** claim (`gauge.getReward()`) → take the **vote-floor `exerciseVe` slice FIRST**
-  (`auto-sodomizer.md` §8 inv. 8 — defend `s*` before any sell slice) → re-`vote` our gauge → pass the remaining
+  (`auto-compounder.md` §8 inv. 8 — defend `s*` before any sell slice) → re-`vote` our gauge → pass the remaining
   oHYDX to 8-B8 per the regime split. (The rebase claim is an independent, idempotent op.)
 - **State:** **none beyond the set-once wiring** — each `exerciseVe` mints a fresh account-owned veNFT and voting /
   floor / rebase are all account-keyed or operator-curated, so the module tracks **no `tokenId`** (the earlier "the
@@ -944,7 +947,7 @@ self-collateralizing harvest loop; the LP is its own working capital).
   cutoff = $0.015** (the operative skip — our borrow→exercise→sell→repay loop nets a profit only above it: at $0.015
   the gross spread is ~33%, enough to cover the ~2–3% sell-side slippage on the thin draining pool; below it the
   round-trip stops netting → **skip `exercise`**, the oHYDX accrues to the Safe until a profitable epoch,
-  `auto-sodomizer.md` §4 step 4 / `monitoring.md` §D) > a **$0.018 amber / begin-taper tier** (start shrinking the
+  `auto-compounder.md` §4 step 4 / `monitoring.md` §D) > a **$0.018 amber / begin-taper tier** (start shrinking the
   loop size as price approaches the cutoff — a graceful taper, not a cliff, `hydrex.md` §9.3) > the **hard underwater
   floor $0.01** (mechanical: `strike = max(30%·TWAP, $0.01)` ⇒ spread = 0% at $0.01 and the option is literally dead
   below it; = `getMinPaymentAmount()`, `hydrex.md` §2.4 — never reached, we stop at $0.015). *(Canonical loop cutoff
@@ -967,7 +970,7 @@ self-collateralizing harvest loop; the LP is its own working capital).
   the **fastest payoff wins** — sell now, repay, release, re-stake; (2) the HYDX/USDC pool is **net-draining with
   no buy-side** (`hydrex.md` §2.3), so resting sell orders *above* spot (the old range-ladder) rarely fill — you
   must take the bid that exists. So this module **market-sells** the exercised HYDX into the pool. *(supersedes the
-  earlier NFPM range-ladder — `hydrex.md` §9.1 / `auto-sodomizer.md` §4 step 5; an UP-regime range-rest of the
+  earlier NFPM range-ladder — `hydrex.md` §9.1 / `auto-compounder.md` §4 step 5; an UP-regime range-rest of the
   **residual only** is an optional fee optimization, never the repay leg.)*
 - **External calls `[EXT]`, Algebra `SwapRouter` `0x6f4b…`:** `exactInputSingle(...)` HYDX→USDC (market sell into
   the HYDX/USDC pool `0x51f0…`); read spot/TWAP from `pool.globalState()` to size the order against the cap.
@@ -1008,7 +1011,7 @@ self-collateralizing harvest loop; the LP is its own working capital).
   exit at NAV, §6.4/§7) — there is no USDC-to-holder payout and no xALPHA boost. (Supersedes the prior Mode A/B/C
   framing (post-M1 economics, TBD); the reinvest sink formerly split out as **8-B13 is absorbed here** — single-sided LP
   removes the balanced-add/swap machinery 8-B13 carried.)
-- **Free-value-only invariant (load-bearing, `auto-sodomizer.md` §8 inv. 3) — ENFORCE ON-CHAIN.** The
+- **Free-value-only invariant (load-bearing, `auto-compounder.md` §8 inv. 3) — ENFORCE ON-CHAIN.** The
   **8-B10 module owns** the single `uint256 freeValueAccrued` storage (no other module writes it); the **CRE
   operator is the only writer** (`onlyCRE`, the same gate as every entrypoint). Two mutators: `creditFreeValue(uint256
   realizedUsdc)` — called after 8-B9 sweeps a fill, **increments** by the USDC realized **net of** the 8-B5 strike
@@ -1038,7 +1041,7 @@ leg). There is one sink (recycle → NAV), not three modes; the engine's on-chai
   (the engine strategy-admin operator path). **This subsection pins only the on-chain seam it drives:**
   - A single immutable **CRE operator address** is the sole authorized caller of every 8-B5…8-B10 entrypoint
     (`onlyCRE`, set-once-then-immutable, mirroring §4.4). It is the Zodiac-module `msg.sender`; the module then
-    forwards to the Safe via its inherited `exec(...)` (`core/Module.sol:43`). This realizes `auto-sodomizer.md` §8 inv. 1.
+    forwards to the Safe via its inherited `exec(...)` (`core/Module.sol:43`). This realizes `auto-compounder.md` §8 inv. 1.
   - **The driven-entrypoint registry** (the surface the §8 workflow calls): 8-B5 `postCollateral`/`borrow`/`repay`/`withdrawCollateral`;
     8-B6 `postLp`/`stake`/`unstake`/`restake`; 8-B7 `harvestAndVote`; 8-B8 `exercise`; 8-B9 `marketSell`; 8-B10
     `recycle`. Each is revert-bounded by its
@@ -1063,10 +1066,10 @@ leg). There is one sink (recycle → NAV), not three modes; the engine's on-chai
 - **Implementation (`monitoring.md` §4):** a Multicall3 batch per epoch + a continuous floor/price poll + archive
   `eth_call` checkpoints + a team-Safe event indexer.
 - **Outputs:** (1) the CRE trigger panel that drives the 8-B11 robot (each amber/red → a `hydrex.md` §9 action);
-  (2) the depositor-facing **trailing-realized** APR (never projected, `auto-sodomizer.md` §7); (3) the Treasury digest/pages.
+  (2) the depositor-facing **trailing-realized** APR (never projected, `auto-compounder.md` §7); (3) the Treasury digest/pages.
 - **Escalation tiers (`monitoring.md` §3):** Green (bot auto-acts) / Amber (notify) / Red (page Treasury — team
   lock-power jump, oHYDX-hoard drawdown, profitability-halt → bot defaults to all-to-ve / pause-sells / halt-minting).
-- **TVL cap (the binding governor, `auto-sodomizer.md` §7 / `hydrex.md` §5):** `maxDeposit` gates so
+- **TVL cap (the binding governor, `auto-compounder.md` §7 / `hydrex.md` §5):** `maxDeposit` gates so
   `expected_weekly_oHYDX_sold ≤ measured pool absorption`, re-derived each epoch from the measured net Swap flow.
   **Enforced on-chain at 8-B2;** 8-B12 computes the cap value from the fill curve and feeds it.
 - **Superseded-metric note:** `monitoring.md` §C's "szipUSD backing ratio" is superseded by the Baal redesign
@@ -1249,9 +1252,10 @@ against the treasury's xALPHA-buyback budget, not against a junior APR.
 zipUSD (the **$1 utility dollar**) and szipUSD (the **junior**, the main product) leave by different
 mechanisms, because they are different instruments. zipUSD is a $1 hard claim where many holders compete for
 limited cash → a **pro-rata epoch queue at par** (§6.1). szipUSD is share-backed, NAV-floating, first-loss
-capital → the **Exit Gate** (Loot-custody + intent queue + liquidity windows, §6.4), which fits the floating NAV,
-removes the raw-ragequit footgun, and deters runs. Both ultimately hit the same liquidity ceiling: you can only get
-out as much USDC/value as the pool can free (§6.3).
+capital → the **Exit Gate** (Loot-custody) + the **CoW book** (a resting sell order *is* the queue; the treasury
+fills it just-in-time via buy-and-burn, §6.4), which fits the floating NAV, removes the raw-ragequit footgun, and
+deters runs. Both ultimately hit the same liquidity ceiling: you can only get out as much USDC/value as the pool
+can free (§6.3).
 
 ### 6.1 Epoch queue at par (primary, zipUSD) — `ZipRedemptionQueue`
 The USDC backing zipUSD is lent out to illiquid lien markets, so par redemption is a **30-day epoch
@@ -1302,7 +1306,7 @@ stresses, §11), and it is why par redemption is an epoch queue rather than inst
 draws against pending redemptions. This contention is exactly what the **systemic Duration Bond (§11 trigger
 B)** defends against — a utilization breach engages the junior lock to prevent a run.
 
-### 6.4 Junior exit (szipUSD) — the Exit Gate (custody + intent queue + liquidity windows)
+### 6.4 Junior exit (szipUSD) — the Exit Gate (custody) + the CoW book
 The junior does **not** use the at-par epoch queue (that is zipUSD's mechanism) and does **not** expose raw Baal
 `ragequit` to depositors. Baal `ragequit` is permissionless on the **Loot-holder** and **cannot be paused**
 (`reference/Baal/contracts/Baal.sol:619`; pause blocks transfers, not ragequit) — so the only way to gate it is to
@@ -1317,55 +1321,54 @@ supersedes the old `sUSD3` cooldown + soulbound-claim model, which assumed a rag
    the gate is the sole Loot-holder and thus the sole ragequit caller, so it controls *when* exits happen — **not**
    on the user share, which is a freely transferable ERC-20. So no depositor can call `ragequit`, yet szipUSD trades
    on the CoW book (§6.2). (The gate keeps `szipUSD.totalSupply() == its Loot balance`.)
-2. **Intent queue.** To leave, a holder signals intent — `gate.requestExit(amount)` — which queues the claim; no
-   assets move yet. ("Marie taps Exit once; her request joins the next window's queue.")
-3. **Liquidity windows (free — they ride the harvest cadence).** The gate processes the queue **only during
-   liquidity windows**: the recurring moments when the auto-sodomizer harvest loop has **unstaked the ICHI LP** (it
-   pulls the LP off the gauge for borrow collateral every cycle, §4.5.1 / 8-B5/8-B6), so the basket is liquid in the
-   main Safe and a ragequit pays **full pro-rata**. (A raw ragequit while the LP is staked reads `balanceOf(LP)=0`
-   and shortchanges the LP leg — the gate exists precisely to avoid that mechanical haircut.) A window is opened by a
-   **set-once `windowController`** — the **CRE operator / keeper** that coordinates with the harvest (the *operator*
-   tier of the §4.5 item-0 two-tier model: narrow blast radius — it can only *process the queue*, never mint or
-   change authority) — calling `gate.processWindow(maxClaims)` (gas-bounded; the keeper shards). At the window the
-   gate **ragequits the queued Loot against the main Safe — a plain in-kind, pro-rata claim across the basket legs**
-   (`tokens[]` = the sorted basket assets: zipUSD + xALPHA, the LP having been decomposed to its underlying by the
-   harvest). The exiter receives **their pro-rata slice of the (free, main-Safe) treasury, in-kind** — worth
-   `shares × NAV/share` by construction (the share is a volatile NAV-bearing claim; the slice self-prices, so there
-   is **no oracle read, no value-cap, and no numeraire conversion in the exit path** — the NAV oracle prices
-   *issuance*, not exit). The matching Loot + escrowed szipUSD are burned. **The leaver's downstream legs are NOT the
-   gate:** a separate Zodiac **auto-dump module** market-sells the xALPHA leg → zipUSD on Hydrex (so they end holding
-   only zipUSD), and the existing **`ZipRedemptionQueue`** (§6.1) turns that zipUSD → USDC. The gate's sole job is
-   *ragequit the pro-rata share + burn the loot.*
+2. **The CoW book is the queue.** To leave, a holder rests a **CoW sell order** for their szipUSD at their own
+   limit — that resting order *is* their place in the queue; only their own token rests (no parked protocol
+   capital, no on-chain escrow window).
+3. **Fill = the CoW book (treasury just-in-time + external buyers).** A resting sell order is filled by either
+   the **protocol treasury** — which posts a *transient, just-in-time* CoW `BUY szipUSD` bid (**8-B14**, priced
+   `≤ navExit × (1 − d)`, **never above NAV** — paying above NAV would rob stayers), funded by the back-office
+   **zipUSD → USDC off-ramp** (basket zipUSD redeemed at par via `ZipRedemptionQueue`, §6.1) — **or** by **external
+   buyers** (adversarial bids on the same book). On a treasury fill the bought szipUSD lands in the **rq/main Safe**
+   (the `engineSafe` label resolves there — there is **no separate engine Safe**; the basket, the buyback, and the
+   redeemed USDC all live on the one ragequit Safe, so there is no cross-Safe routing) and
+   `ExitGate.burnFor` burns it + the matching Loot: pure supply reduction → **NAV/share rises, the discount accretes
+   to stayers**. Price is **discovery, not administered** (the junior is paid the yield *for* bearing the risk —
+   there is no par floor on szipUSD; only zipUSD carries par). A holder who wants more than the market offers simply
+   **sits unfilled, still in the vault, still earning**, until the market rises to them or they capitulate. **No
+   forfeit** — the basket is never confiscated against a frozen slice; the frozen equity stays the holder's (steps
+   4-6) and clears as it frees. The operator tier here is a **set-once `windowController`** (narrow blast radius —
+   it can only post the discounted bid + drive `burnFor`, never mint or change authority).
 4. **Free vs committed — the sidecar IS the freeze.** Only the **free** junior equity lives in the main
    (ragequit-target) Safe. The equity **committed to live credit lines** — sized to credit-warehouse **utilization**
-   — lives in a **non-ragequittable sidecar Safe** (`BaalAndVaultSummoner`, §4.5) running the auto-sodomizer, so it
-   keeps earning HYDX while reserved. A window exit redeems your share of the **free** equity; the **committed**
-   slice is not redeemable until those lines close/repay and the CRE rotates that equity back to the main Safe. This
+   — lives in a **non-ragequittable sidecar Safe** (`BaalAndVaultSummoner`, §4.5) running the auto-compounder, so it
+   keeps earning HYDX while reserved. A CoW exit clears against your share of the **free** equity; the **committed**
+   slice is not realizable until those lines close/repay and the CRE rotates that equity back to the main Safe. This
    *is* the Duration Bond freeze (§11) — **structural, not a ragequit gate**: the committed equity simply isn't in the
    redeemable Safe. The withhold fraction `committedFraction = committed backing / basketNAV` = credit-warehouse
    **utilization** (§11) = the fraction held in the sidecar — **not** sized by any single default's at-risk amount
    (that sizes only the NAV markdown, §4.6/§11).
 5. **Coverage floor = the freeze (not a governed knob).** The floor *is* the committed/utilization slice the sidecar
-   already locks (item 4) — window exits reach only the **free** equity, so junior NAV can never drain below the
+   already locks (item 4) — CoW fills reach only the **free** equity, so junior NAV can never drain below the
    utilized first-loss backing. Structural, enforced by the freeze; **no separate floor percentage to set** (§2).
 6. **Default / stasis.** If lines stall or default, utilization stays high → the committed slice stays in the sidecar
-   → window exits keep redeeming only the free equity → **nobody front-runs the loss**. The slashed xALPHA duration
+   → CoW fills keep clearing only against the free equity → **nobody front-runs the loss**. The slashed xALPHA duration
    bond lands **in the sidecar**; the sidecar keeps printing HYDX; the slice releases when the hole is made whole
    (§11/§4.6).
-7. **Impatient exit = the CoW secondary (no forfeit).** A holder who wants out *now* — including their share of the
-   frozen slice — **sells szipUSD on the CoW book** (§6.2) to patient capital that prices the duration/impairment
-   risk; the basket isn't touched. There is **no protocol forfeit-haircut** — the market prices it. The protocol's
-   **8-B14 buy-and-burn** posts discounted standing bids (engine USDC, below NAV) and **burns** the szipUSD it buys,
-   actualizing the seller's haircut to the patient holders.
+7. **Patience vs price is the holder's own call (no forfeit).** Whether a holder waits for a near-NAV fill or
+   capitulates to a lower bid now, it is one book and their own limit — never a protocol haircut. Their share of
+   the frozen slice is theirs throughout; it is realized when the market fills them or the freeze releases.
 
 This is the **junior-exit valve only — zipUSD itself never freezes** (the senior is the composable dollar; its only
-throttle is the epoch queue, §6.1). The window cadence is the timing gate, the sidecar is the freeze, and gate
-custody removes the raw-ragequit footgun. Window cadence / floor / `f` remain governed params (§17).
+throttle is the epoch queue, §6.1). The sidecar is the freeze; gate custody removes the raw-ragequit footgun; the
+CoW book + 8-B14 buy-and-burn is the single exit. The discount `d`/`f` and the subordination floor remain governed
+params (§17). The **resting CoW order is the only queue** — there is **no on-chain intent queue, escrow window, or
+liquidity window to schedule** (the old `ExitGate` `requestExit`/`processWindow` forfeit path is retired; exit =
+rest a CoW sell → treasury just-in-time buy-and-burn or external fill → `burnFor`).
 
 **Legibility (so a depositor never panics about "where are my tokens").** The depositor UI shows **one position** —
 "szipUSD: $X, ~Y% APR" — never raw Loot or the gate/sidecar internals. Exit is one button → a clear status track:
-**Requested → Window opens ~<date / live countdown> → Claimable → Claimed**, with the **next-window estimate** (it
-rides the predictable harvest + line-expiry cadence) and an **estimated payout**. The gate and sidecar are surfaced
+**Order resting (your limit) → Filled (treasury or market) → szipUSD burned**, showing the live `navExit` mark and
+the standing treasury bid so the holder sees exactly what they'd get now vs by waiting. The gate and sidecar are surfaced
 as named, audited components that hold her claim explicitly — her funds are never "lost in a weird contract," they
 are in a tracked queue with a visible clock.
 
@@ -1468,9 +1471,9 @@ two trust modes; every workflow below is one or the other.
    (LP mark), the `CreditWarehouse` CRE-receiver/Roles-adapter (senior-custody ops), and `DefaultCoordinator`
    (default/recovery, M2). Full per-type table: §8.0.
 2. **The operator path — the single immutable CRE operator → the engine modules' `onlyOperator` entrypoints.**
-   The auto-sodomizer engine (8-B5…8-B10, §4.5/§4.5.1) is driven by **one immutable operator identity** calling
+   The auto-compounder engine (8-B5…8-B10, §4.5/§4.5.1) is driven by **one immutable operator identity** calling
    plain `msg.sender == operator` entrypoints on the engine Zodiac modules — **not** DON-signed reports
-   (`reports/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
+   (`reports/baal-spec.md` 8-B11; `auto-compounder.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
    `RecycleModule.creditFreeValue` is unbounded), and that trust is exactly what makes the revolving reservoir
    borrow safe (it kills the external-oracle-manipulation exploit, §4.5.1). Full surface: §8.7.
 The two paths are independent identities by construction (the engine `operator` is asserted `!= owner` at module
@@ -1499,6 +1502,7 @@ as required; no contract change.
 | `7` LP_MARK | `SzipReservoirLpOracle` | `(uint256 mark, uint32 ts)` | Share-price feeds (§8.6) | CRE-03 |
 | SUPPLY/APPROVE/REDEEM/REPAY | `CreditWarehouse` CRE-receiver | `(uint8 opType, bytes payload)` → re-encoded Safe call (§8.5) | Warehouse ops (§8.5) | CRE-04 |
 | default/recovery (reportType 8) | `DefaultCoordinator` | `(uint8 action, bytes actionData)` — LOCK/RELEASE/DEFAULT/RECOVERY/RESOLVE/WRITEOFF (§8.4) | Default/recovery (§8.4) | CRE-01 (LOCK/RELEASE M1-live; default actions go live with the M2 demo) |
+| `8` RATE | `SzAlphaRateOracle` (Base) | `(uint256 rate, uint48 ts)` — the raw xALPHA `exchangeRate()` pulled from 964 | xALPHA rate pull (§8.8) | CRE-03 (8x-02) |
 
 `equityMark` = the Proof-of-Value mark (home value − senior debt, §4.1); `proofRef` = a commitment to the Proof
 attestation bundle (lien-perfected + value + insurance); the lien/insurance **gates** are off-chain
@@ -1668,9 +1672,9 @@ cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
   until refreshed. `mark!=0`, `mark<=uint208.max`, `ts<=now` are enforced on-chain (`:82-84`).
 
 ### 8.7 Engine strategy-admin operator (8-B11 — the operator path, NOT a report)
-The auto-sodomizer engine (§4.5/§4.5.1, 8-B5…8-B10) is driven by the **single immutable CRE operator** calling
+The auto-compounder engine (§4.5/§4.5.1, 8-B5…8-B10) is driven by the **single immutable CRE operator** calling
 the engine Zodiac modules' `onlyOperator` (`msg.sender == operator`) entrypoints — a **different write path
-from every §8.0 report** (`reports/baal-spec.md` 8-B11; `auto-sodomizer.md §8` inv. 1). This is the off-chain
+from every §8.0 report** (`reports/baal-spec.md` 8-B11; `auto-compounder.md §8` inv. 1). This is the off-chain
 orchestrator whose **on-chain surface is 8-B11** (a plain `onlyOperator` modifier + an immutable operator
 address on each module); the workflow itself is this CRE build. It is **not** Forwarder-gated and emits **no
 DON-signed report** — the operator submits ordinary transactions (it may still run as a CRE workflow using
@@ -1700,24 +1704,31 @@ deferred to the treasury module, §17); no additional on-chain mechanism is inve
 junior's pay + self-insurance** (the loop vamps net-new USDC, compounding the basket = "frozen but earning",
 waterfall leg (e), §11). It is bounded — TVL-capped, front-loaded, trailing-realized (`hydrex.md`).
 
-### 8.8 xALPHA-APR feed
-The **intrinsic xALPHA-LST APR** is CRE-published on-chain on the same push-cache pattern as the leg marks
-(`tickets/bridge/8x-02-xalpha-apr-cre.md`; reuse the §8.6 producer shape). It is **trailing-realized, never projected** (§12) and
-**derived from on-chain reads alone — no treasury/budget constant.** The number is the annualized growth of the
-wrapper's `exchangeRate()` (`IXAlphaRate.exchangeRate()`, alpha-per-xALPHA = staked-alpha ÷ supply, StakingV2
-`0x805` under the hood): since `deposit`/`redeem` mint/burn at the prevailing rate (NAV-neutral), **every move in
-`exchangeRate()` is validator dividends compounding into the wrapper's staked pool** — that is the LST's own
-staking yield. Formula: `intrinsic_APR = (rate_now / rate_prev − 1) × (year / Δ)`, alpha-denominated and
-**numeraire-clean** (supply cancels in the ratio; the cross-chain circulating supply matters only for per-token
-NAV/USD *value* and the post-M1 incentive denominator, not for this ratio). A metagraph emission read
-(`getEmission`/`getDividends` `0x802`) is a **forward cross-check only**, not the headline (validator-take/split
-caveat). This is **distinct from** the szipUSD depositor APR (NAV accretion from the recycle loop — the 8-B12 /
-§8.6 product feed); it is xALPHA's *own* yield. It feeds §12 / the depositor UI and the engine regime gates
-(8-B12 → 8-B11). The stale "lending-spread + coupon" base leg is **dropped** (lending yield → treasury, not
-depositors, §17/[[supply-side-redesign-locked]]); the **post-M1 szipUSD incentive APR** (xALPHA emitted as a
-subsidy: `emitted × xALPHA_USD ÷ szipUSD_TVL`) is a separate, clearly-labeled, deferred overlay that consumes
-this primitive — never blended. (CRE-03 pairs this with the §8.6 share-price feeds — one bridge/oracle workflow
-family.)
+### 8.8 xALPHA exchange-rate Base oracle + the DERIVED APR (8x-02)
+**The one fact that lives only on Bittensor is the xALPHA `exchangeRate()`** (`staked alpha ÷ supply`, StakingV2
+`0x805`, native to **Subtensor 964**; the Base `SzAlphaMirror` is a plain `BurnMintERC20` with no stake surface). So
+a CRE workflow (`cre/szalpha-rate/`) **pulls that ONE primitive from 964 and pushes it — raw — to a Base oracle**
+`SzAlphaRateOracle` (`contracts/src/bridge/SzAlphaRateOracle.sol`, `reportType RATE = 8`, payload `(uint256 rate,
+uint48 ts)`). **CRE transports the rate; the chain derives everything else** (NAV, APR) on Base from it — nothing
+pre-computed is ever pushed or bridged. `SzAlphaRateOracle` is the Base-side `IXAlphaRate`: `exchangeRate()` (the
+last pushed rate) + `fresh()`/`lastUpdate()`. Push guards are truthful, not adversarial — non-zero, not-future,
+**strictly-newer** (no replay/out-of-order); deliberately **no deviation band** (a validator slash legitimately
+lowers the rate); consumers **fail-closed on staleness** via `fresh()` (a rate that moves NAV must not serve stale).
+
+- **NAV consumes the rate directly.** `SzipNavOracle`'s xALPHA leg reads `exchangeRate()` from this oracle (in
+  production; the M1 18-dp stand-in exposes the same surface). This **resolves the §8.6 cross-chain rate seam** —
+  the rate the NAV oracle needs on Base now has a defined producer.
+- **The intrinsic APR is DERIVED on-chain** from the pushed rate's history: `SzAlphaRateOracle.intrinsicAprBps()` =
+  `(rate_now / rate_prev − 1) × year/Δ` over two rolling checkpoints the pushes maintain — **floored at 0** (a
+  slash/decline is 0, not negative — no brick), clamped to an immutable `aprCap` display bound. **Trailing-realized,
+  never projected** (§12), numeraire-clean (supply cancels), **no treasury/budget constant.** It is advisory —
+  consumed by the depositor UI / 8-B12 monitoring / the 8-B11 regime gate — and **gates no funds**, so it is never
+  pushed or bridged; it is a pure read on the rate. (A metagraph `getEmission`/`getDividends` `0x802` read stays an
+  off-chain **forward cross-check only**.) This is **distinct from** the szipUSD depositor APR (NAV accretion from
+  the recycle loop — the 8-B12 / §8.6 product feed); it is xALPHA's *own* yield. The stale "lending-spread + coupon"
+  base leg is **dropped** (lending yield → treasury, §17/[[supply-side-redesign-locked]]); the **post-M1 szipUSD
+  incentive APR** (`emitted × xALPHA_USD ÷ szipUSD_TVL`) is a separate, deferred overlay consuming this primitive —
+  never blended (its USD/value leg is the only piece that touches cross-chain supply, post-M1).
 
 ### 8.9 The Proof capability gate (DEC-01 — RESOLVED, two-layer model)
 Every report in §8.0 carrying a credit fact (origination 1, draw 2, revaluation 3, §8.4 recovery) needs its facts
@@ -1796,16 +1807,17 @@ with `setGovernorAdmin(adapter)`, `setHookConfig(gatingHook, OP_BORROW|OP_LIQUID
 shared router and no `govSetFallbackOracle`**; the per-line router keys `(LIEN_i, USDC)` on the registry and
 is frozen at birth (§4.1). Deploy an **OpenZeppelin `TimelockController`** (delay ≈2 days) **for §17
 parameter governance only** (szipUSD floor / `f` / cooldown — §17), **not** as a router governor;
-deploy registry/controller with an **immutable** Forwarder — the base `setForwarderAddress` is non-virtual
-(not overridable), so immutability is sealed by **renouncing `Ownable` ownership** as the final wiring op;
-**but first, before renouncing, call `setExpectedAuthor(WORKFLOW_OWNER)` and
+deploy registry/controller; in the **build phase the Forwarder + every wiring slot stay Timelock-re-pointable**
+(§17 — immutability/renounce is deferred to the pre-prod lock-down), so the final wiring op **transfers `Ownable`
+ownership to the Timelock** (`transferOwnership(timelock)`), **not** renounce;
+**but first, before the hand-off, call `setExpectedAuthor(WORKFLOW_OWNER)` and
 `setExpectedWorkflowId(WORKFLOW_ID)` on every `ReceiverTemplate` subclass** (`ZipcodeController`,
 `ZipcodeOracleRegistry`, and — when added — `DefaultCoordinator`) **and assert `getExpectedWorkflowId() != 0`
-on each immediately before `renounceOwnership()`, aborting the deploy otherwise**. The workflow-identity
+on each immediately before `transferOwnership(timelock)`, aborting the deploy otherwise**. The workflow-identity
 check in `ReceiverTemplate.onReport (:88-117)` is enforced **only when these expected values are non-zero**
-(`x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol:143,184`); if `renounceOwnership` runs
+(`x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol:143,184`); if ownership is handed off
 first, the identity check is bypassed and any workflow the Forwarder accepts can call `onReport`. **Set
-identity first (assert it), then renounce `Ownable` ownership** (§4.4). **No controller-level operator-wiring
+identity first (assert it), then transfer `Ownable` ownership to the Timelock** (§4.4/§17). **No controller-level operator-wiring
 step is needed** — under the per-line borrower model (§4.4) each line's operator grant is issued **at
 origination** by the adapter's per-line `LineAccount` (which deploys, registers its fresh prefix, and calls
 `EVC.setAccountOperator(borrowAccount, adapter, true)` — granting the **adapter** (the borrow-driver), §4.7),
@@ -1842,6 +1854,63 @@ burns the lien token and emits `LienReleased` → off-chain SPV releases the rec
 
 **Redeem path:** `ZipRedemptionQueue.requestRedeem(zipUSD)` (escrowed) → 30-day `settleEpoch()` (CRE cron)
 pro-rata fill from freeable USDC → `claim`.
+
+### 9.1 Local fork dev-harness (Anvil) — the item-10 stand-up target + RPC cost discipline
+
+Item 10's deploy/wiring script (`DeployZipcode`, TODO) targets a **persistent local Anvil forked off Base
+mainnet** before it ever targets real Base. This is the dev/integration substrate: the whole Base-side system
+(`ZipcodeOracleRegistry` → `CREGatingHook` → `EulerVenueAdapter` → `ZipcodeController`; the szipUSD Baal
+substrate + `SzipNavOracle` + Exit Gate + `SzipUSD` + the 8 engine modules; `CreditWarehouse` + redemption
+queue; loss side; `SzAlphaMirror` + its CCT pool) deployed + wired in dependency order, then exercised by the
+`audit/2` S→L traces against live forked Euler/EulerEarn/ICHI/Hydrex/CCT-registry. (The **964 leg** — `SzAlpha`
+over the Subtensor StakingV2 precompile — **cannot** run on a Base fork; it needs a separate Subtensor EVM fork
+and is validated standalone, 8x-01.)
+
+**Stand-up (the proven recipe, 8x-01 window):**
+```
+anvil --fork-url $BASE_RPC_URL --fork-block-number <PINNED> --chain-id 8453 --port 8545
+# deploy with the well-known Anvil account 0 as the local team multisig:
+#   TEAM_MULTISIG=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+#   key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+forge script script/DeployZipcode.s.sol --rpc-url http://localhost:8545 --broadcast --slow --private-key <ANVIL0>
+```
+- **`--slow` is mandatory** for multi-tx broadcasts: without it Anvil drops txs from the mempool on nonce
+  races (observed: the substrate summon failed without `--slow`, succeeded with it).
+- **Pin `--fork-block-number`** (do NOT fork "latest"). A pinned block makes Foundry's on-disk RPC cache
+  (`~/.foundry/cache/rpc/base/<block>/`) reusable across runs and makes fork tests deterministic — it also
+  fixes the logged 8-B6 `DTL` flake (unpinned `createSelectFork("base")` = latest-block roulette).
+- **Chain-id 8453** so contracts reading `block.chainid` behave as Base.
+- The substrate summon is proven on this harness: `SummonSubstrate` deploys Baal + both Safes with
+  `totalShares()==0` (inert), `avatar()` wired, and the team multisig an owner of both Safes.
+
+**RPC compute-unit discipline (LOAD-BEARING — fork reads spend real Alchemy CUs).** Foundry persists every
+fetched fork slot to a disk cache at **`~/.foundry/cache/rpc/<chain>/<block>/`** (Anvil and `forge` both write
+it), keyed by **block number** (`--no-storage-caching` disables it — never set it). Reads only cost CUs on a
+cache **miss**; an already-cached `(block, slot)` is free forever. Alchemy meters per call (e.g. `eth_call` ≈ 26
+CU, `eth_getStorageAt` etc.) at ~500 CUPS, so an uncached heavy run burns millions of CUs needlessly — the goal
+is not a CU *ceiling* (PAYG has ample credit) but **not wasting CUs on re-fetches that a pinned cache makes
+free**. Rules, in impact order:
+1. **PIN THE FORK BLOCK everywhere.** This is the dominant fix. The current suite uses unpinned
+   `vm.createSelectFork("base")` (= "latest"), so **every run forks a different block and re-fetches the entire
+   working set** — verified: the cache held **265 distinct block dirs / 654 MB**, i.e. near-zero reuse across
+   runs. Pin one block (in `ForkConfig` + `foundry.toml`/Anvil `--fork-block-number`) → a single cache entry,
+   reused across all future runs and Anvil restarts → steady-state ≈ 0 CU. (Also fixes the 8-B6 `DTL` flake.)
+2. **Never run the heavy invariant/fuzz suites against a fork.** The 128k-call stateful invariants
+   (`DefaultCoordinator`, `LienXAlphaEscrow`/8-Bx, `ZipRedemptionQueue`, `FreezeHandler`) touch enormous numbers
+   of unique slots and have **no live-state dependency** — run them on the plain local EVM (`forge test`, no
+   `--fork-url`) = **0 CU**. Running the *full* suite with `--fork-url` was the dominant CU burn in the 8x-01
+   window and is forbidden. Fork only the tests that read live deployed contracts (Euler/EulerEarn/ICHI/Hydrex/
+   CCT registry); tag them (`*Fork*` / `--match-path`).
+3. **Persist Anvil's deployed state across restarts** with `--state state.json` (alias for `--dump-state` on
+   exit + `--load-state` on start) so a stood-up + wired system survives a restart without re-deploying — and,
+   with the block pinned (rule 1), the fork cache is reused too, so a restart is cheap.
+4. **Throttle Anvil to the provider** with `--compute-units-per-second <N>` (default 330; set at/under the
+   Alchemy 500 CUPS ceiling) rather than `--no-rate-limit`, so a burst can't trip provider rate limits.
+5. Use **`--slow`** for the deploy broadcast (multi-tx nonce-race → dropped tx without it, observed 8x-01).
+
+A full green run is therefore: **plain-EVM suite (0 CU) for the bulk + a small forked subset for the
+live-contract integration**, against **one pinned, state-persisted Anvil** — not the whole suite forking a
+fresh latest block and re-fetching from Alchemy.
 
 **Default path:** CRE default report → the committed slice is **already frozen** in the sidecar (structural,
 utilization-sized — a default does not move it, §6.4) → `DefaultCoordinator` **writes a conservative provision into
@@ -1905,7 +1974,7 @@ the default path via `DefaultCoordinator` (§4.6) and `LienXAlphaEscrow`.
 >    report (or the §11-B utilization-hysteresis release), never a manual/open-ended lock (a trust + rug
 >    surface otherwise).
 > 5. **The basket NAV grows off the HYDX vamp — that is the junior's compensation AND the hole-plug.** The
->    auto-sodomizer (the vault's **core** CRE strategy, NOT a post-M1 bolt-on) continuously vamps USDC out of
+>    auto-compounder (the vault's **core** CRE strategy, NOT a post-M1 bolt-on) continuously vamps USDC out of
 >    the HYDX/USDC pool (farm oHYDX → exercise → sell HYDX → USDC → recycle into the basket), compounding the
 >    Safe basket. This is what makes "frozen but earning" substantial — the junior is **well-paid for the
 >    duration risk it bears** — and is itself **waterfall leg (e)**: "HYDX/USDC liquidity pays for duration and
@@ -1949,10 +2018,10 @@ frozen junior's zipUSD" levers — the loss is now the marked NAV, recoverable, 
    credit-warehouse utilization** (`committedFraction = committed backing / basketNAV` = the fraction held in the
    sidecar, recomputed as lines draw/repay — the Exit Gate's accounting, §6.4). A default simply keeps utilization
    high, so that slice **stays** frozen until the line repays; the at-risk amount sizes the **NAV markdown** (the
-   provision into `SzipNavOracle`, §7/§4.6), **not** the freeze. The committed backing **stays in place and keeps earning** (auto-sodomizer in the
+   provision into `SzipNavOracle`, §7/§4.6), **not** the freeze. The committed backing **stays in place and keeps earning** (auto-compounder in the
    sidecar; no escrow, no share-move, no markdown). **Implemented via Exit-Gate custody + the sidecar (§6.4), not a
    ragequit gate** — Baal `ragequit` cannot be paused, so the freeze is the equity simply not being in the
-   redeemable main Safe; the Exit Gate (sole Loot-holder) only processes window exits against the free main-Safe
+   redeemable main Safe; the Exit Gate (sole Loot-holder) only clears CoW exits against the free main-Safe
    equity. (UX: "xx% bonded for the resolution window, resolves with the xALPHA premium.")
 3. **xALPHA bond (held, applied at resolution).** The lien's xALPHA bond is **held** through the freeze and
    applied at resolution in two jobs, in order: `slashXAlphaToCapital` — **sell xALPHA → external USDC** to fill
@@ -1975,7 +2044,7 @@ lock of every szipUSD position for a fixed term, realized as the **sidecar/utili
 Gate, §6.4; no per-position index, no SBT) fires on **either**:
 - **(A) a default — loss-driven (the flow above).** A lien defaults → its committed backing is **already in the
   sidecar** (structural, utilization-sized — the freeze was never "engaged"; it just doesn't release while the line is
-  unresolved) so window exits keep reaching only the free equity → the at-risk amount sized from the deviation re-mark
+  unresolved) so CoW fills keep reaching only the free equity → the at-risk amount sized from the deviation re-mark
   drives the **NAV markdown** (the provision, §7/§4.6) → the committed slice rotates back to the main Safe when the
   waterfall fills the hole and the line closes → the frozen cohort receives the **xALPHA premium**
   (`slashXAlphaToCohort`, the in-kind bond). **A conservative recoverable provision on NAV (§7), no share-escrow/burn,
@@ -1992,24 +2061,27 @@ Gate, §6.4; no per-position index, no SBT) fires on **either**:
     — it moves only via real originations and real redemption pressure. An optional CRE "secondaries-down" report (a
     new `reportType`, modeled on the §8.4 default/recovery report) may trip it **earlier**, but cannot un-trip a live
     on-chain breach.
-  - **Sizing:** `lockFraction = maxLockFraction × clamp((U − U_lock) / (U_max − U_lock), 0, 1)` — anchored to
-    utilization, the squeeze's stress variable (cf. trigger A's `atRisk/juniorNAV`).
+  - **Sizing (M1 = the utilization identity):** the freeze fraction is `φ_B = U` **exactly** — anchored to
+    utilization, the squeeze's stress variable (cf. trigger A's `atRisk/juniorNAV`). The escalation band
+    `lockFraction = maxLockFraction × clamp((U − U_lock) / (U_max − U_lock), 0, 1)` (a buffer rising *above* `U`
+    near saturation) is a **post-M1 surface — NOT built in M1**; M1 sets freeze% = utilization% directly.
   - **Stacking with (A):** a position's effective lock is `max(φ_A, φ_B)`, capped at `1.0` — the same shares
     serve the larger need; never summed. Each lock releases on its own condition; a governed `maxDuration`
     backstops both.
   - **Release:** auto-releases when free liquidity recovers — `U` falls below `U_lock − releaseHysteresis`
     (the hysteresis prevents flap).
-  - **M1 realization (the continuous structural floor, §6.4).** The above describes the *binary-lock* abstraction;
-    the M1 build (`DurationFreezeModule`) realizes it as the §6.4 **continuous structural floor** — the freeze is
-    *whatever fraction of basket value sits in the non-RQ sidecar*, and the on-chain guard is that a CRE-driven
-    **release** cannot drop the sidecar below `requiredFraction(U) × grossBasketValue`, where `requiredFraction =
-    min(1, max(U, lockFraction))` is recomputed live each release. Under this continuous floor, **`maxDuration` and
-    `releaseHysteresis` are subsumed** (M1 carries neither): there is no discrete "engaged" edge to debounce or
-    time-bound — the floor tracks `U` continuously and releases exactly as `U` falls when lines repay, and `U` is
-    non-manipulable so there is no flap to prevent. `commit` (raising the freeze) is always peg-safe and ungated by
-    value; `maxLockFraction` caps only the `lockFraction` escalation term (the effective lock is still capped only at
-    `1.0`), so there is no separate redeemability cap. (Re-introduce the binary-lock params only if a future design
-    replaces the continuous floor.)
+  - **M1 realization (DEAD-SIMPLE: freeze% = utilization%, §6.4).** The above describes the *binary-lock* abstraction
+    with an escalation term; the **M1 build (`DurationFreezeModule`) collapses it to the §6.4 identity directly —
+    `requiredFraction(U) = U`** (superintendent decision 2026-06-09). The freeze is *whatever fraction of the junior
+    NAV sits in the non-RQ sidecar*, and the on-chain guard is that a CRE-driven **release** cannot drop the sidecar
+    below `U × grossBasketValue`, recomputed live each release. **Utilization % of the credit book = freeze % of the
+    whole junior NAV — full stop.** The escalation surface (`lockFraction` / `U_lock` / `U_max` / `maxLockFraction`)
+    and the binary-lock params (`maxDuration` / `releaseHysteresis`) are **NOT built for M1** (post-M1 refinements):
+    under the continuous floor there is no discrete "engaged" edge to debounce/time-bound, the floor tracks `U`
+    continuously and releases exactly as `U` falls when lines repay, and `U` is non-manipulable so there is no flap.
+    `commit` (raising the freeze) is always peg-safe and ungated by value; the effective freeze is capped only at
+    `1.0` (= `U` itself), so there is no separate redeemability cap. (Re-introduce the escalation/binary-lock params
+    only if a future design needs to freeze *above* utilization during a squeeze.)
   - **Compensation: none beyond the continuing yield.** The Duration Bond premium *is* the slashed xALPHA bond;
     a squeeze slashes nothing, so it pays **no premium** — and needs none: the loans are performing and
     accruing at the fixed credit-line rate (§3 IRM; §10 "the line simply accrues"), with the perf-fee routed
@@ -2063,9 +2135,9 @@ custodies over a **Baal/Moloch-v3 Safe basket** (zipUSD + xALPHA + the zipUSD/xA
 **staked** ICHI LP), CRE-**pushes only** the off-chain leg prices it cannot read on Base (the xALPHA
 `alphaUSD` leg; HYDX if thin), and maintains an **on-chain cumulative TWAP accumulator** (window `W ≈ 4h`,
 §17). Issuance prices at `navEntry = max(spot, twap)`, exit at `navExit = min(spot, twap)` (protecting resident
-holders both directions). The Gate's windowed ragequit pulls the basket pro-rata and pays each queued exiter at
-**`navExit`** (partial-fill, §6.4) — **NAV is in the exit path**; the impatient alternative is selling szipUSD
-on the CoW book (§6.2), which the protocol **never reads for accounting** (§7). The basket compounds off the
+holders both directions). The Gate's exit is the **CoW book**: the treasury's buyback bids at **`navExit×(1−d)`**
+and burns the fill (§6.4) — **NAV drives the exit price** via the bid; the protocol **never reads the szipUSD CoW
+market price for accounting** (§7). The basket compounds off the
 **HYDX vamp** (§4.5) — that growth, plus the duration-risk boost, is the junior's pay for the duration risk it
 bears (the freeze keeps it "frozen but earning").
 
@@ -2216,15 +2288,19 @@ would add its own reference repos behind the `IZipcodeVenue` boundary (§4.7).
 - **Perf-fee `f`** (venue perf-fee parameter — the lending yield it routes is **protocol-side**, **not** the
   junior's return; the depositor's return is the **xALPHA subsidy**, see Yield routing below) and the
   **subordination floor** (re-anchored to outstanding loan exposure; **no cap**) — §2/§5/§6.4.
-- **Junior exit = liquidity windows** (ride the harvest cadence; **partial-fill-per-window**, remainder re-queued +
-  still-accruing) — §6.4; **not** a fixed cooldown. The **coverage floor is the freeze itself** (structural, not a
-  governed knob). *(Supersedes "≈30d sUSD3 cooldown".)*
-- **Systemic-squeeze params** — `U_lock`, `U_max`, `maxLockFraction`, `maxDuration`, `releaseHysteresis`
-  (the Duration Bond's liquidity-driven trigger B, §11); metric-4 utilization (§12) is the trigger input.
+- **Junior exit = the CoW book** (a resting szipUSD sell order *is* the queue; the treasury fills just-in-time via
+  8-B14 buy-and-burn priced `≤ navExit×(1−d)`, or an external buyer fills; an unfilled holder simply stays in the
+  vault, still earning) — §6.4; **not** a fixed cooldown and **not** an on-chain intent queue / liquidity window
+  (the `requestExit`/`processWindow` forfeit path is retired). The **coverage floor is the freeze itself**
+  (structural, not a governed knob). *(Supersedes "≈30d sUSD3 cooldown" and the "liquidity-window / partial-fill"
+  framing.)*
+- **Systemic-squeeze params** — M1 has **none governed**: the freeze fraction = utilization (`requiredFraction = U`,
+  §11-B). The escalation band (`U_lock`, `U_max`, `maxLockFraction`) + `maxDuration`/`releaseHysteresis` (the Duration
+  Bond's liquidity-driven trigger B, §11) are **post-M1, not built**; metric-4 utilization (§12) is the trigger input.
 - **Junior accounting unit** *(two-token model, 2026-06-07)* — the junior is a **transferable szipUSD ERC-20
   share** the **Exit Gate** mints **NAV-proportionally** 1:1 against soulbound Baal Loot it holds, over a Baal Safe
   basket (zipUSD + xALPHA + the ICHI LP). **NAV (`SzipNavOracle`, §7) IS the issuance/exit pricing primitive** (not
-  display-only). **Exit:** windowed ragequit at `min(spot,twap)` NAV (partial-fill) / CoW secondary (§6.4/§6.2).
+  display-only). **Exit:** sell szipUSD on the **CoW book** (§6.4/§6.2) — treasury buys at `navExit×(1−d)` + burns.
   **Depositor return = NAV accretion** (HYDX-vamp free value recycled into the basket, 8-B10; lending fee → warehouse over-collateralization, future treasury). **First-loss = a pari-passu
   conservative provision-that-recovers** (§11): the freeze handles duration; a small conservative markdown is
   written at recognition and recovers on verified facts. Pari passu inside the junior; no subordination cap.
@@ -2404,7 +2480,7 @@ lending asset; **never freezes** · **szipUSD** the **freezable junior vault sha
 **zap** target); **`sdVAULT` collapses into it** (one junior token); depositor return = **xALPHA** subsidy
 (the lending yield is the protocol's, §5/§17); staked zipUSD = subordinated principal; bears **residual** first loss; frozen-but-accruing during
 a Duration Bond · **sdVAULT** the **post-M1 Hydrex/oHYDX yield-engine module** that bolts onto the szipUSD
-vault (zipUSD/xALPHA ICHI LP + CRE oHYDX autocompounder; `auto-sodomizer.md`) — **not a separate token** · **zap**
+vault (zipUSD/xALPHA ICHI LP + CRE oHYDX autocompounder; `auto-compounder.md`) — **not a separate token** · **zap**
 deposit → mint zipUSD → auto-stake szipUSD in one tx · **zipCRED** a future RWA token (tokenized credit) ·
 **xALPHA** — the **one** liquid-staked Zipcode-subnet alpha (LST), bridged via CCIP
 (`tickets/bridge/8x-01-szalpha-wrapper-cct.md`): per-lien first-loss bond + Duration-Bond premium + szipUSD incentive +

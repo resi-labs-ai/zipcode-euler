@@ -1,7 +1,7 @@
 # 8-B8 — Exercise module (paid `oHYDX.exercise` → HYDX, within the strike loop)
 
 > **NEXT / build-only.** The fifth harvest-loop engine module (after 8-B14 buy-and-burn, 8-B5 reservoir-loop, 8-B6
-> LP-strategy, 8-B7 harvest-vote). It owns the **paid exercise leg** of the auto-sodomizer: per harvest, for the
+> LP-strategy, 8-B7 harvest-vote). It owns the **paid exercise leg** of the auto-compounder: per harvest, for the
 > **sell** slice, it pays the ~30% USDC strike (financed by the 8-B5 borrow) to `oHYDX.exercise(...)` and receives
 > liquid **HYDX** to the Safe, which 8-B9 then market-sells to repay. Internal engine plumbing → **build-only** (no
 > INFLOW ticket; the frontend never wires to it; the 8-B11 CRE strategy robot drives the entrypoint). It is a
@@ -59,7 +59,7 @@ Two files under the supply/engine tree, plus two minimal interface additions:
   exercise of the sell slice, distinct from 8-B7's free `exerciseVe`; strike = `max(30%·2h-TWAP, $0.01)` read from
   oHYDX, not a knob; `maxPayment` slippage bound set per call) + **§3.2** (oHYDX marked at intrinsic = HYDX × (1 −
   discount) pre-exercise; post-exercise the position is HYDX, marked directly).
-- `pending-docs/auto-sodomizer.md` **§4 (step c) / §9** (the exercise step of the harvest loop; strike funding via the
+- `pending-docs/auto-compounder.md` **§4 (step c) / §9** (the exercise step of the harvest loop; strike funding via the
   borrow) **/ §2.4** (the price tiers: $0.015 loop cutoff / $0.018 amber-taper / $0.01 dead floor — a CRE pre-check, not a contract gate).
 - `pending-docs/hydrex.md` **§2.4** (the price tiers: $0.015 loop cutoff / $0.018 amber-taper / $0.01 dead-option floor)
   **/ §2.5/§2.6** (the verified address book + live params).

@@ -1,26 +1,38 @@
-# 8x-02 — xALPHA-LST intrinsic-APR CRE feed (`XAlphaAprOracle` push-cache + workflow)
+# 8x-02 — xALPHA exchange-rate Base oracle + derived APR (`SzAlphaRateOracle`)
 
-> **NEXT / build-only.** The CRE half of the bridge: a **Chainlink CRE workflow** that computes the **intrinsic APR
-> of the xALPHA liquid-staking token** — the staking yield the LST throws off on its own — and publishes it on-chain
-> as a trust-minimized **push-cache report** the UI, contracts, and engine regime-gates read. The APR is **derived,
-> not budgeted**: it is the annualized growth of the wrapper's `exchangeRate()` (`IXAlphaRate`, ticket 8x-01), which
-> moves **only** as our subnet validator's dividends compound into the staked alpha pool. **No treasury constant, no
-> `$100k` budget** — the number is a byproduct of on-chain reads alone (NAV growth + validator emission).
+> **FINAL SHAPE 2026-06-09 (user-directed) — CRE pulls the RATE to Base; the chain derives the rest.** The real
+> deliverable is **a Base oracle that holds the xALPHA `exchangeRate`** so `SzipNavOracle` / the Euler price-oracle
+> adapter can read it (and the APR derives on top). The arc that got here: v1 pushed a pre-computed APR (defended by
+> adversarial bands — over-built; the band spawned the slash-brick knot it then "solved"); v2 tried to derive
+> natively on 964 (right principle, wrong chain — the protocol + consumers are Base-side). **v3 (this):** the ONE
+> fact that lives only on Bittensor is the **rate** (`staked/supply`, StakingV2 `0x805`, native to **964**; the Base
+> mirror has no stake surface). A CRE workflow (`cre/szalpha-rate/`) **pulls that one primitive from 964 and pushes
+> it RAW to `SzAlphaRateOracle` on Base** (`reportType RATE = 8`, payload `(uint256 rate, uint48 ts)`). **CRE
+> transports the primitive; the chain derives NAV + APR from it** — nothing pre-computed is ever pushed/bridged.
 >
-> **This ticket is the detailed build spec for the xALPHA-APR portion of `CRE-03`** (`claude-zipcode.md §8.8/§8.11`);
-> it subsumes the former `bridge/xALPHA-apr.md` design doc. CRE-03 builds the §8.6 share-price feeds and this APR feed
-> as **one bridge/oracle workflow family** — author the receiver + workflow here, file the build under CRE-03.
+> **`SzAlphaRateOracle` (Base) is the Base-side `IXAlphaRate`:** `exchangeRate()` (last pushed) + `fresh()` /
+> `lastUpdate()`. Push guards are truthful not adversarial — non-zero, not-future, **strictly-newer** (no
+> replay/out-of-order); **no deviation band** (a slash legitimately lowers the rate); consumers **fail-closed on
+> staleness** via `fresh()` (a rate that moves NAV must not serve stale). The intrinsic **APR is a DERIVED view**
+> on the pushed rate's history (`intrinsicAprBps()`, floored-0/cap-clamped) — advisory, gates no funds. **This
+> resolves the §8.6 cross-chain rate seam:** the rate `SzipNavOracle`'s xALPHA leg needs on Base now has a producer.
 >
-> **Mocked vs real.** **Real:** the live 964 reads (`exchangeRate()` on the deployed `SzAlpha`, metagraph emission)
-> exercised on a Subtensor EVM fork; the receiver on a Base fork. **Mocked:** the CRE DON relay itself (no real DON in
-> tests — use the receiver's Forwarder seam with a test signer). Until 8x-01's lane is live, the workflow reads the
-> **xALPHA stand-in** (the 18-dp mock also exposing `IXAlphaRate`, `claude-zipcode.md §4.5.1`).
->
-> **Sequencing.** M1 but **not on the contract-spine critical path** — depends on 8x-01 (`SzAlpha`/`IXAlphaRate`) for
-> real reads and on the CRE-00 scaffold. Schedule against CRE-03 / 8x-01, not ahead. The **post-M1 szipUSD incentive
-> APR overlay** (§6) is explicitly **out of scope** here (treasury economics, removed 2026-06-09, re-author post-M1).
+> **Sequencing.** M1 but **not on the contract-spine critical path** — depends on 8x-01 (`SzAlpha`/`IXAlphaRate`).
+> The **post-M1 szipUSD incentive APR overlay** (§6) is explicitly **out of scope** here (treasury economics).
 
 ---
+
+## OPEN / BLOCKING RISKS (NOT buried — every TODO in the code lives here)
+
+These are the things this window did **not** close. They are tracked here, in the ticket, not hidden in code
+comments. The contract (`SzAlphaRateOracle`) is forge-green; that does not mean the feed works end-to-end.
+
+| # | Risk | Severity | Where it bites | Status |
+|---|---|---|---|---|
+| **R-1** | **Can CRE READ 964?** — NARROWED after reading `SzAlpha` (was overstated as "the precompile call won't work"). `SzAlpha.exchangeRate()` (`SzAlpha.sol:201`) does NOT make a typed precompile call — it already uses the **workaround**: low-level `STAKING_V2.staticcall(abi.encodeWithSelector(getStake...))` (`SzAlpha.sol:308-309`), the pattern that DOES reach the runtime (the "8x exception" `ISubtensorPrecompiles.sol:13` / `reference/evm-bittensor/solidity/stakeV2.sol:46` is about *typed* calls, which `SzAlpha` avoids). So an `eth_call` to `exchangeRate()` works on-chain. **Residual = a config/support question, not impossibility:** is 964 a CRE-supported chain (selector + DON RPC access), and does the DON's `eth_call` against the 964 node execute the staticcall. | **CONFIG-VERIFY** (downgraded from BLOCKING) | the pull needs 964 read access | **VERIFY at CRE-03:** confirm CRE supports a 964 chain selector + has a 964 RPC, and a test `eth_call` to live `SzAlpha.exchangeRate()` returns. The read pattern itself is proven (the wrapper uses it). |
+| **R-2** | **The fund-moving consumer is not safe yet.** `SzipNavOracle._xAlphaUSD()` reads `IXAlphaRate(xAlpha).exchangeRate()` with **NO freshness check** today (it trusts the M1 stand-in). Pointed at this PUSHED oracle, a stale-or-zero rate silently mis-marks the xALPHA NAV leg — which gates issuance/exit. "Resolves the §8.6 seam" is only half-true until this is fixed. | **HIGH (fund-safety)** | NAV mis-mark → wrong issuance/exit price | **OPEN.** Fix: `SzipNavOracle` consumes `SzAlphaRateOracle` for the rate (token addr stays the mirror for `balanceOf`) AND gates the rate read on `fresh()` (revert issuance / fall back to TWAP on stale). Touches the 42-pinned `SzipNavOracle` suite ⇒ its own focused change, NOT a silent item-10 line. |
+| **R-3** | **Standalone oracle vs. a leg in the existing NAV push — a chosen tradeoff, stated.** `SzipNavOracle` already has a CRE Forwarder push (`NAV_LEG=7`) + already reads the rate. The rate COULD be one more leg in that push instead of a new contract+reportType+workflow. **Chose standalone** for single-responsibility + independent reuse (an Euler adapter can read just the rate). Revisit if the extra surface isn't worth it. | LOW (design) | — | **DECIDED (standalone), documented.** |
+| **R-4** | **CRE-03 wiring checklist** (the ex-`TODO(CRE-03)` from `cre/szalpha-rate/main.go`, enumerated): (a) `go.mod` pinning `cre-sdk-go`; (b) the 964 + 8453 chain selectors + RPCs in `project.yaml`; (c) config unmarshal; (d) the exact 964 `exchangeRate()` read (gated by R-1). | MED | the workflow can't run until done | **OPEN, tracked (was buried in code).** |
 
 ## The yield, mechanically (why the formula is what it is)
 
@@ -57,102 +69,52 @@ state the chosen fallback in the report. (Mirrors 8x-01's fork-real-vs-mock gate
 
 ## Deliverable
 
-One push-cache receiver, one CRE workflow, one fork/mock test suite.
+One contract — `contracts/src/bridge/SzAlphaRateOracle.sol` — deployed on **Base**, + the CRE workflow
+`cre/szalpha-rate/` that feeds it. `forge`-tested with a mock-EOA Forwarder pushing the rate.
 
-### 1. `contracts/src/bridge/XAlphaAprOracle.sol` — the on-chain push-cache receiver
+### The contract — `SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate` (Base)
+- **The push.** `_processReport` decodes the §8.0 envelope `abi.encode(uint8 reportType, bytes payload)`,
+  `require(reportType == RATE)` (`RATE = 8`, `(receiver,reportType)`-scoped — non-colliding with
+  `DefaultCoordinator`'s `8`), then `abi.decode(payload, (uint256 rate, uint48 ts))`. Guards: `rate != 0`
+  (`ZeroRate`), `ts <= block.timestamp` (`FutureTimestamp`), **`ts > latest.ts`** (`StaleReport` — strictly newer,
+  no replay/out-of-order). **No deviation band** (the rate is ground truth from 964; a slash legitimately lowers
+  it). Maintains two rolling checkpoints for the derived APR (`curAnchor` → `prevAnchor` once `window` old).
+- **The deliverable — Base `IXAlphaRate`.** `exchangeRate() returns (uint256)` (the last pushed rate; the drop-in
+  `SzipNavOracle`'s xALPHA leg + an Euler adapter read), `lastUpdate()`, `fresh()` (within `maxStaleness`). A rate
+  that moves NAV **must** be gated on `fresh()` by the consumer (fail-closed on a stale push).
+- **The APR — DERIVED view.** `intrinsicAprBps()` = `(rate_now/rate_prev − 1) × year/Δ` over the checkpoints,
+  **floored at 0** (slash/decline ⇒ 0, no brick), clamped to immutable `aprCap`. Advisory; gates no funds; `0`
+  before warm. NAV does NOT use this — it reads `exchangeRate()` directly.
+- **Constructor** `(address forwarder, uint256 maxStaleness, uint32 window, uint256 aprCap)`: forwarder zero
+  reverts in `ReceiverTemplate`; `maxStaleness/window != 0`; `aprCap != 0 && <= type(uint32).max`. Owner = the
+  Timelock (re-pointable Forwarder, build-phase doctrine [[oracle-replaceable-timelock-wiring]]); knobs immutable.
 
-`contract XAlphaAprOracle is ReceiverTemplate` — follow the **exact §8.6 push-cache pattern** of
-`contracts/src/supply/SzipNavOracle.sol` (Forwarder-gated, identity-immutable, deviation/staleness guards). It caches
-the latest DON-signed APR report and exposes getters; it holds **no** trust beyond the Forwarder.
+### The CRE workflow — `cre/szalpha-rate/` (the cross-chain pull; CRE-03 integration artifact)
+Cron (~1 min) → read `SzAlpha.exchangeRate()` on **964** → `GenerateReport(abi.encode(RATE, abi.encode(rate, ts)))`
+→ `WriteReport` to `SzAlphaRateOracle` on Base. **Transports the raw rate ONLY — no off-chain math.** Pinned exact:
+the payload/envelope ABI (byte-matching the receiver). `TODO(CRE-03)`: go.mod, 964/8453 selectors + RPC, the exact
+964 read. Not compiled in the Foundry repo (no Go toolchain).
 
-- **reportType:** allocate an APR report type in the `claude-zipcode.md §8.0` envelope table (suggest **`APR = 8`**;
-  do **not** silently reuse `7` — that is `NAV_LEG`/`LP_MARK`, per-receiver-scoped). Pin it in the ticket report.
-- **Payload (decoded in `_processReport`):**
+### Tests — `contracts/test/bridge/SzAlphaRateOracle.t.sol`
+Ctor guards; Forwarder-gated push lands + serves the rate; `exchangeRate()` drop-in through `IXAlphaRate`;
+non-Forwarder / wrong-reportType / `ZeroRate` / `FutureTimestamp` / `StaleReport`(replay) reverts; `fresh()` flips
+false past `maxStaleness` (rate still served — consumer gates); the derived APR vs a hand-computed 1216 bps; slash ⇒
+0-not-brick (rate still served, fresh); cap-clamp; APR 0 before warm.
 
-  | Field | Type | Meaning |
-  |---|---|---|
-  | `intrinsicAprBps` | `uint32` | the headline — §primary trailing-realized LST staking yield (alpha-denominated) |
-  | `exchangeRate` | `uint256` | `exchangeRate()` at compute time (alpha per xALPHA, 18-dp; auditable input) |
-  | `windowSeconds` | `uint32` | the Δ lookback used (so consumers see the trailing window) |
-  | `forwardAprBps` | `uint32` | §secondary metagraph cross-check (advisory; flagged on divergence) |
-  | `xalphaPriceUsd` | `uint256` | LST per-token USD value (display; needs alpha-price + TAO/USD) — `0` if value leg withheld |
-  | `incentiveAprBps` | `uint32` | §6 depositor-subsidy APR — **post-M1, `0` until live**, never blended |
-  | `computedAt` | `uint32` | freshness timestamp |
-  | `flags` | `uint32` | staleness / deviation / cap-hit / validator-out-of-consensus bitfield |
+### What this DELETED vs the prior drafts
+The v1 push-cache that received a **pre-computed APR** (Forwarder + the 8-field pushed payload + deviation band +
+its one-sided/first-push/atomic/slash-flag fallout) and the v2 `XAlphaAprOracle`-on-964 (read-native) are both
+**removed**. What ships pushes the **rate** (the irreducible cross-chain primitive) and derives NAV/APR on-chain.
 
-- **On-chain guards (mirror `SzipNavOracle`):** `computedAt <= block.timestamp` (`FutureTimestamp`); a per-push
-  **deviation circuit-break** on `intrinsicAprBps` vs the prior cache (`DeviationExceeded`, governed `maxDeviationBps`)
-  — the producer must not jump the APR more than the band in one push; a **sanity cap** `intrinsicAprBps <= APR_CAP`
-  (`AprCapExceeded`, a price/read glitch must not publish a 9,000% headline); `exchangeRate != 0` (`ZeroRate`).
-- **Reads expose `(value, ts, flags)` + a `fresh(maxAge)` view** so consumers (UI, 8-B12, regime gate) can fail-soft
-  on a stale APR rather than trust an old number. The APR is **advisory/display** — it gates **nothing** that moves
-  funds (unlike `SzipReservoirLpOracle`), so staleness is a flag, not a revert.
-- **Authority:** identity (Forwarder + `(receiver,reportType)` filter) immutable post-deploy; no owner mutation of the
-  cache; governed knobs (`maxDeviationBps`, `APR_CAP`, `maxAge`) set at deploy under the timelock, recorded in report.
-
-### 2. The CRE workflow — `XAlphaAprWorkflow` (Go, `reference/cre-sdk-go` + `cre-templates` layout)
-
-Stateful across runs (keeps the prior `(exchangeRate, ts)` sample). Per cadence (§cadence):
-
-**Primary (the published `intrinsicAprBps`) — trailing-realized NAV growth, 964 reads only:**
-```
-r_now  = IXAlphaRate(SzAlpha).exchangeRate()          // 964, alpha per xALPHA, 18-dp
-r_prev = prior cached sample                            // workflow state (r_prev, t_prev)
-period_growth = r_now / r_prev - 1
-intrinsicApr  = period_growth * (SECONDS_PER_YEAR / (now - t_prev))      // simple annualization (conservative)
-```
-- **Numeraire-clean:** both legs alpha → the real staking yield, independent of alpha's USD price. (USD price enters
-  only the value field + §6, never this ratio.)
-- Δ (`now - t_prev`) spans **several** subnet tempos so per-epoch dividend granularity averages out; optional EMA over
-  the last N samples to damp noise (publish smoothed, carry raw in a side field for audit).
-- Persist `(r_now, now)` as the next `r_prev`.
-
-**Secondary (`forwardAprBps`, advisory cross-check + liveness flag) — metagraph `0x802`:**
-```
-ourUid  = resolve VALIDATOR_HOTKEY -> uid               // scan getHotkey(netuid,uid) over getUidCount, or pinned config
-emission = getEmission(netuid, ourUid)                  // uint64, alpha (rao) to our UID this tempo
-ourStake = getStake(VALIDATOR_HOTKEY, wrapperColdkey, NETUID)   // StakingV2 0x805
-forwardApr ≈ (emission * staker_share / ourStake) * epochs_per_year
-```
-- **Caveat (why secondary, never the headline):** `getEmission` is the UID's *total* emission; the fraction reaching
-  the staked pool (vs validator take + miner split) is not fully exposed by the read. Use `getDividends(netuid,ourUid)`
-  (uint16, normalized) + `getValidatorStatus` to bound it. The **ground truth is the §primary NAV growth** — use this
-  only to **flag divergence** (realized ≫ forward ⇒ transient; forward → 0 or `getValidatorStatus == false` ⇒
-  validator deregistered/out of consensus ⇒ set the liveness flag, the realized number will lag reality).
-- `epochs_per_year` from **live subnet tempo** (≈360 blocks × ~12 s ≈ 72 min ⇒ ~7,300 epochs/yr) — **read live, do not
-  hardcode.**
-
-**Value field (`xalphaPriceUsd`, display only):** `exchangeRate() × alpha_price_TAO_EMA × TAO_USD`. **EMA, never spot**
-for alpha price (`subnet_moving_price`), with a deviation guard vs a secondary source; withhold the leg (push `0` +
-flag) if stale/divergent. Does **not** affect `intrinsicAprBps`.
-
-**`incentiveAprBps`:** push `0` in M1 (the depositor-subsidy emission program is post-M1, §6).
-
-`emit WriteReport` to `XAlphaAprOracle` via the Forwarder; honor the **publish-on-change threshold** (only write when a
-leg moves > X bps) to control gas/spam.
-
-### 3. `contracts/test/bridge/XAlphaAprOracle.t.sol` + workflow tests
-
-- **Receiver (Base fork or unit):** Forwarder-gated push lands; non-Forwarder push reverts; `FutureTimestamp`,
-  `DeviationExceeded`, `AprCapExceeded`, `ZeroRate` each revert on the bad payload; `fresh(maxAge)` flips false past
-  `maxAge`; getters return the last good `(value, ts, flags)`.
-- **Workflow (Subtensor fork or MOCK — name says MOCK if mocked):**
-  - **`test_intrinsicAprFromRateGrowth`:** given `r_prev`/`r_now` and Δ, the published bps equals the hand-computed
-    annualized growth; **supply-invariance** — minting/burning xALPHA between samples (NAV-neutral) does **not** change
-    the APR.
-  - **`test_dividendsOnlyMovesRate`:** an out-of-band validator dividend (stake rises, supply flat) raises the APR; a
-    `deposit` (stake + supply rise together) does not.
-  - **`test_forwardCrossCheckFlags`:** `getValidatorStatus == false` or `getEmission == 0` sets the liveness flag;
-    forward-vs-realized divergence beyond band sets the divergence flag (advisory, still publishes intrinsic).
-  - **`test_capAndDeviation`:** a glitched `r_now` that implies a 9,000% APR is rejected by `APR_CAP`/`maxDeviationBps`,
-    not published.
-  - **`test_valueFieldWithheld`:** stale/divergent alpha-price ⇒ `xalphaPriceUsd == 0` + flag, `intrinsicAprBps`
-    unaffected.
-  - **`test_uidResolution`:** `getHotkey` scan finds `ourUid` for our `VALIDATOR_HOTKEY`; a UID reshuffle re-resolves.
-
----
 
 ## Inputs (read map)
+
+> **NOTE (post-redesign):** for the **on-chain derivation** (this ticket's deliverable) the ONLY input is the first
+> row — `exchangeRate()` on `SzAlpha` (964), read natively + the contract's own checkpoint as `r_prev`. The
+> remaining rows (metagraph `0x802` forward cross-check, subnet tempo, alpha-price/TAO-USD, cross-chain circulating
+> supply) are **off-chain `8-B12` monitoring / post-M1 `xalphaPriceUsd` + incentive concerns**, NOT part of the
+> contract. The `Safety / manipulation resistance`, `Cadence`, and `§6` sections below describe that off-chain
+> overlay + the post-M1 value/incentive leg and are kept for the monitoring build — they do not gate the derivation.
 
 | Input | Source (read path) | Chain | Use |
 |---|---|---|---|
@@ -168,9 +130,12 @@ leg moves > X bps) to control gas/spam.
 
 1. **NAV, not pool price** — the APR is built from `exchangeRate()` (stake accounting), never the thin POL DEX pool
    (circular/manipulable). `IXAlphaRate` reads stake on-chain, no oracle in the path.
-2. **Monotone-rate sanity** — reject a §primary sample where `r_now < r_prev` beyond dust (rate is non-decreasing
-   absent a slash) or jumps past the deviation band; a genuine slash (rate drops) is a **flagged event**, not a silent
-   negative APR.
+2. **Monotone-rate sanity (WORKFLOW guard, NOT the receiver — R4).** The **workflow** rejects/clamps a §primary
+   sample where `r_now < r_prev` beyond dust (rate is non-decreasing absent a slash): a genuine slash (rate drops)
+   ⇒ the workflow publishes `intrinsicAprBps = 0` + the slash bit in `flags` (a **flagged event**, never a silent
+   negative APR — and `uint32` cannot carry a negative anyway). The **receiver** does NO `r_now < r_prev` reject
+   (it holds no prior rate; on-chain that would brick the feed on a real slash). The on-chain per-push bound is the
+   one-sided-UP deviation band (R3), which lets honest downward moves through.
 3. **EMA, not spot** for any alpha price (value field), + deviation guard vs a secondary source.
 4. **Staleness bound** — every input has a max age; stale → flag (the APR is advisory, so flag not revert).
 5. **Sanity cap / circuit breaker** — `APR_CAP` bounds the publishable APR; cap-hit flags, never emits garbage.
@@ -190,7 +155,10 @@ spans several cadences (averages per-epoch granularity); cadence = how often to 
 
 ## Open items
 
-1. **reportType allocation** — pin `APR = 8` (or next free) in `claude-zipcode.md §8.0`; update the envelope table.
+1. **reportType allocation** — **RESOLVED (R1):** `APR = 8` pinned on the `XAlphaAprOracle` receiver; it is a
+   non-collision with `DefaultCoordinator`'s `8` by the `(receiver,reportType)` rule (§8.0). The §8.0 envelope
+   table row is **added** (this window). (The earlier "do not reuse 7 / next free" framing wrongly implied a
+   global type space — corrected.)
 2. **uid resolution** — `getHotkey` scan vs pinned `ourUid` config (re-validate on UID reshuffle). Decide at build.
 3. **rao vs alpha scaling** — StakingV2 ABI comments are inconsistent (`getStake`→"RAO"; `removeStake`→"alpha");
    confirm `getStake` units (1 alpha = 1e9 rao) on a fork before trusting §secondary/value absolutes. The §primary

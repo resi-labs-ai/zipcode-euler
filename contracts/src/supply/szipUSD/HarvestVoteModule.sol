@@ -14,7 +14,7 @@ import {IRewardsDistributor} from "../../interfaces/hydrex/IRewardsDistributor.s
 /// @notice The on-chain seam of the 8-B7 harvest/vote leg (§4.5.1): the fourth engine Zodiac Module (after the 8-B14
 ///         buy-and-burn, the 8-B5 reservoir loop, and the 8-B6 LP strategy), CRE-operator-gated, enabled on the
 ///         szipUSD engine Safe (`avatar == target == engineSafe`). It owns the emissions + governance leg of the
-///         auto-sodomizer: per epoch it (1) CLAIMS the gauge's oHYDX to the Safe (`gauge.getReward()`), (2) takes the
+///         auto-compounder: per epoch it (1) CLAIMS the gauge's oHYDX to the Safe (`gauge.getReward()`), (2) takes the
 ///         vote-floor `exerciseVe` slice FIRST (the free permalock → grows the Safe's account-aggregate veHYDX),
 ///         (3) re-VOTES our gauge (votes reset weekly), and (4) claims the anti-dilution REBASE on the veNFTs.
 ///

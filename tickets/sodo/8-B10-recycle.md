@@ -8,7 +8,7 @@
 > builder section) + the `PROGRESS.md`/`LEDGER.md` historical digests. The body below is the **as-built recipe**.
 
 > **Build-only.** A harvest-loop engine module (sibling of 8-B14 buy-and-burn, 8-B5 reservoir-loop, 8-B6 LP-strategy,
-> 8-B7 harvest-vote, 8-B8 exercise, 8-B9 sell). It owns the **free-value ledger** of the auto-sodomizer — the single
+> 8-B7 harvest-vote, 8-B8 exercise, 8-B9 sell). It owns the **free-value ledger** of the auto-compounder — the single
 > `freeValueAccrued` accumulator (no other module writes it) — and the ONE sink that spends it: `recycle(usdc)` parks the
 > free-value USDC as senior warehouse backing + mints backed zipUSD 1:1 **into the MAIN-Safe basket** (no
 > `gate.depositFor`, no share issuance). 8-B6 single-sides that zipUSD into the ICHI LP next (CRE-sequenced). Basket
@@ -47,7 +47,7 @@ One new contract + its test file:
   The operator supplies **only scalars**; the module builds all calldata to the **set-once wired targets**
   (`zipDepositModule`, `usdc`). **No generic call passthrough, no arbitrary token/target, no delegatecall, `value == 0`
   on every `exec`** (§10.1). **No swap** (8-B9 `buyXAlpha`), **no LP/gauge** (8-B6), **no EVC/borrow** (8-B5), **no NAV
-  write** (recycle is a realized reinvestment, never a NAV markup — §8 inv. 7 / `auto-sodomizer.md` §7; the module never
+  write** (recycle is a realized reinvestment, never a NAV markup — §8 inv. 7 / `auto-compounder.md` §7; the module never
   touches `SzipNavOracle`). **No payout, no xALPHA leg, no distributor, no compounder/8-B13 seam** (all removed in the
   single-sink redesign).
 
@@ -74,7 +74,7 @@ USDC), mocked in unit tests — **no new `BaseAddresses` constant** (parity with
   under `initializer`, Call-only / no delegatecall) + **§10.8 / 8-B10** (the recycle description: the free-value-only
   invariant funded only by HYDX-extracted value; what it touches: 8-B9 buy leg / 8-B5 free-value source / `ZipDepositModule`
   / item 2 NAV).
-- `pending-docs/auto-sodomizer.md` **§6/§11** (the recycle sink → NAV accretion) **/ §8 inv. 1/2/3/7** (permissioned CRE
+- `pending-docs/auto-compounder.md` **§6/§11** (the recycle sink → NAV accretion) **/ §8 inv. 1/2/3/7** (permissioned CRE
   writer; depositor principal never at risk in the dump; free-value-only; trailing-realized not-NAV).
 - `pending-docs/treasury.md` **§4.7** (recycle economics — referenced).
 - `claude-zipcode.md` **§17** locked: venue-agnostic; the engine is **CRE-permissioned** (one writer); no on-chain
@@ -133,7 +133,7 @@ the **real summoned substrate Safe** as the engine Safe for the live `recycle`.
 - **Do NOT** mark up NAV or touch `SzipNavOracle`. `recycle` is value-neutral to NAV at the moment of the call (the
   basket swaps USDC for equal-value backed zipUSD; the EE shares accrue to the warehouse/senior side); the per-share
   accretion comes from the recycled value being net-new to the basket without minting shares (§8 inv. 7 /
-  `auto-sodomizer.md` §7).
+  `auto-compounder.md` §7).
 - **Do NOT** trust the `freeValueAccrued` accumulator as the *backing* guarantee. It is the **policy ceiling** (don't
   spend more than was extracted as free value). The **hard** guarantee is that `recycle`'s deposit leg moves **real**
   USDC out of the Safe (`ZipDepositModule.deposit` does `safeTransferFrom(Safe, ...)`) — if the Safe lacks the balance,

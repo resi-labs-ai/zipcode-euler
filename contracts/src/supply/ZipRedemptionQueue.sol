@@ -73,6 +73,14 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     /// @notice The CRE redemption-settle operator (CRE-02) — the sole caller of `settleEpoch`. Timelock-settable,
     ///         non-zero. NOT the 7540 `requester` nor the `operator`.
     address public controller;
+    /// @notice The SOLE authorized `requestRedeem` caller — the rq Safe (the `OffRampModule` `exec`s through it, so
+    ///         the `msg.sender` the queue sees is the Safe, NOT the module). Hard-gates new escrow to the off-ramp
+    ///         path ("must exit through the vault"), closing the epoch-dilution / senior-USDC-griefing vector of an
+    ///         OPEN `requestRedeem` (an external whale escrowing just before `settleEpoch` to shrink honest pro-rata
+    ///         fills). Timelock-settable, non-zero. NOT theft prevention (par is fixed, `settleEpoch` is
+    ///         `onlyController`, the queue is non-sweepable) — only griefing closure. The CLAIM path
+    ///         (`withdraw`/`redeem`) stays OPEN for existing requesters.
+    address public redeemController;
 
     // --------------------------------------------------------------------- constants
     /// @notice High-precision RAY for `cumRemaining` (so many small partial fills don't lose resolution).
@@ -122,6 +130,7 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     error NotWholeUnit();
     error NotAuthorized();
     error NotController();
+    error NotRedeemController();
     error EpochNotElapsed();
     error CannotSetSelfAsOperator();
     error InsufficientClaimable();
@@ -149,6 +158,7 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     event OperatorSet(address indexed controller, address indexed operator, bool approved);
     event TokensSet(address indexed zipUSD, address indexed usdc);
     event ControllerSet(address indexed controller);
+    event RedeemControllerSet(address indexed redeemController);
 
     /// @param zipUSD_     The zipUSD `ESynth` (18-dp). @param usdc_ USDC (6-dp). @param controller_ the CRE
     ///                    redemption-settle operator (the sole `settleEpoch` caller).
@@ -183,6 +193,24 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
         if (controller_ == address(0)) revert ZeroAddress();
         controller = controller_;
         emit ControllerSet(controller_);
+    }
+
+    /// @notice Re-point the redeem controller — the rq Safe authorized to call `requestRedeem` (build phase, §17;
+    ///         re-pointable, NOT set-once). `onlyOwner` (Timelock), `ZeroAddress`-guarded. Wire this to the rq SAFE
+    ///         (the `OffRampModule` `exec`s through it), NOT the module — wiring it to the module would make the C1
+    ///         off-ramp path revert (the queue sees the Safe as `msg.sender`).
+    function setRedeemController(address redeemController_) external onlyOwner {
+        if (redeemController_ == address(0)) revert ZeroAddress();
+        redeemController = redeemController_;
+        emit RedeemControllerSet(redeemController_);
+    }
+
+    // --------------------------------------------------------------------- gate
+    /// @dev Hard-gate `requestRedeem` to the wired `redeemController` (the rq Safe). New escrow must come through the
+    ///      off-ramp path; the claim path stays open for existing requesters.
+    modifier onlyRedeemController() {
+        if (msg.sender != redeemController) revert NotRedeemController();
+        _;
     }
 
     // --------------------------------------------------------------------- internal realize (O(1) lazy fill)
@@ -238,6 +266,7 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     function requestRedeem(uint256 shares, address requester, address owner)
         external
         nonReentrant
+        onlyRedeemController
         returns (uint256 requestId)
     {
         if (shares == 0) revert ZeroShares();

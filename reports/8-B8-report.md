@@ -1,7 +1,7 @@
 # 8-B8 report — Exercise module (`ExerciseModule`)
 
 **TL;DR.** Authored + built + KEPT the 5th engine Zodiac Module — the **paid** oHYDX-exercise (strike-financing) leg
-of the auto-sodomizer. It pays the ~30% USDC strike (financed by the 8-B5 borrow) to `oHYDX.exercise(...)` and
+of the auto-compounder. It pays the ~30% USDC strike (financed by the 8-B5 borrow) to `oHYDX.exercise(...)` and
 receives liquid **HYDX** to the Safe, which 8-B9 then market-sells to repay. **25/25 green** (21 unit + 4 Base-fork
 proving a real `oHYDX.exercise`), **351/351 total no-regression**, **ZERO load-bearing guesses**. This was a clean,
 low-surprise window: the ticket was faithful out of the gate (the 5-critic fanout found **no spec-mechanism gap**,

@@ -14,7 +14,7 @@
 > fork non-determinism can intermittently show 2 `LpStrategyModuleForkTest` `DTL` reverts (unpinned `createSelectFork`
 > + a fixed 1-WETH deposit into the live WETH/USDC ICHI stand-in `0x07e72…`); the contract passes 5/5 in isolation,
 > zero coupling to this rework. Fix = pin the fork block in `ForkConfig`.
-> Spec/docs reconciled (`claude-zipcode.md §4.5.1`/§2/§17; `baal-spec`/`auto-sodomizer §6,§11`/`treasury §4.7`).
+> Spec/docs reconciled (`claude-zipcode.md §4.5.1`/§2/§17; `baal-spec`/`auto-compounder §6,§11`/`treasury §4.7`).
 > **Superintendent verdict: ON-TRACK.** *(The original builder report for the now-deleted `RecyclePayoutModule`
 > follows, retained as the design-rationale record.)*
 
@@ -26,7 +26,7 @@
 tree untracked — superintendent commit decision pending).**
 
 ## TL;DR
-Built the **7th engine Zodiac module**, `RecyclePayoutModule` — the auto-sodomizer's **free-value ledger** and its two
+Built the **7th engine Zodiac module**, `RecyclePayoutModule` — the auto-compounder's **free-value ledger** and its two
 *distribute* sinks (Mode A clean USDC / Mode B boosted xALPHA) — plus its companion **`SzipRewardsDistributor`** (a
 multi-asset Merkle cumulative-claim pull-claim YIELD distributor). It is the only engine module that carries real
 mutable state: the single `uint256 freeValueAccrued` accumulator that 8-B9 credits, 8-B13 (Mode C) will spend, and the
@@ -36,7 +36,7 @@ backed-mint is proven both fork-free (against a real `ESynth`) and on a Base for
 
 ## What the window did
 1. **Read** `nextsteps.md` / `PROGRESS.md` / the harness / `baal-spec §10.8` 8-B10 / `claude-zipcode.md §4.5.1` 8-B10 /
-   `auto-sodomizer.md §6/§8/§11` / the §3 `RewardsDistributor` reference. Verified the dependency signatures
+   `auto-compounder.md §6/§8/§11` / the §3 `RewardsDistributor` reference. Verified the dependency signatures
    (`SellModule._exec`, `ZipDepositModule.deposit`, the reference distributor leaf, OZ/zodiac paths).
 2. **Fixed 2 §4.5.1 spec-gaps FIRST** (triage order). See "Spec edits".
 3. **Drafted** `tickets/sodo/8-B10-recycle.md` (reconciled 2026-06-08 to the as-built single-sink recipe; originally drafted as `8-B10-recycle-payout.md`).
@@ -78,7 +78,7 @@ backed-mint is proven both fork-free (against a real `ESynth`) and on a Base for
    plain rollback test can't distinguish decrement-before from decrement-after.
 
 ## Holes surfaced → resolution
-- **§4.5.1 "Loot holders"** (Mode A) → **szipUSD holders** (two-token model; `auto-sodomizer §6`). Spec-fixed.
+- **§4.5.1 "Loot holders"** (Mode A) → **szipUSD holders** (two-token model; `auto-compounder §6`). Spec-fixed.
 - **§4.5.1 "State: payout-mode flag; distribution checkpoints"** → stateless (mode = entrypoint choice) + checkpoints in
   the distributor. Spec-fixed (same class as 8-B9's "per-epoch accumulator" gap).
 - All other findings were TICKET-GAPS (events, guards, modifier, ctor, Merkle rule, fork rig, security negatives) →

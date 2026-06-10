@@ -206,11 +206,6 @@ abstract contract FreezeBase is Test {
     address internal warehouse = makeAddr("warehouse");
     address internal rando = makeAddr("rando");
 
-    // §11-B params: uLock=0.8, uMax=0.95, maxLockFraction=1.0
-    uint256 internal constant U_LOCK = 0.8e18;
-    uint256 internal constant U_MAX = 0.95e18;
-    uint256 internal constant MAXLOCK = 1e18;
-
     function _legs() internal {
         zip = new MockERC20(18);
         usdc = new MockERC20(6);
@@ -227,12 +222,9 @@ abstract contract FreezeBase is Test {
         address op_,
         address oracle_,
         address ee_,
-        address wh_,
-        uint256 uLock_,
-        uint256 uMax_,
-        uint256 maxLock_
+        address wh_
     ) internal pure returns (bytes memory) {
-        return abi.encode(owner_, main_, side_, op_, oracle_, ee_, wh_, uLock_, uMax_, maxLock_);
+        return abi.encode(owner_, main_, side_, op_, oracle_, ee_, wh_);
     }
 
     function _deploy() internal {
@@ -250,10 +242,7 @@ abstract contract FreezeBase is Test {
                 operator,
                 address(basket),
                 address(ee),
-                warehouse,
-                U_LOCK,
-                U_MAX,
-                MAXLOCK
+                warehouse
             )
         );
     }
@@ -283,9 +272,6 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         assertEq(m.navOracle(), address(basket));
         assertEq(m.eulerEarn(), address(ee));
         assertEq(m.warehouse(), warehouse);
-        assertEq(m.uLock(), U_LOCK);
-        assertEq(m.uMax(), U_MAX);
-        assertEq(m.maxLockFraction(), MAXLOCK);
         // the five legs read LIVE off the oracle
         assertEq(m.zipUSD(), address(zip));
         assertEq(m.usdc(), address(usdc));
@@ -298,8 +284,7 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         vm.expectRevert();
         m.setUp(
             _initParams(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-                U_LOCK, U_MAX, MAXLOCK
+                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse
             )
         );
     }
@@ -326,14 +311,11 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         address op_,
         address oracle_,
         address ee_,
-        address wh_,
-        uint256 uLock_,
-        uint256 uMax_,
-        uint256 maxLock_
+        address wh_
     ) internal {
         DurationFreezeModule x = new DurationFreezeModule();
         vm.expectRevert(err);
-        x.setUp(_initParams(owner_, main_, side_, op_, oracle_, ee_, wh_, uLock_, uMax_, maxLock_));
+        x.setUp(_initParams(owner_, main_, side_, op_, oracle_, ee_, wh_));
     }
 
     function test_setUp_rejects_zero_addresses() public {
@@ -342,51 +324,27 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         address O = address(basket);
         address E = address(ee);
         bytes4 z = DurationFreezeModule.ZeroAddress.selector;
-        _expectSetUpRevert(z, address(0), M, S, operator, O, E, warehouse, U_LOCK, U_MAX, MAXLOCK); // owner
-        _expectSetUpRevert(z, owner, address(0), S, operator, O, E, warehouse, U_LOCK, U_MAX, MAXLOCK); // main
-        _expectSetUpRevert(z, owner, M, address(0), operator, O, E, warehouse, U_LOCK, U_MAX, MAXLOCK); // sidecar
-        _expectSetUpRevert(z, owner, M, S, address(0), O, E, warehouse, U_LOCK, U_MAX, MAXLOCK); // operator
-        _expectSetUpRevert(z, owner, M, S, operator, address(0), E, warehouse, U_LOCK, U_MAX, MAXLOCK); // navOracle
-        _expectSetUpRevert(z, owner, M, S, operator, O, address(0), warehouse, U_LOCK, U_MAX, MAXLOCK); // eulerEarn
-        _expectSetUpRevert(z, owner, M, S, operator, O, E, address(0), U_LOCK, U_MAX, MAXLOCK); // warehouse
+        _expectSetUpRevert(z, address(0), M, S, operator, O, E, warehouse); // owner
+        _expectSetUpRevert(z, owner, address(0), S, operator, O, E, warehouse); // main
+        _expectSetUpRevert(z, owner, M, address(0), operator, O, E, warehouse); // sidecar
+        _expectSetUpRevert(z, owner, M, S, address(0), O, E, warehouse); // operator
+        _expectSetUpRevert(z, owner, M, S, operator, address(0), E, warehouse); // navOracle
+        _expectSetUpRevert(z, owner, M, S, operator, O, address(0), warehouse); // eulerEarn
+        _expectSetUpRevert(z, owner, M, S, operator, O, E, address(0)); // warehouse
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
         _expectSetUpRevert(
             DurationFreezeModule.OwnerIsOperator.selector, operator, address(mainSafe), address(sidecar), operator,
-            address(basket), address(ee), warehouse, U_LOCK, U_MAX, MAXLOCK
+            address(basket), address(ee), warehouse
         );
     }
 
     function test_setUp_rejects_mainSafe_equals_sidecar() public {
         _expectSetUpRevert(
             DurationFreezeModule.BadParams.selector, owner, address(mainSafe), address(mainSafe), operator,
-            address(basket), address(ee), warehouse, U_LOCK, U_MAX, MAXLOCK
+            address(basket), address(ee), warehouse
         );
-    }
-
-    function test_setUp_rejects_param_boundaries() public {
-        address M = address(mainSafe);
-        address S = address(sidecar);
-        address O = address(basket);
-        address E = address(ee);
-        bytes4 b = DurationFreezeModule.BadParams.selector;
-        _expectSetUpRevert(b, owner, M, S, operator, O, E, warehouse, 0.95e18, 0.95e18, MAXLOCK); // uLock >= uMax
-        _expectSetUpRevert(b, owner, M, S, operator, O, E, warehouse, 0.8e18, 1e18 + 1, MAXLOCK); // uMax > 1e18
-        _expectSetUpRevert(b, owner, M, S, operator, O, E, warehouse, 0.8e18, 0.95e18, 0); // maxLock == 0
-        _expectSetUpRevert(b, owner, M, S, operator, O, E, warehouse, 0.8e18, 0.95e18, 1e18 + 1); // maxLock > 1e18
-    }
-
-    function test_setUp_accepts_uMax_and_maxLock_eq_1e18() public {
-        DurationFreezeModule x = new DurationFreezeModule();
-        x.setUp(
-            _initParams(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-                0.8e18, 1e18, 1e18
-            )
-        );
-        assertEq(x.uMax(), 1e18);
-        assertEq(x.maxLockFraction(), 1e18);
     }
 
     function test_operator_cannot_redirect_safe() public {
@@ -438,61 +396,18 @@ contract DurationFreezeModuleMathTest is FreezeBase {
         assertEq(m.utilization(), 0.7e18);
     }
 
-    // -------------------------------------------------------------- requiredFraction (the §11-B table)
-    function test_requiredFraction_table() public {
-        // uLock=0.8, uMax=0.95, maxLockFraction=1.0
-        _setU(0.6e18);
-        assertEq(m.requiredFraction(), 0.6e18, "U below uLock -> U");
-        _setU(0.8e18);
-        assertEq(m.requiredFraction(), 0.8e18, "U == uLock -> U (no escalation)");
-        _setU(0.875e18);
-        assertEq(m.requiredFraction(), 0.875e18, "midpoint: esc=0.5 < U -> U dominates");
-        _setU(0.95e18); // == uMax: the exact-equality branch
-        assertEq(m.requiredFraction(), 1e18, "U == uMax -> max(0.95, maxLock=1.0) = 1.0");
+    // -------------------------------------------------------------- requiredFraction (freeze% == utilization%)
+    function test_requiredFraction_equals_utilization() public {
+        // freeze% = utilization% exactly, across the range. utilization() is already clamped to [0, 1e18].
+        _setU(0);
+        assertEq(m.requiredFraction(), 0, "U==0 -> 0");
+        assertEq(m.requiredFraction(), m.utilization());
+        _setU(0.7e18);
+        assertEq(m.requiredFraction(), 0.7e18, "U==0.7 -> 0.7");
+        assertEq(m.requiredFraction(), m.utilization());
         _setU(1e18);
-        assertEq(m.requiredFraction(), 1e18, "U == 1.0 -> min cap 1.0");
-    }
-
-    function test_requiredFraction_escalation_bites() public {
-        // uLock=0.1, uMax=0.2, maxLockFraction=1.0, U=0.19 -> esc = 1.0 * 0.09/0.1 = 0.9 > U=0.19
-        DurationFreezeModule x = new DurationFreezeModule();
-        x.setUp(
-            _initParams(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-                0.1e18, 0.2e18, 1e18
-            )
-        );
-        ee.setBacking(1, 100e18, 81e18); // U = 0.19
-        assertEq(x.utilization(), 0.19e18);
-        assertEq(x.requiredFraction(), 0.9e18, "escalation 0.9 > U 0.19 -> 0.9");
-    }
-
-    function test_requiredFraction_low_maxLock_structural_U_dominates() public {
-        // maxLockFraction=0.5, U=0.95 -> esc=0.5; max(0.95, 0.5)=0.95 (structural U dominates)
-        DurationFreezeModule x = new DurationFreezeModule();
-        x.setUp(
-            _initParams(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-                0.8e18, 0.95e18, 0.5e18
-            )
-        );
-        _setU(0.95e18);
-        assertEq(x.requiredFraction(), 0.95e18, "max(0.95, 0.5) = 0.95");
-    }
-
-    function test_requiredFraction_uLock_zero_always_escalating() public {
-        // uLock=0, uMax=1.0, maxLockFraction=1.0 -> esc = U for all U>0; max(U, U) = U
-        DurationFreezeModule x = new DurationFreezeModule();
-        x.setUp(
-            _initParams(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-                0, 1e18, 1e18
-            )
-        );
-        _setU(0.3e18);
-        assertEq(x.requiredFraction(), 0.3e18);
-        _setU(0); // U==0 == uLock, not > uLock, esc stays 0; max(0,0)=0
-        assertEq(x.requiredFraction(), 0);
+        assertEq(m.requiredFraction(), 1e18, "U==1.0 -> 1.0");
+        assertEq(m.requiredFraction(), m.utilization());
     }
 
     // -------------------------------------------------------------- truncation pin (qa #2)
@@ -501,7 +416,7 @@ contract DurationFreezeModuleMathTest is FreezeBase {
         ee.setBacking(1, 3, 1);
         uint256 u = m.utilization();
         assertEq(u, uint256(2) * 1e18 / 3, "U truncated down");
-        // U=0.6666.. < uLock(0.8) -> requiredFraction == U
+        // requiredFraction == utilization exactly
         assertEq(m.requiredFraction(), u);
         // gross = a prime-ish value
         uint256 gross = 777_777_777; // non-dividing
@@ -601,8 +516,7 @@ contract DurationFreezeModuleRotationTest is FreezeBase {
         DurationFreezeModule x = new DurationFreezeModule();
         x.setUp(
             _initParams(
-                owner, address(mainSafe), address(sidecar), operator, address(b2), address(ee), warehouse,
-                U_LOCK, U_MAX, MAXLOCK
+                owner, address(mainSafe), address(sidecar), operator, address(b2), address(ee), warehouse
             )
         );
         fot.mint(address(mainSafe), 100e18);
@@ -1056,8 +970,7 @@ contract DurationFreezeModuleInvariantTest is Test {
         m = new DurationFreezeModule();
         m.setUp(
             abi.encode(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-                uint256(0.8e18), uint256(0.95e18), uint256(1e18)
+                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse
             )
         );
 
@@ -1156,8 +1069,7 @@ contract DurationFreezeModuleForkTest is ForkConfig, SummonSubstrate {
         bytes memory init = abi.encodeWithSelector(
             DurationFreezeModule.setUp.selector,
             abi.encode(
-                owner, mainSafe, sidecar, operator, address(oracle), address(ee), warehouse,
-                uint256(0.8e18), uint256(0.95e18), uint256(1e18)
+                owner, mainSafe, sidecar, operator, address(oracle), address(ee), warehouse
             )
         );
         address clone = IModuleProxyFactory(BaseAddresses.ZODIAC_MODULE_PROXY_FACTORY)

@@ -58,10 +58,13 @@ fork test (+ mocks).
 
 ### 1. `contracts/src/bridge/SzAlpha.sol` — the LST wrapper (pooled-staker model)
 
-`contract SzAlpha is BurnMintERC20, IXAlphaRate, UUPSUpgradeable, ...` — an upgradeable ERC-20 (18-dp) liquid-staking
-receipt. **Extend the canonical `BurnMintERC20`** (`reference/chainlink-evm/.../shared/token/ERC20/BurnMintERC20.sol`)
-so the CCT `mint`/`burn` + `grantMintAndBurnRoles(address)` (MINTER_ROLE/BURNER_ROLE) come from audited code —
-`grantMintAndBurnRoles` is on the *implementation*, NOT on `IBurnMintERC20` (ref-verifier-confirmed). Exchange-rate
+`contract SzAlpha is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable, IXAlphaRate, ...`
+— an upgradeable ERC-20 (18-dp) liquid-staking receipt. **`SzAlpha` does NOT inherit the canonical `BurnMintERC20`**
+(it is constructor-based + OZ-4.8.3-bound — a UUPS proxy can't run its constructor). Instead **implement the
+`IBurnMintERC20` surface** (`mint`/`burn`×2/`burnFrom`/`grantMintAndBurnRoles(address)` (MINTER_ROLE/BURNER_ROLE) +
+`getCCIPAdmin()`/`setCCIPAdmin`) on top of OZ-Upgradeable, so the CCT face matches the audited one exactly. (Only the
+immutable Base mirror inherits the canonical `BurnMintERC20`.) `grantMintAndBurnRoles` is on the *implementation*, NOT
+on `IBurnMintERC20` (ref-verifier-confirmed). Exchange-rate
 accounting = cToken / wstETH / ERC-4626 pattern. `reference/evm-bittensor/solidity/stakeV2.sol` is the worked
 precompile example; build the staking leg fresh (Rubicon's wrapper is not public).
 
@@ -99,9 +102,12 @@ ERC-20 shares; the wrapper holds the aggregate stake. (This is what makes it an 
   **no DEX/oracle in the path** (§2). The wrapper exposes **rate only**; the **APR** figure (§8.8) is **CRE-computed
   off-chain** from this rate + the §8.6 NAV legs (`tickets/bridge/8x-02-xalpha-apr-cre.md`) — NOT an on-chain method here.
 - **First-mint anti-dilution (security HIGH-3):** guard the `totalSupply == 0` case against the donation/inflation
-  attack. At `initialize`, **mint exactly `1e3` dead shares to `address(0)`** (the OZ ERC-4626 minimum-shares
-  pattern — locked value, not "seed or burn"). Rounding on both `deposit` and `redeem` **always favors the protocol
-  / existing holders**, never the caller.
+  attack via the **OZ ERC-4626 virtual-offset** (`virtualShares = 1`, `virtualAssets = 1`): `shares = amount × (supply
+  + 1) / (stake + 1)`, rounded **down** — NOT "mint `1e3` dead shares to `address(0)`" (minting to `address(0)` reverts
+  in OZ and would not prevent the first-deposit div-by-zero). Gives a clean 1:1 genesis (`exchangeRate() == 1e18`), no
+  div-by-zero ever, and rounding that always favors the protocol / existing holders. The pooled-staker model makes a
+  third-party donation **structurally impossible** (stake is coldkey-attributed; `getStake` reads only the wrapper's
+  coldkey), the strongest defense.
 - **Post-call effect verification (security HIGH-4) — BOTH directions, distinct errors (round-2 tightening):** the
   StakingV2 precompile may not revert on failure, so verify the *observable* effect via `getStake` delta:
   - After `addStake` in `deposit`: re-read `getStake(VALIDATOR_HOTKEY, wrapperColdkey, NETUID)`; revert
@@ -160,7 +166,7 @@ the 3rd arg is **`advancedPoolHooks` (address; pass `address(0)` if unused)**, N
 
 Alongside `IXAlphaRate.sol` (already exists, `exchangeRate()` — confirmed the CRE-03 shape), add the minimal
 interfaces the wire lib calls (verified present in `reference/chainlink-ccip`): `IRegistryModuleOwnerCustom`
-(`registerAdminViaOwner(address)`), `ITokenAdminRegistry` (`setPool(address,address)`, `acceptAdminRole(address)` —
+(`registerAdminViaGetCCIPAdmin(address)`), `ITokenAdminRegistry` (`setPool(address,address)`, `acceptAdminRole(address)` —
 both confirmed to exist). Keep minimal — only the selectors the lib touches.
 
 ### 4. `contracts/script/DeploySzAlphaBridge.s.sol` — deploy + wire (both chains, self-serve, no allowlisting)
@@ -177,7 +183,7 @@ both confirmed to exist). Keep minimal — only the selectors the lib touches.
 Selectors (`chain-selectors`): 964 = `2135107236357186872`, Base 8453 = `15971525489660198786`.
 
 Per chain: deploy token (`SzAlpha` on 964 / `SzAlphaMirror` on Base) → deploy pool → `token.grantMintAndBurnRoles(pool)`
-→ `RegistryModuleOwnerCustom.registerAdminViaOwner(token)` → `TokenAdminRegistry.acceptAdminRole(token)` →
+→ `RegistryModuleOwnerCustom.registerAdminViaGetCCIPAdmin(token)` → `TokenAdminRegistry.acceptAdminRole(token)` →
 `TokenAdminRegistry.setPool(token, pool)` → `pool.applyChainUpdates(uint64[] toRemove, ChainUpdate[] toAdd)` where
 `ChainUpdate = {remoteChainSelector, remotePoolAddresses[], remoteTokenAddress, outboundRateLimiterConfig,
 inboundRateLimiterConfig}` and `RateLimiter.Config = {isEnabled, capacity, rate}` per direction (struct shapes
@@ -198,9 +204,10 @@ fallback in the report.
 **Wrapper (Subtensor fork or mock) — each S# below is backed by a named test:**
 - `deposit` lands stake on our validator under the wrapper coldkey; correct shares minted at rate. `redeem` unstakes
   + burns + returns alpha; rate moves as `totalStaked` accrues.
-- **`test_firstMintDeadShares` (S3):** after `initialize`, `totalSupply() == 1e3` to `address(0)`; first `deposit`
-  mints `amount × totalSupply / totalStaked` with no divide-by-zero; an out-of-band stake to the validator before
-  the first depositor does **not** skew the rate in an attacker's favor.
+- **`test_firstDeposit_oneToOne_noDivByZero` (S3):** at genesis `exchangeRate() == 1e18` and the first `deposit`
+  mints `amount × (supply + 1) / (stake + 1)` (virtual-offset) with no divide-by-zero — no `address(0)` dead-share
+  mint; an out-of-band stake to the validator before the first depositor does **not** skew the rate in an attacker's
+  favor (`test_inflationDefense_*`).
 - **`test_roundingFavorsProtocol` (S3):** 100 deposit/redeem cycles at varying rates; assert byte-exact
   `Σ alphaOut ≤ Σ alphaIn` (any dust is the user's loss, never a user gain).
 - **`test_mintVerifiesAddStakeEffect` (S4):** mock `addStake` to return success without raising `getStake` →
@@ -285,3 +292,26 @@ fallback in the report.
 > skeletons added. Ref-verifier re-confirmed every signature/struct/selector/address. Round 2's fixes are
 > clarifications of already-intended surface (per §3a, a strict tightening) — **no third re-fan required;
 > build-ready.**
+>
+> **BUILD NOTE (2026-06-09) — BUILT-VERIFIED + KEPT (`reports/8x-01-report.md`).** Three build-exposed
+> corrections were folded into the kept code (the code is the source of truth per keep-the-build); this
+> ticket's prose above is superseded on these three points:
+> 1. **Registration uses `registerAdminViaGetCCIPAdmin`, NOT `registerAdminViaOwner`** (§4 table). The
+>    canonical `BurnMintERC20` (the Base mirror) is AccessControl-based with **no `owner()`**, and
+>    `SzAlpha.owner()` is the TimelockController from genesis — so the CCIP registrar is the **separate
+>    `ccipAdmin` role** (returned by `getCCIPAdmin()`), distinct from the upgrade/owner authority. Both tokens
+>    implement `getCCIPAdmin`.
+> 2. **`SzAlpha` does NOT inherit `BurnMintERC20`** (deliverable 1). A UUPS proxy cannot use a
+>    constructor-based, OZ-4.8.3-bound `BurnMintERC20`; `SzAlpha` is a fresh OZ-Upgradeable (5.1.0) token that
+>    *implements* the `IBurnMintERC20` surface (`mint`/`burn`x2/`burnFrom`/`grantMintAndBurnRoles`/
+>    `getCCIPAdmin`). Only the immutable **Base mirror** inherits the canonical `BurnMintERC20`.
+> 3. **Anti-dilution = OZ ERC-4626 virtual offset, NOT "mint 1e3 dead shares to `address(0)`"** (HIGH-3).
+>    Minting to `address(0)` reverts in OZ and would not prevent the first-deposit div-by-zero; the virtual
+>    offset (virtualShares=1/virtualAssets=1) is the real OZ pattern — genesis 1:1, no div-by-zero, rounds to
+>    the protocol. The pooled-staker model makes a third-party donation **structurally impossible** (stake is
+>    coldkey-attributed; `getStake` reads only the wrapper's coldkey), the strongest defense.
+>
+> Also: precompiles are called **low-level** (`call`/`staticcall` + `encodeWithSelector`) — a typed call never
+> reaches the runtime precompile (`stakeV2.sol`); the reference `stakingV2.sol` has a trailing-comma syntax
+> error, so minimal local ABIs are authored. The OZ version seam ("8x exception") is resolved via versioned
+> `@4.8.3`/`@5.3.0` remap prefixes + a context-scoped OZ-Upgradeable 5.1.0 — no core OZ/solc bump.

@@ -1,7 +1,7 @@
 # 8-B9 — Sell module (market-sell HYDX→USDC + the zipUSD→xALPHA POL buy leg, via Algebra `SwapRouter`)
 
 > **NEXT / build-only.** The sixth harvest-loop engine module (after 8-B14 buy-and-burn, 8-B5 reservoir-loop, 8-B6
-> LP-strategy, 8-B7 harvest-vote, 8-B8 exercise). It owns the **swap leg** of the auto-sodomizer: per harvest it
+> LP-strategy, 8-B7 harvest-vote, 8-B8 exercise). It owns the **swap leg** of the auto-compounder: per harvest it
 > **market-sells** the exercised HYDX (from 8-B8) → USDC immediately so the CRE can repay the 8-B5 strike-borrow
 > (`debtOf(safe)→0`), and it also runs the **zipUSD→xALPHA on our POL** swap that the 8-B10/8-B13 recycle/compound
 > Modes B/C consume. Internal engine plumbing → **build-only** (no INFLOW ticket; the frontend never wires to it; the
@@ -95,7 +95,7 @@ Two files under the supply/engine tree, plus one new minimal interface and one n
   `setUp` under `initializer`, Call-only / no delegatecall) + **§10.8 / 8-B9** (the swap description: market-sells
   HYDX→USDC for the 8-B5 repay leg **and** zipUSD→xALPHA on our POL for the Mode B/C buy leg, via the Hydrex
   `SwapRouter`, sized within the soft-bleed caps; addresses `SwapRouter 0x6f4b…`, HYDX/USDC pool `0x51f0…`).
-- `pending-docs/auto-sodomizer.md` **§4 step (d) / §5 / §9** (the market-sell step; `SwapRouter.exactInputSingle`
+- `pending-docs/auto-compounder.md` **§4 step (d) / §5 / §9** (the market-sell step; `SwapRouter.exactInputSingle`
   HYDX→USDC, immediate, sized within the §9.3 soft-bleed cap; loop sizing = size the loop so the repay sell fits the
   cap, NOT sell-slowly) **/ §6 / §11** (the zipUSD→xALPHA buy leg for Mode B/C).
 - `pending-docs/hydrex.md` **§9.3** (the soft-bleed caps: per-order slippage ≤2–3%, per-epoch volume ≤1–2% of pool

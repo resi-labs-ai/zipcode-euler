@@ -8,6 +8,11 @@ import {IGauge} from "../interfaces/hydrex/IGauge.sol";
 import {IOptionToken} from "../interfaces/hydrex/IOptionToken.sol";
 import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
 
+/// @notice The freshness face of `SzAlphaRateOracle` — issuance gates on this for the CRE-pushed cross-chain rate.
+interface IXAlphaRateFresh {
+    function fresh() external view returns (bool);
+}
+
 /// @title SzipNavOracle
 /// @notice The szipUSD junior-vault NAV-per-share oracle: the **issuance + exit pricing primitive** (NAV is not
 ///         display-only). It composes the junior basket's NAV on-chain — reading every quantity trustlessly across
@@ -16,7 +21,7 @@ import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
 ///         on-chain cumulative TWAP accumulator on `navPerShare` over a governed window `W`. Consumers read a
 ///         bracketed share price: `navEntry = max(spot, twap)` (issuance), `navExit = min(spot, twap)` (exit),
 ///         each 18-dp (`1e18 = $1.00`). Two write authorities mirror the lien registry's split: the immutable
-///         Forwarder pushes leg marks as reportType 7; a set-once `DefaultCoordinator` is the sole impairment-
+///         Forwarder pushes leg marks as reportType 7; a `DefaultCoordinator` is the sole impairment-
 ///         provision writer (M2). `claude-zipcode.md` §7/§12; `baal-spec.md` §3.
 /// @dev Documented invariants (the security review's accepted trade-offs):
 ///      - The bracket defends the PROFITABLE direction both ways: `navEntry = max` so a one-block spot spike UP only
@@ -27,8 +32,8 @@ import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
 ///        Gate MUST `poke()` before every exit/issuance read; `poke()` is permissionless so any keeper can maintain
 ///        it. `lastUpdate` is public for freshness audit.
 ///      - `writeProvision` is UNBOUNDED at the oracle by design — the bound (down <= atRisk*(1-recoveryFloor), up by
-///        realized receipts) lives in the set-once `DefaultCoordinator` (M2), which the oracle trusts. Until wired,
-///        `writeProvision` reverts for everyone (fail-closed); item-10 deploy verifies the wiring before renounce.
+///        realized receipts) lives in the `DefaultCoordinator` (M2), which the oracle trusts. Until wired,
+///        `writeProvision` reverts for everyone (fail-closed); item-10 deploy verifies the wiring before the Timelock hand-off.
 ///      - The xALPHA `exchangeRate()` read is non-manipulable in production (LST stake-accounting, no pool price) but
 ///        in M1 is a STAND-IN mock; the production Rubicon `LiquidStakedV3` getter + supply-immutability are verified
 ///        at bridge integration.
@@ -65,7 +70,7 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice The per-push deviation circuit-break, in bps (governed).
     uint256 public immutable maxDeviationBps;
 
-    // --------------------------------------------------------------------- set-once wiring (frozen by renounce)
+    // --------------------------------------------------------------------- wiring (Timelock-re-pointable, §17)
     /// @notice szipUSD — the supply denominator (deployed after this oracle).
     address public shareToken;
     /// @notice The zipUSD/xALPHA ICHI vault (LP reserves source). Zero ⇒ LP leg contributes 0 (M1 pre-LP).
@@ -76,6 +81,11 @@ contract SzipNavOracle is ReceiverTemplate {
     address public engineSafe;
     /// @notice The sole impairment-provision writer (M2). Zero ⇒ `writeProvision` reverts for everyone.
     address public defaultCoordinator;
+    /// @notice The Base xALPHA rate oracle (`SzAlphaRateOracle`, exposing `exchangeRate()` + `fresh()`). When set,
+    ///         the xALPHA NAV leg reads the rate from HERE (the CRE-pushed cross-chain rate) and **issuance gates on
+    ///         its `fresh()`** (a stale cross-chain rate must not mint), while exit still prices off the last rate
+    ///         (the §7 asymmetry). Zero ⇒ fall back to reading `IXAlphaRate(xAlpha)` directly (the M1 stand-in).
+    address public xAlphaRateOracle;
 
     // --------------------------------------------------------------------- pushed-leg cache
     struct LegCache {
@@ -88,7 +98,7 @@ contract SzipNavOracle is ReceiverTemplate {
 
     // --------------------------------------------------------------------- provision
     /// @notice The impairment provision (18-dp USD), subtracted from the gross basket value. Sole writer = the
-    ///         set-once `DefaultCoordinator`.
+    ///         `DefaultCoordinator`.
     uint256 public provision;
 
     // --------------------------------------------------------------------- TWAP accumulator
@@ -118,17 +128,19 @@ contract SzipNavOracle is ReceiverTemplate {
     error StalePrice(uint8 leg);
     error UnknownLpToken(address token);
     error ZeroAddress();
+    error StaleRate(); // the wired xALPHA rate oracle is stale — issuance halts (exit still prices off last rate)
 
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
     event LpPositionSet(address indexed ichiVault, address indexed gauge);
     event EngineSafeSet(address indexed engineSafe);
     event DefaultCoordinatorSet(address indexed dc);
+    event XAlphaRateOracleSet(address indexed rateOracle);
     event LegPriceUpdated(uint8 indexed leg, uint256 price, uint48 ts);
     event ProvisionWritten(uint256 provision);
     event Poked(uint32 ts, uint256 cumNav);
 
-    /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`; frozen by deploy-time renounce).
+    /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`; Timelock-re-pointable, §17 — not renounce-frozen).
     constructor(
         address forwarder,
         address zipUSD_,
@@ -193,6 +205,14 @@ contract SzipNavOracle is ReceiverTemplate {
         emit DefaultCoordinatorSet(dc_);
     }
 
+    /// @notice Wire/re-point (or unset with `address(0)`) the Base xALPHA rate oracle. When set, the xALPHA NAV leg
+    ///         reads the rate from it and issuance gates on its `fresh()`. Zero ⇒ fall back to `IXAlphaRate(xAlpha)`.
+    ///         `onlyOwner` (Timelock). Re-pointable, not set-once (§17 build-phase wiring).
+    function setXAlphaRateOracle(address rateOracle_) external onlyOwner {
+        xAlphaRateOracle = rateOracle_; // address(0) is a valid "unset / use fallback" value
+        emit XAlphaRateOracleSet(rateOracle_);
+    }
+
     // --------------------------------------------------------------------- write paths
     /// @notice Revaluation (§4.4 reportType 7): the Forwarder pushes a batch of off-chain leg marks. All-or-nothing.
     /// @param report The shared §4.4 envelope `abi.encode(uint8 reportType, bytes payload)`.
@@ -221,7 +241,7 @@ contract SzipNavOracle is ReceiverTemplate {
         }
     }
 
-    /// @notice Write the impairment provision. Sole caller = the set-once `DefaultCoordinator`. Immediate (not
+    /// @notice Write the impairment provision. Sole caller = the `DefaultCoordinator`. Immediate (not
     ///         TWAP-smoothed) — the next `spotNavPerShare` reflects it. The bound lives in the coordinator (M2).
     function writeProvision(uint256 newProvision) external {
         if (msg.sender != defaultCoordinator) revert NotDefaultCoordinator();
@@ -348,6 +368,9 @@ contract SzipNavOracle is ReceiverTemplate {
     function navEntry() external view returns (uint256) {
         if (_legStale(LEG_ALPHA_USD)) revert StalePrice(LEG_ALPHA_USD);
         if (_legStale(LEG_HYDX_USD)) revert StalePrice(LEG_HYDX_USD);
+        // Cross-chain rate freshness: a stale CRE-pushed xALPHA rate must not mint (exit is unaffected — `navExit`
+        // does not call this). Only enforced when the rate oracle is wired (M1 stand-in path is unchanged).
+        if (xAlphaRateOracle != address(0) && !IXAlphaRateFresh(xAlphaRateOracle).fresh()) revert StaleRate();
         uint256 s = spotNavPerShare();
         uint256 t = twapNavPerShare();
         return s > t ? s : t;
@@ -362,7 +385,9 @@ contract SzipNavOracle is ReceiverTemplate {
 
     /// @notice True iff both required pushed legs are within `maxAge` (the §4 `navOracle.fresh()` issuance guard).
     function fresh() public view returns (bool) {
-        return !_legStale(LEG_ALPHA_USD) && !_legStale(LEG_HYDX_USD);
+        if (_legStale(LEG_ALPHA_USD) || _legStale(LEG_HYDX_USD)) return false;
+        if (xAlphaRateOracle != address(0) && !IXAlphaRateFresh(xAlphaRateOracle).fresh()) return false;
+        return true;
     }
 
     // --------------------------------------------------------------------- internals
@@ -378,7 +403,11 @@ contract SzipNavOracle is ReceiverTemplate {
 
     /// @dev USD per 1.0 xALPHA (18-dp): on-chain LST exchangeRate × the pushed alphaUSD.
     function _xAlphaUSD() internal view returns (uint256) {
-        return IXAlphaRate(xAlpha).exchangeRate() * legCache[LEG_ALPHA_USD].price / 1e18;
+        // Rate source: the wired Base rate oracle (CRE-pushed cross-chain rate) when set, else the direct read
+        // (M1 stand-in). Value (not freshness) is read here — freshness is gated at issuance (`navEntry`/`fresh`),
+        // so `grossBasketValue`/exit keep pricing off the last good rate (the §7 asymmetry).
+        address rateSrc = xAlphaRateOracle == address(0) ? xAlpha : xAlphaRateOracle;
+        return IXAlphaRate(rateSrc).exchangeRate() * legCache[LEG_ALPHA_USD].price / 1e18;
     }
 
     /// @dev USD per 1.0 oHYDX (18-dp): intrinsic = HYDX/USD × (100 - discount)/100, discount read on-chain.

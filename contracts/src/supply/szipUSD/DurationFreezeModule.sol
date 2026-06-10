@@ -23,8 +23,9 @@ import {IEulerEarnUtil} from "../../interfaces/euler/IEulerEarnUtil.sol";
 ///      destination, no custody; (b) `release` cannot drop the sidecar below `requiredFraction(U) ×
 ///      grossBasketValue`, where `U` is read live and donation-immune from EulerEarn and is not outsider-
 ///      manipulable (§4.3/§8.2) — so a compromised operator cannot open the run hatch while utilization is
-///      breached; (c) `requiredFraction` only ever *rises* with utilization (no off-chain floor input exists in
-///      M1); (d) only the five oracle-valued legs are movable (no unvalued-asset leak). A compromised operator can
+///      breached; (c) `requiredFraction == utilization` exactly (freeze% = utilization%; the §11-B escalation is
+///      post-M1, not built — no off-chain floor input exists in M1); (d) only the five oracle-valued legs are
+///      movable (no unvalued-asset leak). A compromised operator can
 ///      **grief** (over-commit free equity, delaying exits; §12 metrics + governance watch it) but **cannot steal**
 ///      and **cannot under-freeze**. zipUSD never freezes (junior-only, §17). The floor read is sound under the
 ///      single-operator invariant (no concurrent sibling-module rotation mid-`release`).
@@ -55,14 +56,6 @@ contract DurationFreezeModule is Module, ReentrancyGuard {
     /// @notice The CreditWarehouse Safe holding the EulerEarn senior shares (the `owner` arg of the `U` read).
     address public warehouse;
 
-    // -- governed §11-B sizing params (18-dp; 1e18 = 100%) --
-    /// @notice The utilization below which no escalation applies (`U_lock`). `uLock < uMax`.
-    uint256 public uLock;
-    /// @notice The utilization at which escalation saturates to `maxLockFraction` (`U_max`). `uMax <= 1e18`.
-    uint256 public uMax;
-    /// @notice The cap on the escalation term (NOT the effective lock — the lock is capped at 1e18). `0 < x <= 1e18`.
-    uint256 public maxLockFraction;
-
     // -- the movable whitelist == exactly the five oracle leg addresses (read LIVE at setUp) --
     address public zipUSD;
     address public usdc;
@@ -91,10 +84,10 @@ contract DurationFreezeModule is Module, ReentrancyGuard {
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
-    ///         `initializer`. Decodes the wired addresses + governed params, reads the five movable legs LIVE off
-    ///         the oracle (so the whitelist == exactly what the oracle prices — no drift), sets `avatar == target
-    ///         == mainSafe` (the inherited single-avatar exec is NOT used; both rotations go through explicit
-    ///         `ISafe(src)` calls), and transfers ownership to the Timelock `owner`.
+    ///         `initializer`. Decodes the wired addresses, reads the five movable legs LIVE off the oracle (so the
+    ///         whitelist == exactly what the oracle prices — no drift), sets `avatar == target == mainSafe` (the
+    ///         inherited single-avatar exec is NOT used; both rotations go through explicit `ISafe(src)` calls), and
+    ///         transfers ownership to the Timelock `owner`.
     function setUp(bytes memory initParams) public override initializer {
         (
             address owner_,
@@ -103,14 +96,8 @@ contract DurationFreezeModule is Module, ReentrancyGuard {
             address operator_,
             address navOracle_,
             address eulerEarn_,
-            address warehouse_,
-            uint256 uLock_,
-            uint256 uMax_,
-            uint256 maxLockFraction_
-        ) = abi.decode(
-            initParams,
-            (address, address, address, address, address, address, address, uint256, uint256, uint256)
-        );
+            address warehouse_
+        ) = abi.decode(initParams, (address, address, address, address, address, address, address));
 
         if (
             owner_ == address(0) || mainSafe_ == address(0) || sidecar_ == address(0) || operator_ == address(0)
@@ -119,7 +106,6 @@ contract DurationFreezeModule is Module, ReentrancyGuard {
         if (owner_ == operator_) revert OwnerIsOperator();
         // distinctness is load-bearing: equal Safes make a rotation a self-transfer that trivially passes the floor.
         if (mainSafe_ == sidecar_) revert BadParams();
-        if (!(uLock_ < uMax_ && uMax_ <= 1e18 && maxLockFraction_ != 0 && maxLockFraction_ <= 1e18)) revert BadParams();
 
         // The module is enabled ON the main Safe; the inherited single-avatar exec is inert (rotation uses ISafe(src)).
         avatar = mainSafe_;
@@ -131,9 +117,6 @@ contract DurationFreezeModule is Module, ReentrancyGuard {
         navOracle = navOracle_;
         eulerEarn = eulerEarn_;
         warehouse = warehouse_;
-        uLock = uLock_;
-        uMax = uMax_;
-        maxLockFraction = maxLockFraction_;
 
         // Read the five movable legs LIVE off the wired oracle (the LpStrategyModule "read token0/token1 live"
         // idiom) — the whitelist is EXACTLY what the oracle prices, removing drift and five setUp args.
@@ -256,18 +239,12 @@ contract DurationFreezeModule is Module, ReentrancyGuard {
         u = (sa - free) * 1e18 / sa;
     }
 
-    /// @notice The required sidecar floor FRACTION (§11-B sizing + §6.4 structural baseline):
-    ///         `min(1e18, max(U, escalation))`, escalation = `maxLockFraction × clamp((U−uLock)/(uMax−uLock),0,1)`.
-    ///         `max` not sum (§11-B): φ_A = utilization is the liquidity-path identity. All divisions truncate DOWN
-    ///         (sub-wei under-floor; documented direction — qa #2).
-    function requiredFraction() public view returns (uint256 f) {
-        uint256 u = utilization();
-        uint256 esc;
-        if (u > uLock) {
-            esc = u >= uMax ? maxLockFraction : maxLockFraction * (u - uLock) / (uMax - uLock);
-        }
-        uint256 r = u > esc ? u : esc;
-        f = r > 1e18 ? 1e18 : r;
+    /// @notice The required sidecar floor FRACTION: `freeze% = utilization%` exactly. `utilization()` is already
+    ///         clamped to `[0, 1e18]`, so this IS the whole formula — no escalation, no `min`/`max`. The §11-B
+    ///         escalation surface (`U_lock`/`U_max`/`maxLockFraction`) is post-M1, not built. φ_A = utilization is
+    ///         the liquidity-path identity (§6.4 structural baseline).
+    function requiredFraction() public view returns (uint256) {
+        return utilization();
     }
 
     /// @notice The committed (sidecar-only) basket value, read FROM the oracle (18-dp USD).

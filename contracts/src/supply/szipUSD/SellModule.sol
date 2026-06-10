@@ -11,7 +11,7 @@ import {ISwapRouter} from "../../interfaces/algebra/ISwapRouter.sol";
 /// @notice The on-chain swap seam of the 8-B9 market-sell leg (§4.5.1): the sixth engine Zodiac Module (after the
 ///         8-B14 buy-and-burn, the 8-B5 reservoir loop, the 8-B6 LP strategy, the 8-B7 harvest/vote, and the 8-B8
 ///         exercise), CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target == engineSafe`). It
-///         owns the SWAP leg of the auto-sodomizer: per harvest the CRE robot (8-B11) market-sells the exercised HYDX
+///         owns the SWAP leg of the auto-compounder: per harvest the CRE robot (8-B11) market-sells the exercised HYDX
 ///         (from 8-B8) → USDC immediately so it can then repay the 8-B5 strike-borrow (`debtOf(safe)→0`), and it also
 ///         runs the zipUSD→xALPHA on-our-POL swap that the 8-B10/8-B13 recycle/compound Modes B/C consume.
 ///

@@ -1,0 +1,130 @@
+# 8-B6 — LpStrategyModule (wiring map)
+
+> Source of truth = the kept code `contracts/src/supply/szipUSD/LpStrategyModule.sol`. Ticket
+> `tickets/sodo/8-B6-lp-strategy.md` + report `reports/8-B6-report.md` are intent only — the code is final.
+> Test: `contracts/test/LpStrategyModule.t.sol`.
+
+## Role
+The **third engine Zodiac Module** (after the 8-B14 buy-and-burn and the 8-B5 reservoir loop) and the **simplest**
+of the engine set: **no EVC leg, no oracle, no hook, no custody, no storage written in any mutating path**. It owns
+the LP's whole lifecycle on the szipUSD engine Safe: build the single-sided zipUSD/xALPHA ICHI LP (`addLiquidity` →
+`IICHIVault.deposit`), gauge-stake it to farm oHYDX (`stake` → `IGauge.deposit`), and unstake slices back to the
+Safe for the 8-B5 harvest loop (`unstake` → `IGauge.withdraw`). The module is **CRE-operator-gated**: the operator
+supplies only scalar amounts; the module builds all calldata to set-once wired targets and the deposit `to` / every
+balance read is the literal `engineSafe`.
+
+The module is **vault-agnostic** — it forwards `(deposit0, deposit1)` unchanged. Single-sidedness is **not a module
+gate**; it is the *wired vault's* `allowToken0()`/`allowToken1()` property, which rejects the disallowed leg
+fail-closed inside the vault. The only shape guard is `ZeroAmount` (≥1 non-zero side) + the `minShares` floor. The
+ICHI **DepositGuard is NOT used** — direct `IICHIVault.deposit` lands shares (build-verified on live Base against the
+real vault `0x07e72…` on factory `0x2b52c416…`); slippage protection is the operator-supplied `minShares` post-check,
+not the guard's `minimumProceeds`. The LP token **IS** the ICHI vault contract (an 18-dp ERC20); the gauge custodies
+the staked LP.
+
+## Contracts involved (what each does)
+| Contract / Interface | What it does |
+|---|---|
+| `LpStrategyModule` (`is Module`, zodiac-core) | The seam. `setUp` initializer + 6 `onlyOwner` build-phase wiring setters + 3 `onlyOperator` entrypoints (`addLiquidity`/`stake`/`unstake`) + 2 views (`stakedBalance`/`lpBalance`). Private `_exec` drives the Safe via inherited `execAndReturnData` (Call, value 0) and bubbles inner reverts. |
+| `IICHIVault` (`src/interfaces/ichi/IICHIVault.sol`) | The managed LP vault for zipUSD/xALPHA. `deposit(deposit0, deposit1, to) → shares`; `token0()`/`token1()`/`balanceOf()` read live. The vault contract **is** the LP share token. `allowToken0/1()` is where single-sidedness lives (fail-closed). |
+| `IGauge` (`src/interfaces/hydrex/IGauge.sol`) | The Hydrex gauge over our pool. `deposit(amount)`/`withdraw(amount)` stake/unstake the LP; `balanceOf(safe)` is the staked balance. Staking is REQUIRED to earn oHYDX (bare LP earns only swap fees). Must be `ALM_ICHI_UNIV3` type. |
+| `IERC20` (OZ 4.x) | `approve` selector encoded for the exact-amount approve / reset on both legs (token0/token1 → ichiVault; ichiVault → gauge). |
+| `Module` / `Operation` (zodiac-core) | Base: `avatar`/`target` (set to `engineSafe`), `onlyOwner`, `execAndReturnData`, `initializer`. |
+
+## Wiring — internal (ctor / setUp / entrypoints)
+**No constructor logic** — the mastercopy ships uninitialized and is init-locked at deploy. All per-clone config is
+**plain set-once storage written in `setUp` under `initializer`, NOT `immutable`** (a `ModuleProxyFactory` clone
+shares the mastercopy runtime bytecode, so `immutable` would be identical for every clone and cannot carry per-clone
+config — the proven 8-B14/8-B5 clone fact).
+
+**`setUp(bytes initParams)`** decodes **five** addresses `(owner, engineSafe, operator, ichiVault, gauge)`. Order is
+load-bearing:
+1. Validate **all five** nonzero (`ZeroAddress`) FIRST — so an `ichiVault == 0` reverts cleanly, not via a staticcall
+   on a code-less address; then `owner != operator` (`OwnerIsOperator`).
+2. Set `avatar = target = engineSafe` (the module is enabled ON the engine Safe and only ever mutates it).
+3. Persist `engineSafe`/`operator`/`ichiVault`/`gauge`.
+4. Read `token0`/`token1` **LIVE** off the wired vault (`IICHIVault(ichiVault).token0()/token1()`), assert each
+   nonzero — this guarantees the approved tokens match the vault and removes two setUp args (the `SzipBuyBurnModule`
+   pattern).
+5. `_transferOwnership(owner_)`.
+
+**Six storage slots** (all `public`): `engineSafe`, `operator`, `ichiVault`, `gauge`, `token0`, `token1`.
+
+**Three `onlyOperator` entrypoints** (scalar-only; the gate is `msg.sender != operator → NotOperator`):
+- **`addLiquidity(deposit0, deposit1, minShares) → shares`** — guards `!(deposit0==0 && deposit1==0)` (`ZeroAmount`)
+  and `minShares != 0` (`ZeroMinShares` — a zero floor would no-op the only sandwich protection on a direct ICHI
+  deposit). Then, per non-zero leg: `_exec(tokenN, approve(ichiVault, depositN))`; `_exec(ichiVault,
+  IICHIVault.deposit(deposit0, deposit1, engineSafe))` and `abi.decode` the returned `shares`; reset each approved leg
+  to 0; finally `shares < minShares → Slippage`. Deposit `to` is the literal `engineSafe` — the minted LP lands in the
+  Safe. No standing approvals (exact-amount, reset defensively).
+- **`stake(lpAmount)`** — `ZeroAmount` guard, then exactly 3 `exec`s: `approve(gauge, lpAmount)` on `ichiVault` (the LP
+  token) / `IGauge.deposit(lpAmount)` / `approve(gauge, 0)` reset.
+- **`unstake(lpAmount)`** — `ZeroAmount` guard, then exactly 1 `exec`: `IGauge.withdraw(lpAmount)`. The gauge returns
+  the LP to the Safe (= the gauge call's `msg.sender`).
+
+**Views** (pinned to `engineSafe`): `stakedBalance()` = `IGauge(gauge).balanceOf(engineSafe)`; `lpBalance()` =
+`IICHIVault(ichiVault).balanceOf(engineSafe)`. These feed the 8-B5/8-B11/8-B12 back-pressure sizing.
+
+**`_exec(to, data)` discipline:** inherited `execAndReturnData(to, 0, data, Operation.Call)` — Call-only, `value == 0`,
+no delegatecall, no generic passthrough. On `ok == false` it **bubbles the inner revert data** (`revert(add(ret,
+0x20), mload(ret))`) so the original ICHI/gauge error surfaces, or `ExecFailed` if there is none. (The Gnosis Safe's
+`execTransactionFromModuleReturnData` catches inner reverts and returns `(false, revertData)` rather than bubbling, so
+an unchecked `exec` would silently swallow a failed deposit/stake — hence the hard re-revert.)
+
+**No DepositGuard slot.** The module deposits directly into `IICHIVault.deposit`; the guard `0x9A0EBEc4…` is neither
+wired nor referenced.
+
+## Wiring — cross-component (who points at whom)
+- **`ichiVault` = the SHARED LP address (PROGRESS row 338).** The production POL ICHI vault (the LP share token) MUST
+  be the **single** address wired into ALL of: this module's `ichiVault` (`setUp`), the 8-B5 reservoir escrow vault's
+  collateral `asset()` (`ReservoirMarketDeployer.lpToken`), the `SzipReservoirLpOracle` `LP_MARK` key, and the
+  `SzipNavOracle` basket-LP leg. 8-B6 `unstake`s that LP to the Safe (harvest-loop step 1) and 8-B5 `postCollateral`
+  deposits it into the escrow — if the two are wired to *different* LP addresses the loop silently fractures (the
+  unstaked LP can't be posted). The item-10 deploy MUST assert
+  `LpStrategyModule.ichiVault() == reservoir-escrow asset() == lpOracle key`.
+- **`gauge` resolved via `Voter.gauges(ourPool)`** (Hydrex Voter `0xc69E…`) with a **hard `!= 0` gate** — our
+  zipUSD/xALPHA gauge must be Hydrex-whitelisted (`Voter.createGauge(ourPool, ALM_ICHI_UNIV3)`), an **external
+  governance dependency** (`hydrex.md §9.4`). The gauge's staking token is the ICHI vault share; staking is what earns
+  oHYDX (8-B7 claims it).
+- **`operator` = the single CRE operator** — the sole caller of all three entrypoints. The CRE robot sizes `minShares`
+  off the `SzipNavOracle` reserve×price math (no on-chain absolute floor is knowable without the oracle; per-call
+  non-zero is the right granularity) and sequences `unstake → re-stake` around the 8-B5 strike loop (8-B11 driver).
+- **Staked/collateral exclusivity (8-B5 seam).** A staked LP is custodied by the gauge and therefore cannot
+  *simultaneously* be EVK collateral — collateralizing requires unstaking, and the unstaked slice stops earning oHYDX
+  until re-staked. This is exactly why 8-B5 is a tight unstake→borrow→repay→re-stake loop, not a hold; 8-B6 supplies
+  the `unstake` (loop step 1) and `stake` (loop step 7) ends.
+- **`owner` = the TimelockController** (governance) — holds the 6 `onlyOwner` build-phase wiring setters
+  (`setEngineSafe`/`setOperator`/`setIchiVault`/`setGauge`/`setToken0`/`setToken1`, each `ZeroAddress`-guarded,
+  emitting `WiringSet(slot, value)`) plus the inherited `setAvatar`/`setTarget`. `owner != operator` is enforced at
+  `setUp` and at `setOperator`. The hot CRE `operator` can never re-point wiring; a redirect is a deliberate
+  timelocked act.
+
+## Item-10 deploy facts (PROGRESS rows 337/338/339)
+- **Create the POL vault** as a **single-sided zipUSD YieldIQ ICHI vault** via the ICHI factory `0x2b52c416…`
+  (`createICHIVault`): only zipUSD deposited; the xALPHA leg is acquired via the underlying Algebra pool's flow +
+  the emissions flywheel (exact vault config pending an ICHI conversation — single-sided zipUSD is the decided shape).
+- **Resolve + wire the gauge** via `Voter.gauges(ourPool)` with the **hard gate `Voter.gauges(ourPool) != 0`** (the
+  ALM_ICHI gauge must be Hydrex-whitelisted — external governance dep).
+- **CREATE2-clone** the module via `ModuleProxyFactory`, `enableModule` it on the engine Safe, `setUp` it with
+  `(owner=Timelock, engineSafe, operator, ichiVault, gauge)`, and **init-lock the mastercopy**.
+- **`owner = TimelockController != operator`** (the hot CRE key).
+- **Assert** `LpStrategyModule.ichiVault() == reservoir-escrow vault asset() == lpOracle key` (the shared-LP-address
+  invariant, row 338).
+- No `audit/*` follow-on for 8-B6 itself — the LP-lifecycle audit-sweep is folded into the deferred
+  engine-integration pass.
+
+## Gotchas
+- **The gauge MUST be `ALM_ICHI_UNIV3` type.** A wrong-type gauge (or an unwhitelisted pool, `Voter.gauges(ourPool)
+  == 0`) breaks staking; until the Hydrex OTC whitelist lands, fork tests use a stand-in (`hydrex.md §9.4`). The
+  production zipUSD/xALPHA vault + ALM gauge do not exist until the whitelist clears — the behavioral cycle tests use
+  mocks (the blessed §4.5.1 stand-in posture); the real-vault fork test uses the live WETH/USDC single-sided vault as
+  a *mechanism* stand-in (direct deposit lands shares).
+- **Backed-zipUSD-only invariant.** The CRE funds the engine Safe with backed zipUSD (minted only via 8-B10's
+  free-value path); **the module never mints** and holds no custody — it only forwards the Safe's own balances. The
+  deposited zipUSD must be backed, never unbacked.
+- **0.8.24 pin.** `require(cond, CustomError())` is 0.8.26+; guards here use `if (!cond) revert CustomError()`.
+- **Fork non-determinism (test-infra).** `ForkConfig` uses an unpinned `createSelectFork("base")` (latest block); the
+  two real-vault fork tests deposit a FIXED amount into a live third-party ICHI vault, which can intermittently revert
+  `DTL` at certain blocks. Pin a block before relying on those two tests (logged in PROGRESS as latent fragility);
+  the module logic is unaffected.
+- **`minShares == 0` is rejected** (`ZeroMinShares`) — a deliberate strictness choice, not a footgun: a direct ICHI
+  deposit is sandwich-exposed and a zero floor would no-op the only protection.

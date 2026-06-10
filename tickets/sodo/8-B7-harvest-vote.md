@@ -1,7 +1,7 @@
 # 8-B7 — Harvest/vote module (claim oHYDX; defend the vote floor; re-vote each epoch)
 
 > **NEXT / build-only.** The fourth harvest-loop engine module to be built (after 8-B14 buy-and-burn, 8-B5
-> reservoir-loop, 8-B6 LP-strategy). It owns the **emissions + governance leg** of the auto-sodomizer: per epoch it
+> reservoir-loop, 8-B6 LP-strategy). It owns the **emissions + governance leg** of the auto-compounder: per epoch it
 > (1) **claims** the gauge's oHYDX to the Safe, (2) takes the **vote-floor `exerciseVe` slice FIRST** (free permalock
 > → grows the Safe's account-aggregate veHYDX), (3) **re-votes** our gauge (votes reset weekly), and (4) **claims the
 > anti-dilution rebase** on the veNFTs. Internal engine plumbing → **build-only** (no INFLOW ticket; the frontend
@@ -70,7 +70,7 @@ Two files under the supply/engine tree, plus three minimal interface edits/addit
   out-compounds you ~7:1) **/ §8** (default the un-sold surplus to `exerciseVe`; the dutiful auto-locker) **/ §9.2**
   (regime switch: UP/FLAT → sell, DOWN → `exerciseVe`; never dump into weakness) **/ §2.5/§2.6** (the verified
   address book + live params).
-- `pending-docs/auto-sodomizer.md` **§4 (steps 1/3a/6) / §8 inv. 8** (the harvest loop's claim + vote-floor-first
+- `pending-docs/auto-compounder.md` **§4 (steps 1/3a/6) / §8 inv. 8** (the harvest loop's claim + vote-floor-first
   ordering).
 - `claude-zipcode.md` **§17** locked: venue-agnostic; the engine is **CRE-permissioned** (one writer); no on-chain
   economic liquidation. (8-B7 reopens nothing.)

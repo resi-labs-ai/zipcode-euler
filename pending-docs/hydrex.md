@@ -142,7 +142,7 @@ read as a committed partner, and accept minority status. Acquisition is via the 
 market buy into a $429k pool.
 
 **Ownership of the dials:** **Treasury sets the target floor `s*`** (the minority share we defend) and the
-auto-sodomizer **payout mode** (§6 / `auto-sodomizer.md` §6); the CRE bot enforces `s*` via the per-epoch
+auto-compounder **payout mode** (§6 / `auto-compounder.md` §6); the CRE bot enforces `s*` via the per-epoch
 lock-vs-sell split and pages Treasury on the regime-change tripwire (`monitoring.md` §B).
 
 ---
@@ -169,7 +169,7 @@ Austin's BD matter more than execution tricks.
 
 ---
 
-## 6. The depositor surface — the structured-product vault ("auto-sodomizer")
+## 6. The depositor surface — the structured-product vault ("auto-compounder")
 
 The product that makes Hydrex usable: **"Deposit your xALPHA, earn [trailing-7-day realized] APR in USDC"** —
 depositors never see an oHYDX. The vault robot:
@@ -338,4 +338,4 @@ Lending-book performance is the only thing under all of this that's real — tha
 On-chain (`cast`, Base, week 38): Voter `0xc69E…`, Minter `0xA7D6…`, EmissionSchedule `0x5aAa…`, ve `0x25B2…`,
 oHYDX `0xA113…`, pool `0x51f0…`, team Safes `0xd9e9…`/`0x1ae3…`/`0x7426…`. Verified source (Sourcify): `VoterV5`,
 `MinterUpgradeableV3`, `OptionTokenV4`. SDK `@hydrexfi/hydrex-sdk` (`LendingGauge` Euler/Morpho routing). 90-day
-USDC reserve trajectory via archive reads. Companions: `auto-sodomizer.md` + `monitoring.md`.
+USDC reserve trajectory via archive reads. Companions: `auto-compounder.md` + `monitoring.md`.

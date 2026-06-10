@@ -57,12 +57,13 @@ Two code artifacts under the supply tree, plus one additive oracle view:
 - `claude-zipcode.md` **§11 trigger B** (`:1984-2010`) — the duration-squeeze: liquidity-driven, every loan
   performing, **no realized loss**; **Trigger** = an on-chain utilization floor `U` (the illiquid fraction of the
   senior backing, `U = 1 − maxWithdraw(CreditWarehouse)/convertToAssets(balanceOf(CreditWarehouse))`, donation-immune,
-  §8.2) breaching a governed `U_lock` engages the lock automatically, **not outsider-manipulable**; **Sizing** =
-  `lockFraction = maxLockFraction × clamp((U − U_lock)/(U_max − U_lock), 0, 1)`; **Stacking** = effective lock
-  `max(φ_A, φ_B)` capped at 1.0; **M1 realization** (the `:2003`-area note added this window) = the §6.4 **continuous
-  structural floor**, `maxDuration`/`releaseHysteresis` **subsumed** (M1 carries neither), `commit` ungated,
-  `maxLockFraction` caps only the escalation term (no separate redeemability cap); **Compensation** = none beyond
-  continuing yield.
+  §8.2) engages the lock automatically, **not outsider-manipulable**. The spec's full §11-B abstraction adds an
+  escalation **Sizing** (`lockFraction = maxLockFraction × clamp((U − U_lock)/(U_max − U_lock), 0, 1)`) +
+  **Stacking** (`max(φ_A, φ_B)` capped at 1.0) that could freeze *above* utilization during a squeeze — but the
+  **M1 build is DEAD-SIMPLE** (the `:2003`-area realization note, superintendent 2026-06-09): **`requiredFraction(U)
+  = U` — freeze% = utilization%, full stop.** The escalation + the binary-lock params (`U_lock`/`U_max`/
+  `maxLockFraction`/`maxDuration`/`releaseHysteresis`) are **post-M1, not built**; `commit` ungated; **Compensation**
+  = none beyond continuing yield.
 - **§6.4** (`:1336-1362`) — the structural freeze: only **free** junior equity lives in the main (ragequit-target)
   Safe; the equity **committed to live credit lines — sized to credit-warehouse utilization** — lives in the
   non-ragequittable sidecar; a window exit reaches only free equity; the CRE rotates the committed slice back as
@@ -155,9 +156,8 @@ Two code artifacts under the supply tree, plus one additive oracle view:
 - Do **NOT** engage any markdown, write the oracle's `provision`, read/route any xALPHA bond, pay any premium, or
   read any default/`DefaultCoordinator`/loss state — trigger B is **liquidity-only** (`:1989`). Do **NOT** call,
   read, or modify the **Exit Gate** (no `setExitGate`, no Gate import) — the freeze gates window exits structurally.
-- Do **NOT** add a value gate to **`commit`** (MAIN→SIDECAR). §11 is canonical (the baal-spec §8.8 "redeemability
-  cap" phrasing is stale and dies with that file, spec-fidelity-confirmed): the effective lock is capped only at
-  `1.0`; `maxLockFraction` caps only the escalation term. An unbounded `commit` can freeze 100% — that is the
+- Do **NOT** add a value gate/ceiling to **`commit`** (MAIN→SIDECAR). The freeze is capped only at `1.0` (= `U`
+  itself, dead-simple); there is no separate redeemability cap. An unbounded `commit` can freeze 100% — that is the
   intended squeeze behavior; the residual operator-grief (over-freeze) is accepted (item-10 wires the §12 metric-4
   alarm).
 - Do **NOT** let `release` drop the sidecar below `requiredFraction(U) × grossBasketValue` — that floor IS the
@@ -179,17 +179,17 @@ Two code artifacts under the supply tree, plus one additive oracle view:
    #confirmed.)
 2. **`setUp(bytes initParams) public override initializer`** decodes
    `(address owner, address mainSafe, address sidecar, address operator, address navOracle, address eulerEarn,
-   address warehouse, uint256 uLock, uint256 uMax, uint256 maxLockFraction)`:
+   address warehouse)` — **NO escalation params** (DEAD-SIMPLE model, superintendent 2026-06-09: freeze% =
+   utilization%, the §11-B `U_lock`/`U_max`/`maxLockFraction` escalation is post-M1, not built):
    - revert `ZeroAddress` on any zero address; `OwnerIsOperator` if `owner == operator`.
    - **`BadParams` if `mainSafe == sidecar`** (qa #6 — distinctness is load-bearing: equal Safes make rotation a
      self-transfer that trivially passes the floor).
-   - `BadParams` unless `uLock < uMax && uMax <= 1e18 && maxLockFraction != 0 && maxLockFraction <= 1e18`.
    - **Read the five movable basket-leg addresses LIVE from the oracle** (`ISzipNavBasket(navOracle).zipUSD()` /
      `.usdc()` / `.xAlpha()` / `.hydx()` / `.oHydx()`) and store them as the whitelist (the `LpStrategyModule`
      "read token0/token1 live" idiom — guarantees the whitelist == exactly what the oracle prices, no drift).
    - Set `avatar = mainSafe; target = mainSafe;` (satisfies the base; the inherited single-avatar exec is **not used**
      — both rotations go through explicit `ISafe(src)` calls). Store all wired values. `_transferOwnership(owner)`.
-   - 18-dp convention: `uLock`/`uMax`/`maxLockFraction`/all fractions are `1e18 = 100%`.
+   - 18-dp convention: all fractions are `1e18 = 100%`.
 3. **Whitelist gate (the leak fix).** `modifier onlyValued(address asset)` / inline check:
    `if (asset != zipUSD && asset != usdc && asset != xAlpha && asset != hydx && asset != oHydx) revert
    UnvaluedAsset(asset);` applied to BOTH `commit` and `release`.
@@ -197,12 +197,11 @@ Two code artifacts under the supply tree, plus one additive oracle view:
    `function utilization() public view returns (uint256 u) { IEulerEarnUtil e = IEulerEarnUtil(eulerEarn); uint256
    sa = e.convertToAssets(e.balanceOf(warehouse)); if (sa == 0) return 0; uint256 free = e.maxWithdraw(warehouse); if
    (free >= sa) return 0; u = (sa - free) * 1e18 / sa; }` — the illiquid fraction, 18-dp, in `[0, 1e18]`.
-5. **Required floor fraction (§11-B sizing + §6.4 structural baseline):**
-   `function requiredFraction() public view returns (uint256 f) { uint256 u = utilization(); uint256 esc; if (u >
-   uLock) { esc = u >= uMax ? maxLockFraction : maxLockFraction * (u - uLock) / (uMax - uLock); } uint256 r = u > esc
-   ? u : esc; f = r > 1e18 ? 1e18 : r; }` — `min(1e18, max(U, escalation))`. **`max` not sum** (§11-B `:1998`); φ_A =
-   utilization is the liquidity-path identity (spec-fidelity FAITHFUL — trigger A's `atRisk/juniorNAV` is the
-   DefaultCoordinator's lane). All divisions truncate **down** (sub-wei; document the direction — qa #2).
+5. **Required floor fraction (DEAD-SIMPLE — the §6.4 identity directly):**
+   `function requiredFraction() public view returns (uint256) { return utilization(); }` — **freeze% = utilization%,
+   full stop.** `utilization()` is already clamped to `[0, 1e18]`, so no `min`/`max`/escalation. (The §11-B
+   `lockFraction = maxLockFraction × clamp(...)` escalation that would freeze *above* utilization during a squeeze is
+   **post-M1, not built** — superintendent 2026-06-09.)
 6. **Value views (read FROM the oracle):** `committedValue()`/`grossBasketValue()` via `ISzipNavBasket`;
    `requiredCommittedValue() = requiredFraction() * grossBasketValue() / 1e18`; `freeValue() = grossBasketValue() -
    committedValue()`.
@@ -271,17 +270,13 @@ existing `grossBasketValue` exact pins are unchanged, qa #11). Test fixtures:
 
 Tests:
 - **setUp/ctor:** rejects each zero address (`ZeroAddress`), `owner == operator` (`OwnerIsOperator`), `mainSafe ==
-  sidecar` (`BadParams`), each param `BadParams` boundary (`uLock >= uMax`, `uMax > 1e18`, `maxLockFraction == 0/ >
-  1e18`); accepts `uMax == 1e18` and `maxLockFraction == 1e18`; reads the five leg addresses into the whitelist; a
-  clone re-`setUp` reverts (`initializer`); the mastercopy is init-locked.
+  sidecar` (`BadParams`); reads the five leg addresses into the whitelist; a clone re-`setUp` reverts
+  (`initializer`); the mastercopy is init-locked.
 - **utilization() (donation-immune):** `sa == 0` → 0; `free >= sa` → 0; mid value (`sa=100, free=30`) → `0.7e18`; a
   **USDC donation to the eulerEarn mock address leaves `U` unchanged** (the CRITICAL-fix proof); `free == sa` → 0
   exactly.
-- **requiredFraction() (the §11-B math, table-driven):** with `uLock=0.8e18, uMax=0.95e18, maxLockFraction=1e18`:
-  `U=0.6`→`0.6e18`; `U=0.8`(==uLock)→`0.8e18`; `U=0.875`→`0.875e18`; **`U=0.95`(==uMax, exact-equality branch)**→`max(
-  0.95e18, 1e18)=1e18`; `U=1.0`→`1e18`(min cap). **Escalation-bites vector** (`uLock=0.1e18, uMax=0.2e18,
-  maxLockFraction=1e18, U=0.19e18`) → `esc=0.9e18 > U` → `0.9e18` (the case the design exists for). LOW maxLockFraction
-  (`0.5e18`, `U=0.95`) → `max(0.95e18,0.5e18)=0.95e18` (structural U dominates). `uLock==0` always-escalating.
+- **requiredFraction() == utilization() (DEAD-SIMPLE):** assert equality at `U` = 0, a mid value (`0.7e18`), and
+  `1e18`. (No escalation table — `requiredFraction` IS `utilization`.)
 - **truncation-pin vector (qa #2):** non-dividing values (e.g. `sa=3, free=1` → `U=333333333333333333`; a prime-ish
   `gross`) asserting the **exact** integer `requiredCommittedValue()` so a future rounding-direction flip is caught.
   Plus `gross == 0` → floor 0, any release allowed (no div-by-zero); `requiredFraction == 1e18` with sidecar == gross
@@ -350,9 +345,9 @@ squeeze trace + the `audit/3-results.md` authority rows author at item-10.
 **Cross-ticket obligations this item CREATES** (record in PROGRESS at Conclude — discharged by item-10 / CRE later):
 - **Item 10 (deploy/wiring):** deploy the module mastercopy + clone via `ModuleProxyFactory`; `setUp(owner=Timelock,
   mainSafe, sidecar, operator=CRE-05, navOracle, eulerEarn=OUR senior pool, warehouse=the CreditWarehouse Safe
-  holding the EE shares, uLock, uMax, maxLockFraction)`; **`enableModule(module)` on BOTH Safes** (sidecar only
+  holding the EE shares)` (NO escalation params — dead-simple); **`enableModule(module)` on BOTH Safes** (sidecar only
   **after** `isOwner(team)` — row 289); assert the module is enabled on both + the five whitelist legs == the oracle's
-  + the governed params before going live.
+  before going live.
 - **Item 10 / security — the live-pool utilization verification (the CRITICAL's residual):** assert the wired
   `eulerEarn` is OUR senior pool AND that `U` is derived from `maxWithdraw/convertToAssets` (the controller-gated
   borrow side), never an idle `balanceOf`. Verify against the **live** deployed pool that (a) a USDC donation to the
@@ -363,9 +358,9 @@ squeeze trace + the `audit/3-results.md` authority rows author at item-10.
   `commit`/`release` to keep `committedValue ≈ requiredFraction(U) × gross` as lines draw/repay (`:1685` step 5),
   decomposing the staked LP via 8-B6 unstake first when it must move LP value (this module moves only the five liquid
   legs).
-- **Governance params (§17):** `uLock`, `uMax`, `maxLockFraction` are governed VALUES set at deploy (no live setter —
-  a re-tune is a redeploy/clone, mirroring `recoveryFloor`). `maxDuration`/`releaseHysteresis` are subsumed by the
-  continuous floor (§11-B M1 note) — re-decide only if a binary lock is reintroduced.
+- **No governed freeze params (DEAD-SIMPLE):** freeze% = utilization%, so there is **no** `uLock`/`uMax`/
+  `maxLockFraction`/`maxDuration`/`releaseHysteresis` to set — the only freeze input is on-chain `U`. The §11-B
+  escalation (freeze *above* utilization during a squeeze) is post-M1; re-introduce its params only if that's ever needed.
 - **Optional CRE early-trip (§8.4, post-M1):** a "secondaries-down" report that *raises* the floor earlier than
   on-chain `U` — additive, can only raise; NOT in M1 scope.
 - **`audit/2.md` / `audit/3-results.md` (item-10):** author the freeze-sizing rotation step + the trigger-B squeeze

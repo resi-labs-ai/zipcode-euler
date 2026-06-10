@@ -11,6 +11,7 @@ import {IGPv2Settlement} from "../../interfaces/cow/IGPv2Settlement.sol";
 interface INavOracle {
     function navExit() external view returns (uint256);
     function fresh() external view returns (bool);
+    function maxAge() external view returns (uint256);
 }
 
 /// @dev The minimal ERC20 surface the module needs (the USDC `approve` the module builds calldata for).
@@ -103,6 +104,7 @@ contract SzipBuyBurnModule is Module {
     error ZeroAmount();
     error CapExceeded();
     error BadValidTo();
+    error ValidToBeyondNavFreshness();
     error StaleNav();
     error BidAboveDiscount();
     error BuyAmountTooLarge();
@@ -244,6 +246,11 @@ contract SzipBuyBurnModule is Module {
         if (order.buyAmount > MAX_BUY_AMOUNT) revert BuyAmountTooLarge();
         if (order.sellAmount > buybackCap) revert CapExceeded();
         if (order.validTo <= block.timestamp || order.validTo > block.timestamp + MAX_BID_TTL) revert BadValidTo();
+        // NAV-freshness fence (the collapsed "fulfillment controller", 2026-06-09): a resting bid must not be able
+        // to fill against a NAV mark that has since gone stale. `navExit` is priced now off `fresh()` legs, but the
+        // order rests until `validTo` — bound it to the oracle's freshness window so the price the buyer relies on
+        // cannot age past `maxAge`. Binds before `BadValidTo` whenever `maxAge < MAX_BID_TTL`.
+        if (order.validTo > block.timestamp + INavOracle(navOracle).maxAge()) revert ValidToBeyondNavFreshness();
         if (!INavOracle(navOracle).fresh()) revert StaleNav();
         if (dBps == 0 || dBps >= 10_000) revert BadDiscount();
 

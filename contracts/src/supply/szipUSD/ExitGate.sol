@@ -19,15 +19,12 @@ import {SzipUSD} from "./SzipUSD.sol";
 ///         Flows:
 ///         1. `depositFor` — NAV-proportional issuance off `SzipNavOracle.navEntry()` (round down); pulls the asset
 ///            into the main Safe (the basket), mints Loot to itself + transferable szipUSD to the receiver.
-///         2. `requestExit` — escrow szipUSD, queue the claim; no assets move.
-///         3. `processWindow` — keeper-driven (rides the harvest cadence): **pure ragequit** of each queued claim —
-///            the exiter gets their pro-rata in-kind slice of the (free, main-Safe) basket (zipUSD + xALPHA), the
-///            matching Loot + escrowed szipUSD are burned. No oracle on exit, no cap, no numeraire.
-///         4. `burnFor` — the §7 / 8-B14 paired buy-and-burn retire (pure supply reduction, no asset payout).
-///
-///         The leaver's downstream path is NOT this contract: a separate Zodiac auto-dump module market-sells the
-///         xALPHA leg → zipUSD on Hydrex (so they hold only zipUSD), then the existing `ZipRedemptionQueue` turns
-///         that zipUSD → USDC. The Gate only ragequits the pro-rata share and burns the loot.
+///         2. `burnFor` — the §7 / 8-B14 paired buy-and-burn retire (pure supply reduction, no asset payout): the
+///            ONLY exit executor. The exit path is now the CoW book — an exiter rests a CoW sell order, the treasury
+///            (`SzipBuyBurnModule`) or an external buyer fills it, and the bought szipUSD is retired here via
+///            `burnFor`. The forfeiting `requestExit`/`processWindow` on-chain queue is RETIRED (credit-union.md C3):
+///            it ragequit the FULL claim against the free main-Safe basket, so an exiter at utilization `U` forfeited
+///            `U` of their equity to stayers. That confiscation is replaced by the CoW buy-and-burn rail.
 ///
 /// @dev Documented invariants (the design's accepted trade-offs):
 ///      - Two-token invariant: `szipUSD.totalSupply() == loot.balanceOf(gate)` at all times — every Loot mint/burn is
@@ -36,9 +33,7 @@ import {SzipUSD} from "./SzipUSD.sol";
 ///      - Exit is **pure in-kind ragequit**: the share is a volatile NAV-bearing claim; you leave, you get your
 ///        pro-rata slice of the treasury (worth `shares × NAV/share` by construction — the slice self-prices, so no
 ///        oracle read is needed in the exit path; the oracle prices *issuance*). zipUSD-numeraire/cap/sweep is GONE.
-///      - The freeze is structural: `processWindow` ragequits only `mainSafe`; the committed slice is in the non-RQ
-///        sidecar (item 9 rotation) → unreachable. A leaver gets their share of the free (main-Safe) basket.
-///      - Zero-Shares forever: the Gate never calls `mintShares`; only `mintLoot`/`burnLoot`/`ragequit`.
+///      - Zero-Shares forever: the Gate never calls `mintShares`; only `mintLoot`/`burnLoot`.
 contract ExitGate is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -56,18 +51,6 @@ contract ExitGate is Ownable, ReentrancyGuard {
     address public windowController; // the CRE operator/keeper that opens windows
     address public engineSafe; // the 8-B14 buy-and-burn Safe whose szipUSD `burnFor` retires
 
-    // --------------------------------------------------------------------- exit queue
-    struct Claim {
-        address owner;
-        uint256 shares;
-        uint256 filled;
-    }
-
-    /// @notice The FIFO exit-intent queue (never reordered/removed; `queueHead` advances).
-    Claim[] public claims;
-    /// @notice The next unfilled claim index `processWindow` resumes from.
-    uint256 public queueHead;
-
     // --------------------------------------------------------------------- errors
     error ZeroAddress();
     error ZeroAmount();
@@ -77,16 +60,9 @@ contract ExitGate is Ownable, ReentrancyGuard {
     error UnsupportedAsset(address asset);
     error TvlCapExceeded();
     error NotWindowController();
-    error NotClaimOwner();
-    error NoSuchClaim();
-    error AlreadyClosed();
 
     // --------------------------------------------------------------------- events
     event Deposited(address indexed receiver, address indexed asset, uint256 amount, uint256 value, uint256 shares);
-    event ExitRequested(uint256 indexed requestId, address indexed owner, uint256 shares);
-    event ExitFilled(uint256 indexed requestId, address indexed owner, uint256 shares);
-    event ExitCancelled(uint256 indexed requestId, uint256 remainder);
-    event WindowProcessed(uint256 claimsFilled, uint256 queueHead);
     event Burned(uint256 amount);
     event ShareTokenSet(address indexed szipUSD);
     event WindowControllerSet(address indexed controller);
@@ -217,66 +193,6 @@ contract ExitGate is Ownable, ReentrancyGuard {
         shares = value * 1e18 / navE; // round DOWN — identical to depositFor
     }
 
-    // --------------------------------------------------------------------- exit intent queue
-    /// @notice Signal exit intent: escrow `shares` szipUSD and queue the claim. No assets move.
-    function requestExit(uint256 shares) external nonReentrant returns (uint256 requestId) {
-        if (shares == 0) revert ZeroAmount();
-        if (shareToken == address(0)) revert NotWired();
-        IERC20(shareToken).safeTransferFrom(msg.sender, address(this), shares);
-        claims.push(Claim({owner: msg.sender, shares: shares, filled: 0}));
-        requestId = claims.length - 1;
-        emit ExitRequested(requestId, msg.sender, shares);
-    }
-
-    /// @notice Withdraw the unfilled remainder of a queued claim. Closes the claim (processWindow skips it).
-    function cancelExit(uint256 requestId) external nonReentrant {
-        if (requestId >= claims.length) revert NoSuchClaim();
-        Claim storage c = claims[requestId];
-        if (c.owner != msg.sender) revert NotClaimOwner();
-        uint256 remainder = c.shares - c.filled;
-        if (remainder == 0) revert AlreadyClosed();
-        c.filled = c.shares; // close
-        IERC20(shareToken).safeTransfer(msg.sender, remainder);
-        emit ExitCancelled(requestId, remainder);
-    }
-
-    // --------------------------------------------------------------------- liquidity window (the patient exit)
-    /// @notice Process the exit queue during a liquidity window (keeper-driven, rides the harvest cadence). FIFO:
-    ///         for each queued claim, **pure ragequit** — the exiter gets their pro-rata in-kind slice of the
-    ///         (free, main-Safe) basket (zipUSD + xALPHA), and the matching Loot + escrowed szipUSD are burned.
-    ///         No oracle, no cap, no numeraire conversion. The committed slice in the non-RQ sidecar is the freeze
-    ///         (structurally unreachable). xALPHA→zipUSD dump + zipUSD→USDC are separate downstream legs.
-    /// @param maxClaims The max number of queued claims to process this window (gas-bounded; the keeper shards).
-    function processWindow(uint256 maxClaims) external nonReentrant {
-        if (msg.sender != windowController) revert NotWindowController();
-
-        address[] memory tokens = _basketTokens(); // [zipUSD, xALPHA] sorted ascending (Baal `!order` check)
-        uint256 filledCount;
-
-        for (uint256 i = 0; i < maxClaims; i++) {
-            if (queueHead >= claims.length) break; // empty / exhausted
-            Claim storage c = claims[queueHead];
-            uint256 s = c.shares - c.filled;
-            if (s == 0) {
-                queueHead++; // a cancelled/closed claim — skip it
-                continue;
-            }
-            // Pure ragequit: the exiter gets their pro-rata in-kind slice of the (free, main-Safe) basket —
-            // zipUSD + xALPHA — sent straight to them; burn the matching Loot + the escrowed szipUSD. No oracle,
-            // no cap, no numeraire: you leave, you get your share. (xALPHA→zipUSD dump + zipUSD→USDC queue are
-            // separate downstream legs, not this contract.)
-            baal.ragequit(c.owner, 0, s, tokens);
-            SzipUSD(shareToken).burn(address(this), s);
-
-            c.filled = c.shares;
-            emit ExitFilled(queueHead, c.owner, s);
-            queueHead++;
-            filledCount++;
-        }
-
-        emit WindowProcessed(filledCount, queueHead);
-    }
-
     // --------------------------------------------------------------------- paired buy-and-burn (§7 / 8-B14)
     /// @notice Retire `amount` szipUSD the engine Safe bought below NAV on CoW: pure supply reduction, NO asset
     ///         payout — `burnLoot` from the Gate + burn the engine Safe's szipUSD. NAV-per-share ticks up for stayers.
@@ -289,22 +205,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
         emit Burned(amount);
     }
 
-    // --------------------------------------------------------------------- views / internals
-    /// @notice The number of queued claims (for off-chain / frontend enumeration).
-    function claimCount() external view returns (uint256) {
-        return claims.length;
-    }
-
-    /// @dev The basket tokens to ragequit, sorted strictly ascending (the Baal `!order` check, `Baal.sol:625`).
-    ///      M1 basket = zipUSD + xALPHA (the harvest decomposes the ICHI LP to its underlying into the main Safe
-    ///      before a window, so both legs are liquid and claimable pro-rata).
-    function _basketTokens() internal view returns (address[] memory tokens) {
-        tokens = new address[](2);
-        (address lo, address hi) = zipUSD < xAlpha ? (zipUSD, xAlpha) : (xAlpha, zipUSD);
-        tokens[0] = lo;
-        tokens[1] = hi;
-    }
-
+    // --------------------------------------------------------------------- internals
     function _one(address a) private pure returns (address[] memory arr) {
         arr = new address[](1);
         arr[0] = a;

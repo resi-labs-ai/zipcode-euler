@@ -414,7 +414,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
 
 ### WOOF-07 — `szipUSD` ~~freezable junior vault share~~ — **DELETED 2026-06-06 (WRONG VAULT)**
 > **This ticket + INFLOW-08 + the report were DELETED.** It built szipUSD as an ERC-4626 convert-on-stake vault
-> over **EulerEarn loan-book pool shares** — the wrong substrate. szipUSD is the **auto-sodomizer junior NAV
+> over **EulerEarn loan-book pool shares** — the wrong substrate. szipUSD is the **auto-compounder junior NAV
 > vault** (**Baal Moloch-v3 + Zodiac**: Loot share, Safe-held multi-asset basket, ragequit in-kind exit, NAV
 > tracked from multiple oracles, CRE-driven Hydrex farm, LOCK + FREEZE gates, first-loss = withhold-not-markdown).
 > See the
@@ -463,6 +463,32 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   `earn/[vault]/index.vue` + the unstake side on `earn/[vault]/[subAccount]/withdraw.vue`, the cooldown panel is
   NET-NEW, unstake cross-links to the zipUSD queue, reads via `useSpyMode.ts:53` not `multicall.ts`).
 
+### Credit-union — the szipUSD CoW-book exit (C1–C4)  ·  §6.4  ·  `credit-union.md` (consolidated build spec)
+- **What it does.** Replaces the forfeiting on-chain exit queue with the CoW book + treasury buy-and-burn. Four
+  pieces: **C1 `OffRampModule`** (a CRE-operator Zodiac module on the rq Safe; drives `ZipRedemptionQueue` to turn
+  basket zipUSD → USDC at par so the treasury can fund buybacks; pure driver, no redemption logic; bubbling `_exec`,
+  reads `scaleUp()` live, destinations pinned to the rq Safe). **C2 NAV-freshness fence** — folded into
+  `SzipBuyBurnModule.postBid` (`validTo ≤ now + maxAge`, error `ValidToBeyondNavFreshness`, `maxAge()` added to its
+  local `INavOracle`). **C3** removed the `ExitGate.processWindow` forfeit + on-chain queue (+ all orphans).
+  **C4** hard-gated `ZipRedemptionQueue.requestRedeem` to the rq Safe (Timelock-settable `redeemController`).
+- **Locked shape.** Exit = a resting CoW sell order (the order IS the queue) filled by the treasury's 8-B14
+  buy-and-burn (priced ≤ navExit×(1−d)) or an external buyer → `ExitGate.burnFor` (NAV-accretive, basket flat). No
+  forfeit, no on-chain window, no separate engine Safe (the `engineSafe` label = the rq Safe = `Baal.avatar()`).
+- **Holes surfaced → resolution.** (a) C2 controller-vs-fold → **COLLAPSED to the fence** (superintendent reversed
+  the critic "keep it thin" call — the CRE already holds both roles + drives `postBid`/`burnFor`). (b) C4 gate must
+  target the **rq Safe**, not the module (the module `exec`s through the Safe) — and is a griefing-vector fix, not
+  theft prevention. (c) C1 must use the bubbling `_exec` (Safe swallows reverts otherwise) + read `scaleUp()` live.
+  (d) C3's `test_invariant_sequence` was a hidden landmine (calls the deleted fns but isn't named `*processWindow*`).
+  (e) `burnFor` is unbounded operator-trusted (documented). (f) stale spec language (§6.4/§17 "liquidity windows /
+  intent queue / engine Safe") fixed in `claude-zipcode.md` first.
+- **Cross-ticket obligations.** Item-10: wire the rq-Safe `OffRampModule` (enable + operator); set
+  `ZipRedemptionQueue.redeemController = rqSafe`; the junior-acceptance `audit/2` sweep now traces the CoW exit (not
+  `processWindow`). 8-B12: tripwire `ExitGate.Burned`/buyback throughput. **NOTE:** a parallel agent is building
+  `RecycleModule.divert` (Stream-2) in the same tree — no file overlap with this rework; attribute results per-suite,
+  not by the aggregate `forge test` count.
+- **Status.** BUILT-VERIFIED + KEPT 2026-06-09 (C1 17/17 · C2 SzipBuyBurnModule 36/36 · C3 ExitGate 14/14 · C4
+  ZipRedemptionQueue 44/44; full non-fork green). `reports/credit-union-report.md`.
+
 ---
 
 ## Pending (one-liner each; expanded when authored)
@@ -470,7 +496,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
 - **7 · `ZipDepositModule` — the zap (§4.5)** — **DONE** (WOOF-06 + INFLOW-06; see Authored above).
 - **8 · `szipUSD` — the Baal NAV vault (§4.5/§6.4/§11)** *[+ interface]* — **REDESIGNING.** The 2026-06-05 WOOF-07
   + INFLOW-08 (ERC-4626 convert-on-stake over EulerEarn pool shares) were **DELETED — wrong vault.** szipUSD is now
-  the **Baal/Moloch-v3 + Zodiac** auto-sodomizer NAV vault (Loot share, Safe basket, in-kind ragequit; two-token /
+  the **Baal/Moloch-v3 + Zodiac** auto-compounder NAV vault (Loot share, Safe basket, in-kind ragequit; two-token /
   NAV-oracle / provision money model — the 2026-06-06 withhold-not-markdown model was retired 2026-06-07).
   **Phase 8-S spec foundation DONE; Phase 8-B build tickets mostly BUILT-VERIFIED** (see PROGRESS item 8 +
   `reports/baal-spec.md`). The WOOF-07 digest below is retained ONLY as the record of the
@@ -535,9 +561,10 @@ deliberately pushed to another ticket — verify at the end that each is actuall
     8-B14 pure-supply retire (burnLoot + burn engine-Safe szipUSD, no asset payout). *Locked shape:* two-token
     invariant `szipUSD.totalSupply()==loot.balanceOf(gate)` held on every path; **Shares stay 0 forever** (never
     `mintShares`); the **freeze is structural** (ragequit reaches only the main Safe; the sidecar/committed slice is
-    excluded, so a leaver gets their share of free equity; no floor knob, no fundability gate). The leaver's
-    xALPHA→zipUSD dump (`tickets/sodo/8-B-exit-autodump.md`, new TODO) + zipUSD→USDC (`ZipRedemptionQueue`) are
-    **separate downstream legs**. *Holes surfaced → resolution:* (a) the oracle had no per-asset valuation → **added
+    excluded, so a leaver gets their share of free equity; no floor knob, no fundability gate). The leaver takes
+    zipUSD→USDC via `ZipRedemptionQueue` (a separate downstream leg). *(The xALPHA→zipUSD auto-dump module was
+    REMOVED 2026-06-09 — user-directed: the impatient exit relies on CoW, not an auto-dump.)* *Holes surfaced →
+    resolution:* (a) the oracle had no per-asset valuation → **added
     public `valueOf` to the kept `SzipNavOracle`** (§7 spec edit + 42/42, for *issuance*); (b) §6.4 didn't name the
     window opener → **named `windowController`** + rewrote exit to **plain in-kind ragequit** (§6.4 edit; the
     zipUSD-numeraire I first built was user-overruled 2026-06-08 — see PROGRESS rework entry). *Obligations discharged:* 8-B1 F4.2 (manager-grant + zero-Shares) +
@@ -690,7 +717,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   kept-contract edits; `BaseAddresses.sol` untouched — live test vault/gauge are test-file constants). Ticket
   `tickets/sodo/8-B6-lp-strategy.md`; `reports/8-B6-report.md`.
 - **8-B7 · `HarvestVoteModule` · the harvest/vote (emissions + governance) module (§4.5.1 8-B7 / `reports/baal-spec.md §10.8`) —
-  BUILT-VERIFIED 2026-06-08.** *What it does:* the per-epoch emissions+governance leg of the auto-sodomizer — claims the
+  BUILT-VERIFIED 2026-06-08.** *What it does:* the per-epoch emissions+governance leg of the auto-compounder — claims the
   gauge's oHYDX to the Safe, takes the **vote-floor `exerciseVe` slice** (free permalock → grows the Safe's
   account-aggregate veHYDX), re-**votes** our gauge (votes reset weekly), and claims the anti-dilution **rebase**. The
   **4th engine Zodiac Module** and the **simplest sibling of 8-B6**: `is Module`, zodiac-core, `enableModule`'d on the
@@ -785,7 +812,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   `tickets/sodo/8-B8-exercise-ohydx.md`; `reports/8-B8-report.md`.
 - **8-B9 · `SellModule` · the swap (market-sell + POL-buy) module (§4.5.1 8-B9 / `reports/baal-spec.md §10.8`) — BUILT-VERIFIED
   2026-06-08.** *What it does:* the **6th engine Zodiac Module** (sibling of 8-B8, NO EVC/oracle/repay) — the swap leg
-  of the auto-sodomizer. Two `onlyOperator` mutators sharing a private `_swap(tokenIn, tokenOut, amountIn, minOut,
+  of the auto-compounder. Two `onlyOperator` mutators sharing a private `_swap(tokenIn, tokenOut, amountIn, minOut,
   deadline)` approve→`exactInputSingle`→reset-approve dance (the 8-B8 token-dance, router target instead of oHYDX):
   `sellHydx`(HYDX→USDC, the 8-B5 strike-loop repay leg — market-sell now because the borrow accrues + the pool is
   net-draining with no buy-side) + `buyXAlpha`(zipUSD→xALPHA, the 8-B10/8-B13 Mode-B/C POL buy leg). *Locked shape:*
@@ -824,7 +851,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   > `creditFreeValue` + `recycle` + internal `_spendFreeValue`. setUp decodes **5** addresses (owner/engineSafe/
   > operator/zipDepositModule/usdc). **19/19** (16 unit + 2 integrated + 1 Base-fork), superintendent-reverified;
   > `RecyclePayoutModule.*` + `SzipRewardsDistributor.*` DELETED. **8-B13 REMOVED** (absorbed here — single-sided LP
-  > moots the balanced-add compounder). Spec/docs reconciled (§4.5.1/§2/§17; baal-spec/auto-sodomizer/treasury).
+  > moots the balanced-add compounder). Spec/docs reconciled (§4.5.1/§2/§17; baal-spec/auto-compounder/treasury).
   > Inbound obligations stay discharged; the distributor/compounder/8-B13-seam outbound obligations are VOIDED.
   *(Historical pre-rework `RecyclePayoutModule` digest follows:)*
   *What it does:* the engine's free-value LEDGER + the two *distribute* sinks. `RecyclePayoutModule` (7th engine Zodiac
@@ -862,6 +889,36 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   427/427 total, ZERO load-bearing guesses.** Code `contracts/src/supply/szipUSD/{RecyclePayoutModule,SzipRewardsDistributor}.sol`
   + `contracts/test/{RecyclePayoutModule,SzipRewardsDistributor}.t.sol`. `tickets/sodo/8-B10-recycle.md`;
   `reports/8-B10-report.md`. NEXT engine contract = 8-B13 (Mode C compounder; deps 8-B6+8-B10 done).
+- **S1 · `RecycleModule.divert` — loss-side Stream 2 (`solvency.md` §C.S1) — BUILT-VERIFIED + KEPT 2026-06-09.**
+  *What it does:* a SECOND spend mode on the BUILT `RecycleModule` (8-B10) that **supplies engine free-value USDC
+  straight into the credit warehouse** to fill the capital hole a default left behind — `divert(usdcAmount)` =
+  bounds → `_spendFreeValue` → `eePool.deposit(usdcAmount, warehouse)` (**raw USDC, NO zipUSD minted, NO senior
+  claim**) — bounded by the live `SzipNavOracle.provision()` hole. Distinct from `recycle` (which mints backed zipUSD
+  into the basket for NAV accretion); both debit the same `freeValueAccrued` ledger and leave the other working on
+  the remainder. *Locked shape:* 3 new set-once wiring slots (`navOracle`/`eePool`/`warehouse`, clone-safe non-
+  `immutable`, setUp 5→8, 3 Timelock `WiringSet` setters); order load-bearing — **bounds-before-spend, then CEI**
+  (ZeroAmount → NoHole → ExceedsHole [`usdcAmount*1e12 > provision()`, strict `>`, scales USDC 6-dp→USD 18-dp] →
+  `_spendFreeValue` → approve/deposit/reset → guards → `Filled`). 2 local interfaces (`ISzipNavProvision`,
+  `IEulerEarn`); errors `NoHole`/`ExceedsHole`/`NoSharesMinted`/`BackingShortfall`. **TWO value guards after the
+  deposit:** hard-backing (Safe USDC fell by EXACTLY `usdcAmount` → `BackingShortfall`) + liveness (warehouse
+  EE-share balance rose → `NoSharesMinted`). Divert NEVER writes `provision` (the CRE reduces the hole later via
+  `DefaultCoordinator.Recovery`; `Filled.provisionAfter == the pre-spend hole`). No `nonReentrant` (clone-ctor-skip +
+  effects-first, sibling of `recycle`). *Holes surfaced → resolution:* (1) **security MED F5** — the spec's required
+  share-rose guard proves *liveness*, not *value moved*; a malicious EE could mint warehouse shares without pulling
+  USDC → **promoted the USDC-fell hard-backing assert into the contract** (`BackingShortfall`), matching the module's
+  own HARD-BACKING doctrine (preserve-intent hardening, flagged for superintendent); (2) **security MED F2** —
+  huge-provision → drain free value = §13-accepted **grief** (USDC still lands in the bank; bounded by the trusted
+  Coordinator+CRE pair + the deferred invariant-fuzz), not theft; (3) qa — the value-flow test MUST use a LIVE Safe +
+  real `EEMock` (a non-live RecordingSafe would falsely trip the share-rose guard) + new 2-arg `deposit` mocks
+  (stingy/free-mint/readback). NO spec gap (spec-fidelity FAITHFUL; **no `claude-zipcode.md` edit**). *Cross-ticket:*
+  *created* the item-10/S2 wiring (`setNavOracle`/`setEePool`/`setWarehouse` + the one-bank deploy-asserts
+  `warehouse == ZipDepositModule's warehouse` AND `eePool == ZipDepositModule.eePool()`), the loss-side audit sweep +
+  the `divert ≤ min(freeValueAccrued, provision/1e12)` invariant-fuzz, the 8-B11 CRE divert-sizing + Recovery
+  follow-up. **15 new tests** (13 `RecycleModuleDivertTest` LIVE-Safe unit/integrated + 1 Base-fork divert vs a real
+  summoned Safe + 1 Stream-2 setter test), ZERO load-bearing guesses. Code
+  `contracts/src/supply/szipUSD/RecycleModule.sol` (the `divert` mode) + `contracts/test/RecycleModule.t.sol`.
+  `tickets/sodo/S1-recycle-divert.md`; `reports/S1-report.md`. The loss side is now fully built on-chain; NEXT = S2
+  item-10 deploy/wiring.
 - **8-Bw · `CreditWarehouse` + `WarehouseAdminModule` (§4.5/§8.5/§11, `baal-spec §11`) — BUILT-VERIFIED + KEPT
   2026-06-09.** The **SENIOR** custody: a plain **Gnosis Safe** holds the `EulerEarn` shares backing all zipUSD float
   (the "protocol's holding"); a deployed **Zodiac Roles-modifier-v2** (`enableModule`'d on the Safe) is the audited
@@ -978,7 +1035,7 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   off-chain arithmetic; the item-10/M2 audit sweep. `tickets/loss/DefaultCoordinator.md`, `reports/DefaultCoordinator-report.md`.
 - **— · `DurationFreezeModule` (Duration-Bond trigger B, §11-B/§6.4/§8.2)** — **BUILT-VERIFIED + KEPT 2026-06-09**
   (`contracts/src/supply/szipUSD/DurationFreezeModule.sol` + the additive `SzipNavOracle` views + the two interfaces +
-  `contracts/test/DurationFreezeModule.t.sol`; **48/48 module, 633/633 total no regression, independently re-run from
+  `contracts/test/DurationFreezeModule.t.sol`; **40/40 module, 628 total no regression, independently re-run from
   `forge clean`**; the 42-test oracle suite + `grossBasketValue` pins unchanged). The **rotation/floor actuator** for the structural sidecar freeze —
   the orphan that baal-spec §8 parked as "item 9 / 8-B11" but never got a build slot (the `ExitGate.sol:40` `// (item 9
   rotation)` comment is the fingerprint). **What it does:** a Zodiac `Module` enabled on **BOTH** Safes (main + non-RQ
@@ -988,15 +1045,17 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   not here), `value==0`/Call-only via `ISafe(src).execTransactionFromModule`, balance-delta-asserted, no recipient
   param (destinations are the literal set-once Safes). **Locked shape (the bounds-not-validates thesis, §13):** the
   load-bearing guard is the **release floor** — `release` reverts unless `committedValue() ≥ requiredFraction(U)×
-  grossBasketValue`, where `requiredFraction = min(1e18, max(U, escalation))`, `escalation = maxLockFraction×clamp((U−
-  U_lock)/(U_max−U_lock),0,1)` (§11-B), and **U is read live + donation-immune** off the senior pool (`1 −
+  grossBasketValue`, where **`requiredFraction = U`** (freeze% = utilization%, DEAD-SIMPLE — superintendent 2026-06-09;
+  the §11-B `max(U, escalation)` band over `U_lock`/`U_max`/`maxLockFraction` is **post-M1, not built**), and **U is
+  read live + donation-immune** off the senior pool (`1 −
   maxWithdraw(warehouse)/convertToAssets(balanceOf(warehouse))`). So the operator picks *which/how-much* to rotate; the
   contract bounds the *release value* on-chain → **even a compromised operator can't open the run hatch** while
   utilization is breached. Gates the Exit Gate **structurally** (by what's kept out of the main Safe — no ExitGate
   change). No markdown, no xALPHA bond/premium, no Exit-Gate/DefaultCoordinator coupling (trigger B is liquidity-only).
   **Holes surfaced → resolution:** (spec-fidelity FAITHFUL on all 5 flagged tensions — the autonomous floor is faithful
-  §11-B/§6.4 detailing per the §4.6 precedent; `max(U,esc)` with φ_A=utilization; `commit` ungated + `maxLockFraction`=
-  escalation-cap is canonical §11 [baal-spec §8.8's "redeemability cap" is **stale**, dies with that file]; dropping
+  §11-B/§6.4 detailing per the §4.6 precedent; freeze% = utilization (φ_A=U; the `max(U,esc)` escalation band was built
+  then STRIPPED post-conclusion — post-M1); `commit` ungated + no separate redeemability cap [baal-spec §8.8's
+  "redeemability cap" is **stale**, dies with that file]; dropping
   `maxDuration`/`releaseHysteresis` faithful under the continuous floor). **SECURITY CRITICAL caught + fixed FIRST:** the
   v1 `idle = balanceOf(eulerEarn)` U-read was **wrong** (EulerEarn `totalAssets()` excludes idle → idle≈0 → U≈1 → bricks
   release) **and donatable** (transfer USDC to the pool → lower U → lower floor → over-release run-hatch) → **redesigned
@@ -1004,18 +1063,42 @@ deliberately pushed to another ticket — verify at the end that each is actuall
   error). **SECURITY HIGH:** non-basket-asset leak → the 5-leg whitelist. Folded (no re-fan): the additive oracle
   `committedValue()`/`freeValue()` (**grossBasketValue UNCHANGED** — 42-test pins hold; parity exact for plain legs,
   ≤2-wei for split LP; gross exactly rotation-invariant since the module never moves LP); the `FreezeHandler` 128k
-  invariant; FoT mock + atomic-rollback; truncation pins; escalation-bites + exact-`U==uMax` vectors; donation-immunity
+  invariant; FoT mock + atomic-rollback; truncation pins; the `requiredFraction == utilization` identity vectors; donation-immunity
   test; the two-Safe `enableModule` fork plumbing. **Cold-build (fresh subagent, same window): ZERO load-bearing
-  guesses, 48/48 module + 633/633 total green, independently re-run from `forge clean`** (the subagent hit forge
+  guesses, 40/40 module + 628 total green, independently re-run from `forge clean`** (the subagent hit forge
   incremental-cache phantoms that cleared on clean). The invariant is a per-successful-release ghost check (faithful to
   "after any successful release"). **Obligation DISCHARGED:** PROGRESS row 289 (sidecar-funding-after-team-owns —
   structural fail-closed + fork-proven enable-on-both + item-10 wiring). **Obligations CREATED:** item-10 (clone/setUp +
   enable-on-both-Safes + warehouse wiring + the **live-pool U donation-immunity verification**); CRE-05 drives the
-  rotation; governed `uLock/uMax/maxLockFraction`; the audit/2+3 sweep. **Build-surfaced (not mine):** the branch
+  rotation; **no governed freeze params** (freeze% = utilization%, dead-simple); the audit/2+3 sweep. **Build-surfaced (not mine):** the branch
   `SzipNavOracle.sol` had already flipped its four set-once wiring setters to **Timelock-re-pointable** (test updated to
   match) — an authority-model change touching the item-10 renounce/freeze + DefaultCoordinator set-once assumptions;
   left intact, flagged for superintendent review. `tickets/sodo/DurationFreezeModule.md`, `reports/DurationFreezeModule-report.md`.
-- **— · `sdVAULT` yield-ENGINE (§4.5 / `auto-sodomizer.md`)** — **post-M1 module bolted onto the szipUSD vault,
+- **8x-02 · `SzAlphaRateOracle` — the Base xALPHA exchange-rate oracle + derived APR (§8.6/§8.8)** — the Base home
+  for the one fact native only to Bittensor (the rate), and the §8.6 cross-chain-rate-seam resolution. **Locked
+  shape (REDESIGNED ×2, user-directed 2026-06-09):** the arc — v1 pushed a **pre-computed APR** (over-built,
+  adversarial deviation bands; the band spawned the "slash bricks the feed" knot it then solved); v2 derived
+  **natively on 964** (right principle, wrong chain — the protocol + the NAV/Euler oracle are Base-side); **v3 (as
+  shipped):** `exchangeRate` (`staked/supply`, `0x805`) is native only on 964 and the consumers are on Base, so the
+  cross-chain pull **is** required and **is** a CRE job — but **CRE pulls the RATE (the primitive), not a
+  pre-computed APR.** `SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate` (Base): a CRE workflow
+  (`cre/szalpha-rate/`) reads `SzAlpha.exchangeRate()` on 964 and pushes it RAW (`reportType RATE = 8`, payload
+  `(uint256 rate, uint48 ts)`); the contract exposes **`exchangeRate()`** (the drop-in `SzipNavOracle`'s xALPHA leg
+  + an Euler adapter read), `fresh()`/`lastUpdate()`, and a **DERIVED** `intrinsicAprBps()` view (`(rate_now/
+  rate_prev−1)×year/Δ` over two rolling checkpoints the pushes maintain, floored-0/cap-clamped, advisory).
+  **Truthful guards** (non-zero / not-future / **strictly-newer** — no replay/out-of-order); **NO deviation band**
+  (a validator slash legitimately lowers the rate — a band would brick it or need a bypass); consumers
+  **fail-closed on staleness** via `fresh()` (a rate that moves NAV must not serve stale). **Key design move:**
+  *CRE transports the primitive; the chain derives NAV + APR* — nothing pre-computed is ever pushed or bridged.
+  **Holes surfaced → resolution:** v1's deviation band was self-inflicted complexity (deleted); v2 mis-placed the
+  derivation off the consuming chain (corrected). **Resolves the §8.6 cross-chain rate seam** — `SzipNavOracle`'s
+  xALPHA rate read now has a defined Base producer. **Spec:** §8.8 rewritten (rate→Base oracle, APR derived); §8.0
+  gains the `8` RATE / `SzAlphaRateOracle` row. **Cross-ticket obligations:** item-10 deploys `SzAlphaRateOracle` on
+  **Base** (ctor `forwarder`/`maxStaleness`/`window`/`aprCap`, owner=Timelock) + runs the pull workflow + points
+  `SzipNavOracle`'s xALPHA **rate** read at it (token stays the mirror for balances — the split is the seam fix);
+  8-B12/8-B11 + the UI read `intrinsicAprBps()`/`fresh()`. 17/17 suite + 675/675 total non-fork.
+  `tickets/bridge/8x-02-xalpha-apr-cre.md`, `reports/8x-02-report.md`.
+- **— · `sdVAULT` yield-ENGINE (§4.5 / `auto-compounder.md`)** — **post-M1 module bolted onto the szipUSD vault,
   NOT a separate token.** Hydrex/oHYDX autocompounder + zipUSD/xALPHA POL; farms `oHYDX` → sells HYDX for net-new
   USDC → book AUM + xALPHA reward; the **free-value stream funds the duration boost + residual hole-plug**
   ("HYDX/USDC pays for duration and plugs holes"). DEFERRED (post-M1) — needs the §17 yield-routing flip + the

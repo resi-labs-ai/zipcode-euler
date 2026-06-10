@@ -133,8 +133,9 @@ path), **§7** (the paired buy-and-burn), **§2.2/§2.3** (the two-token invaria
   Pass `tokens[]` = the **full sorted basket** (zipUSD + xALPHA), ragequit straight to the exiter (`to = claim.owner`),
   burn the escrowed szipUSD. The exiter gets their literal pro-rata slice of the (free, main-Safe) basket — a mixture
   of zipUSD + xALPHA. Do **NOT** read the oracle on exit, do **NOT** claim only zipUSD, do **NOT** compute an `owe`
-  or sweep anything: the in-kind slice self-prices to the live NAV by construction. (xALPHA→zipUSD is a *separate*
-  auto-dump module; zipUSD→USDC is the existing `ZipRedemptionQueue` — neither is this contract's job.)
+  or sweep anything: the in-kind slice self-prices to the live NAV by construction. (zipUSD→USDC is the existing
+  `ZipRedemptionQueue` — not this contract's job. The xALPHA→zipUSD auto-dump module was REMOVED 2026-06-09 — the
+  impatient exit relies on CoW, not an auto-dump.)
 - **Do NOT size, engage, or release the freeze in the Gate.** The freeze is **structural** — committed equity lives
   in the non-RQ sidecar (item 9 / 8-B11 rotation). The Gate ragequits **only `mainSafe`**, so it *automatically*
   reaches only free equity; the partial-fill (a window that can't fund every queued claim from the free zipUSD) **is**
@@ -383,8 +384,8 @@ manager grant + wiring + renounce), the **CRE/keeper track** (`processWindow` ca
 **Spec edits this ticket made (DONE this window — both critic-confirmed spec gaps)**
 1. **§6.4 item 3** — rewrote the window exit as **plain in-kind ragequit**: the exiter gets their pro-rata slice of
    the (free, main-Safe) basket (zipUSD + xALPHA), no oracle/cap/numeraire on exit (the slice self-prices to NAV); the
-   downstream **xALPHA→zipUSD auto-dump module** + the existing **`ZipRedemptionQueue`** (zipUSD→USDC) are named as the
-   separate legs; the **set-once `windowController`** (CRE-operator/keeper, the §4.5 item-0 operator tier) opens windows.
+   downstream existing **`ZipRedemptionQueue`** (zipUSD→USDC) is named as the separate leg; the **set-once
+   `windowController`** (CRE-operator/keeper, the §4.5 item-0 operator tier) opens windows.
 2. **§7** — added the **`valueOf(asset, amount)`** public per-asset valuation getter to the `SzipNavOracle` surface
    (the Gate's issuance reads it; the oracle is the §3 valuation authority — additive, no behavior change).
 3. **Kept-oracle code** — added `valueOf(address,uint256) public view` to `contracts/src/supply/SzipNavOracle.sol`
@@ -398,9 +399,9 @@ manager grant + wiring + renounce), the **CRE/keeper track** (`processWindow` ca
    CoW fill the CRE op calls `gate.burnFor(amount)`.
 3. **Item 9 (sidecar rotation):** rotate SIDECAR→MAIN on line close so a leaver's free-equity share grows; the Gate
    never touches the sidecar (the freeze is structural).
-3a. **Exit auto-dump module (NEW ticket — `tickets/sodo/8-B-exit-autodump.md`):** a separate Zodiac module that
-   market-sells the **xALPHA leg** the leaver received → zipUSD on Hydrex, so they walk out holding only zipUSD. NOT
-   the Gate; reuses the engine's Hydrex sell machinery (8-B9).
+   *(The Exit auto-dump module obligation was REMOVED 2026-06-09 — user-directed: full ragequit is viable only for
+   winding the vault down in its entirety, so the impatient exit relies on CoW, not an auto-dump; a CoW-exit spec is
+   being authored separately.)*
 4. **Item 10 (deploy/wiring):** deploy Gate → szipUSD(gate) → `gate.setShareToken`/`oracle.setShareToken`/
    `gate.setWindowController`/`gate.setEngineSafe`/`oracle.setEngineSafe`; grant `manager(2)` via the team-admin
    `mainSafe.execTransaction → Baal.setShamans([gate],[2])`; seed genesis Loot/szipUSD AFTER the grant; assert

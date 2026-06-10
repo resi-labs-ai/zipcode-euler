@@ -343,125 +343,6 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         vm.stopPrank();
     }
 
-    // ----------------------------------------------------------------- intent queue
-    function test_requestExit_and_cancel() public {
-        _deposit(alice, 10e18);
-        vm.startPrank(alice);
-        szip.approve(address(gate), 10e18);
-        uint256 id = gate.requestExit(4e18);
-        vm.stopPrank();
-        assertEq(szip.balanceOf(address(gate)), 4e18, "escrowed");
-        assertEq(gate.claimCount(), 1);
-
-        // non-owner cancel reverts
-        vm.prank(bob);
-        vm.expectRevert(ExitGate.NotClaimOwner.selector);
-        gate.cancelExit(id);
-
-        // owner cancels -> remainder returned, double-cancel reverts
-        vm.prank(alice);
-        gate.cancelExit(id);
-        assertEq(szip.balanceOf(alice), 10e18, "remainder returned");
-        vm.prank(alice);
-        vm.expectRevert(ExitGate.AlreadyClosed.selector);
-        gate.cancelExit(id);
-
-        // non-existent claim
-        vm.prank(alice);
-        vm.expectRevert(ExitGate.NoSuchClaim.selector);
-        gate.cancelExit(99);
-    }
-
-    // ----------------------------------------------------------------- windowed exit (pure ragequit, in-kind)
-    function test_processWindow_pays_pro_rata_in_kind() public {
-        _deposit(alice, 10e18); // 10 shares
-        _deposit(bob, 10e18); // 10 shares; main holds 20e18 zip, supply 20e18
-
-        vm.startPrank(alice);
-        szip.approve(address(gate), 10e18);
-        gate.requestExit(10e18);
-        vm.stopPrank();
-
-        uint256 aliceZipBefore = zip.balanceOf(alice);
-        vm.prank(keeper);
-        gate.processWindow(10);
-
-        // pure ragequit: alice gets her 10/20 pro-rata of the main-Safe basket (all zip here) = 10e18 zip, in-kind.
-        assertEq(zip.balanceOf(alice) - aliceZipBefore, 10e18, "pro-rata in-kind zip");
-        assertEq(szip.balanceOf(address(gate)), 0, "escrow burned");
-        assertEq(szip.totalSupply(), 10e18, "supply down by exited shares");
-        assertEq(gate.queueHead(), 1, "queueHead advanced");
-        _assertInvariants();
-        assertEq(szip.balanceOf(bob), 10e18); // stayer keeps his shares
-    }
-
-    function test_processWindow_multi_asset_in_kind() public {
-        _deposit(alice, 10e18); // 10 shares
-        _deposit(bob, 10e18); // 10 shares; supply 20e18
-        // the vault earns xALPHA (e.g. emissions/yield landing in the basket): main now holds 20e18 zip + 4e18 xAlpha.
-        xa.mint(sub.mainSafe, 4e18);
-
-        vm.startPrank(alice);
-        szip.approve(address(gate), 10e18);
-        gate.requestExit(10e18);
-        vm.stopPrank();
-
-        uint256 aZipBefore = zip.balanceOf(alice);
-        uint256 aXaBefore = xa.balanceOf(alice);
-        vm.prank(keeper);
-        gate.processWindow(10);
-
-        // alice gets her 10/20 pro-rata of BOTH legs, in-kind: 10e18 zip + 2e18 xAlpha. No conversion, no forfeit.
-        assertEq(zip.balanceOf(alice) - aZipBefore, 10e18, "pro-rata zip leg");
-        assertEq(xa.balanceOf(alice) - aXaBefore, 2e18, "pro-rata xAlpha leg");
-        // the remaining half of each leg stays in the main Safe for the stayer (bob).
-        assertEq(zip.balanceOf(sub.mainSafe), 10e18, "main keeps stayer zip");
-        assertEq(xa.balanceOf(sub.mainSafe), 2e18, "main keeps stayer xAlpha");
-        _assertInvariants();
-    }
-
-    function test_processWindow_freeze_pays_free_equity_only() public {
-        _deposit(alice, 10e18);
-        _deposit(bob, 10e18); // supply 20, main holds 20e18 zip
-
-        // commit 8e18 to the non-RQ sidecar (the structural freeze — backing live credit lines; CRE rotation = item 9).
-        vm.prank(sub.mainSafe);
-        zip.transfer(sub.sidecar, 8e18); // main = 12e18 free, sidecar = 8e18 committed
-
-        vm.startPrank(alice);
-        szip.approve(address(gate), 10e18);
-        gate.requestExit(10e18);
-        vm.stopPrank();
-
-        uint256 aliceZipBefore = zip.balanceOf(alice);
-        uint256 sidecarBefore = zip.balanceOf(sub.sidecar);
-        vm.prank(keeper);
-        gate.processWindow(10);
-
-        // ragequit reaches only the main Safe: alice gets 10/20 of the FREE 12e18 = 6e18 zip; the committed
-        // sidecar slice is untouched (that IS the freeze — she got her share of free equity, structurally).
-        assertEq(zip.balanceOf(alice) - aliceZipBefore, 6e18, "pro-rata of free (main) equity only");
-        assertEq(zip.balanceOf(sub.sidecar), sidecarBefore, "sidecar (committed) untouched by ragequit");
-        assertEq(szip.totalSupply(), 10e18, "alice fully exited");
-        assertEq(gate.queueHead(), 1);
-        _assertInvariants();
-    }
-
-    function test_processWindow_onlyController_and_empty() public {
-        // non-controller
-        vm.prank(alice);
-        vm.expectRevert(ExitGate.NotWindowController.selector);
-        gate.processWindow(1);
-
-        // empty queue / maxClaims==0 -> no revert, no fills
-        vm.prank(keeper);
-        gate.processWindow(5);
-        assertEq(gate.queueHead(), 0);
-        vm.prank(keeper);
-        gate.processWindow(0);
-        assertEq(gate.queueHead(), 0);
-    }
-
     // ----------------------------------------------------------------- buy-and-burn
     function test_burnFor_pure_supply_retire() public {
         _deposit(alice, 10e18);
@@ -489,16 +370,18 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
 
     // ----------------------------------------------------------------- cross-cut invariant sequence
     function test_invariant_sequence() public {
+        // C3: the exit path is now the CoW buy-and-burn rail (requestExit/processWindow retired). The two-token
+        // invariant must hold across deposit -> a simulated CoW fill (transfer to the engine Safe) -> burnFor.
         _deposit(alice, 10e18);
         _deposit(bob, 6e18);
         _assertInvariants();
-        vm.startPrank(alice);
-        szip.approve(address(gate), 10e18);
-        gate.requestExit(4e18);
-        vm.stopPrank();
-        _assertInvariants(); // requestExit escrows, burns no Loot -> invariant still holds
+        // simulate a CoW fill landing in the engine Safe, then retire it.
+        vm.prank(alice);
+        szip.transfer(engine, 4e18);
+        _assertInvariants(); // a transfer moves no Loot -> invariant still holds
         vm.prank(keeper);
-        gate.processWindow(10);
+        gate.burnFor(4e18);
         _assertInvariants();
+        assertEq(szip.totalSupply(), 12e18, "supply down by the retired amount");
     }
 }

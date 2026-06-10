@@ -66,6 +66,7 @@ contract RecordingSafe {
 contract MockNavOracle {
     uint256 public navExitV;
     bool public freshV;
+    uint256 public maxAgeV = 1 days; // default == MAX_BID_TTL, so the NAV-freshness fence is a no-op at default
 
     function setNavExit(uint256 v) external {
         navExitV = v;
@@ -75,12 +76,20 @@ contract MockNavOracle {
         freshV = v;
     }
 
+    function setMaxAge(uint256 v) external {
+        maxAgeV = v;
+    }
+
     function navExit() external view returns (uint256) {
         return navExitV;
     }
 
     function fresh() external view returns (bool) {
         return freshV;
+    }
+
+    function maxAge() external view returns (uint256) {
+        return maxAgeV;
     }
 }
 
@@ -304,6 +313,32 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.prank(operator);
         vm.expectRevert(SzipBuyBurnModule.BuyAmountTooLarge.selector);
         module.postBid(_order(1e6, 1e30 + 1, _validTo()));
+    }
+
+    // ---------------------------------------------- NAV-freshness fence (collapsed "fulfillment controller")
+    // A resting bid's `validTo` must not exceed `now + navOracle.maxAge()` — so a fill cannot land against a NAV
+    // mark that has since aged past the oracle's freshness window. Binds before `BadValidTo` when maxAge < TTL.
+    function test_validTo_at_maxAge_boundary_ok() public {
+        oracle.setMaxAge(1 hours); // < MAX_BID_TTL (1 day)
+        // validTo == now + maxAge → exactly the boundary, the fence uses `>` so this PASSES (deep-discount price).
+        vm.prank(operator);
+        module.postBid(_order(5e5, 1e18, uint32(block.timestamp + 1 hours)));
+        assertTrue(module.currentUid().length != 0, "bid posted at the freshness boundary");
+    }
+
+    function test_validTo_one_past_maxAge_reverts() public {
+        oracle.setMaxAge(1 hours);
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ValidToBeyondNavFreshness.selector);
+        module.postBid(_order(5e5, 1e18, uint32(block.timestamp + 1 hours + 1)));
+    }
+
+    function test_freshness_fence_binds_before_BadValidTo() public {
+        oracle.setMaxAge(1 hours); // maxAge < MAX_BID_TTL
+        // validTo = now + 2h: within MAX_BID_TTL (so BadValidTo would NOT fire) but past maxAge → the fence binds.
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ValidToBeyondNavFreshness.selector);
+        module.postBid(_order(5e5, 1e18, uint32(block.timestamp + 2 hours)));
     }
 
     // ----------------------------------------------------------------- cap / kill-switch / single bid

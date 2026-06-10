@@ -182,7 +182,7 @@ run against these (the real ICHI vault is used only for the headline single-side
   **fail-closed in the vault**, so a both-legs deposit reverts **there**, not in the module. The module stays agnostic
   so the **exact ICHI vault config can be finalized later (with ICHI) without re-authoring the module**. A balanced
   add is **not a supported flow** — the xALPHA leg is NEVER deposited; it accumulates in the Algebra position from
-  pool trading + the emission flywheel (`auto-sodomizer.md §2/§10.3`). The module merely must not *itself* block the
+  pool trading + the emission flywheel (`auto-compounder.md §2/§10.3`). The module merely must not *itself* block the
   passthrough (that vault-agnostic property is what the both-legs tests pin).
 - **Do NOT use `immutable` for any `setUp`-decoded value** (clone bytecode is shared).
 - **Do NOT add a `removeLiquidity`/un-LP entrypoint, a gauge `getReward` claim, a vote, or a swap.** 8-B6's scope is

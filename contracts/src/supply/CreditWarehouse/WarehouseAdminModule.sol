@@ -139,7 +139,7 @@ contract WarehouseAdminModule is ReceiverTemplate {
         emit WiringSet("repaySink", repaySink_);
     }
 
-    /// @notice The §4.4/§8.5 envelope handler. Gated upstream by the immutable-Forwarder check in
+    /// @notice The §4.4/§8.5 envelope handler. Gated upstream by the Forwarder check in
     ///         `ReceiverTemplate.onReport`. Decodes `(uint8 opType, bytes payload)`, builds exactly one scoped
     ///         call, and forwards it through the Roles modifier. Reverts `UnsupportedOpType` on any other byte.
     /// @param report The shared envelope `abi.encode(uint8 opType, bytes payload)`.

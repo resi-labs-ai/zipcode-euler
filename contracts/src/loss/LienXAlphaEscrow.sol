@@ -23,7 +23,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///         (1) `slashXAlphaToCapital` routes xALPHA → the `capitalSink` (the off-chain recovery/bridge account
 ///         that liquidates alpha → TAO → USDC on Bittensor, §11) to cover a REALIZED capital hole, up to the
 ///         shortfall the coordinator computed off-chain; (2) the remainder is the in-kind Duration-Bond premium,
-///         `slashXAlphaToCohort`, routed to the immutable `sidecar` Safe — NAV does the socialized cohort
+///         `slashXAlphaToCohort`, routed to the `sidecar` Safe — NAV does the socialized cohort
 ///         pro-rata for free (no snapshot / per-holder index / RewardsDistributor / SBT, §6.4/§11).
 ///
 ///         CUSTODY MODEL — clean-room replication of `reference/moneymarket-contracts/src/InsuranceFund.sol`
@@ -34,11 +34,12 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///
 ///         SECURITY THESIS (destination integrity, NOT authorization correctness): no state-changer takes a
 ///         recipient parameter; xALPHA can only ever flow to three destinations — the recorded `bondOriginator`
-///         (captured at lock from the coordinator's arg), the immutable `capitalSink`, the immutable `sidecar`.
-///         A fully-compromised `coordinator` cannot redirect a bond to an attacker (the theft surface is
-///         structurally closed); it can only GRIEF (premature release / slash a healthy bond) — that timing /
-///         authorization correctness is wholly the coordinator's §13 trust boundary. The escrow does NOT add
-///         on-chain solvency/default gating; the split + timing are the coordinator's job (§4.6).
+///         (captured at lock from the coordinator's arg), the `capitalSink`, the `sidecar`. So a compromised
+///         `coordinator` cannot redirect a bond to an attacker — it can only GRIEF (premature release / slash a
+///         healthy bond), the coordinator's §13 trust boundary. (BUILD PHASE, §17: the sinks are Timelock-set, so
+///         the theft-immunity holds against everyone EXCEPT the Timelock owner, who can re-point them — a
+///         grief/redirect, not a drain; re-freezing the sinks to immutable at pre-prod restores the absolute.)
+///         The escrow does NOT add on-chain solvency/default gating; the split + timing are the coordinator's job (§4.6).
 ///
 ///         CEI + `nonReentrant` (both): every external transfer happens AFTER all state writes for that path,
 ///         and every state-changer carries `nonReentrant`. xALPHA is hookless/feeless today; the contract is

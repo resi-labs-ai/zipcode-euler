@@ -10,10 +10,10 @@
 
 > **What this watches:** the four things that can quietly end the Hydrex leg or the depositor product, each with an
 > on-chain source, a cadence, a threshold, and the action it fires. Built as a **read-only multicall + archive
-> reads + event indexer**; no writes. Consolidates the dashboards in `hydrex.md` §10 and `auto-sodomizer.md` §7
+> reads + event indexer**; no writes. Consolidates the dashboards in `hydrex.md` §10 and `auto-compounder.md` §7
 > and adds the four critical watch-items. The dashboard is the trigger source for the CRE bot (`hydrex.md` §10,
-> `auto-sodomizer.md` §4).
-> Refs: `hydrex.md`, `auto-sodomizer.md`, `claude-zipcode.md §4.5.1`. Memory: [[hydrex-gauge-architecture]].
+> `auto-compounder.md` §4).
+> Refs: `hydrex.md`, `auto-compounder.md`, `claude-zipcode.md §4.5.1`. Memory: [[hydrex-gauge-architecture]].
 
 ---
 
@@ -57,7 +57,7 @@ The recycle (8-B10) pumps real USDC into the warehouse as senior backing; backin
 
 | Metric | Source | Cadence | Threshold → action |
 |---|---|---|---|
-| Recycle USDC inflow | cumulative warehouse deposits routed from the auto-sodomizer recycle | per epoch | tracks AUM growth from the bleed |
+| Recycle USDC inflow | cumulative warehouse deposits routed from the auto-compounder recycle | per epoch | tracks AUM growth from the bleed |
 | **zipUSD over-collateralization** = warehouse NAV ÷ zipUSD float | warehouse + `EE_POOL.convertToAssets` | continuous | **< 1.0 → HALT all minting + escalate** (should never happen — deposit precedes mint; a breach means an accounting bug) |
 | **szipUSD NAV-per-share** = basket NAV ÷ szipUSD supply | `SzipNavOracle` | continuous | should accrete; a *drop* = a loss event (provision booked) → investigate |
 | **Origination throughput** = USDC deployed-in-loans ÷ USDC idle | warehouse state | per epoch | **idle fraction rising → origination lagging the recycle inflow → throttle the recycle**; this is the *real* constraint, not backing |
@@ -66,7 +66,7 @@ The recycle (8-B10) pumps real USDC into the warehouse as senior backing; backin
 
 ### D. Option-floor proximity — slippage/spread vs the inflexible strike
 
-The auto-sodomizer's profitability **mechanically collapses** as spot falls toward the $0.01 strike floor, because
+The auto-compounder's profitability **mechanically collapses** as spot falls toward the $0.01 strike floor, because
 the option strike is **rigid** (`strike = max(30%·2h-TWAP, $0.01)`) while the HYDX you sell keeps dropping. Watch
 the two converge.
 
@@ -82,7 +82,7 @@ the two converge.
 
 > **The inflexibility, stated:** the strike cannot adapt downward past $0.01, and it lags the price by the 2h
 > TWAP. So profit = (a declining sale price) − (a floored, lagging strike) — a spread that shrinks faster than
-> linear and dies at the floor. The auto-sodomizer must **detect the convergence and stop selling**, not grind the
+> linear and dies at the floor. The auto-compounder must **detect the convergence and stop selling**, not grind the
 > last unprofitable basis points.
 
 ---
@@ -98,7 +98,7 @@ the two converge.
 | **Floor (D)** | spot, strike, effective spread, TWAP-gap, per-order slippage, distance-to-floor | `oHYDX.getDiscountedPrice/getMinPaymentAmount/getTimeWeightedAveragePrice`, `pool` |
 | **Clock** | rebase %, emission decay, weeks-to-sunset | `Minter.calculate_rebase`, `EmissionSchedule` |
 | **Backing (C)** | zipUSD over-collateralization, szipUSD NAV-per-share, origination throughput, net new USDC | warehouse state, `SzipNavOracle` |
-| **Product** | vault TVL vs bleed cap, trailing-realized APR, net deposit flow | `auto-sodomizer` vault, CRE APR oracle |
+| **Product** | vault TVL vs bleed cap, trailing-realized APR, net deposit flow | `auto-compounder` vault, CRE APR oracle |
 
 ---
 
@@ -133,5 +133,5 @@ the two converge.
       regime-change early warning).
 - [ ] zipUSD over-collateralization + szipUSD NAV-per-share + origination-throughput feeds from the warehouse/oracle.
 - [ ] Effective-spread / TWAP-gap / distance-to-floor continuous monitor + the **profitability-halt** signal into
-      the auto-sodomizer.
-- [ ] Tick-enumeration fill curve (shared with `hydrex.md` §5 / `auto-sodomizer.md` §7).
+      the auto-compounder.
+- [ ] Tick-enumeration fill curve (shared with `hydrex.md` §5 / `auto-compounder.md` §7).

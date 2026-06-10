@@ -25,7 +25,7 @@ interface IZipcodeOracleRegistry {
 }
 
 /// @title ZipcodeController (§4.4)
-/// @notice The portable core's orchestrator: the CRE receiver (inbound gated on an immutable Forwarder), the
+/// @notice The portable core's orchestrator: the CRE receiver (inbound gated on the Timelock-pinned Forwarder), the
 ///         report decode + per-`reportType` decision logic, and the lien-token mint/burn authority. It is the
 ///         on-chain borrower of record — but it touches NO EVC: every on-chain venue effect (open a line, set
 ///         LTV/caps, fund, draw, observe debt, close) is driven through the venue-neutral `IZipcodeVenue` seam
@@ -90,7 +90,7 @@ contract ZipcodeController is ReceiverTemplate {
     event LienStatusUpdated(bytes32 indexed lienId, uint8 status);
     event WiringSet(bytes32 indexed slot, address value);
 
-    /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`); frozen by deploy renounce.
+    /// @param forwarder The Chainlink Forwarder (reverts on zero in `ReceiverTemplate`); Timelock-re-pointable (§17), not renounce-frozen.
     /// @param venue_ The `IZipcodeVenue` adapter (every venue effect).
     /// @param lienFactory_ The `LienTokenFactory`.
     /// @param oracleRegistry_ The `ZipcodeOracleRegistry`.
