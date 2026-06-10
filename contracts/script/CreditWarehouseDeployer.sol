@@ -58,8 +58,14 @@ contract CreditWarehouseDeployer {
     ///      `onlyOwner` scope/assign calls (`msg.sender == owner`). After wiring it `swapOwner`s the Safe and
     ///      `transferOwnership`s the Roles to `godOwner` (the GOD-EOA, later upgraded to a multisig at item-10).
     ///      It does NOT renounce the adapter / set its identity expectations — that is the item-10 / §4.4 S11 seal.
+    /// @param receiverAdmin The interim owner the `WarehouseAdminModule` adapter (a CRE `ReceiverTemplate`) is handed
+    ///        to. This is the item-10 deploy broadcaster — NOT `godOwner`. The Safe + Roles are custody artifacts that
+    ///        go to `godOwner`; the adapter is a CRE receiver whose identity the item-10 script seals and whose final
+    ///        home is the Timelock, so it must be owned by that script's broadcaster (else it is stranded under this
+    ///        throwaway deployer instance and can never be sealed/re-homed).
     function deploy(
         address godOwner,
+        address receiverAdmin,
         address eePool,
         address usdc,
         address forwarder,
@@ -84,8 +90,9 @@ contract CreditWarehouseDeployer {
             new WarehouseAdminModule(forwarder, roles, ROLE_KEY, safe, eePool, usdc, repaySink)
         );
 
-        // 6. assignRoles the adapter as the sole role member; 7. hand off ownership to godOwner.
-        _assignAndHandoff(safe, roles, adapter, godOwner);
+        // 6. assignRoles the adapter as the sole role member; 7. hand off Safe/Roles to godOwner + the adapter (a CRE
+        //    receiver) to receiverAdmin (the item-10 broadcaster).
+        _assignAndHandoff(safe, roles, adapter, godOwner, receiverAdmin);
 
         w = Warehouse({safe: safe, roles: roles, adapter: adapter, roleKey: ROLE_KEY});
     }
@@ -137,14 +144,18 @@ contract CreditWarehouseDeployer {
         IRoles(roles).scopeFunction(rk, usdc, IERC20.transfer.selector, _treeTransfer(repaySink), EXEC_NONE);
     }
 
-    function _assignAndHandoff(address safe, address roles, address adapter, address godOwner) internal {
+    function _assignAndHandoff(address safe, address roles, address adapter, address godOwner, address receiverAdmin)
+        internal
+    {
         bytes32[] memory keys = new bytes32[](1);
         keys[0] = ROLE_KEY;
         bool[] memory memberOf = new bool[](1);
         memberOf[0] = true;
         IRoles(roles).assignRoles(adapter, keys, memberOf);
 
-        // Hand off: Roles `transferOwnership`, then the Safe `swapOwner` (drop self for godOwner).
+        // Hand off: the adapter (a CRE ReceiverTemplate, OZ-Ownable) to receiverAdmin (the item-10 broadcaster), the
+        // Roles `transferOwnership` + the Safe `swapOwner` (drop self) to godOwner.
+        IOwnable(adapter).transferOwnership(receiverAdmin);
         IOwnable(roles).transferOwnership(godOwner);
         _execTransactionAsSelf(
             safe, abi.encodeWithSelector(ISafe.swapOwner.selector, SENTINEL_OWNERS, address(this), godOwner)
@@ -153,6 +164,7 @@ contract CreditWarehouseDeployer {
         address[] memory finalOwners = ISafe(safe).getOwners();
         if (finalOwners.length != 1 || finalOwners[0] != godOwner) revert SafeInitMismatch();
         if (IRolesInit(roles).owner() != godOwner) revert RolesInitMismatch();
+        if (IRolesInit(adapter).owner() != receiverAdmin) revert RolesInitMismatch();
     }
 
     /// @dev Drive `safe` via the owner `execTransaction` path with the 1/1 pre-validated signature (msg.sender ==

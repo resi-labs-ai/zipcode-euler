@@ -387,7 +387,7 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
         // warehouse side: deploy with repaySink == queue
         ee = new MockEulerEarn(usdc);
         deployer = new CreditWarehouseDeployer();
-        w = deployer.deploy(godOwner, address(ee), usdc, forwarder, address(queue), 1);
+        w = deployer.deploy(godOwner, godOwner, address(ee), usdc, forwarder, address(queue), 1);
         adapter = WarehouseAdminModule(w.adapter);
         warehouseSafe = w.safe;
 

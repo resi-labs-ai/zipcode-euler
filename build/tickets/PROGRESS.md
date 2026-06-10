@@ -57,10 +57,24 @@ frontend track once the event ABIs are frozen.
 
 ## Open obligations / seams
 
-- **item-10 deploy/wire never fork-executed.** `DeployZipcode.s.sol` is `forge build`-green but has never run;
-  `DeployZipcode.t.sol` is three `vm.skip(true)` placeholders. The EulerEarn pool config (`createEulerEarn` +
-  `setIsAllocator`/`setCurator`/`setFeeRecipient`/`setFee` + point the supply queue at the reservoir borrow
-  vault) is an out-of-band fork-runbook TODO, not in the script. **Gates a live CRE origination (CRE-01) test.**
+- **item-10 deploy/wire FORK-EXECUTED 2026-06-10 (green, anvil Base-fork @ 47096000).** `script/DeployLocal.s.sol`
+  (a `DeployZipcode` subclass) provisions the six `(T)` stand-ins (ZeroIRM, xALPHA MockERC20, MockEulerEarn ×2, + the
+  live HYDX ICHI vault `0x07e7…`/gauge `0xAC39…` pair) and runs P0..P9 in one team-broadcast. All 8 seams hold; every
+  receiver + engine-module proxy + the warehouse adapter is owned by the Timelock; the warehouse Roles/Safe by godOwner.
+  **Four latent deploy-blocking bugs in the orchestrator were found + fixed** (the cost of "never executed"):
+    1. `CreditWarehouseDeployer` left the adapter (a CRE ReceiverTemplate) owned by the throwaway deployer instance →
+       P9's seal+transfer reverted. Fixed: new `receiverAdmin` param hands the adapter to the item-10 broadcaster.
+    2. P9 re-`transferOwnership(tl)`'d engine modules already owned by `tl` (setUp `_transferOwnership(owner_=tl)`) →
+       revert. Fixed: removed the redundant P9 module loop.
+    3. P4 built `ZipRedemptionQueue` with `address(0)` zipUSD (the queue ctor zero-checks + reads `.decimals()`) →
+       revert. Fixed: deploy the zipUSD synth at the top of P4 (EVC-only dep) before the queue.
+    4. P7 built `LienXAlphaEscrow` with `address(0)` coordinator (ctor zero-checks it) → revert. Fixed: deploy the
+       coordinator first (its ctor needs no escrow), then the escrow with the real coordinator.
+  Still a fork-only TODO (origination-time, NOT deploy-time): the EulerEarn pool config (`createEulerEarn` +
+  `setIsAllocator`/`setCurator`/`setFeeRecipient`/`setFee` + point the supply queue at the reservoir borrow vault) —
+  the deploy used a `MockEulerEarn` EE pool. **Still gates a live CRE origination (CRE-01) test.** Also P5 needs an
+  initial `LP_MARK` seeded before the reservoir `setLTV` (EVK calls `getQuote`); in prod that is a CRE push — the local
+  harness seeds it via the owner→forwarder trick (`DeployLocal._seedLpMark`). `DeployZipcode.t.sol` 3 skips remain.
 - **CRE report ABI seam.** Every CRE report payload must `abi.decode` to the §4.4 layout the filed
   `ZipcodeController` / `ZipcodeOracleRegistry` expect (reportTypes 1/2/4/5/6 → controller, 3 → registry).
 - **Subgraph blocked** until item-10 freezes the §9 event signatures.

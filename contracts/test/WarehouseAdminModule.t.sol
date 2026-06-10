@@ -102,7 +102,7 @@ contract WarehouseAdminModuleTest is ForkConfig {
         ee = new MockEulerEarn(usdc);
 
         deployer = new CreditWarehouseDeployer();
-        w = deployer.deploy(godOwner, address(ee), usdc, forwarder, repaySink, 1);
+        w = deployer.deploy(godOwner, godOwner, address(ee), usdc, forwarder, repaySink, 1);
 
         adapter = WarehouseAdminModule(w.adapter);
         safe = w.safe;

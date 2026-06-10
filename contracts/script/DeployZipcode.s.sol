@@ -248,12 +248,19 @@ contract DeployZipcode is SummonSubstrate {
 
     // ================================================================= P4 — warehouse (before the P3 deposit module)
     function _phaseP4() internal {
-        // 21. repaySink = the redemption queue — but the queue is a P3 contract; deploy the queue first here so the
-        //     warehouse can pin repaySink == queue (the §6 repaySink chain). The queue's other wiring lands in P3.
-        d.queue = new ZipRedemptionQueue(address(_pendingZipUSD()), BaseAddresses.USDC, _redemptionController());
+        // zipUSD synth — deployed HERE (ahead of P3) so the redemption queue ctor can bind the REAL token: the queue
+        // ctor zero-checks `zipUSD` AND reads `zipUSD.decimals()`, so it cannot accept the `address(0)`-then-setTokens
+        // placeholder. The synth depends only on the EVC (no warehouse/summon dependency), so building it here is safe;
+        // P3's later steps (deposit module, NAV oracle, Gate) reuse `d.zipUSD`.
+        d.zipUSD = new ESynth(BaseAddresses.EVC, "Zipcode USD", "zipUSD");
+
+        // 21. repaySink = the redemption queue — deployed here (before the warehouse) so the warehouse can pin
+        //     repaySink == queue (the §6 repaySink chain). The queue's remaining wiring (controllers) lands in P3.
+        d.queue = new ZipRedemptionQueue(address(d.zipUSD), BaseAddresses.USDC, _redemptionController());
 
         d.warehouse = new CreditWarehouseDeployer().deploy(
             i.godOwner,
+            msg.sender, // receiverAdmin — the adapter (a CRE ReceiverTemplate) is handed to the item-10 broadcaster
             i.eePool,
             BaseAddresses.USDC,
             BaseAddresses.CRE_KEYSTONE_FORWARDER,
@@ -278,8 +285,7 @@ contract DeployZipcode is SummonSubstrate {
         // warehouse non-commingling now that the main Safe exists.
         if (d.warehouse.safe == d.sub.mainSafe) revert SeamWarehouseCommingled();
 
-        // 12. zipUSD synth (evk ESynth, 3-arg).
-        d.zipUSD = new ESynth(BaseAddresses.EVC, "Zipcode USD", "zipUSD");
+        // 12. zipUSD synth — already deployed at the top of P4 (the queue ctor needs the real token); `d.zipUSD` is set.
 
         // 13. deposit module (warehouse is an immutable ctor arg — warehouse Safe from P4).
         d.depositModule =
@@ -310,9 +316,8 @@ contract DeployZipcode is SummonSubstrate {
         d.depositModule.setGate(address(d.gate));
         d.zipUSD.setCapacity(address(d.depositModule), type(uint128).max);
 
-        // 18. the redemption queue was deployed in P4 against the predicted zipUSD; re-point its tokens to the real
-        //     zipUSD now that it exists, and wire its CRE settle controller. (Timelock-settable.)
-        d.queue.setTokens(address(d.zipUSD), BaseAddresses.USDC);
+        // 18. the redemption queue already binds the real zipUSD (deployed at the top of P4); no token re-point needed.
+        //     Its settle controller is the ctor `controller_`; its redeem controller is wired in P6 (setRedeemController).
 
         // 19. grant the Gate manager(2): team -> mainSafe.execTransaction -> Baal.setShamans([gate],[2]).
         _setShamansManager(d.sub.baal, d.sub.mainSafe, address(d.gate));
@@ -323,7 +328,10 @@ contract DeployZipcode is SummonSubstrate {
     }
 
     // ================================================================= P5 — reservoir market + LP oracle
-    function _phaseP5() internal {
+    /// @dev `virtual` so a local/fork harness can interleave an initial `LP_MARK` push between the oracle creation and
+    ///      the market build: EVK `setLTV` (step 24) calls `getQuote` on the `SzipReservoirLpOracle`, which reverts
+    ///      `PriceOracle_NotSupported` until a fresh mark exists. In production the CRE `LP_MARK` push seeds it here.
+    function _phaseP5() internal virtual {
         // 23. LP oracle.
         d.lpOracle = new SzipReservoirLpOracle(
             BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
@@ -445,16 +453,17 @@ contract DeployZipcode is SummonSubstrate {
 
     // ================================================================= P7 — loss side (circular escrow <-> coordinator)
     function _phaseP7() internal {
-        // 26. escrow with coordinator placeholder.
-        d.escrow = new LienXAlphaEscrow(i.xAlphaMirror, address(0), i.capitalSink, d.sub.sidecar);
-
-        // 27. coordinator.
+        // 26. coordinator FIRST — its ctor does not take the escrow (it is set via `setEscrow` below), so it breaks
+        //     the escrow<->coordinator cycle. The escrow ctor, by contrast, zero-checks `coordinator_` and so cannot
+        //     accept a placeholder.
         d.coord = new DefaultCoordinator(
             BaseAddresses.CRE_KEYSTONE_FORWARDER, address(d.navOracle), i.xAlphaMirror, i.recoveryFloor
         );
 
+        // 27. escrow with the REAL coordinator (ctor-pinned; no placeholder re-point needed).
+        d.escrow = new LienXAlphaEscrow(i.xAlphaMirror, address(d.coord), i.capitalSink, d.sub.sidecar);
+
         // 28. close the cycle (coord.setEscrow forceApproves escrow internally per the ctor NatSpec).
-        d.escrow.setCoordinator(address(d.coord));
         d.coord.setEscrow(address(d.escrow));
         d.navOracle.setDefaultCoordinator(address(d.coord));
 
@@ -501,20 +510,15 @@ contract DeployZipcode is SummonSubstrate {
         // `deployer` (this script). No transfer path; a known build-phase limitation (re-deploy to re-home, or the
         // Timelock simply never needs it since setGate is re-settable only by the immutable deployer). Not transferred.
 
-        // every engine module (OZ-Ownable via zodiac Module base).
-        _transferModuleOwner(d.buyBurn, tl);
-        _transferModuleOwner(d.reservoirLoop, tl);
-        _transferModuleOwner(d.lpStrategy, tl);
-        _transferModuleOwner(d.harvestVote, tl);
-        _transferModuleOwner(d.exercise, tl);
-        _transferModuleOwner(d.sell, tl);
-        _transferModuleOwner(d.recycle, tl);
-        _transferModuleOwner(d.offRamp, tl);
-        _transferModuleOwner(d.durationFreeze, tl);
+        // Engine modules are ALREADY owned by `tl`: each was cloned in P6 with `owner_ == tl` and the zodiac
+        // `Module.setUp` runs `_transferOwnership(owner_)`, so the module owner is the Timelock from birth. A P9
+        // `transferOwnership(tl)` here would be both redundant AND revert (the team broadcaster is not the owner).
+        // No module transfer is needed — they enter the post-deploy state owned by the Timelock directly.
 
-        // the warehouse adapter + Roles owner are GOD_OWNER from CreditWarehouseDeployer; re-point both to the
-        // Timelock (the warehouse adapter is a ReceiverTemplate; the Roles owner is zodiac Ownable). GOD_OWNER must
-        // sign these post-build (separate tx outside this script's team-broadcaster scope) — documented obligation.
+        // The warehouse adapter is a `ReceiverTemplate` (OZ-Ownable). `CreditWarehouseDeployer` hands its ownership to
+        // the item-10 broadcaster (`receiverAdmin == msg.sender`, P4) — distinct from the Safe/Roles which go to
+        // GOD_OWNER — so this script seals its CRE identity (above) and re-homes it to the Timelock uniformly with
+        // every other receiver, in this same team-broadcast.
         IOwnableLike(d.warehouse.adapter).transferOwnership(tl);
     }
 
@@ -562,13 +566,6 @@ contract DeployZipcode is SummonSubstrate {
     function _execAsTeam(address safe, address to, bytes memory data) internal {
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(i.team))), bytes32(0), uint8(1));
         ISafe(safe).execTransaction(to, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), sig);
-    }
-
-    /// @dev The redemption queue is built in P4 (so the warehouse can pin repaySink == queue) but its zipUSD token is
-    ///      a P3 artifact; pass `address(0)` at construction and re-point via `queue.setTokens` once zipUSD exists in
-    ///      P3. `address(0)` here is replaced before the queue is ever used.
-    function _pendingZipUSD() internal view returns (ESynth) {
-        return ESynth(address(d.zipUSD)); // address(0) at P4 time; re-pointed in P3 via setTokens.
     }
 
     /// @dev The redemption queue's CRE settle controller is a DISTINCT identity from the origination controller; in
