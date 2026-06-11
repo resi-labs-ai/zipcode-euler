@@ -7,6 +7,10 @@ reference/*
 # provenance is in reference/MANIFEST.md. The dedicated frontend sweep will commit the Zipcode UI it paints.
 frontend/euler-lite/
 
+# The Zipcode UI is its own repo (resi-labs-ai/zipcode-finance-euler, its own .git) that lives here
+# only for local dev — its commits go to that repo, NOT this monorepo. See frontend/README.md.
+frontend/zipcode-finance-euler/
+
 # Foundry build artifacts
 contracts/out/
 contracts/cache/

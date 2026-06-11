@@ -35,9 +35,12 @@ reversed.** The contracts exist, are fork-tested, and their ABIs are fixed. So f
 | Track | Binds to | Intent | Reference patterns |
 |---|---|---|---|
 | **CRE** (Go→wasip1) | the filed `contracts/src/...` report consumers (`ZipcodeController`, `ZipcodeOracleRegistry`, and the other `ReceiverTemplate`s) + `claude-zipcode.md` §8 | `claude-zipcode.md` §8 producer spec | `reference/cre-sdk-go/standard_tests/*/main_wasip1.go`, `reference/cre-templates`, `reference/cre-cli`; existing `cre/szalpha-rate/` |
-| **Frontend** (Vue/viem) | the filed contract **ABIs** (`forge build` output) | `claude-zipcode.md` §5/§12 (UX + dashboard metrics) | `reference/euler-lite/` (pages, composables, abi/address wiring); existing `build/tickets/frontend/INFLOW-06-deposit-module.md`* |
+| **Frontend** (Vue/viem) | the **live anvil deployment** — addresses in `build/anvil/contract-map.md`, ABIs in `build/anvil/abi/` (`index.json` resolves address→ABI). These are the *deployed* contracts' real ABIs; bind to those, not to spec prose. | `claude-zipcode.md` §5/§12 (UX + dashboard metrics) | the **app is `frontend/zipcode-finance-euler/`** (the skinned LAYER over a read-only `euler-lite` submodule) — model euler-lite's pages/composables/abi-address patterns, but author Zipcode files **in the layer, never inside euler-lite**; existing `build/tickets/frontend/INFLOW-06-deposit-module.md`* |
 
-\* `INFLOW-06` is the existing frontend ticket template; model its field shape.
+\* `INFLOW-06` is the existing frontend ticket template; model its field shape. **The FE track is now anvil-grounded
+(item-10 deployed the full stack locally) — its old "gated on item-10 / post-mainnet" + "`reference/euler-lite` /
+build-inside-euler-lite" framing is SUPERSEDED by the `Frontend ↔ anvil` track + obligations/seams in `PROGRESS.md`.
+When this file and PROGRESS disagree on the FE track, PROGRESS wins.**
 
 ---
 
@@ -69,6 +72,12 @@ ticket MUST discharge each, as a Key requirement with a Done-when test. Mark it 
 
 File CRE tickets under `build/tickets/cre/`, frontend tickets under `build/tickets/frontend/` (create the
 folder if absent). Each track keeps its own progress section/ledger in `PROGRESS.md`.
+
+**Where built code commits differs by track.** CRE code commits to the `cre/...` workspace in THIS monorepo. **Frontend
+code commits to the LAYER repo** — `frontend/zipcode-finance-euler/` has its own `.git` (remote: `resi-labs-ai`) and the
+monorepo gitignores it. So an FE ticket's *ticket file* lands in `build/tickets/frontend/` (this repo) while its *built
+Vue/composables/abis/.env.example* land in and are committed to `frontend/zipcode-finance-euler/` (the layer repo).
+Never stage layer code in the monorepo.
 
 ---
 
@@ -111,9 +120,12 @@ per-track gate:
   expects (`uint8 reportType` + the typed payload); a simulated run (trigger → node-mode →
   identical-consensus aggregation → report) executes without guessing SDK signatures. The Go module is
   committed.
-- **Frontend:** `nuxi typecheck` + the component builds; the composable binds to the **real emitted events
-  and method signatures** of the filed contract (a binding to an absent surface fails the gate); any needed
-  contract surface that does not exist becomes a back-pressure obligation. The code is committed.
+- **Frontend:** built **in the layer** (`frontend/zipcode-finance-euler/`); `npm run build` (`nuxt build`) is green —
+  this is the gate, NOT `npm run dev`, which EMFILE-floods on macOS via the node_modules symlink (the build+serve path
+  is Vercel-proven; dev-mode HMR is FE-00's to fix). The composable binds to the **real method signatures + emitted
+  events of the DEPLOYED contract** (its ABI in `build/anvil/abi/`); a binding to an absent surface fails the gate and
+  becomes a back-pressure obligation. Acceptance that reads/writes live state requires the **anvil node up** (see §7).
+  The code is committed **to the layer repo** (§3).
 
 A verdict is **"yes"**, never "yes-with-guesses." If the builder must guess, the gap folds back into the
 ticket and the build re-runs. The code is the proof, the ticket is the intent — they live together,
@@ -172,3 +184,13 @@ around them. That is the point.
 ## 7. Prerequisite (one-time)
 The `reference/` clones must be present (see `reference/MANIFEST.md`) or no real import/model resolves. Run `forge build` in
 `contracts/` so the off-chain and UI tracks bind to fresh ABIs.
+
+**Frontend track also needs the live anvil + a booted layer:**
+- **Anvil up.** The FE tickets bind to the live deployment in `build/anvil/contract-map.md` (Base fork @47096000,
+  chainId 8453, `http://127.0.0.1:8545`). Confirm it responds (`cast block-number --rpc-url http://127.0.0.1:8545`);
+  if it is down, redeploy from `contracts/script/DeployLocal.s.sol` before any acceptance that reads/writes live state.
+  (If `contract-map.md` addresses no longer resolve after a redeploy, regenerate `build/anvil/abi/index.json` per its
+  README — addresses change per deploy; the catalog is fixed.)
+- **Layer boots.** `frontend/zipcode-finance-euler/` builds + serves: deps install into the `euler-lite` submodule and
+  symlink up (exact cmd in its `vercel.json` install step / `frontend/README.md`); `DEV_GEO_COUNTRY` must be set or
+  every route 403s locally. Verify with `npm run build` → `node .output/server/index.mjs` → `/` returns 200.

@@ -1,40 +1,37 @@
-# Zipcode frontend — built on top of euler-lite
+# Zipcode frontend
 
-**The Zipcode frontend is built on top of [euler-lite](https://github.com/euler-xyz/euler-lite)** — Euler's
-open Nuxt 3 / Vue reference app. We do **not** build a frontend from scratch: euler-lite is the **canvas**, and
-the Zipcode supply / zap / position / exit UI is **painted over it**, wired to the deployed Zipcode contracts.
+The Zipcode frontend is the app in **[`./zipcode-finance-euler/`](./zipcode-finance-euler)** — the team's skinned
+borrower/lender UI (`github.com/resi-labs-ai/zipcode-finance-euler`). It is a thin Nuxt **layer on top of**
+[euler-lite](https://github.com/euler-xyz/euler-lite) (Euler's open Nuxt 3 / Vue reference app), which it vendors as a
+git submodule at `zipcode-finance-euler/euler-lite/`. We do not build a frontend from scratch: euler-lite is the
+engine, and the Zipcode screens + branding are layered over it.
 
-## Get the canvas
-`frontend/euler-lite/` is a clone of `euler-xyz/euler-lite` (its own `.git`, so it is **gitignored**; provenance
-pinned in `reference/MANIFEST.md`). If it is not already present locally:
+This is its own project with its own GitHub home (resi-labs-ai). It lives here next to the contracts for local
+development; frontend work is committed and pushed to **that** repo, not the `zipcode-euler` monorepo.
+
+## Run it
+
 ```bash
-git clone https://github.com/euler-xyz/euler-lite.git frontend/euler-lite
-git -C frontend/euler-lite checkout b4971171   # the pinned commit (reference/MANIFEST.md)
-cd frontend/euler-lite && npm install && npm run dev   # Node 24+, npm
+cd zipcode-finance-euler
+git submodule update --init --recursive   # pull the euler-lite engine (one-time)
+npm install
+npm run dev
 ```
 
-## What euler-lite gives us (the patterns to model, not rebuild)
-- `pages/` — routes/screens (lending / borrowing / portfolio). The Zipcode screens slot in here.
-- `composables/` — the reactive on-chain data hooks (wallet, positions, markets). Model the Zipcode
-  position / NAV / queue hooks on these.
-- `abis/` + `services/` + `entities/` — contract ABIs, the on-chain read/write services, and typed entities.
-  The Zipcode contracts plug in here.
-- wallet (Reown / AppKit), multi-chain config (`nuxt.config.ts`), tailwind.
+To point it at the **local anvil** protocol (Base fork, chainId 8453, `http://127.0.0.1:8545`) instead of live Base,
+see ticket **FE-00** in `../../build/tickets/PROGRESS.md` for the `.env` repoint (`RPC_URL_8453`, on-chain vault
+source, local labels). euler-lite's data layer is fully env-driven — nothing is hardwired to mainnet.
 
-## What to build (the Zipcode sweep)
-The Zipcode-specific screens, painted over the euler-lite shell and bound to the deployed contracts:
-- **Supply / zap** — USDC → zipUSD → szipUSD (`ZipDepositModule.zap`). The headline deposit.
-- **Position / NAV** — szipUSD balance + NAV (`SzipNavOracle` navEntry/navExit), APR, utilization / freeze.
-- **Exit** — the CoW-book exit + the senior par redemption queue (`ZipRedemptionQueue`).
-- **(later)** originator / lien views.
+## What's where
 
-## Where the contract surface is
-- **`wires/`** (repo root) — the per-component wiring map: each contract's events + view methods + how it is
-  wired. This is the binding surface the composables / services read. Start at `wires/README.md`.
-- Contract **addresses + ABIs** come from the **item-10 deploy** (`contracts/script/DeployZipcode.s.sol`), so
-  the live-data half of the UI is gated on that deploy.
+- `zipcode-finance-euler/euler-lite/` — the engine (submodule, kept pristine; never edit it).
+- `zipcode-finance-euler/components/zipcode/`, `pages/{borrower,lender,prototype}/`, `lib/zipcode/` — the Zipcode UI.
+  Today these are a clickable mockup fed by `lib/zipcode/store.ts`; the FE-01..07 tickets wire them to the live
+  anvil contracts.
+- `zipcode-finance-euler/nuxt.config.ts` — the layer wiring (`extends: ['./euler-lite']`, aliases, brand CSS).
 
-## Status
-This is the **deferred post-deploy frontend sweep** (built last, one dedicated pass) — no Zipcode UI is authored
-yet. This note + the euler-lite canvas + `wires/` (the contract surface) are the starting point; the zap
-interface intent (INFLOW-06) folds into this sweep.
+## The contract surface it binds to
+
+- **Live anvil address board:** `../../build/anvil/contract-map.md`
+- **ABIs:** `../../build/anvil/abi/` (`index.json` resolves address → ABI)
+- **Build queue:** the `Frontend ↔ anvil` track (FE-00..07) in `../../build/tickets/PROGRESS.md`
