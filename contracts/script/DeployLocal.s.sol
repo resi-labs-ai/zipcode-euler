@@ -32,9 +32,14 @@ contract DeployLocal is DeployZipcode {
     address internal constant ANVIL_4 = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65; // erebor
     address internal constant ANVIL_5 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc; // capitalSink
 
-    // The matched live HYDX ICHI vault + Hydrex gauge pair (used as the POL stand-ins by the module fork tests).
+    // The matched live ICHI vault + its Hydrex ALM gauge (POL stand-ins for the module fork tests). The vault is the
+    // live WETH/USDC ICHI ALM (pool 0x82dbe1834). The gauge MUST be the vault-keyed ALM gauge `Voter.gauges(vault)`
+    // (0x4328CE8A), NOT `Voter.gauges(pool)` — the per-pool CL gauge rejects ICHI ALM shares (reverts 0x87c5d02a; the
+    // staking token is the ALM wrapper, not the raw pool position). Verified on the fork: addLiquidity → stake works
+    // against 0x4328CE8A; the prior 0xAC396Cab was the HYDX/USDC *pool* gauge — a mismatched pair. (Both gauges are
+    // alive; the bug was wiring, not a killed gauge.)
     address internal constant LIVE_ICHI_VAULT = 0x07e72E46C319a6d5aCA28Ad52f5C41a7821989Ad;
-    address internal constant LIVE_HYDREX_GAUGE = 0xAC396CabF5832A49483B78225D902C0999829993;
+    address internal constant LIVE_HYDREX_GAUGE = 0x4328CE8ADC23F1c4E5A3049F63Ffbdd8e73F99Ce;
 
     function runLocal() external {
         _loadLocalInputs();
@@ -51,6 +56,7 @@ contract DeployLocal is DeployZipcode {
         _phaseP7();
         _phaseP8();
         _phaseP9();
+        _configureEulerEarn(); // real-EE curator/allocator config (needs adapter[P1], warehouse[P4], borrowVault[P5])
         vm.stopBroadcast();
     }
 
@@ -87,12 +93,67 @@ contract DeployLocal is DeployZipcode {
         i.rateAprCap = 20_000;
     }
 
-    /// @notice Deploy the four contract stand-ins (IRM, xALPHA mirror, EE pool, base USDC market) inside the broadcast.
+    /// @notice Provision the stand-ins inside the broadcast. The EE pool + base USDC market are REAL contracts (a live
+    ///         EulerEarn pool + a real EVK USDC vault); only the IRM (a real 0%-rate contract) and xALPHA (an inherent
+    ///         cross-chain stand-in — no real Base asset exists pre-bridge) are local. Collateral/Proof-of-Value stays
+    ///         mocked per §17. CoW solver + CRE DON are simulated at smoke-time (the contracts they hit are real).
     function _provisionStandins() internal {
         i.irm = address(new ZeroIRM());
         i.xAlphaMirror = address(new MockERC20("Zipcode xALPHA mirror", "xALPHA", 18));
-        i.eePool = address(new MockEulerEarn(BaseAddresses.USDC));
-        i.baseUsdcMarket = address(new MockEulerEarn(BaseAddresses.USDC));
+
+        // REAL no-borrow USDC resting market — the EE supply-queue head. A bare EVK proxy (asset=USDC, no oracle/uoa
+        // => supply-only). EVK-factory proxies pass the EulerEarn "EVK Factory Perspective", so EE will onboard it.
+        address baseMkt = GenericFactory(BaseAddresses.EVAULT_FACTORY).createProxy(
+            address(0), false, abi.encodePacked(BaseAddresses.USDC, address(0), address(0))
+        );
+        IEVault(baseMkt).setHookConfig(address(0), 0);
+        i.baseUsdcMarket = baseMkt;
+
+        // REAL EulerEarn senior pool off the LIVE factory. owner = team; timelock 0 => immediate cap config below.
+        (bool ok, bytes memory ret) = BaseAddresses.EULER_EARN_FACTORY.call(
+            abi.encodeWithSignature(
+                "createEulerEarn(address,uint256,address,string,string,bytes32)",
+                i.team, uint256(0), BaseAddresses.USDC, "Zipcode Senior USDC", "zSNR", bytes32(i.saltNonce)
+            )
+        );
+        require(ok, "createEulerEarn failed");
+        i.eePool = abi.decode(ret, (address));
+    }
+
+    /// @notice The EE curator runbook the base deploy intentionally omits (admin ABI not compiled). Run as the EE
+    ///         owner (team): set fee recipient + 0 fee, onboard the resting USDC market + the reservoir borrow vault
+    ///         (both EVK-factory proxies => perspective-verified), point the supply queue at the resting market, then
+    ///         hand curator (which also satisfies the allocator role) to the venue adapter so `openLine` can onboard
+    ///         per-line vaults and `fund` can reallocate at origination.
+    function _configureEulerEarn() internal {
+        address ee = i.eePool;
+        uint256 capMax = type(uint136).max;
+
+        // fee defaults to 0 (setFee(0) reverts AlreadySet); set only the recipient so a future non-zero fee routes
+        // lending yield to the warehouse Safe (treasury).
+        _eeCall(ee, abi.encodeWithSignature("setFeeRecipient(address)", d.warehouse.safe));
+
+        _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", i.baseUsdcMarket, capMax));
+        _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", i.baseUsdcMarket));
+        _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", d.borrowVault, capMax));
+        _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", d.borrowVault));
+
+        address[] memory q = new address[](1);
+        q[0] = i.baseUsdcMarket;
+        _eeCall(ee, abi.encodeWithSignature("setSupplyQueue(address[])", q));
+
+        _eeCall(ee, abi.encodeWithSignature("setCurator(address)", address(d.adapter)));
+    }
+
+    /// @dev Low-level EE admin call (the EulerEarn admin ABI is deliberately not compiled into the repo), bubbling the
+    ///      inner revert reason on failure.
+    function _eeCall(address ee, bytes memory data) internal {
+        (bool ok, bytes memory ret) = ee.call(data);
+        if (!ok) {
+            assembly {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
     }
 
     /// @notice P5 override: seed an initial `LP_MARK` between oracle creation and the market build, so the reservoir
@@ -189,40 +250,3 @@ contract MockERC20 {
     }
 }
 
-/// @notice A minimal ERC-4626-ish 1:1 USDC vault mocking `EulerEarn` (mirrors `test/mocks/MockEulerEarn.sol`).
-contract MockEulerEarn {
-    error ZeroShares();
-
-    address public immutable asset;
-
-    mapping(address => uint256) public balanceOf;
-    uint256 public totalSupply;
-
-    constructor(address usdc_) {
-        asset = usdc_;
-    }
-
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
-        shares = assets;
-        if (shares == 0) revert ZeroShares();
-        IERC20Min(asset).transferFrom(msg.sender, address(this), assets);
-        balanceOf[receiver] += shares;
-        totalSupply += shares;
-    }
-
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets) {
-        assets = shares;
-        balanceOf[owner] -= shares;
-        totalSupply -= shares;
-        if (assets > 0) IERC20Min(asset).transfer(receiver, assets);
-    }
-
-    function convertToAssets(uint256 shares) external pure returns (uint256) {
-        return shares;
-    }
-}
-
-interface IERC20Min {
-    function transfer(address to, uint256 amt) external returns (bool);
-    function transferFrom(address from, address to, uint256 amt) external returns (bool);
-}

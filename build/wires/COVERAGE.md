@@ -2,7 +2,8 @@
 
 Provable completeness check for the wiring map. Every Solidity file under `contracts/` is mapped to the
 `wires/` doc that documents it. Inventory taken 2026-06-10: **32 product contracts + 6 scripts + 30 interface
-shims + 28 test/helper files**. Nobody forgotten.
+shims + 28 test/helper files**, plus a **demo/fork-only addendum** (section E): **2 showcase contracts + 1 demo
+interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody forgotten.
 
 ## A. Product contracts (`src/`, non-interface) — 32 files
 | File | Doc |
@@ -119,9 +120,19 @@ component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" 
 | `test/LienXAlphaEscrow.t.sol` | `8-Bx-LienXAlphaEscrow.md` |
 | `test/DefaultCoordinator.t.sol` | `DefaultCoordinator.md` |
 
+## E. Demo / fork-only contracts (mainnet showcase) — NOT part of the audited core
+The vAMM auto-compounder showcase (SP-18): surgical forks of the verified NAV oracle + LP module that price/stake an
+EXISTING live vAMM HYDX/USDC venue, deployed alongside the prod system (do not ship as core). All → `SHOWCASE-VAMM.md`.
+| File | Doc |
+|---|---|
+| `src/demo/SzipNavOracleDemoVAMM.sol` | `SHOWCASE-VAMM.md` |
+| `src/demo/LpStrategyModuleDemoVAMM.sol` | `SHOWCASE-VAMM.md` |
+| `src/interfaces/hydrex/IVammPair.sol` | `SHOWCASE-VAMM.md` |
+| `script/DeployShowcaseVAMM.s.sol` | `SHOWCASE-VAMM.md` |
+
 ## Recheck command
 To re-verify nothing was added since this manifest, diff the live tree against the rows above:
 ```
 find contracts/src contracts/script -name '*.sol' | sort
 ```
-Any file not in sections A–C above needs a doc (or a row here).
+Any file not in sections A–E above needs a doc (or a row here).

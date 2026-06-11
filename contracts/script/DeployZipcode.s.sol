@@ -312,6 +312,11 @@ contract DeployZipcode is SummonSubstrate {
         d.gate.setShareToken(address(d.szip));
         d.navOracle.setShareToken(address(d.szip));
 
+        // 16b. wire the buy-and-burn window controller (the CRE keeper that drives `ExitGate.burnFor`, the post-CoW
+        //      buy-and-burn exit). Done HERE while the gate is still team-owned — P9 transfers the gate to the Timelock.
+        //      M1 = the engine/CRE operator hot key. Without this, `burnFor` is wired to `address(0)` and the exit reverts.
+        d.gate.setWindowController(i.creOperator);
+
         // 17. deposit module gate + zipUSD mint capacity for the module.
         d.depositModule.setGate(address(d.gate));
         d.zipUSD.setCapacity(address(d.depositModule), type(uint128).max);
@@ -585,6 +590,9 @@ contract DeployZipcode is SummonSubstrate {
         i.irm = vm.envAddress("IRM");
         i.xAlphaMirror = vm.envAddress("XALPHA_MIRROR");
         i.polIchiVault = vm.envAddress("POL_ICHI_VAULT");
+        // POL_GAUGE MUST be the ICHI-vault-keyed ALM gauge (`Voter.gauges(POL_ICHI_VAULT)`), NOT the per-pool CL gauge
+        // (`Voter.gauges(pool)`). The CL gauge rejects ICHI ALM wrapper shares (reverts 0x87c5d02a — wrong staking
+        // token). See DeployLocal.s.sol's LIVE_HYDREX_GAUGE note (verified on the fork).
         i.polGauge = vm.envAddress("POL_GAUGE");
         i.capitalSink = vm.envAddress("CAPITAL_SINK");
         i.workflowAuthor = vm.envAddress("WORKFLOW_AUTHOR");

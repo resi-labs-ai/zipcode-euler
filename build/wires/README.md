@@ -57,6 +57,7 @@ contracts + 6 scripts + 30 interface shims + 28 test/helper files) mapped to its
 | Bridge | szALPHA CCT bridge | `8x-01-szALPHA-bridge.md` | `SzAlpha`, `SzAlphaMirror`, `SzAlphaTokenPool`, `DeploySzAlphaBridge` |
 | Bridge | xALPHA rate oracle | `8x-02-SzAlphaRateOracle.md` | `SzAlphaRateOracle` + `cre/szalpha-rate` |
 | Deploy | item-10 deploy/wiring orchestrator | `DeployZipcode.md` | `DeployZipcode` (script; build-green, never executed) |
+| Demo | vAMM auto-compounder showcase (NOT core) | `SHOWCASE-VAMM.md` | `SzipNavOracleDemoVAMM`, `LpStrategyModuleDemoVAMM`, `IVammPair`, `DeployShowcaseVAMM` |
 
 ### Interface shims (`src/interfaces/`, cataloged per folder)
 The minimal local interfaces for the deployed-on-Base protocols (interface+fork) + the internal Zipcode seams.

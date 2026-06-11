@@ -1,0 +1,262 @@
+{
+  "0x89ae086561ed831C4f5ebF31d825f0364C8c3B27": {
+    "name": "TimelockController",
+    "abi": "abi/TimelockController.json",
+    "kind": "protocol"
+  },
+  "0x36025de2F0753789058eAE99003BbE2131b63810": {
+    "name": "ZipcodeController",
+    "abi": "abi/ZipcodeController.json",
+    "kind": "protocol"
+  },
+  "0x87dC8666F0c31Fb4B205240003DD733E327E14F3": {
+    "name": "EulerVenueAdapter",
+    "abi": "abi/EulerVenueAdapter.json",
+    "kind": "protocol"
+  },
+  "0x0395da1BBCD51A0b48EEBf40F4F39E5985d6CA1A": {
+    "name": "ZipcodeOracleRegistry",
+    "abi": "abi/ZipcodeOracleRegistry.json",
+    "kind": "protocol"
+  },
+  "0x16579ac952BBf5cC0844959699A2876eA885808C": {
+    "name": "CREGatingHook",
+    "abi": "abi/CREGatingHook.json",
+    "kind": "protocol"
+  },
+  "0xbF1801C78593aF0Ef7BcB4415Eaf146993Ec7A01": {
+    "name": "LienTokenFactory",
+    "abi": "abi/LienTokenFactory.json",
+    "kind": "protocol"
+  },
+  "0xC5bd67f769bC0bEc5077c15E23d7AD707D5c45aF": {
+    "name": "zipUSD (ESynth)",
+    "abi": "abi/ESynth.json",
+    "kind": "protocol"
+  },
+  "0x33aD3E23ae6189055925ba2265041AcCA356b4E4": {
+    "name": "szipUSD",
+    "abi": "abi/SzipUSD.json",
+    "kind": "protocol"
+  },
+  "0x6ecc717266e6FE8d7Ad7608219c30b736eEB728a": {
+    "name": "ZipDepositModule",
+    "abi": "abi/ZipDepositModule.json",
+    "kind": "protocol"
+  },
+  "0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e": {
+    "name": "ExitGate",
+    "abi": "abi/ExitGate.json",
+    "kind": "protocol"
+  },
+  "0x0C3E77314D97e8e001e0F626A559992479A3C79e": {
+    "name": "SzipNavOracle",
+    "abi": "abi/SzipNavOracle.json",
+    "kind": "protocol"
+  },
+  "0x46c89c1a4e86b7F025871c35F08aA7DA95F79D8f": {
+    "name": "ZipRedemptionQueue",
+    "abi": "abi/ZipRedemptionQueue.json",
+    "kind": "protocol"
+  },
+  "0x4505dbe66837804e2bFe068A365B68cA707d0D42": {
+    "name": "SzipReservoirLpOracle",
+    "abi": "abi/SzipReservoirLpOracle.json",
+    "kind": "protocol"
+  },
+  "0x12881a80c4f4eee7430d1c1c53bbbcfc4c92f71b": {
+    "name": "SzipBuyBurnModule",
+    "abi": "abi/SzipBuyBurnModule.json",
+    "kind": "protocol"
+  },
+  "0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4": {
+    "name": "ReservoirLoopModule",
+    "abi": "abi/ReservoirLoopModule.json",
+    "kind": "protocol"
+  },
+  "0xc242eaeb8e0647ef49a97ed827059786446f3c5c": {
+    "name": "LpStrategyModule",
+    "abi": "abi/LpStrategyModule.json",
+    "kind": "protocol"
+  },
+  "0x38d549cdaf088f68f549d85c0ba390005ff087ec": {
+    "name": "HarvestVoteModule",
+    "abi": "abi/HarvestVoteModule.json",
+    "kind": "protocol"
+  },
+  "0x8a80b821f6fe43b94e84a1ed245276964e52c9d1": {
+    "name": "ExerciseModule",
+    "abi": "abi/ExerciseModule.json",
+    "kind": "protocol"
+  },
+  "0xbc8e1b79f9321d33266e1f8da594e238439a78e2": {
+    "name": "SellModule",
+    "abi": "abi/SellModule.json",
+    "kind": "protocol"
+  },
+  "0x0c4c63843f2607ce58ac31ebb8a86d28aadbbc4e": {
+    "name": "RecycleModule",
+    "abi": "abi/RecycleModule.json",
+    "kind": "protocol"
+  },
+  "0xc595aa93d9ba00726efd1741255961df72e49998": {
+    "name": "OffRampModule",
+    "abi": "abi/OffRampModule.json",
+    "kind": "protocol"
+  },
+  "0x66e0e34254727954cc7137ea58b851d99d438485": {
+    "name": "DurationFreezeModule",
+    "abi": "abi/DurationFreezeModule.json",
+    "kind": "protocol"
+  },
+  "0xb6366c0db8f31319e6fc6b28c6f6304064657e99": {
+    "name": "DefaultCoordinator",
+    "abi": "abi/DefaultCoordinator.json",
+    "kind": "protocol"
+  },
+  "0xfba6a2f082ca39552725cb9190754c2f4c525468": {
+    "name": "LienXAlphaEscrow",
+    "abi": "abi/LienXAlphaEscrow.json",
+    "kind": "protocol"
+  },
+  "0x7251a305fe860099cdc842fcfbde8ab6002afe72": {
+    "name": "SzAlphaRateOracle",
+    "abi": "abi/SzAlphaRateOracle.json",
+    "kind": "protocol"
+  },
+  "0xa430221162cf0e20abDab4324CE2F3d5d3391b5c": {
+    "name": "WarehouseAdminModule",
+    "abi": "abi/WarehouseAdminModule.json",
+    "kind": "protocol"
+  },
+  "0xF6CAAF72A788916915ce1bF111E245e0bEABCd18": {
+    "name": "xALPHA (MockERC20)",
+    "abi": "abi/MockERC20.json",
+    "kind": "standin"
+  },
+  "0xAF5C4Ff1CA534F6e8527Eaf448db7d30bf9d6d5E": {
+    "name": "ZeroIRM",
+    "abi": "abi/ZeroIRM.json",
+    "kind": "standin"
+  },
+  "0x1a7A8A5a6A2B34895201CFBC997C4eC419ba8A3d": {
+    "name": "EulerEarn pool",
+    "abi": "abi/external/EulerEarn.json",
+    "kind": "external"
+  },
+  "0x3A48aaaa90CF3938290f12F6A1E58C1aeb54699D": {
+    "name": "base USDC market (EVault)",
+    "abi": "abi/external/IEVault.json",
+    "kind": "external"
+  },
+  "0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267": {
+    "name": "reservoir borrow vault (EVault)",
+    "abi": "abi/external/IEVault.json",
+    "kind": "external"
+  },
+  "0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1": {
+    "name": "reservoir escrow vault (EVault)",
+    "abi": "abi/external/IEVault.json",
+    "kind": "external"
+  },
+  "0x5a451fEB2Ef43B3615f1eaFba352B7b363d0629f": {
+    "name": "reservoir EulerRouter",
+    "abi": "abi/EulerRouter.json",
+    "kind": "external"
+  },
+  "0x0B9C95c7fc6048Bd4B568b637707D7dC5381B2ac": {
+    "name": "main Safe",
+    "abi": "abi/external/GnosisSafe.json",
+    "kind": "external"
+  },
+  "0x39D229610e52A1229cF5728CAb0A862F650AF6f0": {
+    "name": "sidecar Safe",
+    "abi": "abi/external/GnosisSafe.json",
+    "kind": "external"
+  },
+  "0xe028616919E7515Ff0Ce4086E9f5Fd4AcfffC68C": {
+    "name": "warehouse Safe",
+    "abi": "abi/external/GnosisSafe.json",
+    "kind": "external"
+  },
+  "0xdc4f3Bb2789786b06748179e913F43AfbdcF65Dd": {
+    "name": "Baal DAO",
+    "abi": "abi/external/Baal.json",
+    "kind": "external"
+  },
+  "0xE7501dD9Df8c91b2447b6C3C048c814aFf7354fD": {
+    "name": "Loot",
+    "abi": "abi/external/ERC20.json",
+    "kind": "external"
+  },
+  "0xc25dD44A01100d56D58c8AD33a050f56278E4B58": {
+    "name": "Shares",
+    "abi": "abi/external/ERC20.json",
+    "kind": "external"
+  },
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913": {
+    "name": "USDC",
+    "abi": "abi/external/ERC20.json",
+    "kind": "external"
+  },
+  "0x9008D19f58AAbD9eD0D60971565AA8510560ab41": {
+    "name": "CoW GPv2Settlement",
+    "abi": "abi/external/GPv2Settlement.json",
+    "kind": "external"
+  },
+  "0x07e72E46C319a6d5aCA28Ad52f5C41a7821989Ad": {
+    "name": "POL ICHI vault",
+    "abi": "abi/external/ICHIVault.json",
+    "kind": "external"
+  },
+  "0x4328CE8ADC23F1c4E5A3049F63Ffbdd8e73F99Ce": {
+    "name": "Hydrex ALM gauge",
+    "abi": "abi/external/HydrexGauge.json",
+    "kind": "external"
+  },
+  "0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e": {
+    "name": "Algebra SwapRouter",
+    "abi": "abi/external/AlgebraSwapRouter.json",
+    "kind": "external"
+  },
+  "0x00000e7efa313F4E11Bfff432471eD9423AC6B30": {
+    "name": "HYDX",
+    "abi": "abi/external/HYDX.json",
+    "kind": "external"
+  },
+  "0xA1136031150E50B015b41f1ca6B2e99e49D8cB78": {
+    "name": "oHYDX",
+    "abi": "abi/external/oHYDX.json",
+    "kind": "external"
+  },
+  "0xF8344CFd5c43616a4366C34E3EEE75af79a74482": {
+    "name": "CRE KeystoneForwarder",
+    "abi": "abi/external/KeystoneForwarder.json",
+    "kind": "external"
+  },
+  "0x5301c7dD20bD945D2013b48ed0DEE3A284ca8989": {
+    "name": "EVC",
+    "abi": "abi/external/EVC.json",
+    "kind": "external"
+  },
+  "0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6": {
+    "name": "EulerEarn factory",
+    "abi": "abi/external/EulerEarnFactory.json",
+    "kind": "external"
+  },
+  "0x38235Cfa6c5F5dC818fc83D64D38ff32c92c0811": {
+    "name": "warehouse Roles modifier",
+    "abi": "abi/external/ZodiacRoles.json",
+    "kind": "external"
+  },
+  "0xF84eF3BA83BB62C88502241B878983D79708e371": {
+    "name": "SzipNavOracleDemoVAMM",
+    "abi": "abi/SzipNavOracleDemoVAMM.json",
+    "kind": "demo"
+  },
+  "0xB76FfBa3d1973f61b0E2e3b09536B15283e18dFC": {
+    "name": "LpStrategyModuleDemoVAMM",
+    "abi": "abi/LpStrategyModuleDemoVAMM.json",
+    "kind": "demo"
+  }
+}
