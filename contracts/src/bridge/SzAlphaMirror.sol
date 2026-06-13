@@ -10,11 +10,14 @@ import {BurnMintERC20} from "@chainlink/contracts/src/v0.8/shared/token/ERC20/Bu
 ///         (`SzAlpha`). A separate contract (not an init flag) keeps dead precompile code off Base and
 ///         shrinks the Base audit surface.
 /// @dev This is a bridged mirror with NO native backing on Base — its supply is conserved 1:1 against the
-///      964 supply burned/minted across the CCIP lane. All value accrual (validator rewards) happens on
-///      964 and is reflected via `SzAlpha.exchangeRate()`; the mirror is a pure transport token.
-/// @dev `maxSupply = 0` (unlimited — the cross-chain supply is bounded by the 964 mint/burn, not here);
-///      `preMint = 0` (no genesis supply on Base). `DEFAULT_ADMIN_ROLE` + `ccipAdmin` are the deployer at
-///      construction; the deploy script hands both to the timelock/multisig and revokes the deployer.
+///      szALPHA LOCKED in the 964 `SzAlphaLockReleasePool`'s lockbox (the lane is lock/release on 964,
+///      burn/mint here; locked 964 supply keeps counting in `SzAlpha.totalSupply()`, so the rate stays
+///      truthful — see SzAlphaLockReleasePool). All value accrual (validator rewards) happens on 964 and
+///      is reflected via `SzAlpha.exchangeRate()`; the mirror is a pure transport token.
+/// @dev `maxSupply = 0` (unlimited — the cross-chain supply is bounded by the 964 lock/release custody,
+///      not here); `preMint = 0` (no genesis supply on Base). `DEFAULT_ADMIN_ROLE` + `ccipAdmin` are the
+///      deployer at construction; the deploy script hands both to the timelock/multisig and revokes the
+///      deployer.
 contract SzAlphaMirror is BurnMintERC20 {
     constructor(string memory name_, string memory symbol_) BurnMintERC20(name_, symbol_, 18, 0, 0) {}
 }

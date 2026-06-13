@@ -47,35 +47,52 @@ TimelockController from genesis — so the CCIP admin is a *separate* `ccipAdmin
 
 ---
 
-## ISubtensorPrecompiles.sol — EXTERNAL shim (Bittensor 964 StakingV2 / AddressMapping precompiles)
+## ISubtensorPrecompiles.sol — EXTERNAL shim (Bittensor 964 StakingV2 / Alpha / AddressMapping precompiles)
 
-**What it shims.** The Subtensor (964) Frontier-EVM precompiles the 964-side `SzAlpha` wrapper stakes
-through. Authored locally rather than imported from `reference/subtensor/precompiles/src/solidity/` because
-the reference `stakingV2.sol` does not compile under strict solc (trailing comma in `allowance(...)`), and
-only four selectors are load-bearing. Two faces:
-- `IStakingV2` → the **StakingV2** precompile at `0x...0805`.
+**What it shims.** The Subtensor (964) Frontier-EVM precompiles the 964-side `SzAlpha` wrapper stakes and
+quotes through. Authored locally rather than imported from `reference/subtensor/precompiles/src/solidity/`
+because the reference `stakingV2.sol` does not compile under strict solc (trailing comma in
+`allowance(...)`), and only the load-bearing selectors are pinned. Three faces:
+- `IStakingV2` → the **StakingV2** precompile at `0x...0805` (INDEX 2053).
+- `IAlpha` → the **Alpha** precompile at `0x...0808` (INDEX 2056) — the subnet AMM quoting surface.
 - `IAddressMapping` → the **AddressMapping** precompile at `0x...080C`.
 
 **Declared surface.**
 ```
 interface IStakingV2 {
-    function addStake(bytes32 hotkey, uint256 amount, uint256 netuid) external payable;
-    function removeStake(bytes32 hotkey, uint256 amount, uint256 netuid) external payable;
-    function getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) external view returns (uint256);
+    function addStake(bytes32 hotkey, uint256 amount, uint256 netuid) external payable;   // amount: TAO in rao 9-dp
+    function removeStake(bytes32 hotkey, uint256 amount, uint256 netuid) external payable; // amount: alpha 9-dp
+    function getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) external view returns (uint256); // alpha 9-dp
+}
+interface IAlpha {
+    function getAlphaPrice(uint16 netuid) external view returns (uint256);        // 18-dp TAO/alpha (SPOT)
+    function getMovingAlphaPrice(uint16 netuid) external view returns (uint256);  // 18-dp TAO/alpha (EMA)
+    function simSwapTaoForAlpha(uint16 netuid, uint64 tao) external view returns (uint256);   // 9-dp in/out
+    function simSwapAlphaForTao(uint16 netuid, uint64 alpha) external view returns (uint256); // 9-dp in/out
 }
 interface IAddressMapping {
     function addressMapping(address targetAddress) external view returns (bytes32);
 }
 ```
 
-**Consumed by.** `contracts/src/bridge/SzAlpha.sol` only (the 964 wrapper).
+**Consumed by.** `contracts/src/bridge/SzAlpha.sol` (the 964 wrapper: staking + the preview quotes) and
+`contracts/script/DeploySzAlphaBridge.s.sol` (the `_assertAlphaPrecompile` deploy probe).
 
 **Gotchas.** These interfaces exist ONLY to source the 4-byte selectors and decode return data — they are
 NEVER used as a typed call target. On Subtensor's Frontier EVM a *typed* call to these precompiles "never
 reaches the runtime precompile" (see `reference/evm-bittensor/solidity/stakeV2.sol`). So `SzAlpha` invokes
-`addStake`/`removeStake` via low-level `call` + `abi.encodeWithSelector` and reads `getStake`/`addressMapping`
-via `staticcall`. `getStake` is in alpha; `addStake` amount is rao, `removeStake` amount is alpha;
-`addressMapping` converts an EVM H160 to its Substrate AccountId32 (H256) coldkey.
+`addStake`/`removeStake` via low-level `call` + `abi.encodeWithSelector` and reads everything else via
+`staticcall`.
+- **Units are per-function, not per-precompile:** `addStake` takes TAO in rao (9-dp) and is called with NO
+  attached value (the precompile debits the caller's substrate-mapped balance); `removeStake` takes alpha
+  9-dp; `getStake` returns alpha 9-dp; the `simSwap*` pair is 9-dp in/out; the two price getters are 18-dp.
+  `netuid` is `uint256` in StakingV2 but `uint16` in IAlpha — the selectors differ accordingly.
+- **`addStake` is an AMM swap, not a 1:1 credit** — the alpha received is only observable as a `getStake`
+  delta; `simSwapTaoForAlpha` is the honest pre-quote (fee-inclusive, size-aware).
+- **Spot vs EMA:** `getAlphaPrice`/`simSwap*` are in-block manipulable (advisory quotes only);
+  `getMovingAlphaPrice` is the EMA — the only NAV-grade read (recorded follow-up for the 8-B4 alphaUSD leg).
+- StakingV2 also exposes `transferStake`/`moveStake` (not pinned): third parties CAN attribute stake to the
+  wrapper's coldkey — the donation vector `SzAlpha`'s header documents.
 
 ---
 
@@ -115,5 +132,7 @@ interface IXAlphaRate {
 - **`exchangeRate()` is the drop-in NAV read** on both sides — no pushed APR is needed (resolves 8x-02; see
   `SzAlphaRateOracle.sol`). The interface pins only this one face.
 - **M1 vs production:** M1 xALPHA is an 18-dp mock ERC20 exposing this getter; the production swap-in is the
-  bridged Rubicon LST wrapper (`LiquidStakedV3`), whose rate-getter selector + supply-immutability are
-  VERIFIED AT THE 8x/BRIDGE INTEGRATION (flag, do not block). See `bridge/xalpha-bridge-impl.md §2`.
+  bridged Rubicon LST wrapper (`LiquidStakedV3`). **Verified 2026-06-12:** its `exchangeRate()` selector
+  matches this face (verified source vendored at `reference/rubicon/LiquidStakedV3.flattened.sol`); note its
+  rate nets pending treasury/yield fees, and Rubicon ships NO on-Base rate primitive — our `SzAlphaRateOracle`
+  push is an extension beyond the proven pattern. See `bridge/xalpha-bridge-impl.md §2` + `reference/rubicon/`.

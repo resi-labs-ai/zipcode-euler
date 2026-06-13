@@ -105,7 +105,9 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
     // --------------------------------------------------------------------- IXAlphaRate (the deliverable)
     /// @notice The Base-side xALPHA exchange rate (alpha per xALPHA, 18-dp) — the last value CRE pushed from 964.
     ///         Consumers (NAV / Euler adapter) read this and MUST gate on `fresh()` (a rate that moves NAV must
-    ///         fail-closed on a stale push). Reverts only if never pushed (no genesis rate to serve).
+    ///         fail-closed on a stale push). Returns 0 if never pushed — it does NOT revert, which is exactly
+    ///         why the `fresh()` gate is mandatory (`latest.ts == 0` ⇒ not fresh; an ungated consumer would
+    ///         read a 0 rate).
     function exchangeRate() external view returns (uint256) {
         return latest.rate;
     }

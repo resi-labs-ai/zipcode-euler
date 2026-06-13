@@ -88,9 +88,10 @@ contract DeployLocal is DeployZipcode {
         i.liqLTV = 9000;
         i.dBps = 100;
         i.buybackCap = 1_000_000e18;
-        i.rateMaxStaleness = 86_400;
-        i.rateWindow = 3600;
-        i.rateAprCap = 20_000;
+        // SzAlphaRateOracle immutables — keep in lockstep with DeployMainnet (8x-02 fixtures: 6h/30d/500%).
+        i.rateMaxStaleness = 6 hours;
+        i.rateWindow = 30 days;
+        i.rateAprCap = 50_000;
     }
 
     /// @notice Provision the stand-ins inside the broadcast. The EE pool + base USDC market are REAL contracts (a live

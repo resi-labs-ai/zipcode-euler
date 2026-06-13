@@ -2,6 +2,9 @@
 # but the upstream-URL + pinned-commit manifest IS tracked so the refs are reproducible.
 reference/*
 !reference/MANIFEST.md
+# rubicon is NOT a cloned repo — it's small, curated, explorer-fetched verified source the
+# 8x-01 docs depend on (provenance in its README + file headers). Tracked as an exception.
+!reference/rubicon/
 
 # The frontend canvas is a clone of euler-xyz/euler-lite (its own .git) — ignored like reference/;
 # provenance is in reference/MANIFEST.md. The dedicated frontend sweep will commit the Zipcode UI it paints.

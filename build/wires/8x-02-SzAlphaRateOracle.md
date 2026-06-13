@@ -38,12 +38,13 @@ row at `claude-zipcode.md:1505`).
 - **Checkpoint roll (the derived-APR machinery, `:91-99`).** `curAnchor` seeds on the first push; once a push is
   `>= window` newer than `curAnchor`, the matured `curAnchor` retires to `prevAnchor` and `curAnchor` resets
   (`rolled = true` in the `RatePushed` event). `latest` updates every push.
-- **`exchangeRate()` (`:109-111`).** Returns `latest.rate` — the Base-side `IXAlphaRate`. The drop-in for
-  `SzipNavOracle`'s xALPHA NAV leg and any Euler price-oracle adapter.
-- **`fresh()` / `lastUpdate()` (`:114-121`).** `lastUpdate()` = `latest.ts` (`0` ⇒ never pushed). `fresh()` is true
+- **`exchangeRate()` (`:111-113`).** Returns `latest.rate` — the Base-side `IXAlphaRate`. The drop-in for
+  `SzipNavOracle`'s xALPHA NAV leg and any Euler price-oracle adapter. **Returns 0 (does NOT revert) before
+  the first push** — the `fresh()` gate is what protects ungated reads (natspec corrected 2026-06-12).
+- **`fresh()` / `lastUpdate()` (`:116-123`).** `lastUpdate()` = `latest.ts` (`0` ⇒ never pushed). `fresh()` is true
   iff a rate has been pushed **and** it is within `maxStaleness`. This is the consumer's fail-closed gate — a rate
   that moves NAV must not be served stale; the oracle **exposes** freshness, it does not silently serve old.
-- **`intrinsicAprBps()` (DERIVED view, `:128-141`).** `(rate_now / rate_prev − 1) × year / Δ` over the trailing
+- **`intrinsicAprBps()` (DERIVED view, `:130-143`).** `(rate_now / rate_prev − 1) × year / Δ` over the trailing
   checkpoint (`prevAnchor`, else `curAnchor`). **Floored at 0** (slash/decline/flat ⇒ `0`, never negative — return
   type is `uint32`), **clamped to `aprCap`**, `0` until a trailing checkpoint exists. Never reverts; **advisory only**
   — NAV does NOT consume it (NAV reads `exchangeRate()` directly). The annualization is **one expression**
@@ -91,6 +92,16 @@ This window **resolves the §8.6 cross-chain rate seam** — `SzipNavOracle`'s x
   is proven; `SzAlpha.exchangeRate()` low-level-staticcalls `0x805`).
 
 ## Gotchas
+- **The pushed rate is only as truthful as the 964 topology (8x-01 seam, 2026-06-12).** `exchangeRate()` on
+  964 reads LOCAL `totalSupply()`; the 8x-01 rework's **lock/release** lane keeps bridged-out szALPHA in
+  that supply, so the rate this oracle transports stays truthful across bridge-outs. (Under the abandoned
+  burn/mint topology every bridge-out would have inflated the rate and this oracle would have faithfully
+  pushed the corruption into NAV — `test_lane_roundTrip_rateInvariant` in the 8x-01 suite pins the fix.)
+- **Deploy-knob mismatch (RESOLVED 2026-06-12).** `DeployMainnet`/`DeployLocal`/`DeployZipcode.t`/
+  `.env.example` previously shipped `24h / 1h / 20_000` against this doc's `6h / 30d / 50_000` fixtures —
+  all four now carry the fixtures (`21600 / 2592000 / 50000`). The knobs are IMMUTABLE (a wrong window
+  means redeploying the oracle + re-wiring NAV), so any future change must update doc+scripts+test+env
+  together.
 - **v3 is final; v1 and v2 are DELETED.** The v1 push-cache (a Forwarder-gated receiver that received a
   **pre-computed APR** + defended it with an adversarial deviation band) and the v2 964-native `XAlphaAprOracle`
   (right principle — derive — wrong chain: the consumers are Base-side) were both removed. v3 = **Base + rate-only +

@@ -4,8 +4,12 @@ pragma solidity 0.8.24;
 import {BurnMintTokenPool} from "chainlink-ccip/pools/BurnMintTokenPool.sol";
 import {IBurnMintERC20} from "chainlink-ccip/interfaces/IBurnMintERC20.sol";
 
-/// @title SzAlphaTokenPool — the CCT BurnMintTokenPool for szALPHA (both chains).
-/// @notice A thin subclass of the audited `BurnMintTokenPool` (burn-on-source / mint-on-dest) that adds
+/// @title SzAlphaTokenPool — the CCT BurnMintTokenPool for szALPHA (BASE SIDE ONLY).
+/// @notice Base (8453) pairs this burn/mint pool with the `SzAlphaMirror`. The 964 side uses
+///         `SzAlphaLockReleasePool` instead — burn-on-source on 964 would shrink `SzAlpha.totalSupply()`
+///         against unchanged stake and corrupt `exchangeRate()` (see that pool's header). On Base the
+///         mirror has no rate of its own, so burn/mint is correct and is the proven Rubicon shape.
+/// @dev A thin subclass of the audited `BurnMintTokenPool` (burn-on-source / mint-on-dest) that adds
 ///         two deploy-time invariants the security review requires:
 ///           - S8: `localTokenDecimals == 18` (cross-chain conservation depends on equal decimals); and
 ///           - S9: the wired `rmnProxy` equals the chain's canonical ARMProxy (immutable in `TokenPool`;

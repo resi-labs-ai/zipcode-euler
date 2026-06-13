@@ -9,6 +9,12 @@ checked out locally, so anyone can reproduce it:
 git clone <url> reference/<name> && git -C reference/<name> checkout <commit>
 ```
 
+## Tracked exception: `reference/rubicon/` (NOT a clone)
+Small curated reference, **tracked in this repo** (gitignore-negated): Project Rubicon's verified
+`LiquidStakedV3` source fetched 2026-06-12 from the Taostats explorer (implementation
+`0x395d0996C345b6e16590dB82917c1BFb00577fba` on 964) + the live address book / audit links.
+The 8x-01 bridge rework's proven-pattern provenance — see `reference/rubicon/README.md`.
+
 ## Other cloned bases (outside `reference/`, also gitignored)
 | Path | Upstream URL | Pinned commit |
 |---|---|---|

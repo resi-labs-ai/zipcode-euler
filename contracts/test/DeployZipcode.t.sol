@@ -92,9 +92,10 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         vm.setEnv("LIQ_LTV", vm.toString(uint256(9000)));
         vm.setEnv("BUYBURN_DBPS", vm.toString(uint256(100)));
         vm.setEnv("BUYBACK_CAP", vm.toString(uint256(1_000_000e18)));
-        vm.setEnv("RATE_MAX_STALENESS", vm.toString(uint256(86_400)));
-        vm.setEnv("RATE_WINDOW", vm.toString(uint256(3600)));
-        vm.setEnv("RATE_APR_CAP", vm.toString(uint256(20_000)));
+        // SzAlphaRateOracle immutables — the 8x-02 doc+test fixtures (6h / 30d / 500%).
+        vm.setEnv("RATE_MAX_STALENESS", vm.toString(uint256(6 hours)));
+        vm.setEnv("RATE_WINDOW", vm.toString(uint256(30 days)));
+        vm.setEnv("RATE_APR_CAP", vm.toString(uint256(50_000)));
     }
 }
 

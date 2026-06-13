@@ -9,32 +9,55 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
-import {IStakingV2, IAddressMapping} from "../interfaces/bridge/ISubtensorPrecompiles.sol";
+import {IStakingV2, IAlpha, IAddressMapping} from "../interfaces/bridge/ISubtensorPrecompiles.sol";
 
 /// @title SzAlpha — the self-built xALPHA liquid-staking wrapper (Bittensor 964).
 /// @notice An upgradeable 18-dp ERC-20 liquid-staking receipt over the Subtensor StakingV2 precompile,
 ///         pointed at OUR validator on OUR subnet (the Zipcode subnet). It is the token the M1 szipUSD
 ///         basket holds (the zipUSD/xALPHA Hydrex LP leg) and the one CRE-03 marks via `exchangeRate()`.
+///         The flow mirrors the audited production precedent (Rubicon `LiquidStakedV3`, see
+///         `reference/rubicon/`): TAO in, alpha-denominated backing, TAO out.
 ///
-/// @dev POOLED-STAKER MODEL (the central architecture decision). The *wrapper itself* is the single
-///      staker: all deposited alpha is staked under the wrapper's own coldkey (derived once at init via
-///      AddressMapping `0x80c`). There is NO per-user SS58 mapping — users hold fungible szALPHA shares;
-///      the wrapper holds the aggregate stake. A structural consequence: because Subtensor attributes
-///      stake to the *caller's* coldkey, a third party CANNOT add to the wrapper's backing stake, so the
-///      classic ERC-4626 donation/inflation attack is structurally inapplicable. The OZ virtual-offset
-///      (virtualShares=1 / virtualAssets=1) below is retained anyway for div-by-zero safety + a clean
-///      genesis 1:1 rate (see the anti-dilution note on `_previewDeposit`).
+/// @dev UNIT TABLE (the load-bearing convention; see `ISubtensorPrecompiles` for the runtime facts):
+///        - msg.value / native payouts:  TAO, 18-dp wei.
+///        - precompile stake amounts:    addStake takes TAO in rao (9-dp); removeStake takes alpha 9-dp;
+///                                       getStake returns alpha 9-dp. 1 TAO = 1e9 rao = 1e18 wei.
+///        - shares (this token):         18-dp. All share math runs in 18-dp space via `_stake18()`
+///                                       (= getStake x 1e9), so `exchangeRate()` stays 18-dp
+///                                       alpha-per-szALPHA (1e18 == 1:1) for CRE/NAV consumers.
+///        - deposits swap TAO -> alpha through the subnet AMM at a VARIABLE price: shares are minted
+///          against the MEASURED stake delta (never against msg.value); redemptions pay the MEASURED
+///          TAO balance delta. Both legs take user slippage bounds (minSharesOut / minTaoOut).
 ///
-/// @dev TWO DISTINCT MINT PATHS, gated separately (NEVER one public `mint(amount)`):
-///        - `deposit(amount)` (payable): the user staking leg — mints shares ONLY against verified added
-///          stake; open to anyone; does NOT touch the CCT mint role.
-///        - `mint`/`burn`: the CCT cross-chain leg — callable ONLY by the wired `ccipPool`; moves existing
-///          supply across the CCIP lane; never touches stake.
+/// @dev POOLED-STAKER MODEL. The *wrapper itself* is the single staker: all deposited value is staked
+///      under the wrapper's own coldkey (derived once at init via AddressMapping `0x80C`). There is NO
+///      per-user SS58 mapping — users hold fungible szALPHA shares; the wrapper holds the aggregate stake.
+///
+/// @dev DONATIONS (honest version — replaces an earlier, wrong "structurally inapplicable" claim).
+///      Subtensor's `transferStake` lets a third party attribute staked alpha to the wrapper's coldkey,
+///      so the backing CAN be raised externally. Consequences under measured-delta minting + floor
+///      rounding + the `ZeroSharesOut` guard:
+///        - a donation only raises `exchangeRate()` — a pure, irrecoverable gift to existing holders
+///          (the donor holds no claim on it);
+///        - the classic first-depositor inflation attack is strictly value-destroying: to skew a victim
+///          depositing V the attacker must donate >= V, all of which accrues to others, and a deposit
+///          rounding to zero shares reverts (`ZeroSharesOut`) rather than silently losing funds;
+///        - the deploy script makes a small SEED DEPOSIT at genesis, closing even the griefing window.
+///      The OZ virtual-offset (1/1) is retained for div-by-zero safety + a clean genesis 1:1 rate.
+///
+/// @dev CCIP/CCT TOPOLOGY (lock/release — the proven Rubicon shape). Bridged-out szALPHA is LOCKED in
+///      the 964 `SzAlphaLockReleasePool` (+ `ERC20LockBox`), never burned — so `totalSupply()` keeps
+///      counting it and `exchangeRate()` stays truthful while supply circulates on Base. (Burn-on-source
+///      would shrink local supply against unchanged stake, inflating the rate and letting 964 redeemers
+///      drain the backing of Base holders.) This wrapper therefore exposes NO pool mint/burn surface;
+///      the only CCIP-facing role is `ccipAdmin` (the TokenAdminRegistry registrar via `getCCIPAdmin`).
 ///
 /// @dev AUTHORITY: `owner()` (the OZ Ownable upgrade authority) is the TimelockController from genesis —
 ///      it gates `_authorizeUpgrade` + pause. `ccipAdmin` is a SEPARATE, lower-privilege registrar role
-///      (returned by `getCCIPAdmin()`) that performs the one-time CCIP registration/pool wiring; it has
-///      no mint, no upgrade, no fund power. `ccipPool` (the only mint/burn caller) is set ONCE.
+///      (returned by `getCCIPAdmin()`); it has no mint, no upgrade, no fund power.
+///
+/// @dev v2 candidate (deliberately out of scope): a `getMovingAlphaPrice`-based EMA view for NAV-grade
+///      pricing; the previews below use the spot `simSwap*` quotes (advisory only).
 contract SzAlpha is
     ERC20Upgradeable,
     OwnableUpgradeable,
@@ -47,44 +70,46 @@ contract SzAlpha is
 
     // --- Subtensor precompiles (constants) ---
     address internal constant STAKING_V2 = 0x0000000000000000000000000000000000000805;
+    address internal constant ALPHA = 0x0000000000000000000000000000000000000808;
     address internal constant ADDRESS_MAPPING = 0x000000000000000000000000000000000000080C;
 
-    // --- OZ ERC-4626 virtual-offset anti-dilution constants (see _previewDeposit) ---
+    /// @dev 1 TAO = 1e9 rao; alpha is 9-dp on-chain. Scales 9-dp precompile units <-> 18-dp share space.
+    uint256 internal constant RAO = 1e9;
+
+    // --- OZ ERC-4626 virtual-offset constants (18-dp space; see the donation note above) ---
     uint256 internal constant VIRTUAL_SHARES = 1;
     uint256 internal constant VIRTUAL_STAKE = 1;
 
     // --- Config (set at initialize, UUPS) ---
-    uint256 public netuid; // slot
+    uint256 public netuid; // slot (<= type(uint16).max, enforced at init — IAlpha takes uint16)
     bytes32 public validatorHotkey;
     bytes32 public wrapperColdkey; // derived once at init, cached
-    address public ccipPool; // the SOLE mint/burn caller; set once
     address public ccipAdmin; // the CCIP registrar (getCCIPAdmin); != owner
 
-    /// @dev Storage gap for future upgrades (UUPS). 50 - 5 used slots = 45.
-    uint256[45] private __gap;
+    /// @dev Storage gap for future upgrades (UUPS). 50 - 4 used slots = 46.
+    uint256[46] private __gap;
 
     // --- Events ---
-    event Deposited(address indexed user, uint256 amountIn, uint256 sharesOut);
-    event Redeemed(address indexed user, uint256 sharesIn, uint256 alphaOut);
-    event CcipPoolSet(address indexed pool);
+    /// @param taoIn TAO actually staked (wei, 18-dp; excludes the refunded sub-rao remainder).
+    /// @param alphaStakedRao alpha received from the AMM swap (9-dp) — the measured stake delta.
+    event Deposited(address indexed user, uint256 taoIn, uint256 alphaStakedRao, uint256 sharesOut);
+    /// @param alphaOutRao alpha unstaked (9-dp). @param taoOut TAO paid to the redeemer (wei, 18-dp).
+    event Redeemed(address indexed user, uint256 sharesIn, uint256 alphaOutRao, uint256 taoOut);
     event CcipAdminTransferred(address indexed previousAdmin, address indexed newAdmin);
 
     // --- Errors ---
     error ZeroAmount();
     error ZeroAddress();
-    error ValueMismatch(uint256 sent, uint256 expected);
+    error ZeroSharesOut();
+    error DeadlineExpired();
+    error SlippageExceeded(uint256 actual, uint256 minOut);
+    error NetuidTooLarge(uint256 netuid);
+    error AmountOverflowsUint64(uint256 amountRao);
     error AddStakeEffectMissing();
     error RemoveStakeEffectMissing();
     error PrecompileCallFailed();
-    error PoolAlreadySet();
-    error NotCcipPool();
     error NotCcipAdmin();
     error NativeTransferFailed();
-
-    modifier onlyCcipPool() {
-        if (msg.sender != ccipPool) revert NotCcipPool();
-        _;
-    }
 
     modifier onlyCcipAdmin() {
         if (msg.sender != ccipAdmin) revert NotCcipAdmin();
@@ -98,10 +123,10 @@ contract SzAlpha is
 
     /// @param name_ token name.
     /// @param symbol_ token symbol.
-    /// @param netuid_ our registered subnet id (deploy-time fixture).
+    /// @param netuid_ our registered subnet id (deploy-time fixture; must fit uint16 for IAlpha).
     /// @param validatorHotkey_ our validator hotkey, SS58 pubkey (deploy-time fixture).
     /// @param owner_ the TimelockController (upgrade + pause authority) — set from genesis, never a bare EOA.
-    /// @param ccipAdmin_ the CCIP registrar (registers the token + sets the pool once); != owner.
+    /// @param ccipAdmin_ the CCIP registrar (TokenAdminRegistry admin via getCCIPAdmin); != owner.
     function initialize(
         string memory name_,
         string memory symbol_,
@@ -112,6 +137,7 @@ contract SzAlpha is
     ) external initializer {
         if (owner_ == address(0) || ccipAdmin_ == address(0)) revert ZeroAddress();
         if (validatorHotkey_ == bytes32(0)) revert ZeroAddress();
+        if (netuid_ > type(uint16).max) revert NetuidTooLarge(netuid_);
 
         __ERC20_init(name_, symbol_);
         __Ownable_init(owner_);
@@ -133,60 +159,95 @@ contract SzAlpha is
     // │                    User staking leg (964)                    │
     // ================================================================
 
-    /// @notice Stake `amount` of native alpha and mint szALPHA shares to the caller.
-    /// @dev `msg.value` must equal `amount` (native value carries the alpha on the Subtensor EVM, per
-    ///      `stakeV2.sol`). Shares are minted against the verified added stake (S4 effect-check). Pausable.
-    function deposit(uint256 amount) external payable nonReentrant whenNotPaused returns (uint256 shares) {
-        if (amount == 0) revert ZeroAmount();
-        if (msg.value != amount) revert ValueMismatch(msg.value, amount);
+    /// @notice Stake `msg.value` TAO and mint szALPHA shares against the alpha actually received.
+    /// @dev Units: `msg.value` is wei; the precompile is fed `msg.value / 1e9` rao with NO attached
+    ///      value (it debits this contract's substrate-mapped balance, which holds the sent TAO). The
+    ///      sub-rao remainder (`msg.value % 1e9`) is refunded. The TAO -> alpha AMM conversion is
+    ///      variable-price, so shares are minted against the MEASURED `getStake` delta at the
+    ///      pre-deposit rate (S4: the delta must be > 0, else a silent precompile failure would be
+    ///      fund loss). Slippage: caller bounds the mint with `minSharesOut` (0 = unbounded; the
+    ///      `ZeroSharesOut` backstop still applies). Pausable.
+    /// @param minSharesOut Minimum shares acceptable (derive from `previewDeposit` minus tolerance).
+    /// @param deadline Unix time after which the call reverts (`type(uint256).max` = none).
+    function deposit(uint256 minSharesOut, uint256 deadline)
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        returns (uint256 shares)
+    {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        uint256 amountRao = msg.value / RAO;
+        if (amountRao == 0) revert ZeroAmount();
+        uint256 refund = msg.value % RAO;
 
-        uint256 stakeBefore = _readStake();
+        uint256 stakeRaoBefore = _readStake();
         uint256 supplyBefore = totalSupply();
 
         // Interaction: stake via the precompile (low-level; a typed call never reaches the runtime).
-        _callStaking(abi.encodeWithSelector(IStakingV2.addStake.selector, validatorHotkey, amount, netuid));
+        _callStaking(abi.encodeWithSelector(IStakingV2.addStake.selector, validatorHotkey, amountRao, netuid));
 
-        // S4: verify the observable effect — the stake MUST have risen by >= the deposited amount, else
-        // a silent precompile failure would be fund loss (alpha accepted, no backing stake).
-        uint256 stakeAfter = _readStake();
-        if (stakeAfter < stakeBefore + amount) revert AddStakeEffectMissing();
+        // S4 (direction): the backing stake MUST have risen — the delta IS the alpha received.
+        uint256 stakeRaoAfter = _readStake();
+        if (stakeRaoAfter <= stakeRaoBefore) revert AddStakeEffectMissing();
+        uint256 alphaDeltaRao = stakeRaoAfter - stakeRaoBefore;
 
-        shares = _previewDeposit(amount, supplyBefore, stakeBefore);
-        if (shares == 0) revert ZeroAmount();
+        // Mint against the measured delta at the PRE-deposit rate (18-dp space).
+        shares = _previewDeposit(alphaDeltaRao * RAO, supplyBefore, stakeRaoBefore * RAO);
+        if (shares == 0) revert ZeroSharesOut();
+        if (shares < minSharesOut) revert SlippageExceeded(shares, minSharesOut);
         _mint(msg.sender, shares);
 
-        emit Deposited(msg.sender, amount, shares);
+        // Interaction (last, CEI): return the sub-rao remainder.
+        if (refund > 0) {
+            (bool ok,) = payable(msg.sender).call{value: refund}("");
+            if (!ok) revert NativeTransferFailed();
+        }
+
+        emit Deposited(msg.sender, msg.value - refund, alphaDeltaRao, shares);
     }
 
-    /// @notice Burn `shares` szALPHA and return the proportional native alpha to the caller.
+    /// @notice Burn `shares` szALPHA, unstake the proportional alpha, and pay the caller the TAO the
+    ///         alpha -> TAO AMM swap actually produced.
     /// @dev NEVER pausable (S3/S11): the token's value is NAV-anchored to redeemability; dTAO has no
-    ///      unbonding (immediate, slippage-only). CEI: compute -> burn -> unstake -> pay.
-    function redeem(uint256 shares) external nonReentrant returns (uint256 alphaOut) {
+    ///      unbonding (immediate, slippage-only). CEI: compute -> burn -> unstake -> measure -> pay.
+    ///      S4: the stake must fall AND the native balance must rise; the payout is the MEASURED
+    ///      balance delta (never the estimate). Sub-rao share dust (< 1e9 18-dp units of alpha) is
+    ///      floored away and stays staked, accruing to remaining holders.
+    /// @param minTaoOut Minimum TAO (wei) acceptable (derive from `previewRedeem` minus tolerance).
+    /// @param deadline Unix time after which the call reverts (`type(uint256).max` = none).
+    function redeem(uint256 shares, uint256 minTaoOut, uint256 deadline)
+        external
+        nonReentrant
+        returns (uint256 taoOut)
+    {
+        if (block.timestamp > deadline) revert DeadlineExpired();
         if (shares == 0) revert ZeroAmount();
 
-        uint256 supplyBefore = totalSupply();
-        uint256 stakeBefore = _readStake();
-        alphaOut = _previewRedeem(shares, supplyBefore, stakeBefore);
-        if (alphaOut == 0) revert ZeroAmount();
+        uint256 stakeRaoBefore = _readStake();
+        uint256 alphaOut18 = _previewRedeem(shares, totalSupply(), stakeRaoBefore * RAO);
+        uint256 alphaOutRao = alphaOut18 / RAO; // floor: dust stays staked for remaining holders
+        if (alphaOutRao == 0) revert ZeroAmount();
 
         // Effect: burn the caller's shares first (CEI).
         _burn(msg.sender, shares);
 
         uint256 balBefore = address(this).balance;
 
-        // Interaction: unstake via the precompile.
-        _callStaking(abi.encodeWithSelector(IStakingV2.removeStake.selector, validatorHotkey, alphaOut, netuid));
+        // Interaction: unstake via the precompile (alpha -> TAO swap at the AMM price).
+        _callStaking(abi.encodeWithSelector(IStakingV2.removeStake.selector, validatorHotkey, alphaOutRao, netuid));
 
-        // S4: verify BOTH the stake fell and the native balance rose by >= alphaOut.
-        uint256 stakeAfter = _readStake();
-        if (stakeBefore < stakeAfter + alphaOut) revert RemoveStakeEffectMissing();
-        if (address(this).balance < balBefore + alphaOut) revert RemoveStakeEffectMissing();
+        // S4 (direction + measured output): stake fell, and TAO landed in our native balance.
+        if (_readStake() >= stakeRaoBefore) revert RemoveStakeEffectMissing();
+        taoOut = address(this).balance - balBefore;
+        if (taoOut == 0) revert RemoveStakeEffectMissing();
+        if (taoOut < minTaoOut) revert SlippageExceeded(taoOut, minTaoOut);
 
-        // Interaction: pay the caller.
-        (bool ok,) = payable(msg.sender).call{value: alphaOut}("");
+        // Interaction: pay the caller the measured output.
+        (bool ok,) = payable(msg.sender).call{value: taoOut}("");
         if (!ok) revert NativeTransferFailed();
 
-        emit Redeemed(msg.sender, shares, alphaOut);
+        emit Redeemed(msg.sender, shares, alphaOutRao, taoOut);
     }
 
     // ================================================================
@@ -195,64 +256,48 @@ contract SzAlpha is
 
     /// @inheritdoc IXAlphaRate
     /// @notice Alpha-per-szALPHA, 18-dp (`1e18` == 1:1). Read live from the precompile — NO DEX/oracle in
-    ///         the path, so validator rewards (which lift `totalStaked`) accrue here non-manipulably.
+    ///         the path, so validator rewards (which lift the backing stake) accrue here non-manipulably.
     /// @dev CRE-03 (`8x-02`) annualizes the GROWTH of this value off-chain; the absolute scale is not an
-    ///      on-chain concern. Uses the same virtual offset as the share math for internal consistency.
+    ///      on-chain concern. Stake is normalized to 18-dp (`_stake18`) so the rate's external semantics
+    ///      are unchanged by the 9-dp precompile units. Bridged-out supply stays in `totalSupply()`
+    ///      (lock/release — see the topology note), keeping this rate truthful across chains.
     function exchangeRate() external view returns (uint256) {
-        return (_readStake() + VIRTUAL_STAKE).mulDiv(1e18, totalSupply() + VIRTUAL_SHARES);
+        return (_stake18() + VIRTUAL_STAKE).mulDiv(1e18, totalSupply() + VIRTUAL_SHARES);
     }
 
-    /// @notice The wrapper's current aggregate backing stake (alpha), read live from StakingV2.
+    /// @notice The wrapper's aggregate backing alpha, normalized to 18-dp (raw precompile units are
+    ///         9-dp rao-scale; this is `getStake x 1e9`).
     function totalStaked() external view returns (uint256) {
-        return _readStake();
+        return _stake18();
     }
 
-    /// @notice Preview the shares minted for a `amount` deposit at the current rate.
-    function previewDeposit(uint256 amount) external view returns (uint256) {
-        return _previewDeposit(amount, totalSupply(), _readStake());
+    /// @notice Quote the shares a `taoWei` deposit would mint RIGHT NOW, via the Alpha precompile's
+    ///         AMM swap simulation (fee-inclusive, size-aware) + the current share rate.
+    /// @dev ADVISORY: a current-block estimate — the AMM price can move before execution; derive
+    ///      `minSharesOut` from this minus a tolerance. Spot-based (manipulable in-block), so never
+    ///      consume it for pricing funds on-chain; NAV reads `exchangeRate()` only.
+    function previewDeposit(uint256 taoWei) external view returns (uint256 shares) {
+        uint256 amountRao = taoWei / RAO;
+        if (amountRao == 0) return 0;
+        uint256 alphaOutRao = _simSwapTaoForAlpha(amountRao);
+        return _previewDeposit(alphaOutRao * RAO, totalSupply(), _stake18());
     }
 
-    /// @notice Preview the alpha returned for redeeming `shares` at the current rate.
-    function previewRedeem(uint256 shares) external view returns (uint256) {
-        return _previewRedeem(shares, totalSupply(), _readStake());
+    /// @notice Quote the TAO (wei) redeeming `shares` would pay RIGHT NOW: exact share->alpha rate
+    ///         math, then the Alpha precompile's alpha->TAO swap simulation.
+    /// @dev ADVISORY, same caveats as `previewDeposit`; derive `minTaoOut` from this minus a tolerance.
+    function previewRedeem(uint256 shares) external view returns (uint256 taoWei) {
+        uint256 alphaOutRao = _previewRedeem(shares, totalSupply(), _stake18()) / RAO;
+        if (alphaOutRao == 0) return 0;
+        return _simSwapAlphaForTao(alphaOutRao) * RAO;
     }
 
     // ================================================================
-    // │                  CCT cross-chain leg (CCIP)                  │
+    // │                  CCIP registrar (CCT, lock/release)          │
     // ================================================================
 
-    /// @notice Mint bridged supply on this chain. CCT leg — callable ONLY by `ccipPool`. Pausable (S11).
-    function mint(address account, uint256 amount) external onlyCcipPool whenNotPaused {
-        _mint(account, amount);
-    }
-
-    /// @notice Burn bridged supply held by the pool. CCT leg — callable ONLY by `ccipPool`. NOT pausable.
-    function burn(uint256 amount) external onlyCcipPool {
-        _burn(msg.sender, amount);
-    }
-
-    /// @notice Burn `amount` from `account` (allowance-spending). CCT leg — `ccipPool` only.
-    function burnFrom(address account, uint256 amount) public onlyCcipPool {
-        _spendAllowance(account, msg.sender, amount);
-        _burn(account, amount);
-    }
-
-    /// @notice Alias of `burnFrom` (older CCIP naming). CCT leg — `ccipPool` only.
-    function burn(address account, uint256 amount) external {
-        burnFrom(account, amount);
-    }
-
-    /// @notice One-time wiring of the CCT pool as the SOLE mint/burn caller.
-    /// @dev Named to match the canonical `BurnMintERC20.grantMintAndBurnRoles` so the deploy script is
-    ///      uniform across both tokens. Gated to `ccipAdmin` (the registrar), set-once.
-    function grantMintAndBurnRoles(address pool) external onlyCcipAdmin {
-        if (pool == address(0)) revert ZeroAddress();
-        if (ccipPool != address(0)) revert PoolAlreadySet();
-        ccipPool = pool;
-        emit CcipPoolSet(pool);
-    }
-
-    /// @notice The CCIP admin (registrar) — consumed by `registerAdminViaGetCCIPAdmin`.
+    /// @notice The CCIP admin (registrar) — consumed by `registerAdminViaGetCCIPAdmin`. The 964 pool is
+    ///         lock/release: this token grants NO mint/burn to anything (see the topology note).
     function getCCIPAdmin() external view returns (address) {
         return ccipAdmin;
     }
@@ -268,7 +313,7 @@ contract SzAlpha is
     // │                       Admin (owner)                          │
     // ================================================================
 
-    /// @notice Pause the mint paths (deposit + CCT mint). Redeem stays available. Owner (timelock) only.
+    /// @notice Pause deposits. Redeem stays available (S3/S11). Owner (timelock) only.
     function pause() external onlyOwner {
         _pause();
     }
@@ -289,24 +334,48 @@ contract SzAlpha is
     // │                         Internals                            │
     // ================================================================
 
-    /// @dev OZ ERC-4626 minimum-shares (virtual-offset) convention: shares = amount * (supply + 1) /
-    ///      (stake + 1), rounded DOWN. Replaces the ticket's "mint 1e3 dead shares to address(0)", which
-    ///      is impossible in OZ (`_mint` to address(0) reverts) and would not prevent div-by-zero. The
-    ///      virtual offset: (a) never divides by zero (denominator >= 1), (b) yields a clean 1:1 genesis
-    ///      (supply=stake=0 -> shares=amount), (c) rounds in the protocol's favor. See report 8x-01.
-    function _previewDeposit(uint256 amount, uint256 supply, uint256 stake) internal pure returns (uint256) {
-        return amount.mulDiv(supply + VIRTUAL_SHARES, stake + VIRTUAL_STAKE, Math.Rounding.Floor);
+    /// @dev OZ ERC-4626 minimum-shares (virtual-offset) convention in 18-dp space: shares =
+    ///      amount18 * (supply + 1) / (stake18 + 1), rounded DOWN. The virtual offset: (a) never
+    ///      divides by zero, (b) yields a clean 1:1 genesis (supply=stake=0 -> shares=amount),
+    ///      (c) rounds in the protocol's favor. See the donation note for why 1/1 suffices.
+    function _previewDeposit(uint256 amount18, uint256 supply, uint256 stake18) internal pure returns (uint256) {
+        return amount18.mulDiv(supply + VIRTUAL_SHARES, stake18 + VIRTUAL_STAKE, Math.Rounding.Floor);
     }
 
     /// @dev Inverse of `_previewDeposit`, rounded DOWN (dust is the redeemer's loss, never a gain).
-    function _previewRedeem(uint256 shares, uint256 supply, uint256 stake) internal pure returns (uint256) {
-        return shares.mulDiv(stake + VIRTUAL_STAKE, supply + VIRTUAL_SHARES, Math.Rounding.Floor);
+    function _previewRedeem(uint256 shares, uint256 supply, uint256 stake18) internal pure returns (uint256) {
+        return shares.mulDiv(stake18 + VIRTUAL_STAKE, supply + VIRTUAL_SHARES, Math.Rounding.Floor);
     }
 
-    /// @dev Live `getStake(validatorHotkey, wrapperColdkey, netuid)` via staticcall.
+    /// @dev Live `getStake(validatorHotkey, wrapperColdkey, netuid)` via staticcall. Returns 9-dp alpha.
     function _readStake() internal view returns (uint256) {
         (bool ok, bytes memory ret) = STAKING_V2.staticcall(
             abi.encodeWithSelector(IStakingV2.getStake.selector, validatorHotkey, wrapperColdkey, netuid)
+        );
+        if (!ok || ret.length < 32) revert PrecompileCallFailed();
+        return abi.decode(ret, (uint256));
+    }
+
+    /// @dev The backing stake normalized to the 18-dp space all share math + the rate use.
+    function _stake18() internal view returns (uint256) {
+        return _readStake() * RAO;
+    }
+
+    /// @dev `simSwapTaoForAlpha(netuid, taoRao)` via staticcall. 9-dp in/out (see IAlpha).
+    function _simSwapTaoForAlpha(uint256 taoRao) internal view returns (uint256) {
+        if (taoRao > type(uint64).max) revert AmountOverflowsUint64(taoRao);
+        (bool ok, bytes memory ret) = ALPHA.staticcall(
+            abi.encodeWithSelector(IAlpha.simSwapTaoForAlpha.selector, uint16(netuid), uint64(taoRao))
+        );
+        if (!ok || ret.length < 32) revert PrecompileCallFailed();
+        return abi.decode(ret, (uint256));
+    }
+
+    /// @dev `simSwapAlphaForTao(netuid, alphaRao)` via staticcall. 9-dp in/out (see IAlpha).
+    function _simSwapAlphaForTao(uint256 alphaRao) internal view returns (uint256) {
+        if (alphaRao > type(uint64).max) revert AmountOverflowsUint64(alphaRao);
+        (bool ok, bytes memory ret) = ALPHA.staticcall(
+            abi.encodeWithSelector(IAlpha.simSwapAlphaForTao.selector, uint16(netuid), uint64(alphaRao))
         );
         if (!ok || ret.length < 32) revert PrecompileCallFailed();
         return abi.decode(ret, (uint256));
@@ -326,6 +395,6 @@ contract SzAlpha is
         if (!ok) revert PrecompileCallFailed();
     }
 
-    /// @dev Accept native alpha returned by `removeStake` (the precompile credits this contract).
+    /// @dev Accept native TAO credited by `removeStake` (the precompile pays this contract).
     receive() external payable {}
 }

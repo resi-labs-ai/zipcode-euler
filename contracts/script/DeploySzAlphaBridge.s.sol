@@ -3,27 +3,38 @@ pragma solidity 0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {TokenPool} from "chainlink-ccip/pools/TokenPool.sol";
+import {ERC20LockBox} from "chainlink-ccip/pools/ERC20LockBox.sol";
 import {RateLimiter} from "chainlink-ccip/libraries/RateLimiter.sol";
 import {IBurnMintERC20} from "chainlink-ccip/interfaces/IBurnMintERC20.sol";
+import {AuthorizedCallers} from "@chainlink/contracts/src/v0.8/shared/access/AuthorizedCallers.sol";
 
 import {SzAlpha} from "../src/bridge/SzAlpha.sol";
 import {SzAlphaMirror} from "../src/bridge/SzAlphaMirror.sol";
 import {SzAlphaTokenPool} from "../src/bridge/SzAlphaTokenPool.sol";
+import {SzAlphaLockReleasePool} from "../src/bridge/SzAlphaLockReleasePool.sol";
 import {IRegistryModuleOwnerCustom, ITokenAdminRegistry} from "../src/interfaces/bridge/ICctRegistry.sol";
+import {IAlpha} from "../src/interfaces/bridge/ISubtensorPrecompiles.sol";
 
 /// @title DeploySzAlphaBridge — deploy + self-serve wire of the szALPHA CCT bridge (964 <-> Base 8453).
-/// @notice Per chain: deploy token (SzAlpha proxy on 964 / SzAlphaMirror on Base) -> deploy pool ->
-///         grantMintAndBurnRoles(pool) -> registerAdminViaGetCCIPAdmin(token) -> acceptAdminRole(token) ->
-///         setPool(token, pool) -> applyChainUpdates(remote lane). NO allowlisting (self-serve).
+/// @notice TOPOLOGY (the proven Rubicon shape, see `reference/rubicon/`): LOCK/RELEASE on 964
+///         (SzAlphaLockReleasePool + ERC20LockBox custody — bridged-out supply stays in `totalSupply()`
+///         so `exchangeRate()` stays truthful) and BURN/MINT on Base (SzAlphaMirror + SzAlphaTokenPool).
+///         Per chain: deploy token -> deploy pool (+lockbox on 964) -> wire roles -> register admin via
+///         getCCIPAdmin -> accept -> setPool -> applyChainUpdates(remote lane). NO allowlisting.
 /// @dev Registration uses `registerAdminViaGetCCIPAdmin` (NOT `registerAdminViaOwner`): the Base mirror
 ///      (`BurnMintERC20`) is AccessControl-based with no `owner()`, and `SzAlpha.owner()` is the timelock
-///      from genesis — so the registrar is the separate `ccipAdmin` role (`getCCIPAdmin()`).
-/// @dev The deploy asserts are intentionally aggressive (S1/S8/S9 + the 5-address re-read): a single
-///      router re-read is insufficient — a mis-wired registry module passes a router-only check. Wiring
-///      MUST NOT proceed unless every assert passes.
+///      from genesis — so the registrar is the separate `ccipAdmin` role (`getCCIPAdmin()`). On 964 the
+///      wrapper is initialized with THIS contract as `ccipAdmin` (so `acceptAdminRole` can run in the
+///      same transaction) and the role is handed to the real registrar at the end of `deploy964`.
+/// @dev The deploy asserts are intentionally aggressive (S1/S8/S9 + the 5-address re-read + the 964
+///      precompile probe): a single router re-read is insufficient — a mis-wired registry module passes
+///      a router-only check. Wiring MUST NOT proceed unless every assert passes.
 contract DeploySzAlphaBridge is Script {
+    address internal constant ALPHA_PRECOMPILE = 0x0000000000000000000000000000000000000808;
+
     // --- CCT address book (verified on-chain 2026-06-09; Base typeAndVersion re-read live) ---
     struct CctConfig {
         uint64 chainSelector;
@@ -72,35 +83,77 @@ contract DeploySzAlphaBridge is Script {
     // │                    Deploy (per chain)                        │
     // ================================================================
 
-    /// @notice Deploy the 964 wrapper (UUPS proxy) + its CCT pool, fully wired-but-laned-later.
+    /// @notice Deploy the 964 wrapper (UUPS proxy) + its LOCK/RELEASE custody (lockbox + pool),
+    ///         fully wired-but-laned-later.
     /// @param netuid_ our subnet id (fixture until registration); validatorHotkey_ our validator hotkey.
-    /// @param timelock the upgrade/pause authority (set from genesis); ccipAdmin the registrar.
+    /// @param timelock the upgrade/pause authority AND the post-deploy lockbox owner.
+    /// @param ccipAdmin the registrar the role is handed to AFTER wiring (init uses this contract).
     function deploy964(uint256 netuid_, bytes32 validatorHotkey_, address timelock, address ccipAdmin)
         public
-        returns (SzAlpha token, SzAlphaTokenPool pool)
+        returns (SzAlpha token, SzAlphaLockReleasePool pool, ERC20LockBox lockBox)
     {
         CctConfig memory cfg = bittensorConfig();
         _assertCctAddresses(cfg);
+        _assertAlphaPrecompile(netuid_);
 
         SzAlpha impl = new SzAlpha();
+        // ccipAdmin = THIS contract during wiring (acceptAdminRole must be called by the registrar);
+        // handed to the real `ccipAdmin` below.
         bytes memory initData = abi.encodeCall(
-            SzAlpha.initialize, ("Staked xALPHA", "szALPHA", netuid_, validatorHotkey_, timelock, ccipAdmin)
+            SzAlpha.initialize, ("Staked xALPHA", "szALPHA", netuid_, validatorHotkey_, timelock, address(this))
         );
         token = SzAlpha(payable(address(new ERC1967Proxy(address(impl), initData))));
 
-        pool = new SzAlphaTokenPool(IBurnMintERC20(address(token)), 18, cfg.armProxy, cfg.router, cfg.armProxy);
-        _wire(address(token), address(pool), cfg);
+        // Lock/release custody: bridged-out szALPHA is held by the lockbox (NOT burned), so the pool
+        // can be rotated (RMN/CCIP upgrades) by re-pointing the authorized caller — no fund migration.
+        lockBox = new ERC20LockBox(address(token));
+        pool = new SzAlphaLockReleasePool(
+            IERC20(address(token)), 18, cfg.armProxy, cfg.router, address(lockBox), cfg.armProxy
+        );
+        address[] memory added = new address[](1);
+        added[0] = address(pool);
+        lockBox.applyAuthorizedCallerUpdates(
+            AuthorizedCallers.AuthorizedCallerArgs({addedCallers: added, removedCallers: new address[](0)})
+        );
+
+        // Register on the CCT registry. NO mint/burn grant on 964 (lock/release).
+        IRegistryModuleOwnerCustom(cfg.registryModuleOwnerCustom).registerAdminViaGetCCIPAdmin(address(token));
+        ITokenAdminRegistry(cfg.tokenAdminRegistry).acceptAdminRole(address(token));
+        ITokenAdminRegistry(cfg.tokenAdminRegistry).setPool(address(token), address(pool));
+
+        // Hand off: registrar role to the real ccipAdmin; lockbox ownership PROPOSED to the timelock
+        // (Chainlink 2-step ownership — the timelock must call `lockBox.acceptOwnership()`, a runbook step).
+        token.setCCIPAdmin(ccipAdmin);
+        lockBox.transferOwnership(timelock);
+
         _assertDeployed(address(token), address(pool), timelock, cfg);
+        require(pool.getLockBox() == address(lockBox), "pool lockbox mismatch");
+        require(token.getCCIPAdmin() == ccipAdmin, "ccipAdmin handoff failed");
     }
 
-    /// @notice Deploy the Base (8453) mirror + its CCT pool.
+    /// @notice The 964 genesis SEED DEPOSIT (run immediately after `deploy964`, before announcing).
+    /// @dev Closes the first-depositor griefing window (see SzAlpha's donation note): with non-zero
+    ///      supply, a pre-deposit donation can no longer skew a victim's genesis mint. Send ~1 TAO.
+    ///      The seed shares are minted to the caller — transfer them to 0xdead per the runbook (they
+    ///      are a burnt cost, not a position).
+    function seedDeposit(SzAlpha token) public payable returns (uint256 shares) {
+        return token.deposit{value: msg.value}(0, type(uint256).max);
+    }
+
+    /// @notice Deploy the Base (8453) mirror + its BURN/MINT CCT pool.
     function deployBase(address timelock) public returns (SzAlphaMirror token, SzAlphaTokenPool pool) {
         CctConfig memory cfg = baseConfig();
         _assertCctAddresses(cfg);
 
         token = new SzAlphaMirror("Staked xALPHA", "szALPHA");
         pool = new SzAlphaTokenPool(IBurnMintERC20(address(token)), 18, cfg.armProxy, cfg.router, cfg.armProxy);
-        _wire(address(token), address(pool), cfg);
+
+        // Burn/mint wiring (Base only): grant pool mint/burn -> register -> accept -> setPool.
+        token.grantMintAndBurnRoles(address(pool));
+        IRegistryModuleOwnerCustom(cfg.registryModuleOwnerCustom).registerAdminViaGetCCIPAdmin(address(token));
+        ITokenAdminRegistry(cfg.tokenAdminRegistry).acceptAdminRole(address(token));
+        ITokenAdminRegistry(cfg.tokenAdminRegistry).setPool(address(token), address(pool));
+
         // Mirror has no owner(); the pool ownership hand-off to the timelock is asserted by the caller.
         _assertPoolRmnAndDecimals(address(token), address(pool), cfg);
         // Hand the mirror's mint-control + registrar to the timelock; revoke the deployer. The mirror's
@@ -112,20 +165,8 @@ contract DeploySzAlphaBridge is Script {
     }
 
     // ================================================================
-    // │                    Wire (self-serve)                         │
+    // │                    Lane config (post-deploy)                 │
     // ================================================================
-
-    /// @dev grant pool mint/burn -> register admin via getCCIPAdmin -> accept -> setPool. Lane config
-    ///      (`applyChainUpdates`) is a separate step (`setRemoteLane`) once both chains' pools exist.
-    function _wire(address token, address pool, CctConfig memory cfg) internal {
-        // SzAlpha + SzAlphaMirror both expose `grantMintAndBurnRoles(address)`.
-        (bool ok,) = token.call(abi.encodeWithSignature("grantMintAndBurnRoles(address)", pool));
-        require(ok, "grantMintAndBurnRoles failed");
-
-        IRegistryModuleOwnerCustom(cfg.registryModuleOwnerCustom).registerAdminViaGetCCIPAdmin(token);
-        ITokenAdminRegistry(cfg.tokenAdminRegistry).acceptAdminRole(token);
-        ITokenAdminRegistry(cfg.tokenAdminRegistry).setPool(token, pool);
-    }
 
     /// @notice Configure the remote lane (idempotent per-direction rate limits). Run once both pools exist.
     function setRemoteLane(
@@ -162,6 +203,22 @@ contract DeploySzAlphaBridge is Script {
         require(_eqStr(_typeAndVersion(cfg.registryModuleOwnerCustom), cfg.expReg), "registry module mismatch");
         require(_eqStr(_typeAndVersion(cfg.tokenPoolFactory), cfg.expFactory), "factory mismatch");
         require(_hasCode(cfg.armProxy), "armProxy has no code");
+    }
+
+    /// @dev 964-only live calibration probe (replaces item-10's "calibrate denomination" guesswork):
+    ///      the Alpha precompile must quote a non-zero spot price AND a non-zero 1-TAO swap sim for our
+    ///      netuid — proving the precompile address, the uint16 netuid, the 9-dp sim units, and the
+    ///      subnet pool's existence in one read. Skipped automatically off-964 (no code at 0x808).
+    function _assertAlphaPrecompile(uint256 netuid_) internal view {
+        if (ALPHA_PRECOMPILE.code.length == 0 && block.chainid != 964) return; // not on 964 (e.g. unit tests on anvil)
+        (bool ok1, bytes memory p) = ALPHA_PRECOMPILE.staticcall(
+            abi.encodeWithSelector(IAlpha.getAlphaPrice.selector, uint16(netuid_))
+        );
+        require(ok1 && p.length >= 32 && abi.decode(p, (uint256)) != 0, "alpha price probe failed");
+        (bool ok2, bytes memory s) = ALPHA_PRECOMPILE.staticcall(
+            abi.encodeWithSelector(IAlpha.simSwapTaoForAlpha.selector, uint16(netuid_), uint64(1e9))
+        );
+        require(ok2 && s.length >= 32 && abi.decode(s, (uint256)) != 0, "simSwap probe failed");
     }
 
     function _assertDeployed(address token, address pool, address timelock, CctConfig memory cfg) internal view {

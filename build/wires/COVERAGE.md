@@ -1,11 +1,14 @@
 # wires/ — coverage manifest (every file in `contracts/` → its doc)
 
 Provable completeness check for the wiring map. Every Solidity file under `contracts/` is mapped to the
-`wires/` doc that documents it. Inventory taken 2026-06-10: **32 product contracts + 6 scripts + 30 interface
-shims + 28 test/helper files**, plus a **demo/fork-only addendum** (section E): **2 showcase contracts + 1 demo
-interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody forgotten.
+`wires/` doc that documents it. Inventory taken 2026-06-10, updated 2026-06-12 (8x-01 lock/release rework
+added `SzAlphaLockReleasePool.sol`; deploy-track sweep added `DeployLocal.s.sol`/`DeployMainnet.s.sol`/
+`test/DeployZipcode.t.sol`, forgotten since the smoke-suite commit): **33 product contracts + 8 scripts +
+30 interface shims + 29 test/helper files**, plus a **demo/fork-only addendum** (section E): **2 showcase
+contracts + 1 demo interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody
+forgotten.
 
-## A. Product contracts (`src/`, non-interface) — 32 files
+## A. Product contracts (`src/`, non-interface) — 33 files
 | File | Doc |
 |---|---|
 | `src/CREGatingHook.sol` | `WOOF-03.md` |
@@ -39,12 +42,15 @@ interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. 
 | `src/bridge/SzAlpha.sol` | `8x-01-szALPHA-bridge.md` |
 | `src/bridge/SzAlphaMirror.sol` | `8x-01-szALPHA-bridge.md` |
 | `src/bridge/SzAlphaTokenPool.sol` | `8x-01-szALPHA-bridge.md` |
+| `src/bridge/SzAlphaLockReleasePool.sol` | `8x-01-szALPHA-bridge.md` |
 | `src/bridge/SzAlphaRateOracle.sol` | `8x-02-SzAlphaRateOracle.md` |
 
-## B. Deploy/helper scripts (`script/`) — 6 files
+## B. Deploy/helper scripts (`script/`) — 8 files
 | File | Doc |
 |---|---|
 | `script/DeployZipcode.s.sol` | `DeployZipcode.md` |
+| `script/DeployLocal.s.sol` | `DeployZipcode.md` (anvil-fork wrapper of the orchestrator) |
+| `script/DeployMainnet.s.sol` | `DeployZipcode.md` + `script/RUNBOOK-mainnet-deploy.md` (live-network wrapper) |
 | `script/BaseAddresses.sol` | `WOOF-00.md` |
 | `script/SummonSubstrate.s.sol` | `8-B1.md` |
 | `script/CreditWarehouseDeployer.sol` | `8-Bw-CreditWarehouse.md` |
@@ -86,11 +92,12 @@ Each file is cataloged file-by-file inside its `interfaces-<folder>.md`.
 | `src/interfaces/zodiac/IModuleProxyFactory.sol` | `interfaces-zodiac.md` |
 | `src/interfaces/zodiac/IRoles.sol` | `interfaces-zodiac.md` |
 
-## D. Tests & helpers (`test/`) — 28 files (verification, covered by their component doc)
+## D. Tests & helpers (`test/`) — 29 files (verification, covered by their component doc)
 Tests are the verification artifact for a component, not a separate component — each is covered by the
 component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" are what the test proves).
 | Test/helper file | Component doc |
 |---|---|
+| `test/DeployZipcode.t.sol` | `DeployZipcode.md` |
 | `test/ForkConfig.sol` | `WOOF-00.md` (the fork helper) |
 | `test/mocks/MockEulerEarn.sol` | `WOOF-00.md` / `interfaces-euler.md` (EulerEarn is mocked, 0.8.26) |
 | `test/bridge/BridgeMocks.sol` | `8x-01-szALPHA-bridge.md` |
