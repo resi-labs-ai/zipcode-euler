@@ -54,6 +54,8 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     error InvalidLienDecimals(address lien);
     /// @notice A revaluation `ts` is dated after `block.timestamp` (timestamp-sanity, not a value band).
     error FutureTimestamp();
+    /// @notice A write whose `ts` is not strictly newer than the cached mark (replay / out-of-order). Mirrors `SzAlphaRateOracle`.
+    error StaleReport();
 
     /// @notice The controller was wired (Timelock-settable, build phase).
     event ControllerSet(address indexed controller);
@@ -128,6 +130,7 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
         if (price == 0) revert Errors.PriceOracle_InvalidAnswer();
         if (price > type(uint208).max) revert Errors.PriceOracle_Overflow();
         if (ts > block.timestamp) revert FutureTimestamp();
+        if (ts <= cache[lien].timestamp) revert StaleReport(); // strictly-newer (first write: timestamp==0 passes); covers seedPrice clobber + out-of-order rt-3
         if (_strictDecimals(lien) != LIEN_DECIMALS) revert InvalidLienDecimals(lien);
         cache[lien] = Cache({price: uint208(price), timestamp: ts});
     }

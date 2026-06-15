@@ -10,19 +10,80 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**CRE-00 — Project + secrets scaffold + the shared §8.0 report-encoding package.**
-- **Deliverable:** the `cre-templates`-layout Go workspace that builds to the `wasip1` target, DON-only `GetSecret`,
-  and the shared §8.0 report-encoding package every CRE workflow reuses (the package whose structs must `abi.encode`
-  to the §4.4 layout the *filed* `ZipcodeController` / `ZipcodeOracleRegistry` `abi.decode`).
-- **Binds to:** the filed report consumers under `contracts/src/...` (controller rt 1/2/4/5/6, registry rt3) + the
-  `reference/cre-sdk-go/` SDK symbols. See the CRE truth-source row in `harness.md` §1.
-- **Spec §:** §8.11 / §8.0.
-- **Done when:** `go build` compiles to `wasip1`; a table-driven test encodes a report payload and asserts it
-  `abi.decode`s to the exact §4.4 per-type layout; the Go module is committed to `cre/...` in this monorepo.
+**SEC-02 — Coverage sidecar-LP double-count (Group 2: M2/L14/L1).** Ticket: `build/tickets/sec/SEC-02-coverage-sidecar-lp-double-count.md`.
+- **Deliverable:** scope the oracle `pathLockedLpEquity()` to **mainSafe-only** so sidecar ICHI-LP is single-counted
+  (it is already in `committedValue()`), fixing the inflated `covered()`/`lpBurnKeepsCovered()`.
+- **Binds to:** `SzipNavOracle` `coverageValue()` / `pathLockedLpEquity()` (`:386-390`) — land in the coverage view,
+  **NOT** in `committedValue` (would corrupt `freeValue` + the Committed/Released events; kill-list Group 2).
+- **Source:** `build/kill-list.md` Group 2. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + a new `SEC02_*` regression test (sidecar LP-share donation
+  no longer inflates `covered()`; partition `gross − coverageValue = Pm` holds); test output quoted in the ticket.
 
-> **The Frontend ↔ anvil track is COMPLETE** (FE-00…FE-07 all done 2026-06-10/11). The team's skinned borrower/lender
-> app is now interactive against the live local protocol, and euler-lite's native lend/borrow/earn pages render the
-> real fork Euler markets. The remaining build work is the **CRE track** (CRE-00…CRE-05), head = CRE-00 above.
+> **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
+> Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
+> 11 → 12 → 13 → 14 → 15 → SEC-DOC. After each lands, set the next `SEC-NN` as NEXT.
+>
+> **The Frontend ↔ anvil track is COMPLETE** (FE-00…FE-07, 2026-06-10/11). The **CRE track** (CRE-00…CRE-06) is
+> DEFERRED behind the SEC remediation push; its head is CRE-00 (scope retained in the Backlog table below).
+
+---
+
+## SEC track — kill-list remediation (auditor-prep)
+
+Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list-driver.md`. Tickets in
+`build/tickets/sec/` (`SEC-NN`; Groups 1/2/3 each one ticket, standalone FIX items one each, all DOC items
+→ one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
+Worked correctness-first per the driver's suggested order.
+
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 is DONE (2026-06-15); SEC-02 is now NEXT.**
+The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
+`SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
+doc/comment-only (no regression test).
+
+| ID | Item(s) | What | Status |
+|---|---|---|---|
+| SEC-01 | Group 1 (H1/M1/L3) | Oracle monotonic-timestamp guard at 3 write sites + `error StaleReport()` decls | **DONE 2026-06-15** — `sec/SEC-01-oracle-monotonic-guard.md` |
+| SEC-02 | Group 2 (M2/L14/L1) | Coverage sidecar-LP double-count — scope oracle `pathLockedLpEquity()` mainSafe-only | **NEXT** — `sec/SEC-02-coverage-sidecar-lp-double-count.md` |
+| SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **TICKETED** — `sec/SEC-03-ccip-admin-handoff.md` |
+| SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **TICKETED** — `sec/SEC-04-xalphausd-fail-close.md` |
+| SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **TICKETED** — `sec/SEC-05-seal-lporacle-identity.md` |
+| SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **TICKETED** — `sec/SEC-06-closeline-queue-prune.md` |
+| SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **TICKETED** — `sec/SEC-07-closeline-defund-to-base.md` |
+| SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **TICKETED** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
+| SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **TICKETED** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
+| SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **TICKETED** — `sec/SEC-10-setlptwapwindow-validation.md` |
+| SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **TICKETED** — `sec/SEC-11-fund-previewredeem-sizing.md` |
+| SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **TICKETED** — `sec/SEC-12-redeem-canonical-shares-event.md` |
+| SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **TICKETED** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
+| SEC-14 | L18 | Init-lock 9 mastercopies (empty `initializer` ctor lock — NOT `_disableInitializers`) + fix docstrings | **TICKETED** — `sec/SEC-14-mastercopy-init-lock.md` |
+| SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **TICKETED** — `sec/SEC-15-setoperator-owner-recheck.md` |
+| SEC-DOC | M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 prorata | Doc/runbook sweep (no behavioral code; 4 explicit rejects) | **TICKETED** — `sec/SEC-DOC-doc-runbook-sweep.md` |
+
+> DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
+> existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
+> SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-01 (2026-06-15)
+**Oracle monotonic-timestamp guard at the 3 sibling write sites** (kill-list Group 1: H1/M1/L3), mirroring the
+existing `SzAlphaRateOracle.sol:86`. `error StaleReport()` declared + a strictly-newer `ts` guard added to:
+`ZipcodeOracleRegistry._writePrice` (shared — covers BOTH `seedPrice` and the rt-3 batch loop), `SzipNavOracle.
+_processReport` leg-write (before the `legCache` write, after the deviation block — so `DeviationExceeded` still
+fires first on a same-ts price jump), and `SzipReservoirLpOracle._writePrice`. Timestamp-only; no value/deviation band
+added (§17 / canonical pattern honored). Ticket: `build/tickets/sec/SEC-01-oracle-monotonic-guard.md`.
+- **Gate green:** `forge build` clean; `forge test` **764 passed / 0 failed / 3 skipped** (the 3 skips are the
+  pre-existing `DeployZipcode.t.sol` skips). 9 new `SEC01_*` regression tests across the 3 sites (a backdated/equal-ts
+  replay reverts `StaleReport()` via every path; a strictly-newer write still succeeds). A **new test file**
+  `test/SzipReservoirLpOracle.t.sol` was authored — none existed for that oracle.
+- **Critics ran clean** (spec-fidelity **PASS** — faithful to kill-list Group 1, no invented mechanism, H1 correctly
+  in the shared `_writePrice`, M1 `prior.ts != 0` first-write exemption correct; reference-verifier — all 3 bindings +
+  field names resolve, `StaleReport` declared nowhere but the canonical sibling; junior-dev most-blocking item =
+  the same-block seed re-anchor, resolved below). Implementation is zero-guess (the full suite is the proof).
+- **Behavior change surfaced (intended fail-closed) — folded into the ticket + obligations below.** The controller
+  re-anchors the lien mark via `seedPrice` at BOTH origination and draw, and `seedPrice` stamps `block.timestamp`, so
+  two same-lien seeds in ONE block now revert. This is the H1 seed-clobber the kill-list wanted closed; 6 pre-existing
+  tests that asserted same-ts/backdated-replay SUCCESS (3 oracle units + 3 integration, incl. one **false pass** in
+  `test_Draw_ReAnchorBelowLTV_RollsBack` whose generic `expectRevert` was masking the LTV check) were updated with
+  faithful forward-warps. No real regression.
 
 ### Just done — FE-07 (2026-06-11)
 **Euler-native vault dashboard — the real reservoir EVK market + senior EE pool surfaced through euler-lite's OWN
@@ -238,7 +299,7 @@ Numbering follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the sp
 | Item | What | Spec § |
 |---|---|---|
 | CRE-00 | Project + secrets scaffold (`cre-templates` layout, `wasip1` build, DON-only `GetSecret`) + the shared §8.0 report-encoding package the workflows reuse | §8.11 / §8.0 — *(was NEXT; deferred behind the FE↔anvil push the user prioritized 2026-06-10 — head of the CRE track when released)* |
-| CRE-01 | Origination / draw / close / status → controller (rt 1/2/4/5,6); revaluation → registry (rt3, gas-bounded sharded); default/recovery → `DefaultCoordinator` (rt8 action family) | §8.1 / §8.4 |
+| CRE-01 | Origination / draw / close / status → controller (rt 1/2/4/5,6); revaluation → registry (rt3, gas-bounded sharded); default/recovery → `DefaultCoordinator` (rt8 action family). **SEC-01 constraint: must not co-locate two same-lien `seedPrice` writes (origination+draw / draw+draw) in one block — the registry monotonic guard reverts the second. See open obligations.** | §8.1 / §8.4 |
 | CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call. *(2026-06-12: `settleEpoch` is now ON-DEMAND — the 30-day epoch gate was removed — so this can be event-driven off the queue's `RedemptionSettled` event rather than a fixed cron: settle → if backlog remains, sequence another REDEEM→REPAY. See `build/wires/9-ZipRedemptionQueue.md`.)* **Scope: `build/tickets/cre/CRE-02-redemption-settle.md`.** | §8.3 / §8.5 |
 | CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` — and the xALPHA-APR feed (the 8x-02 receiver is built; the Go producer remains) | §8.6 / §8.8 |
 | CRE-04 | Senior-warehouse **SUPPLY / APPROVE / REPAY** ops via the Roles adapter | §8.5 |
@@ -276,6 +337,28 @@ track on it.
 ---
 
 ## Open obligations / seams
+
+- **TODO (raised 2026-06-15, SEC-01) — CRE-01 must not co-locate two same-lien `seedPrice` writes in one block.**
+  The oracle monotonic guard (SEC-01) lives in `ZipcodeOracleRegistry._writePrice` and rejects a write whose `ts` is
+  not strictly newer than the cached mark. The controller re-anchors via `seedPrice` at origination (`:199`) AND draw
+  (`:223`), and `seedPrice` stamps `block.timestamp` (no incoming CRE ts), so an origination+draw (or draw+draw) of the
+  **same lien in one block** now reverts `StaleReport()` — intended fail-closed (the H1 seed-clobber). Benign in prod
+  (origination/draw are separate Keystone reports in separate blocks), but **CRE-01 must ensure same-lien seeds are not
+  co-located in one block** (defer the second one block, or — future hardening — give the seed path a real ts instead
+  of `block.timestamp`). Not a contract change owed; an operational constraint on the CRE producer.
+
+- **TODO (raised 2026-06-15) — concurrent-line ceiling: the per-line-EVK-vault model caps open lines at ~29 per
+  EulerEarn pool. DESIGN obligation, surfaced while ticketing SEC-06 (H2).** EulerEarn's supply queue AND withdraw
+  queue are each hard-capped at `MAX_QUEUE_LENGTH = 30` (`reference/euler-earn/src/libraries/ConstantsLib.sol:17`;
+  withdraw-queue cap enforced at `EulerEarn.sol:785`). `openLine` enables one EVK borrow vault per line (one queue
+  slot), so a single EE pool structurally supports **≤ ~29 concurrent open lines**. **SEC-06 does NOT raise this** —
+  it only reclaims slots from *closed* lines (correct + necessary for churn, but the kill-list framed H2 as
+  low-concurrency/lines-close-faster-than-open). If the product needs hundreds of **concurrent** lines (e.g. ~300),
+  decide before scaling: **(a)** shard lines across multiple EE pools (~10+); **(b)** change topology to a shared
+  borrow vault with internal per-line sub-accounting (one slot, many lines); **(c)** confirm whether the supply-queue
+  *append* in `openLine` is even needed (`reallocate` only requires `config[id].cap != 0`, not supply-queue
+  membership) — but (c) alone does NOT help because the **withdraw-queue** cap still bounds concurrent enabled
+  markets. Not a kill-list FIX; a topology decision owed before high-line-count scaling. See SEC-06 ticket.
 
 - **TODO (raised 2026-06-12) — `DurationFreezeModule` is INCOMPLETE; rethink its premise + accounting at rebuild.**
   Two independent problems, the first deeper than the second:

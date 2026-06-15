@@ -205,16 +205,16 @@ contract ZipcodeOracleRegistryTest is Test {
 
     function test_RevaluationOverwritesSeed() public {
         _wireController();
-        uint256 t = block.timestamp;
         _seed(address(LIEN), 300_000e6);
-        // earlier-but-valid ts
-        uint32 earlier = uint32(t - 50);
-        bytes memory report = _revalReport(_one(address(LIEN)), _one(uint256(250_000e6)), earlier);
+        // SEC-01: a reval overwrites the seed only with a strictly-newer ts (a backdated overwrite is rejected — see test_SEC01_*).
+        uint32 newer = uint32(block.timestamp + 50);
+        bytes memory report = _revalReport(_one(address(LIEN)), _one(uint256(250_000e6)), newer);
+        vm.warp(block.timestamp + 50);
         vm.prank(FORWARDER);
         reg.onReport("", report);
         (uint208 price, uint48 ts) = reg.cache(address(LIEN));
         assertEq(price, 250_000e6);
-        assertEq(ts, uint48(earlier));
+        assertEq(ts, uint48(newer));
     }
 
     // --- Forwarder gate + reportType + length ----------------------------
@@ -280,7 +280,10 @@ contract ZipcodeOracleRegistryTest is Test {
 
     // --- Duplicate liens last-write-wins ---------------------------------
 
-    function test_DuplicateLiensLastWriteWins() public {
+    // SEC-01: a duplicate lien inside one batch shares the batch's single `ts`, so the SECOND write of that lien
+    // has `ts == cache.timestamp` (just written) and is rejected as a replay. The all-or-nothing batch reverts —
+    // a malformed duplicate report now fails closed instead of silently last-write-winning.
+    function test_DuplicateLiensInBatchRevertStale() public {
         address[] memory liens = new address[](2);
         liens[0] = address(LIEN_A);
         liens[1] = address(LIEN_A);
@@ -289,18 +292,9 @@ contract ZipcodeOracleRegistryTest is Test {
         prices[1] = 200_000e6;
         bytes memory report = _revalReport(liens, prices, uint32(block.timestamp));
 
-        vm.recordLogs();
+        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
         vm.prank(FORWARDER);
         reg.onReport("", report);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 updates = 0;
-        bytes32 sig = keccak256("RegistryPriceUpdated(address,uint256,uint48)");
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == sig) updates++;
-        }
-        assertEq(updates, 2);
-        (uint208 price,) = reg.cache(address(LIEN_A));
-        assertEq(price, 200_000e6);
     }
 
     // --- Write guards: BOTH paths ----------------------------------------
@@ -408,7 +402,8 @@ contract ZipcodeOracleRegistryTest is Test {
     function test_NoValueBand_BigDrop_Succeeds() public {
         _wireController();
         _seed(address(LIEN), 300_000e6);
-        // >99% drop in one report.
+        // >99% drop in one report (no value band) — at a strictly-newer ts (SEC-01 monotonic guard).
+        vm.warp(block.timestamp + 1);
         bytes memory report = _revalReport(_one(address(LIEN)), _one(uint256(1e6)), uint32(block.timestamp));
         vm.prank(FORWARDER);
         reg.onReport("", report);
@@ -530,5 +525,62 @@ contract ZipcodeOracleRegistryTest is Test {
     function test_ForwarderImmutableAfterRenounce() public {
         reg.renounceOwnership();
         assertEq(reg.getForwarderAddress(), FORWARDER); // unchanged, and now unchangeable
+    }
+
+    // --- SEC-01: oracle monotonic-timestamp guard (H1) -------------------
+    // The shared `_writePrice` rejects any write whose `ts` is not strictly newer than the cached mark, covering
+    // BOTH write paths (the controller `seedPrice` clobber and the Forwarder rt-3 batch). First write (timestamp==0)
+    // always passes. Mirrors `SzAlphaRateOracle:86`.
+
+    // seedPrice path: a same-block re-seed (equal `block.timestamp`) is a replay → StaleReport.
+    function test_SEC01_seedPrice_equalTs_reverts() public {
+        _wireController();
+        _seed(address(LIEN), 100_000e6); // first write, cache.timestamp = block.timestamp
+        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
+        vm.prank(CTRL);
+        reg.seedPrice(address(LIEN), 200_000e6); // same block → ts == cache.timestamp
+    }
+
+    // rt-3 batch path: a backdated revaluation over a fresher mark → StaleReport (shields-a-bad-loan replay).
+    function test_SEC01_reval_backdated_reverts() public {
+        uint32 t = uint32(block.timestamp);
+        bytes memory fresh = _revalReport(_one(address(LIEN)), _one(uint256(300_000e6)), t);
+        vm.prank(FORWARDER);
+        reg.onReport("", fresh);
+
+        bytes memory stale = _revalReport(_one(address(LIEN)), _one(uint256(250_000e6)), t - 50);
+        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
+        vm.prank(FORWARDER);
+        reg.onReport("", stale);
+    }
+
+    // rt-3 batch path: an equal-ts replay → StaleReport.
+    function test_SEC01_reval_equalTs_reverts() public {
+        uint32 t = uint32(block.timestamp);
+        bytes memory r1 = _revalReport(_one(address(LIEN)), _one(uint256(300_000e6)), t);
+        vm.prank(FORWARDER);
+        reg.onReport("", r1);
+
+        bytes memory r2 = _revalReport(_one(address(LIEN)), _one(uint256(310_000e6)), t);
+        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
+        vm.prank(FORWARDER);
+        reg.onReport("", r2);
+    }
+
+    // A strictly-newer write still succeeds (the guard only rejects equal/older).
+    function test_SEC01_strictlyNewer_succeeds() public {
+        uint32 t = uint32(block.timestamp);
+        bytes memory r1 = _revalReport(_one(address(LIEN)), _one(uint256(300_000e6)), t);
+        vm.prank(FORWARDER);
+        reg.onReport("", r1);
+
+        vm.warp(block.timestamp + 1);
+        bytes memory r2 = _revalReport(_one(address(LIEN)), _one(uint256(310_000e6)), t + 1);
+        vm.prank(FORWARDER);
+        reg.onReport("", r2);
+
+        (uint208 price, uint48 ts) = reg.cache(address(LIEN));
+        assertEq(price, 310_000e6);
+        assertEq(ts, uint48(t + 1));
     }
 }

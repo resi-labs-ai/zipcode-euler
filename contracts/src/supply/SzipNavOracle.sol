@@ -162,6 +162,7 @@ contract SzipNavOracle is ReceiverTemplate {
     error UnknownLpToken(address token);
     error ZeroAddress();
     error StaleRate(); // the wired xALPHA rate oracle is stale — issuance halts (exit still prices off last rate)
+    error StaleReport(); // a leg push not strictly newer than the cached mark (replay / out-of-order). Mirrors `SzAlphaRateOracle`.
 
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
@@ -294,6 +295,7 @@ contract SzipNavOracle is ReceiverTemplate {
                 uint256 diff = p > priorP ? p - priorP : priorP - p;
                 if (diff * 10_000 / priorP > maxDeviationBps) revert DeviationExceeded(leg, priorP, p);
             }
+            if (prior.ts != 0 && ts <= prior.ts) revert StaleReport(); // strictly-newer (deviation band is price-only; a backdated replay would otherwise slip through and freeze issuance)
             legCache[leg] = LegCache(p, uint48(ts));
             emit LegPriceUpdated(leg, p, uint48(ts));
         }

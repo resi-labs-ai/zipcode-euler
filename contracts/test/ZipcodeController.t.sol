@@ -405,6 +405,8 @@ contract ZipcodeControllerTest is ForkConfig {
         uint256 er0 = IERC20(usdc).balanceOf(EREBOR);
 
         uint256 draw2 = 30_000e6;
+        // SEC-01: the draw re-anchors the mark via seedPrice; a separate CRE report lands in a later block (strictly-newer ts).
+        vm.warp(block.timestamp + 1);
         vm.prank(FORWARDER);
         controller.onReport("", _drawReport(LIEN_ID, EQUITY_MARK, draw2));
 
@@ -424,8 +426,10 @@ contract ZipcodeControllerTest is ForkConfig {
 
         // Lower the mark so the existing + new debt blows the LTV. The re-anchor seed must roll back with the draw.
         uint256 lowMark = 110_000e6; // 0.8 * 110k = 88k < existing 100k debt
+        // SEC-01: advance to a later block so the re-anchor seed clears the monotonic guard and the revert is the LTV check (not StaleReport).
+        vm.warp(block.timestamp + 1);
         vm.prank(FORWARDER);
-        vm.expectRevert();
+        vm.expectRevert(EVKErrors.E_AccountLiquidity.selector);
         controller.onReport("", _drawReport(LIEN_ID, lowMark, 1e6));
 
         assertEq(registry.getQuote(1e18, LIEN_i, usdc), priorQuote, "re-anchor rolled back (prior mark intact)");

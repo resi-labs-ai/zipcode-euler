@@ -413,6 +413,7 @@ contract SzipNavOracleTest is Test {
 
     function test_deviation_within_bound_ok() public {
         _push(0, 1e18);
+        vm.warp(block.timestamp + 1); // SEC-01: a second push needs a strictly-newer ts (monotonic guard)
         _push(0, 119e16); // +19% <= 20%
         (uint256 p,) = oracle.legCache(0);
         assertEq(p, 119e16);
@@ -430,10 +431,27 @@ contract SzipNavOracleTest is Test {
         oracle.onReport("", report);
     }
 
+    // SEC-01 (M1): the deviation band is PRICE-ONLY, so replaying the last price with a backdated/equal `ts` slips
+    // through it and would freeze issuance + buy-burn. The monotonic guard catches it. Same price (diff == 0) proves
+    // the deviation band alone does not — only the strictly-newer `ts` check rejects the replay.
+    function test_SEC01_nav_backdated_replay_reverts() public {
+        _push(0, 1e18); // first write at the current block.timestamp
+        uint8[] memory legs = new uint8[](1);
+        uint256[] memory ps = new uint256[](1);
+        legs[0] = 0;
+        ps[0] = 1e18; // identical price → deviation band passes
+        uint32 backdated = uint32(block.timestamp - 1); // older than the cached leg ts (and not-future)
+        bytes memory report = abi.encode(uint8(7), abi.encode(legs, ps, backdated));
+        vm.prank(forwarder);
+        vm.expectRevert(SzipNavOracle.StaleReport.selector);
+        oracle.onReport("", report);
+    }
+
     // ----------------------------------------------------------------- atomicity
     function test_batch_atomicity_one_bad_entry_reverts_all() public {
         _push(0, 1e18); // prior for leg 0
         _push(1, 5e17); // prior for leg 1
+        vm.warp(block.timestamp + 1); // SEC-01: the batch needs a strictly-newer ts so leg0 clears the monotonic guard and leg1's ZeroPrice is reached
         // batch: leg0 -> 1.05e18 (ok), leg1 -> 0 (ZeroPrice)
         uint8[] memory legs = new uint8[](2);
         uint256[] memory ps = new uint256[](2);
@@ -526,6 +544,7 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.grossBasketValue(), 220e18);
         // IL marked-through: raise alphaUSD -> LP value moves
         uint256 lpBefore = oracle.grossBasketValue();
+        vm.warp(block.timestamp + 1); // SEC-01: the re-mark needs a strictly-newer ts (monotonic guard)
         _pushBoth(22e17, 5e17); // alphaUSD 2.0 -> 2.2 (within 20%)
         assertGt(oracle.grossBasketValue(), lpBefore);
     }

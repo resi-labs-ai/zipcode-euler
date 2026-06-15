@@ -522,6 +522,8 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         _pushMark(o, 3);
         assertEq(o.getQuote(1, address(lp), USDC), 0, "floors against borrower");
         // a mark*inAmount not divisible by feedScale -> floor. mark=1e6, inAmount=333333333333333333 (1/3 share).
+        // SEC-01: the second mark needs a strictly-newer ts (monotonic guard); a re-push lands in a later block.
+        vm.warp(block.timestamp + 1);
         _pushMark(o, 1e6);
         uint256 inAmt = 333_333_333_333_333_333;
         assertEq(o.getQuote(inAmt, address(lp), USDC), inAmt / 1e12, "floor of 1/3 share value");

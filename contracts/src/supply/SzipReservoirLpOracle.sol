@@ -51,6 +51,8 @@ contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
     error InvalidReportType(uint8 reportType);
     /// @notice A pushed `ts` is dated after `block.timestamp` (timestamp-sanity, not a value band).
     error FutureTimestamp();
+    /// @notice A mark whose `ts` is not strictly newer than the cached one (replay / out-of-order). Mirrors `SzAlphaRateOracle`.
+    error StaleReport();
     /// @notice A zero address in a Timelock re-point.
     error ZeroAddress();
 
@@ -114,6 +116,7 @@ contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
         if (mark == 0) revert Errors.PriceOracle_InvalidAnswer();
         if (mark > type(uint208).max) revert Errors.PriceOracle_Overflow();
         if (ts > block.timestamp) revert FutureTimestamp();
+        if (ts <= cache.timestamp) revert StaleReport(); // strictly-newer (first write: timestamp==0 passes); blocks a stale higher mark over-crediting reservoir collateral
         cache = Cache({price: uint208(mark), timestamp: ts});
     }
 

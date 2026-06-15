@@ -404,6 +404,8 @@ contract EulerVenueAdapterTest is ForkConfig {
 
         // Revaluation independence: re-mark B; A's quote unchanged.
         uint256 quoteA_before = registry.getQuote(1e18, address(LIEN_A), usdc);
+        // SEC-01: the re-mark needs a strictly-newer ts (monotonic guard); a separate CRE report lands in a later block.
+        vm.warp(block.timestamp + 1);
         _seedRegistry(address(LIEN_B), 999_999e6);
         uint256 quoteA_after = registry.getQuote(1e18, address(LIEN_A), usdc);
         assertEq(quoteA_after, quoteA_before, "A quote byte-for-byte unchanged after B reval");
