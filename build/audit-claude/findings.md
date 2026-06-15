@@ -9,9 +9,9 @@ documented blast radius) are excluded from findings and listed separately as pos
 
 | # | Severity | Conf | Subsystem | Finding |
 |---|---|---|---|---|
-| 1 | **HIGH** | high | core | Registry has no monotonic-timestamp guard → out-of-order / replayed revaluation overwrites a fresher mark |
+| 1 | **HIGH** | high | core | Registry has no monotonic-timestamp guard → out-of-order / replayed revaluation overwrites a fresher mark — ✅ **RESOLVED (SEC-01, 2026-06-15)** |
 | 2 | **HIGH** | high | venue | Unbounded supply-queue growth in `openLine` bricks all origination after ~29 lines |
-| 3 | MED | high | core | Backdated revaluation arbitrarily rewinds/extends a mark's staleness window |
+| 3 | MED | high | core | Backdated revaluation arbitrarily rewinds/extends a mark's staleness window — ✅ **RESOLVED (SEC-01, 2026-06-15)** |
 | 4 | MED | high | venue | No defund path — USDC stranded in closed line vaults drains base liquidity, DoS's `fund`/`draw` |
 | 5 | MED | high | szipUSD | Resting CoW buy-burn bid keeps filling after coverage drops below floor (gate is post-time only) |
 | 6 | MED | high | bridge/NAV | `navExit`/`grossBasketValue` price the xALPHA leg off a **zero** rate when the rate oracle is never seeded |
@@ -54,6 +54,9 @@ coverage/freeze decisions.
   5. **Impact B (grief/DoS):** a backdated push with `ts = now − validityWindow − 1` makes `_getQuote`
      revert `PriceOracle_TooStale`, bricking borrows/draws against `L` until the next push.
 - **fix:** add `if (ts <= cache[lien].timestamp) revert` on the revaluation path (match `SzAlphaRateOracle`).
+- **RESOLVED 2026-06-15 (SEC-01).** Guard added in the **shared** `_writePrice` (covers both the rt-3 batch and the
+  `seedPrice` clobber); `error StaleReport()` declared. Kill-list H1. The NAV (M1) + LP (L3) siblings fixed in the
+  same ticket. Regression: `test_SEC01_reval_backdated_reverts` / `_equalTs_reverts` / `_seedPrice_equalTs_reverts`.
 
 ### 2. Unbounded supply-queue growth in `openLine` bricks all future origination
 - **contract/fn:** `EulerVenueAdapter` / `openLine`
@@ -86,6 +89,9 @@ coverage/freeze decisions.
   treating a stale appraisal as fresh for another full window with no deviation band to detect the
   unchanged value — defeating the fail-closed staleness guarantee. Symmetric to #1 Impact B.
 - **fix:** same monotone guard as #1.
+- **RESOLVED 2026-06-15 (SEC-01).** A *backdated* `ts` can no longer be written (reverts `StaleReport()`), so the
+  rewind/extend vector is closed by the #1 guard. (Re-pushing the *same* price at `ts = now` is still admissible by
+  design — that is a strictly-newer write; the deviation-band-can't-see-unchanged-value posture is unchanged.)
 
 ### 4. No defund path — USDC stranded in closed line vaults drains base liquidity
 - **contract/fn:** `EulerVenueAdapter` / `fund`, `closeLine` — `src/venue/EulerVenueAdapter.sol:278-295, 343-360`

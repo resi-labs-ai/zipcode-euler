@@ -50,13 +50,16 @@
 ### Group 1 — Oracle monotonic-timestamp guard (3 write sites, one pattern)
 `SzAlphaRateOracle.sol:86` already has the strictly-newer guard (`ts <= latest.ts → StaleReport`);
 three siblings omit it. **Each site must also DECLARE `error StaleReport()` — the one-liner alone won't compile.**
-- [ ] **H1** (HIGH) · `ZipcodeOracleRegistry._writePrice` (`:127-133`). Out-of-order/replayed RT-3
+- [x] **H1** (HIGH) · `ZipcodeOracleRegistry._writePrice` (`:127-133`). Out-of-order/replayed RT-3
   overwrites a fresher mark → shields a bad loan from liquidation. **Fix:** `if (ts <= cache[lien].timestamp) revert StaleReport();`
   in **shared `_writePrice`** (so it also covers the `seedPrice` clobber driving interconnection-C4 draw path). Use `<=`.
-- [ ] **M1** (MED, DoS) · `SzipNavOracle._processReport` leg-write (`:286-297`). Deviation band is
+  **DONE 2026-06-15 (SEC-01).**
+- [x] **M1** (MED, DoS) · `SzipNavOracle._processReport` leg-write (`:286-297`). Deviation band is
   price-only; replaying last price with a backdated `ts` freezes issuance+buy-burn. **Fix:** `if (prior.ts != 0 && ts <= prior.ts) revert StaleReport();` before `:297`.
-- [ ] **L3** (LOW) · `SzipReservoirLpOracle._writePrice` (`:113-118`). Same gap. Note: not pure
+  **DONE 2026-06-15 (SEC-01).**
+- [x] **L3** (LOW) · `SzipReservoirLpOracle._writePrice` (`:113-118`). Same gap. Note: not pure
   grief — a stale-but-still-fresh *higher* mark over-credits reservoir collateral. **Fix:** same guard + error decl.
+  **DONE 2026-06-15 (SEC-01).**
 
 ### Group 2 — Coverage sidecar-LP double-count (one fix; absorbs L14 and the real part of L1)
 - [ ] **M2** (MED, permissionless via LP-share donation to sidecar) · `coverageValue()` counts

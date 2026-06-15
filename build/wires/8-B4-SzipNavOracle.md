@@ -126,7 +126,10 @@ additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
   write the oracle. The LP-dissolution + buy-burn exit gates read the freeze module's `covered()` (which reads
   these views).
 - **CRE Forwarder → oracle.** Pushes reportType 7 `(uint8[] legs, uint256[] prices, uint32 ts)` for
-  `{LEG_ALPHA_USD=0, LEG_HYDX_USD=1}`, all-or-nothing, deviation-circuit-broken per leg (`maxDeviationBps`).
+  `{LEG_ALPHA_USD=0, LEG_HYDX_USD=1}`, all-or-nothing, deviation-circuit-broken per leg (`maxDeviationBps`), and
+  **strictly-newer monotonic-guarded per leg (SEC-01): `prior.ts != 0 && ts <= prior.ts → StaleReport`, checked after
+  the deviation band (so a same-`ts` price jump still surfaces `DeviationExceeded`); the price-only band can't catch a
+  backdated same-price replay, the ts guard does.**
 - **SzAlphaRateOracle → oracle (production).** Optionally wired via `setXAlphaRateOracle`; supplies the
   cross-chain xALPHA `exchangeRate()` + `fresh()`.
 

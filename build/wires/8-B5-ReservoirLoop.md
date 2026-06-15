@@ -85,7 +85,9 @@ holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key c
   shared §4.4 envelope `(uint8 reportType, bytes payload)`, requires `reportType == LP_MARK (7)` (else
   `InvalidReportType`), decodes `(uint256 mark, uint32 ts)`, and `_writePrice(mark, ts)` →
   fail-closed write guards `mark != 0` (`PriceOracle_InvalidAnswer`), `mark <= uint208.max`
-  (`PriceOracle_Overflow`), `ts <= block.timestamp` (`FutureTimestamp`); caches `Cache{uint208 price, uint48
+  (`PriceOracle_Overflow`), `ts <= block.timestamp` (`FutureTimestamp`), **`ts <= cache.timestamp` (`StaleReport`) —
+  strictly-newer monotonic guard (SEC-01); blocks a stale-but-still-fresh higher mark over-crediting reservoir
+  collateral, first write `timestamp==0` passes**; caches `Cache{uint208 price, uint48
   timestamp}`. There is **no controller-seed path** — the Forwarder push is the only writer (the difference from
   the lien `ZipcodeOracleRegistry`).
 - **Read** `_getQuote(inAmount, base, quoteAsset)` (override): requires `quoteAsset == quote && base == lpToken`

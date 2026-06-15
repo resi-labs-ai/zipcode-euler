@@ -60,8 +60,11 @@ constructor(address forwarder, address quote_, uint256 validityWindow_) Receiver
 - `setController` / `setQuote` / `setValidityWindow` (`:82`/`:89`/`:98`) — all `onlyOwner` (the Timelock at
   deploy). Build-phase **re-pointable**, not set-once.
 - `_writePrice` (`:127`) shared fail-closed guards: `price != 0` (`PriceOracle_InvalidAnswer`), `price <=
-  uint208.max` (`PriceOracle_Overflow`), `ts <= block.timestamp` (`FutureTimestamp`), `_strictDecimals(lien) ==
-  18` (`InvalidLienDecimals`). **No value/plausibility band.**
+  uint208.max` (`PriceOracle_Overflow`), `ts <= block.timestamp` (`FutureTimestamp`), **`ts <= cache[lien].timestamp`
+  (`StaleReport`) — strictly-newer monotonic guard (SEC-01); first write `timestamp==0` passes, covers BOTH `seedPrice`
+  and the rt-3 loop**, `_strictDecimals(lien) == 18` (`InvalidLienDecimals`). **No value/plausibility band.**
+  - **SEC-01 operational note:** `seedPrice` stamps `block.timestamp`, so two same-lien seeds in one block now revert
+    (origination+draw / draw+draw co-located) — intended fail-closed; the CRE producer must not co-locate them.
 - `_strictDecimals` (`:137`) — low-level `staticcall(decimals())`; reverts on `!ok || returndata.length != 32`.
   NOT `BaseAdapter._getDecimals` (which silently returns 18 and would no-op the guard, accepting a 6-dp token or
   a code-less EOA).
