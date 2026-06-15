@@ -910,6 +910,86 @@ contract SzipNavOracleParityTest is Test {
         vm.prank(forwarder);
         oracle.onReport("", report);
     }
+
+    // ----------------------------------------------------------- SEC-02: coverage sidecar-LP double-count (Group 2)
+    /// @dev Wire a clean dividing LP (zipUSD/xAlpha, both at $1): 1000 supply, reserves 200 zip + 100 xAlpha, so each
+    ///      share marks at 0.3e18 ($1·200 + $1·100 over 1000). Used by the SEC02 vectors below.
+    function _wireSec02Lp() internal returns (ParityICHIVault iv, ParityGauge g) {
+        iv = new ParityICHIVault();
+        g = new ParityGauge();
+        iv.set(address(zip), address(xalpha), 1000e18, 200e18, 100e18);
+        oracle.setLpPosition(address(iv), address(g));
+        _pushAlpha(1e18); // xAlpha (LP token1) prices at $1 (default exchangeRate 1e18 × $1 mark)
+    }
+
+    /// @dev SEC-02 core: a sidecar LP donation must raise the coverage numerator (`committedValue +
+    ///      pathLockedLpEquity`) by EXACTLY ONE LP mark — `committedValue` already owns the sidecar's LP, so
+    ///      `pathLockedLpEquity` must be mainSafe-only (pre-fix it summed both Safes, double-counting the sidecar leg).
+    function test_SEC02_sidecar_lp_single_counted() public {
+        (ParityICHIVault iv,) = _wireSec02Lp();
+        iv.setBalance(mainSafe, 100e18); // main LP 100/1000 -> 20 zip + 10 xAlpha = 30e18
+        zip.mint(sidecar, 50e18); // sidecar plain leg
+
+        uint256 covBefore = oracle.committedValue() + oracle.pathLockedLpEquity(); // 50 + 30 = 80e18
+        uint256 pathBefore = oracle.pathLockedLpEquity(); // main-only LP = 30e18
+
+        iv.setBalance(sidecar, 50e18); // DONATE 50e18 LP shares into the sidecar -> one mark = 15e18
+
+        uint256 oneMark = oracle.lpShareValue(50e18);
+        assertEq(oneMark, 15e18, "one sidecar LP mark (50/1000 -> 10 zip + 5 xAlpha)");
+        uint256 covAfter = oracle.committedValue() + oracle.pathLockedLpEquity(); // 65 + 30 = 95e18
+        assertEq(covAfter - covBefore, oneMark, "coverage rises by EXACTLY one LP mark, not two (single-count)");
+        assertEq(oracle.pathLockedLpEquity(), pathBefore, "pathLockedLpEquity is mainSafe-only: untouched by sidecar LP");
+    }
+
+    /// @dev SEC-02 partition (L1 verify note): after the fix `grossBasketValue - coverageValue == Pm`, where Pm is the
+    ///      mainSafe free liquid (plain) legs — i.e. every Safe's LP + debt is counted exactly once. Within ≤2 wei.
+    function test_SEC02_partition_gross_minus_coverage_eq_pm() public {
+        (ParityICHIVault iv,) = _wireSec02Lp();
+        iv.setBalance(mainSafe, 100e18); // main LP 30e18
+        iv.setBalance(sidecar, 50e18); // sidecar LP 15e18
+        zip.mint(mainSafe, 40e18); // Pm: mainSafe free liquid legs
+        zip.mint(sidecar, 50e18); // sidecar plain leg
+
+        uint256 gross = oracle.grossBasketValue(); // 40 + 30 + 50 + 15 = 135e18
+        uint256 coverage = oracle.committedValue() + oracle.pathLockedLpEquity(); // (50+15) + 30 = 95e18
+        uint256 pm = 40e18;
+        uint256 diff = gross - coverage;
+        uint256 slack = diff > pm ? diff - pm : pm - diff;
+        assertLe(slack, 2, "gross - coverageValue == Pm (mainSafe free liquid legs) within 2-wei pro-rata floor");
+    }
+
+    /// @dev SEC-02 floor-breach (M2): a state where the PRE-FIX double-counted coverage cleared the senior-liability
+    ///      floor while the true single-counted value is below it. Exercises the REAL module's `covered()` /
+    ///      `lpBurnKeepsCovered()` against the real oracle: post-fix the breach correctly surfaces (covered == false).
+    function test_SEC02_floor_breach_covered_flips_false() public {
+        (ParityICHIVault iv,) = _wireSec02Lp();
+        iv.setBalance(mainSafe, 100e18); // main LP 30e18
+        iv.setBalance(sidecar, 50e18); // sidecar LP 15e18 (the double-counted leg)
+        zip.mint(mainSafe, 40e18); // Pm 40e18 (free liquid, NOT coverage)
+        zip.mint(sidecar, 50e18); // sidecar plain 50e18
+
+        MockEulerEarn ee = new MockEulerEarn();
+        ee.setBacking(1, 100e6, 0); // illiquidSeniorValue == 100e18 (sa 100 USDC, free 0)
+        DurationFreezeModule m = new DurationFreezeModule();
+        m.setUp(
+            abi.encode(
+                makeAddr("owner"), mainSafe, sidecar, makeAddr("operator"),
+                address(oracle), address(ee), makeAddr("warehouse"), uint256(1e4), uint256(0)
+            )
+        );
+
+        assertEq(m.requiredCommittedValue(), 100e18, "floor pinned to senior liability (< gross 135)");
+        assertEq(m.coverageValue(), 95e18, "single-counted coverage = (sidecar 65) + (main LP 30)");
+        assertFalse(m.covered(), "post-fix: 95 < 100 floor -> breach surfaces (NOT covered)");
+
+        // pre-fix the sidecar LP (15e18) was double-counted -> coverage 110e18 >= 100 -> covered() would have lied.
+        uint256 prefixCoverage = m.coverageValue() + oracle.lpShareValue(50e18);
+        assertGe(prefixCoverage, m.requiredCommittedValue(), "pre-fix double-count WOULD have reported covered");
+
+        // and the LP-dissolution gate tightens: from a breached state, burning fenced LP cannot keep coverage.
+        assertFalse(m.lpBurnKeepsCovered(1e18), "burning fenced LP from a breach stays uncovered");
+    }
 }
 
 /// @dev An ICHI-vault stand-in for the LP-split parity vector (settable per-Safe balances + pool globals).

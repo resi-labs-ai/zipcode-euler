@@ -10,14 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-02 — Coverage sidecar-LP double-count (Group 2: M2/L14/L1).** Ticket: `build/tickets/sec/SEC-02-coverage-sidecar-lp-double-count.md`.
-- **Deliverable:** scope the oracle `pathLockedLpEquity()` to **mainSafe-only** so sidecar ICHI-LP is single-counted
-  (it is already in `committedValue()`), fixing the inflated `covered()`/`lpBurnKeepsCovered()`.
-- **Binds to:** `SzipNavOracle` `coverageValue()` / `pathLockedLpEquity()` (`:386-390`) — land in the coverage view,
-  **NOT** in `committedValue` (would corrupt `freeValue` + the Committed/Released events; kill-list Group 2).
-- **Source:** `build/kill-list.md` Group 2. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + a new `SEC02_*` regression test (sidecar LP-share donation
-  no longer inflates `covered()`; partition `gross − coverageValue = Pm` holds); test output quoted in the ticket.
+**SEC-03 — CCIP admin handoff (H4).** Ticket: `build/tickets/sec/SEC-03-ccip-admin-handoff.md`.
+- **Deliverable:** `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + `pendingAdministrator` assert.
+- **Source:** `build/kill-list.md` H4. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC03_*` regression; test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -35,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 is DONE (2026-06-15); SEC-02 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 are DONE (2026-06-15); SEC-03 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -43,8 +39,8 @@ doc/comment-only (no regression test).
 | ID | Item(s) | What | Status |
 |---|---|---|---|
 | SEC-01 | Group 1 (H1/M1/L3) | Oracle monotonic-timestamp guard at 3 write sites + `error StaleReport()` decls | **DONE 2026-06-15** — `sec/SEC-01-oracle-monotonic-guard.md` |
-| SEC-02 | Group 2 (M2/L14/L1) | Coverage sidecar-LP double-count — scope oracle `pathLockedLpEquity()` mainSafe-only | **NEXT** — `sec/SEC-02-coverage-sidecar-lp-double-count.md` |
-| SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **TICKETED** — `sec/SEC-03-ccip-admin-handoff.md` |
+| SEC-02 | Group 2 (M2/L14/L1) | Coverage sidecar-LP double-count — scope oracle `pathLockedLpEquity()` mainSafe-only | **DONE 2026-06-15** — `sec/SEC-02-coverage-sidecar-lp-double-count.md` |
+| SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **NEXT** — `sec/SEC-03-ccip-admin-handoff.md` |
 | SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **TICKETED** — `sec/SEC-04-xalphausd-fail-close.md` |
 | SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **TICKETED** — `sec/SEC-05-seal-lporacle-identity.md` |
 | SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **TICKETED** — `sec/SEC-06-closeline-queue-prune.md` |
@@ -62,6 +58,30 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-02 (2026-06-15)
+**Coverage sidecar-LP double-count closed** (kill-list Group 2: M2 + L14 + the real content of L1). One-line scope
+in `SzipNavOracle.pathLockedLpEquity()` (`:388-392`): `_lpValue(_lpShares(mainSafe))` minus `_reservoirDebt(mainSafe)`
+(was `mainSafe + sidecar` for both legs). The sidecar's LP + debt are already owned by `committedValue()`
+(`_grossValueOf(sidecar)`), so `coverageValue() = committedValue + pathLockedLpEquity` now counts every Safe's LP
+**exactly once**. Pre-fix, anyone could donate ICHI-LP shares into the sidecar to inflate `covered()` /
+`lpBurnKeepsCovered()` and let `removeLiquidity`/`release`/`postBid` proceed below the coverage floor.
+- **Surgical (Do-NOT honored):** only the oracle view changed (+ its docstring). `committedValue`, `freeValue`,
+  `_grossValueOf`, `grossBasketValue`, all events, and the `ISzipNavBasket` interface are byte-for-byte unchanged — so
+  `freeValue = gross − committedValue` and the §11-B Committed/Released accounting are untouched. LP stays IN the
+  coverage numerator (single-count, not exclude — `build/lp-path-lock.md`). L1's "gross-cap DoS" disposition stayed
+  overturned (not touched).
+- **Gate green:** `forge build` clean; `forge test` **767 passed / 0 failed / 3 skipped** (the 3 skips are the
+  pre-existing `DeployZipcode.t.sol` skips; +3 over SEC-01's 764). 3 new `test_SEC02_*` regressions in
+  `SzipNavOracleParityTest` (`test/DurationFreezeModule.t.sol` — that suite already wires the REAL oracle, so the
+  genuine double-count is exercised, not a settable mock): single-count (coverage rises by exactly one 15e18 mark on a
+  sidecar donation, `pathLockedLpEquity` unchanged), partition (`gross − coverageValue == Pm` within ≤2 wei), and
+  floor-breach (REAL `DurationFreezeModule` + REAL oracle + `MockEulerEarn`: single-counted 95e18 < 100e18 floor →
+  `covered() == false`; pre-fix double-counted 110e18 lied `true`). **Fail-before/pass-after confirmed** — reverting
+  the scope reproduces all 3 with the double-count signature (`110≠95`, `30≠15`, gap `15>2`).
+- **No spec change, no back-pressure, no new obligation.** Internal oracle-view fix; no contract surface added or owed.
+  Ticket (with full output): `build/tickets/sec/SEC-02-coverage-sidecar-lp-double-count.md`. Report:
+  `build/reports/SEC-02-report.md`.
 
 ### Just done — SEC-01 (2026-06-15)
 **Oracle monotonic-timestamp guard at the 3 sibling write sites** (kill-list Group 1: H1/M1/L3), mirroring the

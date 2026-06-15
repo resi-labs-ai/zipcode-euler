@@ -2,7 +2,7 @@
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` Group 2 (M2, absorbs L14 + the
 real part of L1); `build/coverage-floor.md`, `build/lp-path-lock.md`; audit `findings.md` (M2),
-`interconnection-findings.md` · **Status:** PROPOSED
+`interconnection-findings.md` · **Status:** DONE (2026-06-15)
 
 > Scope authored 2026-06-15. One fix resolves M2, L14 (same root — the cross-view `freeValue` vs
 > `gross − coverageValue` desync), and the real content of L1 (L1's "gross-cap bricks exits" DoS was
@@ -68,3 +68,41 @@ donate ICHI-LP shares into the sidecar Safe to pump the inflated number.
 
 ## Depends on
 - None. (Independent of SEC-01.) On land: `PROGRESS.md` "Just done — SEC-02" with the finding note.
+
+---
+
+## Done note (2026-06-15)
+**Fix applied — `SzipNavOracle.pathLockedLpEquity()` (`:388-392`) scoped to mainSafe-only:**
+`_lpValue(_lpShares(mainSafe))` minus `_reservoirDebt(mainSafe)` (was `mainSafe + sidecar` for both). The
+sidecar's LP + debt are already owned by `committedValue()` (`_grossValueOf(sidecar)`, `:372-381`), so
+`coverageValue() = committedValue + pathLockedLpEquity` now counts every Safe's LP exactly once. Docstring
+updated to state the mainSafe-only scope + the SEC-02 rationale. **Nothing else touched** — `committedValue`,
+`freeValue`, `_grossValueOf`, `grossBasketValue`, and all events are byte-for-byte unchanged (Key req 2 / Do-NOT).
+
+**Regression (3 new `test_SEC02_*` in `SzipNavOracleParityTest`, `test/DurationFreezeModule.t.sol`)** — that
+suite already wires the REAL `SzipNavOracle`, so the genuine double-count is exercised (not a settable mock):
+- `test_SEC02_sidecar_lp_single_counted` — donate 50e18 sidecar LP shares; coverage numerator rises by
+  **exactly one** mark (`lpShareValue(50e18) = 15e18`, 80→95), and `pathLockedLpEquity` is unchanged at 30e18
+  (mainSafe-only). Pre-fix it rose by 30e18 (two marks).
+- `test_SEC02_partition_gross_minus_coverage_eq_pm` — `grossBasketValue − coverageValue == Pm` (mainSafe free
+  liquid legs, 40e18) within the ≤2-wei pro-rata tolerance. Pre-fix the gap was off by one sidecar mark (15e18).
+- `test_SEC02_floor_breach_covered_flips_false` — REAL `DurationFreezeModule` + REAL oracle + `MockEulerEarn`
+  (debt floor 100e18): single-counted coverage 95e18 < floor → `covered() == false` (breach surfaces) and
+  `lpBurnKeepsCovered(1e18) == false`. Pre-fix the double-counted 110e18 cleared the floor and `covered()` lied.
+
+**Fail-before / pass-after confirmed:** reverting the one-line scope reproduces all 3 failures with the exact
+double-count signature (`110 != 95`, `30 != 15`, `gap 15 > 2`); restoring passes.
+
+**Gate green:**
+```
+forge build  -> No files changed, compilation skipped (clean)
+forge test   -> 767 passed; 0 failed; 3 skipped (770 total)
+             (the 3 skips are the pre-existing DeployZipcode.t.sol skips; +3 new SEC02 over SEC-01's 764)
+forge test --match-test SEC02 ->
+  [PASS] test_SEC02_floor_breach_covered_flips_false()      (gas: 3887384)
+  [PASS] test_SEC02_partition_gross_minus_coverage_eq_pm()  (gas: 728730)
+  [PASS] test_SEC02_sidecar_lp_single_counted()             (gas: 720352)
+```
+
+**No back-pressure, no spec change, no new obligation.** The fix is internal to the oracle view; no module
+signature, event, or interface (`ISzipNavBasket`) changed. SEC-03 (H4 — CCIP admin handoff) is now NEXT.

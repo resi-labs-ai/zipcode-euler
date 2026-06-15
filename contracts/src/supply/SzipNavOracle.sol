@@ -380,14 +380,16 @@ contract SzipNavOracle is ReceiverTemplate {
         value = value > debt ? value - debt : 0;
     }
 
-    /// @notice The path-locked LP equity (18-dp USD): the ICHI LP in every state (loose + gauge-staked + escrow-
-    ///         collateralized) across BOTH Safes, NET of the reservoir strike debt. The freeze module adds this to
-    ///         `committedValue()` for its coverage floor because the LP is fenced — its only dissolution path
-    ///         (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it cannot reach an exit below the floor.
-    ///         build/lp-path-lock.md.
+    /// @notice The path-locked LP equity (18-dp USD): the MAIN-Safe ICHI LP in every state (loose + gauge-staked +
+    ///         escrow-collateralized), NET of the main Safe's reservoir strike debt. MAIN-SAFE ONLY — the SIDECAR's
+    ///         LP + debt are already owned by `committedValue()` (`_grossValueOf(sidecar)`), so summing this into
+    ///         `coverageValue()` counts every Safe's LP exactly once (SEC-02 / kill-list Group 2 double-count fix).
+    ///         The freeze module adds this to `committedValue()` for its coverage floor because the LP is fenced — its
+    ///         only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it cannot reach an exit
+    ///         below the floor. build/lp-path-lock.md.
     function pathLockedLpEquity() public view returns (uint256) {
-        uint256 lpValue = _lpValue(_lpShares(mainSafe) + _lpShares(sidecar));
-        uint256 debt = _reservoirDebt(mainSafe) + _reservoirDebt(sidecar);
+        uint256 lpValue = _lpValue(_lpShares(mainSafe));
+        uint256 debt = _reservoirDebt(mainSafe);
         return lpValue > debt ? lpValue - debt : 0;
     }
 
