@@ -132,10 +132,16 @@ contract MockAddressMapping {
     }
 }
 
-/// @notice Mock CCIP Router exposing only getOnRamp/isOffRamp (the pool's ramp gating).
+/// @notice Mock CCIP Router exposing getOnRamp/isOffRamp (the pool's ramp gating) + typeAndVersion
+///         (the deploy script's 5-address `_assertCctAddresses` probe — see SzAlphaAdminHandoffTest).
 contract MockRouter {
     mapping(uint64 => address) public onRamp;
     mapping(uint64 => mapping(address => bool)) public offRamp;
+
+    /// @dev Must match `CctConfig.expRouter` so `_assertCctAddresses` passes when etched at the router slot.
+    function typeAndVersion() external pure returns (string memory) {
+        return "Router 1.2.0";
+    }
 
     function setOnRamp(uint64 sel, address r) external {
         onRamp[sel] = r;
@@ -207,4 +213,106 @@ contract Mock6DecimalToken is IBurnMintERC20 {
     function transferFrom(address, address, uint256) external pure returns (bool) {
         return true;
     }
+}
+
+/// @dev Minimal `getCCIPAdmin()` surface (the registrar identity the module reads). The real SzAlpha /
+///      SzAlphaMirror both expose this; the mock module calls it via this interface.
+interface IGetCCIPAdminMock {
+    function getCCIPAdmin() external view returns (address);
+}
+
+/// @notice Mock CCIP `TokenAdminRegistry` (SEC-03/H4) — UNIT-FAITHFUL to the reference at
+///         `reference/chainlink-ccip/chains/evm/contracts/tokenAdminRegistry/TokenAdminRegistry.sol`.
+/// @dev Records `administrator`/`pendingAdministrator`/`tokenPool`, enforces `onlyTokenAdmin` on
+///      `setPool`/`transferAdminRole`, and implements the 2-step `proposeAdministrator` (registry-module
+///      only) -> `acceptAdminRole` (pending only) -> `transferAdminRole` (admin only) -> `acceptAdminRole`
+///      lifecycle exactly as the reference. `typeAndVersion` is a `constant` so it survives `vm.etch` at the
+///      hard-coded CCT address the deploy script reads (etch copies code, NOT storage). Skips the reference's
+///      `isSupportedToken` pool-support check (not needed to exercise the admin-slot handoff).
+contract MockTokenAdminRegistry {
+    error OnlyAdministrator(address sender, address token);
+    error OnlyPendingAdministrator(address sender, address token);
+    error OnlyRegistryModuleOrOwner(address sender);
+
+    struct TokenConfig {
+        address administrator;
+        address pendingAdministrator;
+        address tokenPool;
+    }
+
+    string public constant typeAndVersion = "TokenAdminRegistry 1.5.0";
+
+    mapping(address token => TokenConfig) internal s_config;
+    mapping(address module => bool) public isRegistryModule;
+
+    /// @notice Test helper: authorize a module to call `proposeAdministrator`.
+    function addRegistryModule(address module) external {
+        isRegistryModule[module] = true;
+    }
+
+    /// @dev Reference `proposeAdministrator`: registry-module (or owner) gated; sets the pending admin on a
+    ///      fresh token. Kept lenient on the owner branch (no owner in the mock) but module-gated.
+    function proposeAdministrator(address localToken, address administrator) external {
+        if (!isRegistryModule[msg.sender]) revert OnlyRegistryModuleOrOwner(msg.sender);
+        s_config[localToken].pendingAdministrator = administrator;
+    }
+
+    function acceptAdminRole(address localToken) external {
+        TokenConfig storage c = s_config[localToken];
+        if (c.pendingAdministrator != msg.sender) revert OnlyPendingAdministrator(msg.sender, localToken);
+        c.administrator = msg.sender;
+        c.pendingAdministrator = address(0);
+    }
+
+    function setPool(address localToken, address pool) external onlyTokenAdmin(localToken) {
+        s_config[localToken].tokenPool = pool;
+    }
+
+    function transferAdminRole(address localToken, address newAdmin) external onlyTokenAdmin(localToken) {
+        s_config[localToken].pendingAdministrator = newAdmin;
+    }
+
+    function getPool(address token) external view returns (address) {
+        return s_config[token].tokenPool;
+    }
+
+    function getTokenConfig(address token) external view returns (TokenConfig memory) {
+        return s_config[token];
+    }
+
+    modifier onlyTokenAdmin(address token) {
+        if (s_config[token].administrator != msg.sender) revert OnlyAdministrator(msg.sender, token);
+        _;
+    }
+}
+
+/// @notice Mock CCIP `RegistryModuleOwnerCustom` (SEC-03/H4) — mirrors the reference at
+///         `reference/chainlink-ccip/.../RegistryModuleOwnerCustom.sol`: `registerAdminViaGetCCIPAdmin`
+///         reads the token's `getCCIPAdmin()`, requires it == `msg.sender` (self-registration), then calls
+///         `proposeAdministrator` on the registry.
+/// @dev The registry is `immutable` so it survives `vm.etch` (immutables are baked into runtime code).
+///      Construct the instance pointing at the etched registry address, then etch its code at the module slot.
+///      `typeAndVersion` is `constant` for the same etch-survival reason.
+contract MockRegistryModuleOwnerCustom {
+    error CanOnlySelfRegister(address admin, address token);
+
+    string public constant typeAndVersion = "RegistryModuleOwnerCustom 1.6.0";
+
+    MockTokenAdminRegistry internal immutable i_registry;
+
+    constructor(MockTokenAdminRegistry registry) {
+        i_registry = registry;
+    }
+
+    function registerAdminViaGetCCIPAdmin(address token) external {
+        address admin = IGetCCIPAdminMock(token).getCCIPAdmin();
+        if (admin != msg.sender) revert CanOnlySelfRegister(admin, token);
+        i_registry.proposeAdministrator(token, admin);
+    }
+}
+
+/// @notice Mock `TokenPoolFactory` — only the `typeAndVersion` the deploy `_assertCctAddresses` probe reads
+///         (`constant`, survives `vm.etch`). The factory is never otherwise called by deploy964/deployBase.
+contract MockTokenPoolFactory {
+    string public constant typeAndVersion = "TokenPoolFactory 1.5.1";
 }

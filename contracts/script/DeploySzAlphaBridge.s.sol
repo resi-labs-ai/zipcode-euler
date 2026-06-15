@@ -117,18 +117,40 @@ contract DeploySzAlphaBridge is Script {
         );
 
         // Register on the CCT registry. NO mint/burn grant on 964 (lock/release).
+        // THIS contract becomes the registry administrator (it is the registrar + accepts the role) so it
+        // can wire `setPool` in-broadcast. That admin role is the ONLY authority that can ever re-point or
+        // delist the bridge pool, so it MUST be handed to the durable authority before the script exits.
         IRegistryModuleOwnerCustom(cfg.registryModuleOwnerCustom).registerAdminViaGetCCIPAdmin(address(token));
         ITokenAdminRegistry(cfg.tokenAdminRegistry).acceptAdminRole(address(token));
         ITokenAdminRegistry(cfg.tokenAdminRegistry).setPool(address(token), address(pool));
 
-        // Hand off: registrar role to the real ccipAdmin; lockbox ownership PROPOSED to the timelock
-        // (Chainlink 2-step ownership — the timelock must call `lockBox.acceptOwnership()`, a runbook step).
+        // SEC-03/H4: hand the REGISTRY administrator role to the durable ccipAdmin (2-step — proposes
+        // `ccipAdmin` as `pendingAdministrator`). `setCCIPAdmin` alone only mutates the token's
+        // `getCCIPAdmin()` view, which the registry consumed once at registration and never re-reads — it
+        // does NOT move the registry's `administrator` slot. Without this transfer the ephemeral script
+        // stays the sole admin forever and the pool can never be re-pointed (RMN/CCIP upgrades, incident).
+        // RUNBOOK (unavoidable post-deploy step): the durable `ccipAdmin` MUST call
+        //   ITokenAdminRegistry(tokenAdminRegistry).acceptAdminRole(token)
+        // to finalize the handoff. Until it does, THIS script remains a live admin — the one residual
+        // interruption window; accept promptly. The script cannot accept on `ccipAdmin`'s behalf mid-broadcast.
+        ITokenAdminRegistry(cfg.tokenAdminRegistry).transferAdminRole(address(token), ccipAdmin);
+
+        // Hand off: token ccipAdmin view to the real ccipAdmin (kept aligned for any future
+        // re-registration via getCCIPAdmin); lockbox ownership PROPOSED to the timelock (Chainlink 2-step
+        // ownership — the timelock must call `lockBox.acceptOwnership()`, a runbook step).
         token.setCCIPAdmin(ccipAdmin);
         lockBox.transferOwnership(timelock);
 
         _assertDeployed(address(token), address(pool), timelock, cfg);
         require(pool.getLockBox() == address(lockBox), "pool lockbox mismatch");
-        require(token.getCCIPAdmin() == ccipAdmin, "ccipAdmin handoff failed");
+        // SEC-03/H4: assert the REGISTRY pending-administrator is the durable ccipAdmin (NOT the old
+        // `getCCIPAdmin()==ccipAdmin` view check — that gave false confidence on the wrong slot).
+        // `administrator` is still THIS script pre-accept, so assert `pendingAdministrator` per the 2-step.
+        require(
+            ITokenAdminRegistry(cfg.tokenAdminRegistry).getTokenConfig(address(token)).pendingAdministrator
+                == ccipAdmin,
+            "registry admin handoff failed"
+        );
     }
 
     /// @notice The 964 genesis SEED DEPOSIT (run immediately after `deploy964`, before announcing).
@@ -149,14 +171,29 @@ contract DeploySzAlphaBridge is Script {
         pool = new SzAlphaTokenPool(IBurnMintERC20(address(token)), 18, cfg.armProxy, cfg.router, cfg.armProxy);
 
         // Burn/mint wiring (Base only): grant pool mint/burn -> register -> accept -> setPool.
+        // As on 964, THIS contract becomes the registry administrator so it can wire `setPool` in-broadcast.
         token.grantMintAndBurnRoles(address(pool));
         IRegistryModuleOwnerCustom(cfg.registryModuleOwnerCustom).registerAdminViaGetCCIPAdmin(address(token));
         ITokenAdminRegistry(cfg.tokenAdminRegistry).acceptAdminRole(address(token));
         ITokenAdminRegistry(cfg.tokenAdminRegistry).setPool(address(token), address(pool));
 
+        // SEC-03/H4: hand the REGISTRY administrator role to the durable timelock (2-step — proposes
+        // `timelock` as `pendingAdministrator`). `setCCIPAdmin(timelock)` below only updates the token view;
+        // it does NOT move the registry `administrator` slot. RUNBOOK (unavoidable): the timelock MUST call
+        //   ITokenAdminRegistry(tokenAdminRegistry).acceptAdminRole(token)
+        // post-deploy to finalize. Until then this script remains a live admin (the one residual window).
+        ITokenAdminRegistry(cfg.tokenAdminRegistry).transferAdminRole(address(token), timelock);
+
         // Mirror has no owner(); the pool ownership hand-off to the timelock is asserted by the caller.
         _assertPoolRmnAndDecimals(address(token), address(pool), cfg);
-        // Hand the mirror's mint-control + registrar to the timelock; revoke the deployer. The mirror's
+        // SEC-03/H4: assert the REGISTRY pending-administrator is the durable timelock (administrator is
+        // still THIS script pre-accept, per the 2-step — assert `pendingAdministrator`).
+        require(
+            ITokenAdminRegistry(cfg.tokenAdminRegistry).getTokenConfig(address(token)).pendingAdministrator
+                == timelock,
+            "registry admin handoff failed"
+        );
+        // Hand the mirror's mint-control + ccipAdmin view to the timelock; revoke the deployer. The mirror's
         // constructor granted DEFAULT_ADMIN_ROLE + ccipAdmin to THIS contract (the `new SzAlphaMirror`
         // caller), so the revoke target is `address(this)`, not the external caller.
         token.setCCIPAdmin(timelock);

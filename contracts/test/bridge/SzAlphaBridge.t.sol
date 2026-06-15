@@ -23,7 +23,10 @@ import {
     MockAddressMapping,
     MockRouter,
     MockRMN,
-    Mock6DecimalToken
+    Mock6DecimalToken,
+    MockTokenAdminRegistry,
+    MockRegistryModuleOwnerCustom,
+    MockTokenPoolFactory
 } from "./BridgeMocks.sol";
 
 /// @dev A trivial V2 implementation for the UUPS upgrade / storage-gap test.
@@ -788,5 +791,116 @@ contract SzAlphaBaseForkTest is Test {
             c.expReg,
             c.expFactory
         );
+    }
+}
+
+/// @title SEC-03/H4 — CCT registry-admin handoff regression (MOCKED CCT infra, no live fork).
+/// @notice The real CCT router/RMN/registry/module/factory are not on the local anvil Base fork, so the
+///         deploy script's HARD-CODED CCT addresses are `vm.etch`ed with unit-faithful mocks
+///         (`BridgeMocks.sol`) — the driver's "re-run deploy against a fresh fork" is satisfied by this
+///         mock-registry test (see the ticket's deploy-script note). Drives `deploy964`/`deployBase`
+///         end-to-end and proves the registry `administrator` slot is handed to the durable authority
+///         (964 -> `ccipAdmin`, Base -> `timelock`) via the 2-step `transferAdminRole`, then exercises the
+///         runbook `acceptAdminRole` finalize. FAILS BEFORE the SEC-03 fix: the script never calls
+///         `transferAdminRole`, so `pendingAdministrator` stays `address(0)` and the script stays sole admin.
+contract SzAlphaAdminHandoffTest is Test {
+    address internal constant ADDRESS_MAPPING = 0x000000000000000000000000000000000000080C;
+    uint256 internal constant NETUID = 99;
+    bytes32 internal constant HOTKEY = bytes32(uint256(0xABCD));
+
+    DeploySzAlphaBridge internal deployer;
+    address internal timelock = makeAddr("timelock");
+    address internal ccipAdmin = makeAddr("ccipAdmin");
+
+    function setUp() public {
+        deployer = new DeploySzAlphaBridge();
+        // SzAlpha.initialize reads AddressMapping (0x80C) once to cache the wrapper coldkey.
+        vm.etch(ADDRESS_MAPPING, address(new MockAddressMapping()).code);
+        // Etch unit-faithful CCT mocks at BOTH chains' hard-coded addresses the deploy script reads.
+        _wireMockCct(deployer.bittensorConfig());
+        _wireMockCct(deployer.baseConfig());
+    }
+
+    /// @dev Etch a mock TokenAdminRegistry / RegistryModuleOwnerCustom / Router / RMN / factory at the
+    ///      config's hard-coded CCT slots. `vm.etch` copies CODE only (not storage), so the mocks' identity
+    ///      strings are `constant` and the module's registry pointer is `immutable` (both baked into code).
+    function _wireMockCct(DeploySzAlphaBridge.CctConfig memory cfg) internal {
+        vm.etch(cfg.tokenAdminRegistry, address(new MockTokenAdminRegistry()).code);
+        // The module's `i_registry` immutable must point at the registry SLOT (not the temp instance).
+        MockRegistryModuleOwnerCustom moduleImpl =
+            new MockRegistryModuleOwnerCustom(MockTokenAdminRegistry(cfg.tokenAdminRegistry));
+        vm.etch(cfg.registryModuleOwnerCustom, address(moduleImpl).code);
+        // Authorize the module slot to `proposeAdministrator` on the registry (reference gating).
+        MockTokenAdminRegistry(cfg.tokenAdminRegistry).addRegistryModule(cfg.registryModuleOwnerCustom);
+        vm.etch(cfg.router, address(new MockRouter()).code);
+        vm.etch(cfg.armProxy, address(new MockRMN()).code);
+        vm.etch(cfg.tokenPoolFactory, address(new MockTokenPoolFactory()).code);
+    }
+
+    function _reg(DeploySzAlphaBridge.CctConfig memory cfg) internal pure returns (MockTokenAdminRegistry) {
+        return MockTokenAdminRegistry(cfg.tokenAdminRegistry);
+    }
+
+    function test_SEC03_deploy964_handsRegistryAdminToCcipAdmin() public {
+        DeploySzAlphaBridge.CctConfig memory cfg = deployer.bittensorConfig();
+        (SzAlpha token,,) = deployer.deploy964(NETUID, HOTKEY, timelock, ccipAdmin);
+        MockTokenAdminRegistry reg = _reg(cfg);
+
+        // Pre-accept: the ephemeral script is STILL the registry administrator (the 2-step is not yet
+        // finalized), but the durable ccipAdmin is now `pendingAdministrator` — the SEC-03 handoff.
+        assertEq(
+            reg.getTokenConfig(address(token)).administrator,
+            address(deployer),
+            "script still admin pre-accept"
+        );
+        assertEq(
+            reg.getTokenConfig(address(token)).pendingAdministrator,
+            ccipAdmin,
+            "ccipAdmin is pending (the SEC-03 transferAdminRole handoff)"
+        );
+
+        // Runbook finalize: the durable ccipAdmin accepts -> becomes the sole admin; pending cleared.
+        vm.prank(ccipAdmin);
+        reg.acceptAdminRole(address(token));
+        assertEq(reg.getTokenConfig(address(token)).administrator, ccipAdmin, "ccipAdmin is now the admin");
+        assertEq(reg.getTokenConfig(address(token)).pendingAdministrator, address(0), "pending cleared");
+
+        // The ephemeral script can no longer re-point / delist the pool (the H4 risk is closed).
+        vm.prank(address(deployer));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MockTokenAdminRegistry.OnlyAdministrator.selector, address(deployer), address(token)
+            )
+        );
+        reg.setPool(address(token), address(0xBEEF));
+    }
+
+    function test_SEC03_deployBase_handsRegistryAdminToTimelock() public {
+        DeploySzAlphaBridge.CctConfig memory cfg = deployer.baseConfig();
+        (SzAlphaMirror token,) = deployer.deployBase(timelock);
+        MockTokenAdminRegistry reg = _reg(cfg);
+
+        assertEq(
+            reg.getTokenConfig(address(token)).administrator,
+            address(deployer),
+            "script still admin pre-accept"
+        );
+        assertEq(
+            reg.getTokenConfig(address(token)).pendingAdministrator,
+            timelock,
+            "timelock is pending (the SEC-03 transferAdminRole handoff)"
+        );
+
+        vm.prank(timelock);
+        reg.acceptAdminRole(address(token));
+        assertEq(reg.getTokenConfig(address(token)).administrator, timelock, "timelock is now the admin");
+
+        vm.prank(address(deployer));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MockTokenAdminRegistry.OnlyAdministrator.selector, address(deployer), address(token)
+            )
+        );
+        reg.setPool(address(token), address(0xBEEF));
     }
 }
