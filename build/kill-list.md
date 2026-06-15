@@ -117,10 +117,15 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   grossBasketValue / freeze coverageValue / ExitGate deposit). Regression: 5 `test_SEC04_*` across
   `SzipNavOracle.t.sol` (unseeded fail-close + seeded-correct + asymmetry-preserved), `DurationFreezeModule.t.sol`
   (real freeze coverageValue), `ExitGate.t.sol` (real deposit path) — fail-before/pass-after confirmed.
-- [ ] **M4** (MED) · `SzipReservoirLpOracle` deployed with zero author/workflowId so its CRE identity check is
+- [x] **M4** (MED) · `SzipReservoirLpOracle` deployed with zero author/workflowId so its CRE identity check is
   skipped; the P9 seal loop omits it (`DeployZipcode.s.sol:526-531`). Default mainnet path (`LP_TWAP_WINDOW=0`)
   is the vulnerable one. **Fix:** `if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle));`
   + extend `requireIdentityWired` — **both conditional** on `d.lpOracle != 0` (the fair-LP branch leaves it unset).
+  **DONE 2026-06-15 (SEC-05).** P9 now seals `d.lpOracle` (`:535`) and a new `ZipcodeDeployAsserts.
+  requireReceiverIdentityWired(address)` per-receiver gate (`error ReceiverIdentityNotWired`) asserts it (`:542`),
+  both guarded `!= address(0)`. 7 new `test_SEC05_*` in `ZipcodeDeployIdentityGate.t.sol` (identity sealed,
+  dormant-accepts-vs-sealed-rejects behavioral pair on the REAL oracle, pre-gate negative/positive, fair-LP guard)
+  — fail-before/pass-after confirmed (seal removed → wrong-id push accepted again).
 - [ ] **L2** (LOW→MED) · `setLpTwapWindow(>0)` against a plugin-less/under-seeded Algebra pool bricks *every*
   NAV read; setter has zero validation (`SzipNavOracle.sol:247-250`). **Fix:** in the setter, for non-zero window
   assert `IAlgebraPool(pool).plugin() != 0` and `IAlgebraOraclePlugin(plugin).isInitialized()`. (Full cardinality

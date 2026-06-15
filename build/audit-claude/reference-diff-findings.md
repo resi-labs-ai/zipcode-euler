@@ -25,7 +25,8 @@ in the whole audit — invisible to source-only review._
 
 ## MEDIUM
 
-### B3 — `SzipReservoirLpOracle` CRE receiver deployed with ZERO workflow-identity (any co-tenant workflow can push LP marks)
+### B3 — `SzipReservoirLpOracle` CRE receiver deployed with ZERO workflow-identity (any co-tenant workflow can push LP marks) — **RESOLVED 2026-06-15 (SEC-05)**
+- **resolution:** P9 now seals `d.lpOracle`'s identity (`DeployZipcode.s.sol:535`, guarded `!= address(0)`) and the new `ZipcodeDeployAsserts.requireReceiverIdentityWired(address)` per-receiver gate (`error ReceiverIdentityNotWired`) asserts it before ownership transfer (`:542`) — so the dormant-identity hole the controller-only `requireIdentityWired` couldn't catch is closed. The fair-LP branch (`d.lpOracle == address(0)`, ownerless `AlgebraIchiFairLpOracle`) is unaffected by the guard. Regression: 7 `test_SEC05_*` in `test/ZipcodeDeployIdentityGate.t.sol` (incl. the REAL-oracle dormant-accepts-wrong-id vs sealed-rejects-`InvalidWorkflowId` behavioral pair); fail-before/pass-after confirmed. See `build/reports/SEC-05-report.md`.
 - **contract/fn:** deploy seal phase — `script/DeployZipcode.s.sol:526-531` (seal loop **omits** `d.lpOracle`), `:544`; receiver `src/supply/SzipReservoirLpOracle.sol:21,104`
 - **upstream_ref:** `reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol:88` — the workflow-identity check runs **only when** `expectedWorkflowId/author/name != 0`; all-zero ⇒ **no identity check, forwarder-sender gating only**.
 - **class:** report-authentication · **severity: MED · confidence: high**

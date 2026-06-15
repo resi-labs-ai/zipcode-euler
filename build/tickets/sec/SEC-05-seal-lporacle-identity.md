@@ -1,7 +1,7 @@
 # SEC-05 — Seal the CRE-push lpOracle's workflow identity (M4)
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` M4; `build/fair-lp.md`; audit `findings.md` (F1/F3
-dormant-identity), `role-based-findings.md`; `contracts/src/ZipcodeDeployAsserts.sol` · **Status:** PROPOSED
+dormant-identity), `role-based-findings.md`; `contracts/src/ZipcodeDeployAsserts.sol` · **Status:** DONE 2026-06-15
 
 > Scope authored 2026-06-15. Deploy-script + assert-library fix. Both additions are **conditional on
 > `d.lpOracle != address(0)`** — the trustless fair-LP branch (`lpTwapWindow > 0`) deploys an ownerless
@@ -78,3 +78,51 @@ push an LP mark. The fail-closed pre-gate that runs before ownership transfer on
 
 ## Depends on
 - None. On land: `PROGRESS.md` "Just done — SEC-05" with the finding note.
+
+---
+
+## DONE note (2026-06-15)
+**M4 closed — the un-looped CRE-push `lpOracle` identity is now sealed AND fail-closed pre-gated.** Two files
+changed, exactly per Key requirements (no scope widening):
+
+- **`src/ZipcodeDeployAsserts.sol`** — added `error ReceiverIdentityNotWired(address receiver)` + the sibling
+  `requireReceiverIdentityWired(address receiver)` `internal view` (reverts when
+  `IReceiverIdentity(receiver).getExpectedWorkflowId() == bytes32(0)`). The existing two-arg
+  `requireIdentityWired(controller, registry)` + its `:534` call are byte-for-byte untouched (Do-NOT honored).
+- **`script/DeployZipcode.s.sol` P9** — after the six-receiver seal loop: `if (address(d.lpOracle) != address(0))
+  _sealIdentity(address(d.lpOracle));` (`:535`); after the `requireIdentityWired` pre-gate: `if (address(d.lpOracle)
+  != address(0)) ZipcodeDeployAsserts.requireReceiverIdentityWired(address(d.lpOracle));` (`:542`). Both guarded on
+  `!= address(0)`, mirroring the `:544` `transferOwnership` conditional — the fair-LP branch (no
+  `SzipReservoirLpOracle`) neither seals nor asserts and the deploy completes. The lpOracle ctor is unchanged
+  (seal is a P9 post-deploy step, Do-NOT honored).
+
+**Regression — 7 `test_SEC05_*` in `test/ZipcodeDeployIdentityGate.t.sol`** (its existing `MockUSDC` reused; new
+`LpGateHarness` external wrapper for the `internal` single-arg lib fn; a REAL `SzipReservoirLpOracle`, no fork — its
+ctor only reads `quote.decimals()`):
+- `IdentitySealed_AfterSeal` — `getExpectedWorkflowId()` is `bytes32(0)` pre-seal, `== WID` post-seal.
+- `Behavioral_DormantAcceptsWrongIdentity` — the **vuln**: an unsealed oracle ACCEPTS a wrong-workflowId `LP_MARK`
+  push from the Forwarder (cache written).
+- `Behavioral_SealedRejectsWrongIdentity` — the **fix**: once sealed, the SAME push reverts
+  `InvalidWorkflowId(WRONG_WID, WID)`, no cache write.
+- `Behavioral_SealedAcceptsCorrectIdentity` — no false-positive lockout: the authorized workflow still pushes through.
+- `PreGate_RevertsWhenIdentityUnset` — `requireReceiverIdentityWired` reverts `ReceiverIdentityNotWired(oracle)`.
+- `PreGate_PassesWhenSealed` — passes (no revert) once sealed.
+- `FairLpBranch_GuardSemantics` — pins that the script's `!= address(0)` guard is what keeps the ownerless fair-LP
+  branch from fail-closing (the full fair-LP deploy path is the skipped WOOF-10 fork harness's bar).
+
+**Fail-before/pass-after confirmed:** commenting out the `:535` seal call → `Behavioral_SealedRejectsWrongIdentity`
+flips back to accepting the wrong-id push (the dormant vuln). **`forge build` clean.**
+
+**Gate output (`forge test`):**
+```
+Ran 52 test suites: 781 tests passed, 0 failed, 3 skipped (784 total tests)
+```
+(+7 over SEC-04's 774 = the 7 new `test_SEC05_*`; the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold.)
+Focused suite: `Ran 2 test suites ... 12 tests passed` (the 5 pre-existing `ZipcodeDeployIdentityGateTest` +
+7 new `SEC05LpOracleIdentityTest`).
+
+**No spec change** (interface-level deploy fix; §9/§17 intent unchanged — the spec already prescribed sealing every
+receiver's identity; this fences the one receiver the seal loop omitted). **No back-pressure / no new obligation**
+(no contract surface owed; the fix uses the receiver's existing `setExpected*` surface + a new deploy-time library
+fn). The existing **WOOF-10 deploy-bar obligation** (the skipped `DeployZipcode.t.sol` full-fork run) is unchanged —
+SEC-05 does not un-skip it; it adds a no-fork focused regression instead.

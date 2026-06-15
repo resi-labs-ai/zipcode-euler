@@ -21,7 +21,7 @@ deployed bytecode), spans both contracts, and is a pure deploy-time read.
 ## Contracts involved (what each does)
 | Artifact | What it is |
 |---|---|
-| `library ZipcodeDeployAsserts` (`contracts/src/ZipcodeDeployAsserts.sol`) | Stateless helper. One `internal view` fn `requireIdentityWired(address controller, address registry)` + one `error IdentityNotWired(address controller, address registry)`. No state, no storage, no constructor. GPL-2.0-or-later, pragma `0.8.24`. |
+| `library ZipcodeDeployAsserts` (`contracts/src/ZipcodeDeployAsserts.sol`) | Stateless helper. Two `internal view` fns: `requireIdentityWired(address controller, address registry)` (the combined controller+registry S11 gate) and `requireReceiverIdentityWired(address receiver)` (a single-receiver identity gate for a `ReceiverTemplate` outside the S10b same-WORKFLOW_ID loop — used for the un-looped CRE-push `lpOracle`, SEC-05/M4). Two errors: `IdentityNotWired(address controller, address registry)` + `ReceiverIdentityNotWired(address receiver)`. No state, no storage, no constructor. GPL-2.0-or-later, pragma `0.8.24`. |
 | `interface IReceiverIdentity` (inline) | `function getExpectedWorkflowId() external view returns (bytes32)` — the one read face on the representative `ReceiverTemplate` receiver. Declared inline to avoid pulling `ReceiverTemplate`/`BaseAdapter` into the library's compile unit. |
 | `interface IOracleRegistryController` (inline) | `function controller() external view returns (address)` — the set-once controller getter on `ZipcodeOracleRegistry` (the only contract with a `controller` getter, WOOF-02). |
 
@@ -36,6 +36,17 @@ function requireIdentityWired(address controller, address registry) internal vie
         IReceiverIdentity(controller).getExpectedWorkflowId() == bytes32(0)
             || IOracleRegistryController(registry).controller() == address(0)
     ) revert IdentityNotWired(controller, registry);
+}
+
+// SEC-05 (M4): the un-looped CRE-push lpOracle is a ReceiverTemplate NOT covered by the S10b same-WORKFLOW_ID
+// assumption above, so it gets an explicit per-receiver gate. P9 seals it and calls this, both guarded
+// `!= address(0)` (the fair-LP branch has no SzipReservoirLpOracle → nothing to seal/assert).
+error ReceiverIdentityNotWired(address receiver);
+
+function requireReceiverIdentityWired(address receiver) internal view {
+    if (IReceiverIdentity(receiver).getExpectedWorkflowId() == bytes32(0)) {
+        revert ReceiverIdentityNotWired(receiver);
+    }
 }
 ```
 

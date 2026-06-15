@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-05 — Seal `lpOracle` CRE identity in P9 + extend pre-gate (M4).** Ticket: `build/tickets/sec/SEC-05-seal-lporacle-identity.md`.
-- **Deliverable:** in `DeployZipcode.s.sol` P9, `if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle));` + extend `requireIdentityWired` — both conditional on `d.lpOracle != 0` (the fair-LP branch leaves it unset).
-- **Source:** `build/kill-list.md` M4. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC05_*` regression (deploy-script ticket: re-run `DeployLocal` against a fresh anvil fork); test output quoted in the ticket.
+**SEC-06 — `closeLine` prunes the closed line from the EE supply queue (Group 3a / H2).** Ticket: `build/tickets/sec/SEC-06-closeline-queue-prune.md`.
+- **Deliverable:** in `EulerVenueAdapter.closeLine`, remove the closed line's borrow EVAULT from the EulerEarn supply queue (`setSupplyQueue` minus the closed vault) so the 30-slot queue does not grow unboundedly and origination cannot permanently brick.
+- **Source:** `build/kill-list.md` Group 3 / H2. Driver: `build/kill-list-driver.md`. (See the standing concurrent-line-ceiling design obligation below — SEC-06 reclaims *closed*-line slots only, not the ~29 concurrent ceiling.)
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC06_*` regression (open→close→reopen churn past the cap stays live); test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 + SEC-04 are DONE (2026-06-15); SEC-05 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 + SEC-04 + SEC-05 are DONE (2026-06-15); SEC-06 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -42,8 +42,8 @@ doc/comment-only (no regression test).
 | SEC-02 | Group 2 (M2/L14/L1) | Coverage sidecar-LP double-count — scope oracle `pathLockedLpEquity()` mainSafe-only | **DONE 2026-06-15** — `sec/SEC-02-coverage-sidecar-lp-double-count.md` |
 | SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **DONE 2026-06-15** — `sec/SEC-03-ccip-admin-handoff.md` |
 | SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **DONE 2026-06-15** — `sec/SEC-04-xalphausd-fail-close.md` |
-| SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **NEXT** — `sec/SEC-05-seal-lporacle-identity.md` |
-| SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **TICKETED** — `sec/SEC-06-closeline-queue-prune.md` |
+| SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **DONE 2026-06-15** — `sec/SEC-05-seal-lporacle-identity.md` |
+| SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **NEXT** — `sec/SEC-06-closeline-queue-prune.md` |
 | SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **TICKETED** — `sec/SEC-07-closeline-defund-to-base.md` |
 | SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **TICKETED** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
 | SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **TICKETED** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
@@ -58,6 +58,33 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-05 (2026-06-15)
+**Sealed the un-looped CRE-push `lpOracle`'s workflow identity + extended the deploy pre-gate** (kill-list M4; audit
+ref-B / B3). `SzipReservoirLpOracle` is a `ReceiverTemplate` whose `onReport` workflow-identity check is **conditional**
+(runs only when `expectedAuthor`/`expectedWorkflowId` are non-zero). P9's seal loop set those on six receivers but
+**omitted the lpOracle**, and the fail-closed pre-gate only checked the controller as a "representative" — so the
+lpOracle's identity stayed `bytes32(0)` (dormant) and any co-tenant workflow clearing the shared Keystone Forwarder
+could push an arbitrary LP-share mark → mismark reservoir collateral → over-borrow (exceeds the documented
+"compromised CRE" blast radius — no compromise needed).
+- **Fix (2 files):** `ZipcodeDeployAsserts` gained `error ReceiverIdentityNotWired(address)` + a sibling
+  `requireReceiverIdentityWired(address receiver)` `internal view` (reverts on `getExpectedWorkflowId() == 0`); the
+  existing `requireIdentityWired(controller, registry)` + its `:534` call are untouched. `DeployZipcode.s.sol` P9 now
+  `_sealIdentity(d.lpOracle)` (`:535`) and `requireReceiverIdentityWired(d.lpOracle)` (`:542`), **both guarded
+  `!= address(0)`** (mirrors the `:544` `transferOwnership` conditional) so the fair-LP branch (ownerless
+  `AlgebraIchiFairLpOracle`, `d.lpOracle == 0`) neither seals nor asserts and the deploy completes.
+- **Gate green:** `forge build` clean; `forge test` **781 passed / 0 failed / 3 skipped** (+7 over SEC-04's 774; the 3
+  skips are the pre-existing `DeployZipcode.t.sol` scaffold). 7 new `test_SEC05_*` in `test/ZipcodeDeployIdentityGate.t.sol`
+  (no fork — the oracle ctor only reads `quote.decimals()`): identity-sealed; the **dormant-accepts-wrong-id vs
+  sealed-rejects-`InvalidWorkflowId` behavioral pair on the REAL oracle**; sealed-accepts-correct-id (no false lockout);
+  pre-gate negative/positive; fair-LP guard semantics. **Fail-before/pass-after confirmed** (removing the `:535` seal →
+  the wrong-id push is accepted again).
+- **No spec change** (interface-level deploy fix; §9/§17 intent unchanged — the spec already prescribed sealing every
+  receiver's identity; this fences the one the loop omitted). **No back-pressure / no new obligation** (uses the
+  receiver's existing `setExpected*` surface + a new deploy-time lib fn). The standing **WOOF-10 deploy-bar obligation**
+  (the skipped full-fork `DeployZipcode.t.sol`) is unchanged — SEC-05 adds a no-fork focused regression, does not
+  un-skip it. Ticket (full output): `build/tickets/sec/SEC-05-seal-lporacle-identity.md`. Report:
+  `build/reports/SEC-05-report.md`.
 
 ### Just done — SEC-04 (2026-06-15)
 **`_xAlphaUSD()` fail-closed on an UNSEEDED xALPHA rate** (kill-list H5; audit finding #6 / interconnection C1). Pre-fix
