@@ -5,12 +5,21 @@
 > (C4) are intent only — **the code is final**. Where the report/older NatSpec say the controller is
 > "immutable / never renounced," the kept code is in fact `is Ownable` with **Timelock-settable** controller,
 > redeemController and tokens (the §17 build-phase rework, 2026-06-09); this doc records the as-built form.
+>
+> **COLLAPSED 2026-06-13.** The pro-rata / `era` / `cumRemaining` carry-forward engine and the EIP-7540 operator
+> surface were **removed**. With `requestRedeem` gated to a single requester (the rq Safe, C4), pro-rata computed a
+> fraction over a set of size one — dead code. What remains is the **par-burn core**: escrow → `min(available,
+> pending)` fill + burn → claim at par. See `build/CoW-exit.md` for why par redemption is treasury-internal
+> plumbing (it refills the CoW buy-burn bid), not a holder-facing exit.
 
 ## Role
-The **SENIOR exit**: un-staked **zipUSD → USDC at strict par ($1)** through a **30-day epoch queue** with
-**pro-rata partial fills** and auto carry-forward. It is the inverse of the WOOF-06 zap's `deposit` (mint zipUSD
-against USDC parked in the warehouse). It is **NOT** the junior Exit Gate (§6.4) — different instrument (zipUSD =
-the senior dollar, not the szipUSD junior share), different exit, different pricing (**par, NOT NAV**).
+The **SENIOR par-burn sink**: **zipUSD → USDC at strict par ($1)** through an **on-demand settle**. The rq Safe
+escrows its own idle basket zipUSD, the CRE delivers USDC (warehouse REDEEM → REPAY), `settleEpoch` burns the
+zipUSD against that USDC at par, and the rq Safe claims it back to fund the CoW buy-burn bid. A real holder
+**never redeems here** — they exit by selling szipUSD on CoW (`build/CoW-exit.md`). It is the inverse of the
+WOOF-06 zap's `deposit` (mint zipUSD against USDC parked in the warehouse). It is **NOT** the junior Exit Gate
+(§6.4) — different instrument (zipUSD = the senior dollar, not the szipUSD junior share), different exit,
+different pricing (**par, NOT NAV**).
 
 The queue **references no EulerEarn and calls nothing to acquire USDC** (KR-1). It treats its **OWN USDC balance**
 (`balanceOf(this) − reservedAssets`) as the settlement liquidity. The CRE cron does the warehouse REDEEM (USDC →
@@ -20,7 +29,7 @@ into the venue pool itself.
 ## Contracts involved
 | Contract / file | What it does |
 |---|---|
-| `ZipRedemptionQueue` (`is ReentrancyGuard, Ownable`) | The senior par exit queue. ERC-7540-shaped lifecycle (`requestRedeem` → `settleEpoch` → `withdraw`/`redeem`), clean-room (not inherited). Holds escrowed zipUSD + REPAY-delivered USDC; pays out at par. |
+| `ZipRedemptionQueue` (`is ReentrancyGuard, Ownable`) | The senior par-burn sink. Lifecycle `requestRedeem` → `settleEpoch` → `withdraw`/`redeem`. Holds escrowed zipUSD + REPAY-delivered USDC; fills `min(available, pending)`, burns, pays out at par. Single-requester (no pro-rata). |
 | `IZipUSD` (`contracts/src/interfaces/euler/IZipUSD.sol`) | Minimal local seam: `burn(address burnFrom, uint256 amount)`. The queue burns its OWN escrowed zipUSD (`burnFrom == address(this) == msg.sender`) ⇒ the `ESynth._spendAllowance` branch is skipped: **no allowance, no minter-capacity grant** needed. |
 | `WarehouseAdminModule` (`contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol`) | The CRE adapter that funds the queue. Its `REPAY` op is `usdc.transfer(to, amount)` with the Roles scope pinned `EqualTo(repaySink)`; **`repaySink == this queue`** is the wiring item-10 owes. |
 | zipUSD `ESynth` (Euler, 18-dp) | The escrowed-and-burned senior synth (interfaced, not compiled). |
@@ -28,69 +37,62 @@ into the venue pool itself.
 
 ## Wiring — internal
 
-**Constructor (`:165`).** `constructor(address zipUSD_, address usdc_, address controller_) Ownable(msg.sender)`.
+**Constructor.** `constructor(address zipUSD_, address usdc_, address controller_) Ownable(msg.sender)`.
 - All three zero-checked (`ZeroAddress`).
 - `scaleUp = 10 ** (zipDec − usdcDec)` is **derived from the tokens' own `decimals()`** (`1e12` for 18/6) — the
   SAME par scale as the WOOF-06 mint, so mint and redeem stay exact inverses. `zipDec < usdcDec` reverts
   `DecimalsTooFew` (par needs zipUSD the finer unit).
-- `controller = controller_`; `cumRemaining = PREC` (`1e27`, never 0 — KR-4a); `lastEpochTime = block.timestamp`
-  anchors the first 30-day window. `EPOCH_DURATION = 30 days` is a constant.
+- `controller = controller_`. (No `cumRemaining` / `lastEpochTime` / `EPOCH_DURATION` — the pro-rata factor and the
+  time gate are both gone.)
 - `Ownable(msg.sender)` ⇒ the deployer is the initial owner; item-10 hands ownership to the **Timelock**.
 
 **Authority (three distinct identities — do not conflate):**
 - **`owner` (Timelock).** Holds only the three build-phase re-point setters: `setTokens` (re-derives `scaleUp`),
   `setController`, `setRedeemController` — each `onlyOwner` + `ZeroAddress`-guarded, emitting
   `TokensSet`/`ControllerSet`/`RedeemControllerSet`. **No** sweep / pause / upgrade / mint. (§17: wiring is
-  Timelock-re-pointable in the build phase; re-freezing to immutable is DEFERRED to pre-prod. The doc header in
-  the source still narrates an "immutable controller" / "never renounced" — that is stale relative to the kept
-  `Ownable` body; code wins.)
+  Timelock-re-pointable in the build phase; re-freezing to immutable is DEFERRED to pre-prod.)
 - **`controller` (the CRE redemption-settle operator, CRE-02).** The **sole** caller of `settleEpoch`
-  (`if (msg.sender != controller) revert NotController()`). Distinct from the §4.4 `ZipcodeController`, from the
-  7540 `requester`/claimant, and from the EIP-7540 `operator`.
+  (`if (msg.sender != controller) revert NotController()`). Distinct from the §4.4 `ZipcodeController` and from the
+  `requester`/claimant.
 - **`redeemController` (the rq Safe).** The **sole** authorized `requestRedeem` caller — `onlyRedeemController`
-  hard-gates new escrow (`msg.sender != redeemController ⇒ NotRedeemController`). This is the C4 credit-union
-  change: the `OffRampModule` `exec`s **through** the rq Safe, so the `msg.sender` the queue sees is the **Safe,
-  not the module** — wire `redeemController` to the Safe (wiring it to the module would make the C1 off-ramp path
-  revert). It closes the **epoch-dilution / senior-USDC-griefing** vector of an OPEN `requestRedeem` (a whale
-  escrowing just before `settleEpoch` to shrink honest pro-rata fills). It is **not** theft prevention (par is
-  fixed, settle is `onlyController`, the queue is non-sweepable) — only griefing closure. The **claim path**
-  (`withdraw`/`redeem`) stays **OPEN** for existing requesters.
+  hard-gates new escrow (`msg.sender != redeemController ⇒ NotRedeemController`). The `OffRampModule` `exec`s
+  **through** the rq Safe, so the `msg.sender` the queue sees is the **Safe, not the module** — wire
+  `redeemController` to the Safe (wiring it to the module would make the C1 off-ramp path revert). The **claim
+  path** (`withdraw`/`redeem`) stays **OPEN** for the requester.
 
-**The pro-rata engine (global cumulative-remaining factor, scoped by `era`).** O(1), no loops, censorship-resistant
-(no settle caller can omit a requester):
-- `cumRemaining` (RAY, init `PREC`) = the running product of per-epoch UNFILLED fractions within the current
-  `era`. Invariant `0 < cumRemaining <= PREC`.
-- `era` increments **only on a 100%-fill (full-drain) settle**, which resets `cumRemaining = PREC`. A requester
-  whose `eraAt[r] < era` is treated as **fully filled** (`pendingNow = 0`) with NO stale-factor division — the
-  zero-safe escape that fixed the div-by-zero bug.
-- Per-requester `_realize(r)` (`:221`) is called at the start of every touch: it banks prior fills
-  (`pendingNow` rounds **UP** ⇒ `filled` rounds **DOWN** ⇒ Σ credited ≤ reserved — KR-5 solvency) and re-bases
-  `(eraAt, cumAt)` to the current global factor. State is `sharesAt` / `cumAt` / `eraAt` / `claimableAssets`.
+**Accounting (par-burn core, single requester).** No pro-rata, no loops:
+- `totalPending` — escrowed-and-unfilled zipUSD, always a multiple of `scaleUp`.
+- `pendingShares[r]` / `claimableAssets[r]` — per-requester escrow + banked-at-par USDC (one key in practice: the rq Safe).
+- `reservedAssets` — USDC committed to filled-but-unclaimed claims.
+- `pendingRequester` — the single open requester; set on the first escrow, cleared when pending drains to 0. This is
+  the seam that lets `settleEpoch` credit the fill with no loop.
 
-**`settleEpoch()` (`:290`, the 4-step fill).** `onlyController`; reverts `EpochNotElapsed` before
-`lastEpochTime + EPOCH_DURATION`; advances `lastEpochTime` by a **fixed** `EPOCH_DURATION` (cadence can't drift
-earlier, KR-8) and `epoch += 1`. Reads **own balance**: `availableAssets = usdc.balanceOf(this) − reservedAssets`.
-`maxFillAssets = pending / scaleUp` (floor); `fillAssets = min(available, maxFill)`; `filledShares = fillAssets *
-scaleUp`. Three branches: **100% drain** ⇒ `era += 1`, `cumRemaining = PREC`, `totalPending = 0`, reserve, burn;
-**partial** ⇒ fold an **UP-rounded** unfilled fraction `R ∈ [1, PREC)` into `cumRemaining` (ceil ⇒ never 0),
-reserve, burn; **zero** ⇒ no-op (epoch/time still advanced). It **never moves USDC out** (KR-2).
+**`settleEpoch()`.** `onlyController`, **no time gate** — settle on demand, repeatedly, even in the same block.
+Reads **own balance**: `availableAssets = usdc.balanceOf(this) − reservedAssets`. `maxFillAssets = pending / scaleUp`
+(floor); `fillAssets = min(available, maxFill)`; `filledShares = fillAssets * scaleUp`. If `filledShares != 0`:
+debit `totalPending` and `pendingShares[pendingRequester]`, credit `claimableAssets` + `reservedAssets`, clear
+`pendingRequester` when its pending hits 0, then `burn(filledShares)`. Else: no-op. It **never moves USDC out**
+(KR-2). Par credit rounds **DOWN** (`fillAssets = pending / scaleUp`, floor) ⇒ Σ paid ≤ Σ delivered (KR-5).
 
-**`requestRedeem(shares, requester, owner)` (`:266`).** `nonReentrant onlyRedeemController`. `shares` must be
-non-zero and a **whole multiple of `scaleUp`** (`NotWholeUnit`) — the F1/F2 fix that keeps `totalPending` an exact
-`scaleUp` multiple so a fully-funded settle reaches the full-drain era bump (a sub-`scaleUp` request is
-structurally unfillable). `owner` must be `msg.sender` or have approved it as a 7540 operator. Escrows EXTERNAL
-zipUSD via `safeTransferFrom`, realizes, joins `sharesAt[requester]` at the CURRENT `(era, cumRemaining)` (no
-retroactive fill), bumps `totalPending`, emits `RedeemRequest`. There is **no mid-epoch cancel**.
+**`requestRedeem(shares, requester, owner)`.** `nonReentrant onlyRedeemController`. `shares` must be non-zero and a
+**whole multiple of `scaleUp`** (`NotWholeUnit`) — keeps `totalPending` an exact `scaleUp` multiple so a
+fully-funded settle reaches a clean zero (a sub-`scaleUp` request is structurally unfillable). `owner` must be
+`msg.sender` (`NotAuthorized`). **Single-requester invariant:** the first open request sets `pendingRequester`; a
+second *distinct* requester while pending is open reverts **`MultipleRequesters`**. Escrows EXTERNAL zipUSD via
+`safeTransferFrom`, bumps `pendingShares[requester]` + `totalPending`, emits `RedeemRequest`. No mid-epoch cancel.
 
-**`withdraw` / `redeem` (`:326` / `:347`).** Claim USDC at par to an arbitrary `receiver`; gated by the per-
-requester check (`requester == msg.sender || isOperator[requester][msg.sender]`). Effects-before-interaction:
-decrement `claimableAssets` and `reservedAssets`, then `safeTransfer`. `redeem(shares < scaleUp)` reverts
-`ZeroAssets` rather than a phantom zero-transfer.
+**`withdraw` / `redeem`.** Claim USDC at par to an arbitrary `receiver`; gated `requester == msg.sender`
+(`NotAuthorized` otherwise — the EIP-7540 operator delegation was removed). Effects-before-interaction: decrement
+`claimableAssets` and `reservedAssets`, then `safeTransfer`. `redeem(shares < scaleUp)` reverts `ZeroAssets`
+rather than a phantom zero-transfer.
 
-**Events / GRAPH-01 B-1.** `RedeemRequest`, `EpochSettled`, `Withdraw`, `OperatorSet`, plus the three wiring
-events. **The `Withdraw` event lacks a `requestId`** (`Withdraw(sender, receiver, controller, assets, shares)`) —
-the subgraph cannot deterministically close a specific request when an owner has multiple pending (it FIFO-matches
-as the M1 workaround). Tracked as **GRAPH-01 B-1** (LOW; add `uint256 indexed requestId` on any future touch).
+**Events.** `RedeemRequest(requester, owner, sender, shares)`, `RedemptionSettled(pending, filledShares,
+fillAssets, availableAssets)`, `Withdraw(sender, receiver, requester, assets, shares)`, plus the three wiring
+events. (`OperatorSet` and the `era`/`settleCount` event fields were removed with the collapse.)
+
+**Views.** `pendingRedeemRequest(uint256, r) → pendingShares[r]` and `maxWithdraw(r) → claimableAssets[r]` (the
+7540 `claimableRedeemRequest` / `maxRedeem` / `previewRealize` mirrors were dropped — the public mappings are
+direct reads now).
 
 ## Wiring — cross-component (who points at whom)
 
@@ -126,22 +128,22 @@ From `PROGRESS.md` (rows 364–369, 371):
    REDEEM/REPAY seam) is already **DISCHARGED** by item 9.
 
 ## Gotchas
-- **"Immutable / never renounced controller" is stale.** Older NatSpec/report language says the controller is
-  immutable and the queue has no `Owned`. The kept body is `is ReentrancyGuard, Ownable` with **Timelock-settable**
-  `controller` / `redeemController` / tokens (§17 build-phase). Re-freezing to immutable is a **pre-prod** step,
-  not done in M1. Trust the code, not the header.
-- **7540 operator = full claim control (intended, security F7).** A requester-approved `operator` (`setOperator`)
-  can call `withdraw(assets, receiver, requester)` with an **arbitrary `receiver`** — i.e. redirect the
-  requester's claimed USDC. Only the requester can grant it (`msg.sender == operator ⇒ CannotSetSelfAsOperator`,
-  and the `requester != msg.sender && !isOperator` guard stands). A grant is therefore total — by design.
-- **Clean-room fork, NOT inherited.** Modeled on `reference/erc7540-reference` (lifecycle + `setOperator`) and
-  `reference/maple-withdrawal-manager` (pro-rata carry-forward) but **not** inherited: solmate's `BaseERC7540 is
-  ERC4626, Owned` assumes `share == address(this)`, NAV `convertToAssets`, and a mutable transferable owner — all
-  three wrong here (redeemed "shares" are EXTERNAL zipUSD; conversion is PAR; settle is `onlyController`). The
-  function names, signatures, events and operator semantics are kept; the internals are bespoke.
+- **The pro-rata / `era` / `cumRemaining` engine and the 7540 operator surface were REMOVED (2026-06-13).** With
+  `requestRedeem` gated to a single requester (the rq Safe, C4), the carry-forward ratio computed a fraction over a
+  set of size one. The collapse replaced it with a direct `min(available, pending)` fill credited to a single
+  `pendingRequester`. Any future decision to *re-open* `requestRedeem` to external holders would make pro-rata
+  load-bearing again — restore it from git history then, not before. Older NatSpec/report/ticket language
+  referencing `era`, `cumRemaining`, `_realize`, `previewRealize`, `setOperator`, a "30-day epoch cadence," `§6.1`,
+  or `KR-8` is **stale**.
+- **Single-requester invariant is enforced on-chain.** A second distinct requester escrowing while pending is open
+  reverts `MultipleRequesters`. After a full drain (`pendingRequester` cleared) a new requester may open.
+- **The time gate was already gone (2026-06-12).** `settleEpoch` is `onlyController` with no time check (on-demand,
+  same-block-repeatable). Do not re-introduce a time gate.
+- **"Immutable / never renounced controller" is stale.** The kept body is `is ReentrancyGuard, Ownable` with
+  **Timelock-settable** `controller` / `redeemController` / tokens (§17 build-phase). Re-freezing to immutable is a
+  **pre-prod** step, not done in M1. Trust the code, not the header.
 - **`requestRedeem` requires whole-`scaleUp` units.** An odd zipUSD balance redeems the whole-USDC-unit floor and
-  keeps/sells the sub-`scaleUp` (< $0.000001) remainder on the AMM. This both fixes the CRITICAL value-destruction
-  (era could never bump) and avoids a sub-`scaleUp` dust-trap.
-- **Round-down dust stays locked permanently.** `reservedAssets − Σ credited` (bounded sub-cent across the
-  protocol lifetime) is **never swept** — sweeping would break the non-sweepable KR-2 guarantee. `availableAssets`
-  is understated by the accumulated dust; acceptable for M1.
+  keeps/sells the sub-`scaleUp` (< $0.000001) remainder on the AMM. Avoids a sub-`scaleUp` dust-trap.
+- **Round-down dust stays locked permanently.** Par credit floors (`fillAssets = pending / scaleUp`), so
+  `reservedAssets − Σ credited` (bounded sub-cent) is **never swept** — sweeping would break the non-sweepable KR-2
+  guarantee. Acceptable for M1.

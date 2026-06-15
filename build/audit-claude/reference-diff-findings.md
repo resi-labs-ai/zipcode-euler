@@ -1,0 +1,62 @@
+# zipcode-euler — Run B: reference-diff pass (our contracts vs. upstream sources of truth)
+
+_6 parallel agents, each diffing one integration against its vendored upstream in `reference/`. The
+premise: the protocol was built on these repos, so the bugs live where it **assumed upstream behavior
+that the upstream doesn't actually guarantee**, or modified vendored code that drifted. Every finding
+cites the upstream `file:line` that contradicts the assumption. This pass found the most severe issue
+in the whole audit — invisible to source-only review._
+
+## HIGH
+
+### B1 — Loot's "soulbound / no-depositor-ragequit" invariant is NOT enforced on-chain (basket-drain risk)
+- **contract/fn:** `ExitGate` / `depositFor`, `constructor` (never calls `setAdminConfig`) — `src/supply/szipUSD/ExitGate.sol:14-17,29-36,172`
+- **upstream_ref:** `reference/Baal/.../LootERC20.sol:83-95` — `_beforeTokenTransfer` permits **any** transfer when `!paused()`; Baal ships Loot **transferable**, and pause is `baalOrAdminOnly`, not Gate-controlled. `Baal.sol:619-630` — `ragequit` is **permissionless** and pays the caller a pro-rata share of the main-Safe basket.
+- **class:** access-control / invariant-not-enforced · **severity: HIGH · confidence: high**
+- **invariant_broken:** §6 "Gate is sole Loot custodian; depositors hold only szipUSD and can never `ragequit`."
+- **why source-review missed it:** the szipUSD code looks correct in isolation — the bug only exists when you check what Baal Loot *actually does by default*. The entire exit-control thesis assumes Loot is non-transferable, but it isn't unless explicitly paused, and `ExitGate` never pauses it (no `setAdminConfig` call anywhere). If Loot is left unpaused (or an avatar/admin shaman unpauses post-deploy — the Gate holds only `manager=2` and cannot keep it paused), a party can obtain raw Loot and call `ragequit` to **drain the basket directly, bypassing the entire CoW buy-burn exit rail and the coverage gate.**
+- **fix:** assert `IBaalToken(loot).paused()==true` at wire/mint time and `lockAdmin()` so it can't be reverted; treat "Loot paused + admin locked" as a hard, independently-verified deploy invariant.
+
+### B2 — CCIP `TokenAdminRegistry` administrator left as the ephemeral deploy Script, never handed to Timelock
+- **contract/fn:** `DeploySzAlphaBridge` / `deploy964`, `deployBase` — `script/DeploySzAlphaBridge.s.sol:120-127, 153-164`
+- **upstream_ref:** `reference/chainlink-ccip/.../TokenAdminRegistry.sol:116-149` (`setPool`/`transferAdminRole` gated by `onlyTokenAdmin` = `s_tokenConfig[token].administrator`), `:154-166` (`acceptAdminRole` sets `administrator = msg.sender`); `RegistryModuleOwnerCustom.sol:35-39`.
+- **class:** access-control / admin-handoff · **severity: HIGH · confidence: high** (this is finding #11 from the subsystem pass, **confirmed against real upstream and upgraded** with exact mechanics)
+- **divergence:** on both chains `acceptAdminRole()` makes the **deploy Script** the registry `administrator`; the later `token.setCCIPAdmin(timelock)` only mutates the token's `getCCIPAdmin()` view — it has **no effect** on `TokenAdminRegistry.s_tokenConfig[token].administrator`, which only `transferAdminRole`/`acceptAdminRole` change, and which is never called to the Timelock (the local `ITokenAdminRegistry` interface doesn't even declare `transferAdminRole`). Consequence: the admin is a Forge `Script` runtime address with no persisted key — **the CCIP pool can never be re-pointed (e.g. after an RMN rotation, the documented `setPool` recovery is unreachable) and the Timelock cannot delist a compromised pool.** Permanent loss of the CCIP admin control plane, contradicting the §2 "admin/ccipAdmin→Timelock" claim.
+
+## MEDIUM
+
+### B3 — `SzipReservoirLpOracle` CRE receiver deployed with ZERO workflow-identity (any co-tenant workflow can push LP marks)
+- **contract/fn:** deploy seal phase — `script/DeployZipcode.s.sol:526-531` (seal loop **omits** `d.lpOracle`), `:544`; receiver `src/supply/SzipReservoirLpOracle.sol:21,104`
+- **upstream_ref:** `reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol:88` — the workflow-identity check runs **only when** `expectedWorkflowId/author/name != 0`; all-zero ⇒ **no identity check, forwarder-sender gating only**.
+- **class:** report-authentication · **severity: MED · confidence: high**
+- **divergence:** the deploy seals six receivers but leaves `lpOracle` with `expectedAuthor==0 && expectedWorkflowId==0`, then transfers it to the Timelock. `requireIdentityWired` only checks the *controller's* workflowId, so it can't catch this. As deployed, the LP-collateral price receiver accepts a `LP_MARK` (RT7) from **any workflow the shared Keystone Forwarder forwards** — a sibling/co-tenant workflow can push an arbitrary LP-share mark → mismark reservoir collateral → over-borrow. **Exceeds the documented "compromised CRE" blast radius** (no compromise needed, just another workflow on the same Forwarder). **fix:** seal `lpOracle`'s expected author+workflowId like every other receiver; add it to `requireIdentityWired`.
+
+### B4 — `openLine` silently requires EulerEarn `timelock == 0` + perspective allow-listing or every origination reverts
+- **contract/fn:** `EulerVenueAdapter.openLine` — `src/venue/EulerVenueAdapter.sol:225-226`
+- **upstream_ref:** `reference/euler-earn/.../EulerEarn.sol:507` (`acceptCap` is `afterTimelock`), `:185-190`, `:301`+`:508` (`isStrategyAllowed`); `EulerEarnFactory.sol:76-78`. (Grounds Run A's R-DoS item in the real upstream.)
+- **class:** config dependency / liveness · **severity: MED · confidence: high**
+- **divergence:** the same-tx `submitCap`→`acceptCap` only succeeds if EE `timelock==0` (else `TimelockNotElapsed`) **and** the fresh line vault is perspective-verified (`isStrategyAllowed`, else `UnauthorizedMarket`). Non-zero EE timelock (the upstream POST_INIT min is 1 day) bricks **all** origination. These hard preconditions are assumed silently (the in-code comment doesn't state them).
+
+### B5 — Gate manager grant can be permanently bricked on a re-pointed Baal (`managerLock`)
+- **contract/fn:** `ExitGate.setBaal` — `src/supply/szipUSD/ExitGate.sol:114-120`
+- **upstream_ref:** `reference/Baal/.../Baal.sol` — `setShamans` rejects manager perms once `managerLock==true`.
+- **class:** liveness · **severity: MED · confidence: high** — re-pointing to a Baal with `managerLock==true` makes re-granting `manager(2)` impossible → deposits/`burnFor` permanently bricked. (manager==2 and the call shapes are otherwise CONFIRMED correct against Baal.)
+
+## LOW
+- **B6 — `fund` is base→line only; closed-line USDC stranded** (confirms #4). `closeLine` never reallocates USDC back and there's no adapter line→base path; recoverable only by EE owner/allocator, not the adapter. `EulerVenueAdapter.sol:285-292,343-360` vs `EulerEarn.sol:383-442`.
+- **B7 — `fund` uses `convertToAssets(balanceOf(EE))` not EE's `config[id].balance`** → a 1-share donation to the EE pool makes `fund` revert `InconsistentReallocation` (grief DoS, not mis-allocation — `reallocate` enforces `totalWithdrawn==totalSupplied`). `EulerVenueAdapter.sol:285-291` vs `EulerEarn.sol:392-393`.
+- **B8 — `ZipRedemptionQueue.requestRedeem` drops the "unclaimed-claimable blocks new request" guard** that ERC7540 / Maple / Centrifuge all enforce. Benign under the atomic single-requester flow; latent if `redeemController` is ever rewired. `ZipRedemptionQueue.sol:168-176` vs `ControlledAsyncRedeem`/`MapleWithdrawalManager.sol:182`.
+- **B9 — `redeem` lacks the `% scaleUp` whole-unit guard `requestRedeem` has** and emits an overstated `shares` event on sub-unit input (USDC out stays correct — no solvency impact; feed/accounting drift only). `ZipRedemptionQueue.sol:239-248`.
+- **B11 — adapters omit `getDirectionOrRevert`/inverse support** (forward-only); safe because EVK only ever quotes these as collateral (`base`), but a hard divergence from the upstream BaseAdapter bidirectional convention — fails closed if a future router config quotes the reverse pair. `euler-price-oracle/.../FixedRateOracle.sol:45-46`.
+- **B12 — registry uses a single global `scale` assuming every keyed base is 18-dp** (vs upstream one-base-per-adapter); enforced at write (`_strictDecimals==18`) so currently unreachable, structural divergence only.
+- **(R10 reconfirmed) — Zodiac module mastercopies never init-locked**; the "init-locked at deploy" docstring is false (no constructor, deploy never `setUp`s the mastercopy). Non-exploitable (CALL-only, enabled on nothing) but a dead defense vs upstream `TestModule`'s locking ctor.
+
+## INFORMATIONAL / design
+- **B10 — par-burn settlement hardcodes 1:1 with no impairment haircut.** ERC7540/Centrifuge/Maple all pay the realized/impaired rate; this queue burns zipUSD 1:1 even if it de-pegs. Not a code bug under the single-trusted-requester model, but peg integrity is **entirely pushed onto the CRE/solvency trust assumption** with no on-chain defense. `ZipRedemptionQueue.sol:191,221,240`.
+- **Roles dual-address consistency:** `WarehouseAdminModule`'s injected `safe` and the Roles modifier's `avatar` are two independently-settable slots; the `EqualToAvatar` condition enforces `receiver==roles.avatar()`, not `==module.safe`. Divergence fails closed (bricks SUPPLY/REDEEM), but belongs in the runbook, not the docstring's implied single-address model.
+
+## Verified faithful (strong negative results — the integrations that are CORRECT)
+- **Euler EVK/EVC (EulerVenueAdapter, CREGatingHook, LineAccount, ReservoirBorrowGuard, ReservoirLoopModule):** *zero* divergences. The hook anti-spoof `_msgSender()`/`isHookTarget()` is byte-identical to `BaseHookTarget`; the EVK passes the authenticated on-behalf account (not the EVC msg.sender), so the trailing-20-bytes decode + `isProxy` gate is genuinely sound; the `LineAccount` operator grant follows the real owner-self/`addr^1` registration path; `_toAmountCap` matches `AmountCapLib`; the account-status check is deferred to batch-end exactly as assumed. An unusually faithful integration.
+- **euler-price-oracle scale convention:** `calcScale(18, qd, qd)` is byte-identical to upstream `FixedRateOracle` — the central mis-pricing concern is **cleared**; rounding floors against the borrower (conservative for collateral).
+- **Subtensor precompiles:** addresses (0x805/0x808/0x80C), selectors, arg order, rao(1e9)↔18-dp scaling, value-less `addStake` call, and `addressMapping(this)` coldkey derivation all match upstream + the Rubicon precedent. `exchangeRate` is algebraically identical to Rubicon's.
+- **Zodiac Module/Roles:** `avatar==target==engineSafe` + `Operation.Call`/`value==0` everywhere (no delegatecall), clone salt binds the full initializer (no front-run), and the Roles scope (not the module) is the real fail-closed enforcer.
+- **CCT supply conservation:** lock-release ↔ burn-mint accounting and the ctor invariants (`localTokenDecimals==18`, canonical RMN, `advancedPoolHooks==0`) are correctly enforced.

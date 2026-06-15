@@ -8,6 +8,12 @@ import {IICHIVault} from "../../interfaces/ichi/IICHIVault.sol";
 import {IGauge} from "../../interfaces/hydrex/IGauge.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/// @notice The coverage seam the LP-dissolution gate reads (the `DurationFreezeModule`): `removeLiquidity` may only
+///         dissolve LP that is EXCESS over the coverage floor (build/lp-path-lock.md). Local interface, not imported.
+interface ICoverageGate {
+    function lpBurnKeepsCovered(uint256 lpShares) external view returns (bool);
+}
+
 /// @title LpStrategyModule
 /// @notice The on-chain seam of the 8-B6 LP strategy (§4.5.1): the third engine Zodiac Module (after the 8-B14
 ///         buy-and-burn and the 8-B5 reservoir loop), CRE-operator-gated, enabled on the szipUSD engine Safe
@@ -42,12 +48,19 @@ contract LpStrategyModule is Module {
     address public token0;
     /// @notice The ICHI vault's `token1()` (read live in `setUp`) — the approval target for the `deposit1` leg.
     address public token1;
+    /// @notice The coverage gate (`DurationFreezeModule`) the `removeLiquidity` dissolution is bounded by. Zero ⇒
+    ///         gate OFF (M1 pre-wiring; dissolution ungated, the legacy behavior). Wired by the Timelock post-deploy
+    ///         (the module is Timelock-owned at `setUp`, and the gate is created after this module) — once set,
+    ///         `removeLiquidity` may only liquefy LP that is EXCESS over the coverage floor (build/lp-path-lock.md).
+    address public coverageGate;
 
     // --------------------------------------------------------------------- errors
     error NotOperator();
     error ZeroAddress();
     error OwnerIsOperator();
     error ZeroAmount();
+    /// @notice `removeLiquidity` would dissolve floor-backing LP (coverage would fall below the liability floor).
+    error Undercovered();
     /// @notice `minShares == 0` — the slippage floor must be a real bound (a zero floor would no-op the only
     ///         sandwich protection on a direct ICHI deposit; the CRE robot always sizes a non-zero floor).
     error ZeroMinShares();
@@ -58,6 +71,7 @@ contract LpStrategyModule is Module {
 
     // --------------------------------------------------------------------- events
     event LiquidityAdded(uint256 deposit0, uint256 deposit1, uint256 shares);
+    event LiquidityRemoved(uint256 shares, uint256 amount0, uint256 amount1);
     event Staked(uint256 lpAmount);
     event Unstaked(uint256 lpAmount);
     /// @notice A Timelock-settable wiring field was re-pointed (build phase, §17).
@@ -69,14 +83,21 @@ contract LpStrategyModule is Module {
     ///         off the vault. ORDER is load-bearing: validate the five addresses nonzero FIRST (so an `ichiVault == 0`
     ///         reverts `ZeroAddress`, not the live `token0()` staticcall), then read + assert the tokens nonzero.
     function setUp(bytes memory initParams) public override initializer {
-        (address owner_, address engineSafe_, address operator_, address ichiVault_, address gauge_) =
-            abi.decode(initParams, (address, address, address, address, address));
+        (
+            address owner_,
+            address engineSafe_,
+            address operator_,
+            address ichiVault_,
+            address gauge_,
+            address coverageGate_
+        ) = abi.decode(initParams, (address, address, address, address, address, address));
 
         if (
             owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || ichiVault_ == address(0)
                 || gauge_ == address(0)
         ) revert ZeroAddress();
         if (owner_ == operator_) revert OwnerIsOperator();
+        // coverageGate_ MAY be address(0) (gate OFF) — no zero-check, mirrors setCoverageGate.
 
         // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
         avatar = engineSafe_;
@@ -94,6 +115,7 @@ contract LpStrategyModule is Module {
         if (t0 == address(0) || t1 == address(0)) revert ZeroAddress();
         token0 = t0;
         token1 = t1;
+        coverageGate = coverageGate_; // gate ON at deploy (the freeze module); address(0) = OFF (legacy)
 
         _transferOwnership(owner_);
     }
@@ -147,6 +169,13 @@ contract LpStrategyModule is Module {
         if (token1_ == address(0)) revert ZeroAddress();
         token1 = token1_;
         emit WiringSet("token1", token1_);
+    }
+
+    /// @notice Wire/re-point the coverage gate (`DurationFreezeModule`) that bounds `removeLiquidity` to the coverage
+    ///         excess. `onlyOwner` (Timelock). Zero is permitted (turns the gate OFF — the M1 pre-wiring state).
+    function setCoverageGate(address coverageGate_) external onlyOwner {
+        coverageGate = coverageGate_; // address(0) is a valid "gate off" value
+        emit WiringSet("coverageGate", coverageGate_);
     }
 
     // --------------------------------------------------------------------- gates
@@ -214,6 +243,34 @@ contract LpStrategyModule is Module {
         if (shares < minShares) revert Slippage();
 
         emit LiquidityAdded(deposit0, deposit1, shares);
+    }
+
+    /// @notice Decompose `shares` of the engine Safe's LP back to its underlying zipUSD/xALPHA legs (`IICHIVault.
+    ///         withdraw`, `to == engineSafe`). This is the wind-down's LP→legs hop (the global-drain feeder, see
+    ///         `SzipBuyBurnModule`): there is NO live-ops caller — the 8-B5 harvest loop only `unstake`s the LP
+    ///         transiently as collateral and re-stakes it, never decomposing it. The LP shares are already in the
+    ///         Safe (unstaked first via `unstake`), so NO approval is needed — the gauge/vault credit/debit the Safe
+    ///         because the Safe is the `exec` msg.sender. Exactly 1 `exec`.
+    /// @param shares      the LP shares to burn (non-zero; the caller sizes against `lpBalance()`).
+    /// @param minAmount0  slippage floor on the token0 leg returned — revert `Slippage` if undershot.
+    /// @param minAmount1  slippage floor on the token1 leg returned — revert `Slippage` if undershot.
+    /// @return amount0    the token0 (zipUSD) returned to the Safe.
+    /// @return amount1    the token1 (xALPHA) returned to the Safe.
+    function removeLiquidity(uint256 shares, uint256 minAmount0, uint256 minAmount1)
+        external
+        onlyOperator
+        returns (uint256 amount0, uint256 amount1)
+    {
+        if (shares == 0) revert ZeroAmount();
+        // PATH-LOCK (build/lp-path-lock.md): only LP that is EXCESS over the coverage floor may be liquefied —
+        // dissolution converts path-locked LP into exitable legs, so it must respect the same floor as release/exit.
+        // Gate OFF (`coverageGate == 0`) is the M1 pre-wiring state (ungated, legacy). Wired by the Timelock.
+        address gate = coverageGate;
+        if (gate != address(0) && !ICoverageGate(gate).lpBurnKeepsCovered(shares)) revert Undercovered();
+        bytes memory ret = _exec(ichiVault, abi.encodeCall(IICHIVault.withdraw, (shares, engineSafe)));
+        (amount0, amount1) = abi.decode(ret, (uint256, uint256));
+        if (amount0 < minAmount0 || amount1 < minAmount1) revert Slippage();
+        emit LiquidityRemoved(shares, amount0, amount1);
     }
 
     /// @notice Gauge-stake an LP slice to (resume) earning oHYDX (the build/stake step + the 8-B5 loop step 7

@@ -342,6 +342,40 @@ contract ZipDepositModuleTest is ZipModuleBase {
         vm.stopPrank();
     }
 
+    /// @notice REGRESSION (zap-residual.md): a stray zipUSD donation must NOT brick the zap. The cleanliness
+    ///         check is a DELTA (the Gate pulled exactly the minted amount), not an absolute zero balance —
+    ///         else 1 wei of freely-transferable zipUSD sent to the module permanently DoS's the default UX.
+    function test_zap_survives_zipusd_donation() public {
+        // griefer parks 1 wei zipUSD on the module
+        zip.setCapacity(address(this), type(uint128).max);
+        zip.mint(address(module), 1);
+        assertEq(zip.balanceOf(address(module)), 1, "donation parked");
+
+        _mintUsdc(USER, 200_000e6);
+        vm.startPrank(USER);
+        usdc.approve(address(module), 200_000e6);
+        uint256 shares = module.zap(200_000e6); // would revert ResidualBalance under the old absolute check
+        vm.stopPrank();
+
+        assertGt(shares, 0, "zap succeeded despite the donation");
+        assertEq(gate.szip().balanceOf(USER), shares, "user received szipUSD");
+        assertEq(zip.balanceOf(address(module)), 1, "net module delta == 0; donation untouched, not bricked");
+    }
+
+    /// @notice The under-pull invariant still bites WITH a pre-existing donation (delta, not absolute): the
+    ///         Gate pulling less than `zipAmount` leaves balance > `zipBefore` and reverts regardless.
+    function testFuzz_zap_tolerates_donation(uint96 donation) public {
+        zip.setCapacity(address(this), type(uint128).max);
+        if (donation != 0) zip.mint(address(module), donation);
+        _mintUsdc(USER, 200_000e6);
+        vm.startPrank(USER);
+        usdc.approve(address(module), 200_000e6);
+        uint256 shares = module.zap(200_000e6);
+        vm.stopPrank();
+        assertGt(shares, 0, "zap succeeds for any pre-existing balance");
+        assertEq(zip.balanceOf(address(module)), donation, "delta == 0; donation untouched");
+    }
+
     function test_zap_noshare_reverts_ZeroShares() public {
         gate.setMode(MockGate.Mode.NoShare); // pulls FULL, returns 0
         _mintUsdc(USER, 200_000e6);

@@ -77,6 +77,9 @@ contract DeployMainnet is DeployZipcode {
 
         // --- numeric knobs (documented defaults; override via env) ---
         i.validityWindow = vm.envOr("VALIDITY_WINDOW", uint256(31_536_000));
+        // 0 = CRE-push LP oracle + spot NAV LP leg (the M1 / pre-LP default). Set (e.g. 3600 = 1h) only once the
+        // zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin ⇒ trustless fair-LP for both. build/fair-lp.md.
+        i.lpTwapWindow = uint32(vm.envOr("LP_TWAP_WINDOW", uint256(0)));
         i.W = uint32(vm.envOr("NAV_W", uint256(3600)));
         i.maxAge = vm.envOr("NAV_MAX_AGE", uint256(86_400));
         i.maxDeviationBps = vm.envOr("NAV_MAX_DEVIATION_BPS", uint256(1000));

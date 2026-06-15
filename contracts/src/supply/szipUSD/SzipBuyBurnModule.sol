@@ -19,6 +19,12 @@ interface IERC20Approve {
     function approve(address spender, uint256 amount) external returns (bool);
 }
 
+/// @dev The coverage seam the `postBid` outflow gate reads (the `DurationFreezeModule`): a buy-and-burn bid is a
+///      free-side outflow, blocked while coverage is below the liability floor (build/lp-path-lock.md).
+interface ICoverageGate {
+    function covered() external view returns (bool);
+}
+
 /// @title SzipBuyBurnModule
 /// @notice The §7 "haircut buy-and-burn" BID side (8-B14): a CRE-operator-gated Zodiac Module enabled on the engine
 ///         Safe (`avatar == target == engineSafe`) that makes the protocol the **discounted buyer of last resort**
@@ -33,6 +39,29 @@ interface IERC20Approve {
 ///      `immutable` values are baked into the mastercopy at ITS construction and are identical for every clone — they
 ///      CANNOT carry per-clone `setUp` config. EVERY per-clone wired address/param is therefore plain set-once
 ///      storage written in `setUp` under `initializer`, NOT `immutable`. The mastercopy is init-locked at deploy.
+///
+/// @dev SCALING TO A GLOBAL WIND-DOWN (the system-wide RQ exit — CRE-orchestrated, no new exit primitive).
+///      This module is the protocol's ONLY exit valve and the hinge of any full unwind. There is no global
+///      `baal.ragequit` wired (deliberate — see ExitGate): a complete exit is an **orchestrated CoW drain**, opt-in
+///      by construction (holders must post the SELL szipUSD; the protocol can only rest the standing BID). Nothing
+///      here changes for a wind-down — it is the SAME bid, sized larger and re-posted until supply is zero.
+///
+///      The drain is bounded by ONE fact: a resting bid fills only against USDC actually in the engine Safe at
+///      solver-settlement time. So a global exit is a feeder pipeline into this Safe, choreographed by the CRE:
+///        1. LIQUIDATE every basket leg to USDC via the existing driver modules — unstake LP from the gauge
+///           (`LpStrategyModule`), exercise/sell rewards (`ExerciseModule`/`SellModule`), repay reservoir debt
+///           (`ReservoirLoopModule`), and run zipUSD → USDC through the senior par sink (`OffRampModule` +
+///           `ZipRedemptionQueue`). At utilization 0% the whole reservoir is free, so 100%-depth funding is reachable.
+///        2. CONSOLIDATE the proceeds as USDC in the engine Safe (the `receiver`/`owner` of every bid).
+///        3. RAISE `buybackCap` (Timelock) toward the total NAV value of `szipUSD.totalSupply()`, and keep the
+///           resting bid posted at `navExit × (1 − d)`. The single-resting-bid invariant means the CRE operator
+///           `cancelBid` → `postBid` to re-arm as fills consume `currentSellAmount` (watch `currentBid()`); each
+///           bought tranche lands in the Safe and is retired by `ExitGate.burnFor` (windowController authority).
+///      Because `burnFor` is pure supply reduction matched by the asset outflow that funded the bid, NAV-per-share
+///      holds ~flat as the book drains — every exiter clears at the same NAV-minus-haircut mark, 1:1 with backing,
+///      until `szipUSD.totalSupply() == 0`. `dBps` is the only value lever (haircut → split between stayers and
+///      mercenary stinkbidders); `buybackCap == 0` is the kill switch. The wind-down is therefore CRE policy over
+///      this unchanged surface — the work is the feeder modules + the orchestration, never a new exit mechanism.
 contract SzipBuyBurnModule is Module {
     // --------------------------------------------------------------------- GPv2 canonical constants (verified `cast`)
     /// @notice The canonical GPv2 order EIP-712 type hash (verified `cast keccak` of the order string).
@@ -68,6 +97,9 @@ contract SzipBuyBurnModule is Module {
     address public settlement;
     /// @notice The CoW `GPv2VaultRelayer` (the USDC `approve` spender; read live in `setUp`).
     address public vaultRelayer;
+    /// @notice The coverage gate (`DurationFreezeModule`) — `postBid` is blocked while `!covered()`. Zero ⇒ gate OFF
+    ///         (M1 pre-wiring; legacy behavior). Wired by the Timelock post-deploy (build/lp-path-lock.md).
+    address public coverageGate;
     /// @notice The CoW EIP-712 domain separator for this chain (read live in `setUp`).
     bytes32 public domainSeparator;
 
@@ -108,6 +140,8 @@ contract SzipBuyBurnModule is Module {
     error StaleNav();
     error BidAboveDiscount();
     error BuyAmountTooLarge();
+    /// @notice `postBid` blocked: coverage is below the liability floor (the path-lock outflow gate).
+    error Undercovered();
 
     // --------------------------------------------------------------------- events
     event BidPosted(
@@ -121,7 +155,8 @@ contract SzipBuyBurnModule is Module {
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, which is then init-locked). One-shot via the
     ///         zodiac-core `initializer`. Decodes `(owner, engineSafe, operator, navOracle, szipUSD, usdc,
-    ///         settlement, dBps, buybackCap)`; reads the VaultRelayer + domain separator LIVE off the settlement.
+    ///         settlement, dBps, buybackCap, coverageGate)`; reads the VaultRelayer + domain separator LIVE off the
+    ///         settlement. `coverageGate` MAY be address(0) (gate OFF) — no zero-check, mirrors setCoverageGate.
     function setUp(bytes memory initParams) public override initializer {
         (
             address owner_,
@@ -132,8 +167,11 @@ contract SzipBuyBurnModule is Module {
             address usdc_,
             address settlement_,
             uint16 dBps_,
-            uint256 buybackCap_
-        ) = abi.decode(initParams, (address, address, address, address, address, address, address, uint16, uint256));
+            uint256 buybackCap_,
+            address coverageGate_
+        ) = abi.decode(
+            initParams, (address, address, address, address, address, address, address, uint16, uint256, address)
+        );
 
         if (
             owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || navOracle_ == address(0)
@@ -154,6 +192,7 @@ contract SzipBuyBurnModule is Module {
         settlement = settlement_;
         dBps = dBps_;
         buybackCap = buybackCap_;
+        coverageGate = coverageGate_; // gate ON at deploy (the freeze module); address(0) = OFF (legacy)
 
         // Read the spender + domain separator LIVE off the settlement (do not hard-trust a constant), cache them.
         vaultRelayer = IGPv2Settlement(settlement_).vaultRelayer();
@@ -238,6 +277,13 @@ contract SzipBuyBurnModule is Module {
         emit WiringSet("vaultRelayer", vaultRelayer_);
     }
 
+    /// @notice Wire/re-point the coverage gate (`DurationFreezeModule`) that blocks `postBid` while `!covered()`.
+    ///         `onlyOwner` (Timelock). Zero is permitted (turns the gate OFF — the M1 pre-wiring state).
+    function setCoverageGate(address coverageGate_) external onlyOwner {
+        coverageGate = coverageGate_; // address(0) is a valid "gate off" value
+        emit WiringSet("coverageGate", coverageGate_);
+    }
+
     // --------------------------------------------------------------------- the bid (§7.2)
     /// @notice Post the single resting CoW `BUY szipUSD` bid, priced at or below `navExit × (1 − d)`. Operator-only.
     function postBid(GPv2OrderInput calldata order) external onlyOperator {
@@ -245,6 +291,11 @@ contract SzipBuyBurnModule is Module {
         if (order.sellAmount == 0 || order.buyAmount == 0) revert ZeroAmount();
         if (order.buyAmount > MAX_BUY_AMOUNT) revert BuyAmountTooLarge();
         if (order.sellAmount > buybackCap) revert CapExceeded();
+        // PATH-LOCK outflow gate (build/lp-path-lock.md): a buy-and-burn bid spends basket USDC to retire szipUSD — a
+        // free-side outflow. Block it while sidecar+LP coverage is below the floor (a price-drift breach), so exits
+        // cannot drain coverage. Gate OFF (coverageGate == 0) is the M1 pre-wiring state. Wired by the Timelock.
+        address gate = coverageGate;
+        if (gate != address(0) && !ICoverageGate(gate).covered()) revert Undercovered();
         if (order.validTo <= block.timestamp || order.validTo > block.timestamp + MAX_BID_TTL) revert BadValidTo();
         // NAV-freshness fence (the collapsed "fulfillment controller", 2026-06-09): a resting bid must not be able
         // to fill against a NAV mark that has since gone stale. `navExit` is priced now off `fresh()` legs, but the

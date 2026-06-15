@@ -31,6 +31,8 @@ The 8x-01 rework (commit `c510759`) re-founded the inputs supply/ consumes:
 `getMovingAlphaPrice` × TAO/USD (CRE transports the primitive) instead of off-chain price APIs.
 Evaluate this while reviewing the leg-cache design.
 
+888888888888888888888888888888888888888888888888888888
+
 ## Scope (17 files) — suggested order
 
 **Phase 1 — the NAV + issuance/exit spine (highest stakes, do first):**
@@ -41,13 +43,15 @@ Evaluate this while reviewing the leg-cache design.
    Wires: `build/wires/ExitGate-szipUSD.md`.
 4. `src/supply/ZipRedemptionQueue.sol` — wires: `build/wires/9-ZipRedemptionQueue.md`.
 
+888888888888888888888888888888888888888888888888888888
+
 **Phase 2 — the engine loop:**
 5. `szipUSD/LpStrategyModule.sol` (8-B6), `HarvestVoteModule.sol` (8-B7), `ExerciseModule.sol` (8-B8),
    `SellModule.sol` (8-B9), `RecycleModule.sol` (8-B10), `SzipBuyBurnModule.sol` (8-B14).
 6. `szipUSD/ReservoirLoopModule.sol` + `ReservoirBorrowGuard.sol` (8-B5) + `src/supply/SzipReservoirLpOracle.sol`.
 
 **Phase 3 — periphery:**
-7. `szipUSD/OffRampModule.sol`, `szipUSD/DurationFreezeModule.sol`, `CreditWarehouse/WarehouseAdminModule.sol`.
+7. `szipUSD/OffRampModule.sol`, `szipUSD/DurationFreezeModule.sol`, `CreditWarehouse/houseAdminModule.sol`.
 
 Tests live in `contracts/test/` (one suite per module: `SzipNavOracle.t.sol`, `ExitGate.t.sol`,
 `ZipDepositModule.t.sol`, …). `forge test` baseline at session start: **724 passed / 0 failed / 3

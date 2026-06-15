@@ -1,6 +1,6 @@
 # interfaces-algebra — Algebra Integral / Hydrex shims (catalog)
 
-> Source of truth = the kept code under `contracts/src/interfaces/algebra/`. This doc reads the four
+> Source of truth = the kept code under `contracts/src/interfaces/algebra/`. This doc reads the five
 > shims as the final form, pins each to its live Base deployment, and records the declared surface +
 > the Algebra-not-UniV3 gotchas. Address book = `contracts/script/BaseAddresses.sol`.
 
@@ -71,7 +71,10 @@ in `BaseAddresses.sol` comments only.
   - `function globalState() external view returns (uint160 price, int24 tick, uint16 lastFee, uint8 pluginConfig, uint16 communityFee, bool unlocked);`
   - `function token0() external view returns (address);`
   - `function token1() external view returns (address);`
-- **Consumed by:** none in `contracts/src` / `contracts/script` yet.
+  - `function plugin() external view returns (address);` — the attached volatility/TWAP plugin (verified live:
+    pool 0x51f0… → plugin `0xe33a242990780Ab872Ae986AD68206478Fc85Ae1`).
+- **Consumed by:** `IchiAlgebraFairReserves` / `AlgebraIchiFairLpOracle` (`plugin()` + token ordering for the
+  fair-LP TWAP reconstruction — `FairLpOracle.md`).
 - **Gotchas:** `swap(address,bool,int256,uint160,bytes)` = `0x128acb08`; **`globalState()`** =
   `0xe76c01e4` is the UniV3 `slot0` analogue — Algebra packs `(price, tick, lastFee, pluginConfig,
   communityFee, unlocked)`, so **fee lives here (`lastFee`), not on a per-call tier**. For pool 0x51f0…,
@@ -84,3 +87,14 @@ in `BaseAddresses.sol` comments only.
 - **Gotchas:** **fee-by-pair, no fee-tier arg** — `poolByPair(HYDX, USDC)` returns the single canonical
   pool `0x51f0…D3D2` (verified). Base-factory pools (this one) ⇒ `deployer == address(0)` everywhere
   the periphery structs above take a `deployer`.
+
+## `IAlgebraOraclePlugin.sol` — Algebra Integral volatility/TWAP plugin
+- **Shims:** plugin `0xe33a242990780Ab872Ae986AD68206478Fc85Ae1` (= `pool.plugin()` of pool 0x51f0…).
+- **Surface:**
+  - `function getTimepoints(uint32[] secondsAgos) external view returns (int56[] tickCumulatives, uint88[] volatilityCumulatives);`
+  - `function isInitialized() external view returns (bool);`
+- **Consumed by:** `IchiAlgebraFairReserves._meanTick` (the manipulation-resistant TWAP tick — `FairLpOracle.md`).
+- **Gotchas:** the TWAP source lives on the **plugin**, not the pool (unlike UniV3's `observe`). Verified live:
+  `getTimepoints([3600,0])` → mean tick over 1h ≈ `-310830`. The arithmetic-mean tick is
+  `(cum[now] − cum[ago]) / window`, rounded toward **−∞** on a negative remainder (the UniV3/OracleLibrary
+  convention) — the consumer replicates this. The second array (`uint88[]`) is unused.

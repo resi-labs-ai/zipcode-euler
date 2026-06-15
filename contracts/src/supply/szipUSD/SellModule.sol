@@ -233,6 +233,28 @@ contract SellModule is Module {
         amountOut = _swap(zipUSD, xAlpha, amountIn, minOut, deadline);
     }
 
+    /// @notice Sell `amountIn` xALPHA → zipUSD on our POL — the reverse of `buyXAlpha`, same wired pair. It unstrands
+    ///         the xALPHA leg: after `LpStrategyModule.removeLiquidity` decomposes the LP into zipUSD + xALPHA, this
+    ///         routes the xALPHA back to zipUSD (then zipUSD exits to USDC via the senior par queue — xALPHA has no
+    ///         direct USDC pool, it is the bridge stand-in). It is the on-module xALPHA→USDC hop the global wind-down
+    ///         previously lacked, and it equally lets the protocol **accept xALPHA** (e.g. incentive/LM strategies
+    ///         that take xALPHA in) and recycle it to zipUSD on demand.
+    /// @dev    NO size cap (unlike `sellHydx`). The `maxSellHydx` backstop exists because the oHYDX harvest system
+    ///         becomes unprofitable past a clip — a HYDX-specific ceiling. xALPHA has no such profitability ceiling
+    ///         (it is our own POL asset, sold back into our own pair), so a per-call size cap would be arbitrary;
+    ///         `minOut` + `deadline` remain the price/staleness guards, and throughput stays 8-B11/8-B12 CRE policy.
+    /// @param amountIn The xALPHA to sell (pulled from the Safe).
+    /// @param minOut The slippage floor (the router reverts if `amountOut < minOut`).
+    /// @param deadline The swap deadline (the router enforces it).
+    /// @return amountOut The zipUSD received (≥ minOut), sent to the Safe.
+    function sellXAlpha(uint256 amountIn, uint256 minOut, uint256 deadline)
+        external
+        onlyOperator
+        returns (uint256 amountOut)
+    {
+        amountOut = _swap(xAlpha, zipUSD, amountIn, minOut, deadline);
+    }
+
     // --------------------------------------------------------------------- the swap mechanism (shared)
     /// @dev Drive the Safe via the inherited `execAndReturnData` (Operation.Call, value 0) and HARD-REVERT if it
     ///      returns false — BUBBLING the inner revert data so the original router error (e.g. a `minOut` slippage revert

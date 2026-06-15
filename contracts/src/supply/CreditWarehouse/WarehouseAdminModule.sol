@@ -54,6 +54,8 @@ contract WarehouseAdminModule is ReceiverTemplate {
     error ZeroRoleKey();
     /// @notice The decoded `opType` is not one of SUPPLY/APPROVE/REDEEM/REPAY.
     error UnsupportedOpType(uint8 opType);
+    /// @notice A REPAY payload carried a `dest` other than the wired `repaySink` (self-enforced, not just scoped).
+    error WrongRepaySink(address dest);
     /// @notice The inner `execTransactionWithRole` returned false (unreachable defense-in-depth: with
     ///         `shouldRevert=true` the modifier already reverts `ModuleTransactionFailed` on a failed exec).
     error RoleExecFailed();
@@ -163,8 +165,12 @@ contract WarehouseAdminModule is ReceiverTemplate {
             data = abi.encodeWithSelector(IEulerEarn.redeem.selector, shares, safe, safe);
         } else if (opType == REPAY) {
             (address dest, uint256 amount) = abi.decode(payload, (address, uint256));
+            // Self-enforce the sink (belt-and-suspenders with the Roles `EqualTo(repaySink)` scope, and parity with
+            // SUPPLY/REDEEM injecting `safe` from immutables): inject `repaySink`, and revert loudly on a CRE drift
+            // rather than relying solely on the scope to reject a mismatched `dest`.
+            if (dest != repaySink) revert WrongRepaySink(dest);
             to = usdc;
-            data = abi.encodeWithSelector(IERC20.transfer.selector, dest, amount);
+            data = abi.encodeWithSelector(IERC20.transfer.selector, repaySink, amount);
         } else {
             revert UnsupportedOpType(opType);
         }

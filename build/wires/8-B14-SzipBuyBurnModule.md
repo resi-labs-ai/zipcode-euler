@@ -26,9 +26,10 @@ the **first engine Zodiac Module** — it set the `is Module` / `setUp`-under-`i
 ## Contracts involved
 | Contract | What it does |
 |---|---|
-| `SzipBuyBurnModule` (`is Module`, zodiac-core) | The whole bid engine. `setUp`-under-`initializer` set-once wiring (NO immutable — clone); `onlyOperator` `postBid` (validate the 3-field order → price-bound vs `navExit` → NAV-freshness fence → build canonical GPv2 uid → `exec` USDC `approve(vaultRelayer)` + `exec` `setPreSignature(uid,true)`) + `cancelBid` (operator-or-owner; presig→false + allowance→0; idempotent); `_orderUid` (in-contract canonical GPv2 hashing); `onlyOwner` (Timelock) governed-param setters (`setDiscountBps`/`setBuybackCap`) + 7 Timelock-settable wiring setters; `currentBid`/`quoteMaxPrice` views. |
+| `SzipBuyBurnModule` (`is Module`, zodiac-core) | The whole bid engine. `setUp`-under-`initializer` set-once wiring (10 args, +`coverageGate`; NO immutable — clone); `onlyOperator` `postBid` (validate the 3-field order → cap → **coverage gate `covered()`** → price-bound vs `navExit` → NAV-freshness fence → build canonical GPv2 uid → `exec` USDC `approve(vaultRelayer)` + `exec` `setPreSignature(uid,true)`) + `cancelBid` (operator-or-owner; presig→false + allowance→0; idempotent); `_orderUid` (in-contract canonical GPv2 hashing); `onlyOwner` (Timelock) governed-param setters (`setDiscountBps`/`setBuybackCap`) + 8 Timelock-settable wiring setters (incl. `setCoverageGate`); `currentBid`/`quoteMaxPrice` views. |
 | `IGPv2Settlement` (`contracts/src/interfaces/cow/IGPv2Settlement.sol`) | The minimal CoW `GPv2Settlement` surface (Base 8453 `0x9008…ab41`, same address all chains): `domainSeparator()` + `vaultRelayer()` (both read LIVE in `setUp`), `setPreSignature(bytes,bool)` (the PRESIGN target — the `owner` packed into `orderUid` MUST == `msg.sender` == the engine Safe), `preSignature(bytes)` (read-back: 0 = unsigned). |
 | `INavOracle` (declared inline in the .sol) | The minimal `SzipNavOracle` surface the module reads: `navExit()` (= `min(spot, twap)`, NEVER reverts on staleness — the §3 buyer-conservative exit mark), `fresh()` (both pushed legs within `maxAge` — gates `postBid`), `maxAge()` (the NAV-freshness fence bound). |
+| `ICoverageGate` (declared inline in the .sol) | The coverage seam `postBid` reads (the `DurationFreezeModule`): `covered() → bool`. Zero ⇒ gate OFF (M1 / kill-switch). |
 | `IERC20Approve` (declared inline) | The `approve(spender, amount)` face the module builds calldata for (the USDC → VaultRelayer allowance). |
 
 ## Wiring — internal
@@ -41,13 +42,14 @@ config. EVERY wired address/param is therefore plain **set-once storage written 
 `setUp` has zero `operator`/`engineSafe` ⇒ every `postBid` reverts `NotOperator`).
 
 ### `setUp(bytes initParams)` (`public override initializer`)
-Decodes **9 fields** `(address owner_, address engineSafe_, address operator_, address navOracle_, address
-szipUSD_, address usdc_, address settlement_, uint16 dBps_, uint256 buybackCap_)`:
-- Zero-guards every address (`ZeroAddress`); asserts `owner_ != operator_` (`OwnerIsOperator` — the Timelock
-  owner must not be the CRE hot key); asserts `0 < dBps_ < 10_000` (`BadDiscount`). `buybackCap_` is NOT guarded
-  (0 is the valid kill-switch).
+Decodes **10 fields** `(address owner_, address engineSafe_, address operator_, address navOracle_, address
+szipUSD_, address usdc_, address settlement_, uint16 dBps_, uint256 buybackCap_, address coverageGate_)`:
+- Zero-guards the seven required addresses (`ZeroAddress`); asserts `owner_ != operator_` (`OwnerIsOperator` —
+  the Timelock owner must not be the CRE hot key); asserts `0 < dBps_ < 10_000` (`BadDiscount`). `buybackCap_` is
+  NOT guarded (0 = kill-switch). `coverageGate_` MAY be `address(0)` (gate OFF) — no zero-check.
 - Sets `avatar = target = engineSafe_` — the module is enabled ON the engine Safe and only ever `exec`s through it.
-- Writes set-once storage: `engineSafe`, `operator`, `navOracle`, `szipUSD`, `usdc`, `settlement`, `dBps`, `buybackCap`.
+- Writes set-once storage: `engineSafe`, `operator`, `navOracle`, `szipUSD`, `usdc`, `settlement`, `dBps`,
+  `buybackCap`, `coverageGate` (the `DurationFreezeModule`; ARMED at deploy, Timelock-re-pointable / kill-switch).
 - **Reads LIVE off the settlement** (does not hard-trust a constant): `vaultRelayer = IGPv2Settlement(settlement_).vaultRelayer()` (the USDC `approve` spender) + `domainSeparator = IGPv2Settlement(settlement_).domainSeparator()` (the EIP-712 domain for the uid), caches both.
 - `_transferOwnership(owner_)` — the zodiac-core `Module` owner (= the Timelock at item 10).
 
@@ -58,6 +60,10 @@ enters the hash). Validation order:
 1. `currentUid.length != 0` ⇒ `BidAlreadyLive` (single-resting-bid invariant — a re-post must `cancelBid` first).
 2. `sellAmount == 0 || buyAmount == 0` ⇒ `ZeroAmount`; `buyAmount > MAX_BUY_AMOUNT (1e30)` ⇒ `BuyAmountTooLarge`.
 3. `sellAmount > buybackCap` ⇒ `CapExceeded` (so `buybackCap == 0` reverts every post = the kill-switch).
+3b. **COVERAGE GATE** (LP path-lock, 2026-06-13): `if coverageGate != 0 && !ICoverageGate(coverageGate).covered()
+   ⇒ Undercovered` — a buy-burn bid is a free-side outflow (spends basket USDC to retire szipUSD), blocked while
+   sidecar+LP coverage is below the debt floor (incl. a price-drift breach). Transparent at zero senior debt
+   (`floor = 0 ⇒ covered() == true`). `coverageGate == 0` is the M1 / kill-switch state.
 4. `validTo <= now || validTo > now + MAX_BID_TTL (1 day)` ⇒ `BadValidTo`.
 5. **NAV-freshness fence:** `validTo > now + INavOracle(navOracle).maxAge()` ⇒ `ValidToBeyondNavFreshness` (see Gotchas — the collapsed "fulfillment controller").
 6. `!INavOracle(navOracle).fresh()` ⇒ `StaleNav`; `dBps == 0 || dBps >= 10_000` ⇒ `BadDiscount` (re-asserted).
@@ -94,9 +100,11 @@ liveness only).
 
 ### Governed params + Timelock-settable wiring (`onlyOwner` = Timelock, build phase §17)
 - `setDiscountBps(dBps_)` — re-asserts `0 < dBps_ < 10_000`; `setBuybackCap(buybackCap_)` — unguarded (0 = kill-switch).
-- **7 wiring setters** (each zero-guarded, emits `WiringSet(slot, value)`): `setOperator`, `setEngineSafe`,
-  `setNavOracle`, `setSzipUSD`, `setUsdc`, `setSettlement`, `setVaultRelayer`. A redeployed oracle/Safe/settlement
-  is a one-call re-point, not a redeploy cascade ([[oracle-replaceable-timelock-wiring]]).
+- **8 wiring setters** (emit `WiringSet(slot, value)`): `setOperator`, `setEngineSafe`,
+  `setNavOracle`, `setSzipUSD`, `setUsdc`, `setSettlement`, `setVaultRelayer` (each zero-guarded), plus
+  `setCoverageGate` (allows `address(0)` = gate OFF kill-switch / re-point the `DurationFreezeModule`). A
+  redeployed oracle/Safe/settlement/gate is a one-call re-point, not a redeploy cascade
+  ([[oracle-replaceable-timelock-wiring]]).
 - **`setAvatar`/`setTarget`** are inherited from zodiac-core `Module` as `onlyOwner` — the CRE `operator` (hot key)
   CANNOT call them (proven by `test_operator_cannot_redirect_safe`); only the Timelock can, a deliberate timelocked
   act. NOT hard-locked (would require marking the vendored `reference/zodiac-core` setters `virtual` — reference is
@@ -136,6 +144,10 @@ on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for mon
   pattern). After cloning, **`enableModule(module)` on the engine Safe** so the clone can `exec` through it.
 - **`owner = Timelock`, `operator = CRE` — and `owner != operator` is asserted in `setUp`** (the hot key must not
   be the governance owner). Wire the single CRE operator via the `operator` `setUp` field (or `setOperator`).
+- **`coverageGate = durationFreeze` wired at `setUp` (ARMED at deploy).** Deploy clones `DurationFreezeModule` at
+  the TOP of P6 (before this module) and passes it as the 10th `setUp` arg; a `SeamCoverageGate` assert confirms
+  `coverageGate() == durationFreeze`. `postBid` then blocks while `!covered()`. Kill-switch: Timelock
+  `setCoverageGate(0)`. build/lp-path-lock.md.
 - **Wire `module.engineSafe == ExitGate.engineSafe == SzipNavOracle.engineSafe == order.receiver`** (PROGRESS row
   325). The module side is proven (`module.engineSafe() == ExitGate.engineSafe()`); the **oracle-side**
   `SzipNavOracle.setEngineSafe(engineSafe)` (denominator exclusion of the transient pre-burn szipUSD) is the

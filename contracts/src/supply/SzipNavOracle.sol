@@ -7,10 +7,23 @@ import {IICHIVault} from "../interfaces/ichi/IICHIVault.sol";
 import {IGauge} from "../interfaces/hydrex/IGauge.sol";
 import {IOptionToken} from "../interfaces/hydrex/IOptionToken.sol";
 import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
+import {IchiAlgebraFairReserves} from "./lib/IchiAlgebraFairReserves.sol";
 
 /// @notice The freshness face of `SzAlphaRateOracle` — issuance gates on this for the CRE-pushed cross-chain rate.
 interface IXAlphaRateFresh {
     function fresh() external view returns (bool);
+}
+
+/// @notice The reservoir LP escrow collateral vault (8-B5) — only the two views the NAV needs to value the
+///         LP posted as collateral (ERC4626 `convertToAssets`/`balanceOf`; the escrow is a bare 1:1 box).
+interface IReservoirEscrow {
+    function balanceOf(address account) external view returns (uint256);
+    function convertToAssets(uint256 shares) external view returns (uint256);
+}
+
+/// @notice The reservoir USDC borrow vault (8-B5) — only the outstanding-debt read the NAV subtracts.
+interface IReservoirDebt {
+    function debtOf(address account) external view returns (uint256);
 }
 
 /// @title SzipNavOracle
@@ -69,6 +82,12 @@ contract SzipNavOracle is ReceiverTemplate {
     uint256 public immutable maxAge;
     /// @notice The per-push deviation circuit-break, in bps (governed).
     uint256 public immutable maxDeviationBps;
+    /// @notice Minimum wall-clock between committed TWAP checkpoints, derived from `W` in the ctor. The integral
+    ///         (`cumNav`) still advances on every `poke()` with `dt>0`; this only throttles how often a NEW ring
+    ///         slot is consumed, so the `CARDINALITY-1` frozen checkpoints always span `>= W` (with headroom)
+    ///         regardless of poke frequency. THIS is what makes the ring immune to poke-spam — the TWAP window
+    ///         can no longer be collapsed by filling slots faster than once per `obsSpacing`. See build/twap-ring.md.
+    uint32 public immutable obsSpacing;
 
     // --------------------------------------------------------------------- wiring (Timelock-re-pointable, §17)
     /// @notice szipUSD — the supply denominator (deployed after this oracle).
@@ -77,6 +96,20 @@ contract SzipNavOracle is ReceiverTemplate {
     address public ichiVault;
     /// @notice The Hydrex gauge the LP is staked in (staked-LP balance source).
     address public gauge;
+    /// @notice The Algebra TWAP window (seconds) for manipulation-resistant LP reserve reconstruction. Zero ⇒ the
+    ///         LP leg reads spot `getTotalAmounts()` (M1 / non-Algebra pools — unchanged). Non-zero ⇒ `_lpValue`
+    ///         reconstructs the reserves at the pool's TWAP tick (`IchiAlgebraFairReserves`), so an in-block swap
+    ///         cannot move the LP mark — the build/twap-ring.md fair-LP defense-in-depth. Timelock-settable (§17);
+    ///         only set once the LP is a live Algebra pool that exposes a TWAP plugin.
+    uint32 public lpTwapWindow;
+    /// @notice The reservoir LP escrow collateral vault (8-B5). Zero ⇒ the escrow-collateralized LP leg contributes
+    ///         0 (M1 pre-loop). Closes the mid-loop blind spot: while the LP is posted as collateral it is neither
+    ///         loose in the Safe nor gauge-staked, so without this it reads as gone. Timelock-settable (§17).
+    address public escrowVault;
+    /// @notice The reservoir USDC borrow vault (8-B5). Zero ⇒ no debt subtraction (M1 pre-loop). The strike USDC the
+    ///         loop borrows is counted in the `usdc` leg, so its debt must be subtracted or NAV over-reads mid-loop.
+    ///         Timelock-settable (§17).
+    address public borrowVault;
     /// @notice The 8-B14 buy-and-burn Safe whose transient pre-burn szipUSD is excluded from the denominator.
     address public engineSafe;
     /// @notice The sole impairment-provision writer (M2). Zero ⇒ `writeProvision` reverts for everyone.
@@ -133,6 +166,8 @@ contract SzipNavOracle is ReceiverTemplate {
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
     event LpPositionSet(address indexed ichiVault, address indexed gauge);
+    event ReservoirLegSet(address indexed escrowVault, address indexed borrowVault);
+    event LpTwapWindowSet(uint32 window);
     event EngineSafeSet(address indexed engineSafe);
     event DefaultCoordinatorSet(address indexed dc);
     event XAlphaRateOracleSet(address indexed rateOracle);
@@ -168,6 +203,10 @@ contract SzipNavOracle is ReceiverTemplate {
         W = W_;
         maxAge = maxAge_;
         maxDeviationBps = maxDeviationBps_;
+        // obsSpacing = ceil(1.25 * W / (CARDINALITY - 1)): the CARDINALITY-1 frozen checkpoints then span ~1.25*W
+        // (worst-case >= (CARDINALITY-2)*obsSpacing right after a slot advance, still comfortably >= W). The 25%
+        // headroom keeps the query checkpoint off the exact `now - W` boundary under block-time jitter.
+        obsSpacing = uint32((uint256(W_) * 5 + (4 * (CARDINALITY - 1) - 1)) / (4 * (CARDINALITY - 1)));
         uint32 nowTs = uint32(block.timestamp);
         observations[0] = Observation(nowTs, 0);
         lastUpdate = nowTs;
@@ -189,6 +228,25 @@ contract SzipNavOracle is ReceiverTemplate {
         ichiVault = ichiVault_;
         gauge = gauge_;
         emit LpPositionSet(ichiVault_, gauge_);
+    }
+
+    /// @notice Wire/re-point the reservoir escrow + borrow vaults (8-B5), set together. `onlyOwner` (Timelock).
+    ///         Closes the mid-loop NAV blind spot: the escrow-collateralized LP is added and the strike debt
+    ///         subtracted, so a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle is NAV-invariant.
+    function setReservoirLeg(address escrowVault_, address borrowVault_) external onlyOwner {
+        if (escrowVault_ == address(0) || borrowVault_ == address(0)) revert ZeroAddress();
+        escrowVault = escrowVault_;
+        borrowVault = borrowVault_;
+        emit ReservoirLegSet(escrowVault_, borrowVault_);
+    }
+
+    /// @notice Wire/re-point the LP TWAP window (the fair-LP reconstruction window, build/twap-ring.md). Zero ⇒ the
+    ///         LP leg reads spot `getTotalAmounts()` (the M1 / non-Algebra default). Set non-zero (e.g. 3600) only
+    ///         once the LP is a live Algebra pool exposing a TWAP plugin, else `_lpValue` would revert `NoPlugin`.
+    ///         `onlyOwner` (Timelock).
+    function setLpTwapWindow(uint32 lpTwapWindow_) external onlyOwner {
+        lpTwapWindow = lpTwapWindow_; // zero is a valid "use spot" value
+        emit LpTwapWindowSet(lpTwapWindow_);
     }
 
     /// @notice Wire/re-point the engine Safe (its transient pre-burn szipUSD is excluded). `onlyOwner` (Timelock).
@@ -257,39 +315,40 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @dev Book the current spot over [lastUpdate, now] into the cumulative + ring. Idempotent within a block.
+    ///      The integral (`cumNav`/`lastUpdate`) advances on EVERY call with `dt>0` so the time-weighting stays
+    ///      exact; a NEW ring slot is consumed only once `obsSpacing` has elapsed since the newest committed
+    ///      checkpoint, otherwise the head slot is refreshed in place. This decoupling bounds ring consumption to
+    ///      one slot per `obsSpacing` so the frozen checkpoints always span `>= W` — poke-spam can refresh the
+    ///      head but can no longer evict the window (build/twap-ring.md).
     function _accumulate() internal returns (bool) {
         uint32 nowTs = uint32(block.timestamp);
         uint32 dt = nowTs - lastUpdate;
         if (dt == 0) return false;
         cumNav += spotNavPerShare() * uint256(dt);
-        obsIndex = uint16((uint256(obsIndex) + 1) % CARDINALITY);
-        observations[obsIndex] = Observation(nowTs, cumNav);
         lastUpdate = nowTs;
+        // advance to a fresh slot only once obsSpacing has elapsed since the newest checkpoint; else refresh in place.
+        if (nowTs - observations[obsIndex].ts >= obsSpacing) {
+            obsIndex = uint16((uint256(obsIndex) + 1) % CARDINALITY);
+        }
+        observations[obsIndex] = Observation(nowTs, cumNav);
         return true;
     }
 
     // --------------------------------------------------------------------- NAV composition
     /// @notice The gross junior basket value (18-dp USD, `1e18 = $1`), summed across main + sidecar; IL marked-through.
+    ///         The LP is counted in ALL states (loose share + gauge-staked + escrow-collateralized) and the reservoir
+    ///         strike debt is subtracted, so a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle is
+    ///         NAV-invariant (closes the §8.2 mid-loop blind spot). Saturates at 0 (debt can never exceed the basket
+    ///         in solvent operation; the floor guards the insolvent edge).
     function grossBasketValue() public view returns (uint256 value) {
         value += _bal(zipUSD); // 18-dp $1
         value += _bal(usdc) * 1e12; // 6-dp -> 18-dp $1
         value += _bal(xAlpha) * _xAlphaUSD() / 1e18;
         value += _bal(hydx) * legCache[LEG_HYDX_USD].price / 1e18;
         value += _bal(oHydx) * _oHydxUSD() / 1e18;
-        if (ichiVault != address(0)) {
-            uint256 heldShares = IICHIVault(ichiVault).balanceOf(mainSafe) + IICHIVault(ichiVault).balanceOf(sidecar)
-                + IGauge(gauge).balanceOf(mainSafe) + IGauge(gauge).balanceOf(sidecar);
-            if (heldShares != 0) {
-                uint256 supplyLp = IICHIVault(ichiVault).totalSupply();
-                if (supplyLp != 0) {
-                    (uint256 total0, uint256 total1) = IICHIVault(ichiVault).getTotalAmounts();
-                    uint256 amt0 = total0 * heldShares / supplyLp;
-                    uint256 amt1 = total1 * heldShares / supplyLp;
-                    value += _tokenValue(IICHIVault(ichiVault).token0(), amt0);
-                    value += _tokenValue(IICHIVault(ichiVault).token1(), amt1);
-                }
-            }
-        }
+        value += _lpValue(_lpShares(mainSafe) + _lpShares(sidecar));
+        uint256 debt = _reservoirDebt(mainSafe) + _reservoirDebt(sidecar);
+        value = value > debt ? value - debt : 0;
     }
 
     /// @notice The committed (sidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
@@ -306,28 +365,72 @@ contract SzipNavOracle is ReceiverTemplate {
         return _grossValueOf(mainSafe);
     }
 
-    /// @dev Value ONE Safe's holdings (18-dp USD), mirroring `grossBasketValue` per-leg + LP marks but reading a
-    ///      single Safe's balances. Same `supplyLp == 0` / `ichiVault == address(0)` guards. NOT used by any
-    ///      existing function — purely the per-Safe back-pressure the freeze module reads.
+    /// @dev Value ONE Safe's holdings (18-dp USD), mirroring `grossBasketValue` per-leg + LP marks (incl. the escrow
+    ///      leg) minus that Safe's reservoir debt. Used by `committedValue`/`freeValue`. Saturates at 0.
     function _grossValueOf(address safe) internal view returns (uint256 value) {
         value += IERC20(zipUSD).balanceOf(safe); // 18-dp $1
         value += IERC20(usdc).balanceOf(safe) * 1e12; // 6-dp -> 18-dp $1
         value += IERC20(xAlpha).balanceOf(safe) * _xAlphaUSD() / 1e18;
         value += IERC20(hydx).balanceOf(safe) * legCache[LEG_HYDX_USD].price / 1e18;
         value += IERC20(oHydx).balanceOf(safe) * _oHydxUSD() / 1e18;
-        if (ichiVault != address(0)) {
-            uint256 heldShares = IICHIVault(ichiVault).balanceOf(safe) + IGauge(gauge).balanceOf(safe);
-            if (heldShares != 0) {
-                uint256 supplyLp = IICHIVault(ichiVault).totalSupply();
-                if (supplyLp != 0) {
-                    (uint256 total0, uint256 total1) = IICHIVault(ichiVault).getTotalAmounts();
-                    uint256 amt0 = total0 * heldShares / supplyLp;
-                    uint256 amt1 = total1 * heldShares / supplyLp;
-                    value += _tokenValue(IICHIVault(ichiVault).token0(), amt0);
-                    value += _tokenValue(IICHIVault(ichiVault).token1(), amt1);
-                }
-            }
+        value += _lpValue(_lpShares(safe));
+        uint256 debt = _reservoirDebt(safe);
+        value = value > debt ? value - debt : 0;
+    }
+
+    /// @notice The path-locked LP equity (18-dp USD): the ICHI LP in every state (loose + gauge-staked + escrow-
+    ///         collateralized) across BOTH Safes, NET of the reservoir strike debt. The freeze module adds this to
+    ///         `committedValue()` for its coverage floor because the LP is fenced — its only dissolution path
+    ///         (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it cannot reach an exit below the floor.
+    ///         build/lp-path-lock.md.
+    function pathLockedLpEquity() public view returns (uint256) {
+        uint256 lpValue = _lpValue(_lpShares(mainSafe) + _lpShares(sidecar));
+        uint256 debt = _reservoirDebt(mainSafe) + _reservoirDebt(sidecar);
+        return lpValue > debt ? lpValue - debt : 0;
+    }
+
+    /// @dev LP shares held by `safe` across all states: loose ICHI share + gauge-staked + escrow-collateralized.
+    ///      Zero when the LP is unwired (`ichiVault == 0`). The escrow leg is added only once `escrowVault` is wired.
+    function _lpShares(address safe) internal view returns (uint256 s) {
+        if (ichiVault == address(0)) return 0;
+        s = IICHIVault(ichiVault).balanceOf(safe) + IGauge(gauge).balanceOf(safe);
+        if (escrowVault != address(0)) {
+            s += IReservoirEscrow(escrowVault).convertToAssets(IReservoirEscrow(escrowVault).balanceOf(safe));
         }
+    }
+
+    /// @notice The 18-dp USD value of `lpShares` ICHI LP shares — the LP-dissolution gate
+    ///         (`LpStrategyModule.removeLiquidity` via the freeze module) reads this to bound a dissolution to the
+    ///         coverage excess. Public projection of the internal pro-rata mark; 0 if the LP is unwired/empty.
+    function lpShareValue(uint256 lpShares) public view returns (uint256) {
+        return _lpValue(lpShares);
+    }
+
+    /// @dev 18-dp USD value of `lpShares` ICHI LP, pro-rata over the OUR-pool reserves. Returns 0 if the LP is
+    ///      unwired or the vault is empty (the `supplyLp == 0` guard). One floor-division pair per call (the ≤2 wei
+    ///      gross-vs-per-Safe split note still holds — combined shares floor once, per-Safe floor separately).
+    function _lpValue(uint256 lpShares) internal view returns (uint256) {
+        if (lpShares == 0 || ichiVault == address(0)) return 0;
+        uint256 supplyLp = IICHIVault(ichiVault).totalSupply();
+        if (supplyLp == 0) return 0;
+        // Reserve source: spot `getTotalAmounts()` (default) OR the manipulation-resistant TWAP reconstruction
+        // when `lpTwapWindow` is wired (build/twap-ring.md fair-LP). Pro-rata + leg pricing are identical either way.
+        uint256 total0;
+        uint256 total1;
+        if (lpTwapWindow != 0) {
+            (total0, total1,) = IchiAlgebraFairReserves.fairReserves(ichiVault, lpTwapWindow);
+        } else {
+            (total0, total1) = IICHIVault(ichiVault).getTotalAmounts();
+        }
+        uint256 amt0 = total0 * lpShares / supplyLp;
+        uint256 amt1 = total1 * lpShares / supplyLp;
+        return _tokenValue(IICHIVault(ichiVault).token0(), amt0) + _tokenValue(IICHIVault(ichiVault).token1(), amt1);
+    }
+
+    /// @dev Reservoir strike debt of `safe` in 18-dp USD (USDC 6-dp -> 18-dp). Zero if `borrowVault` unwired.
+    function _reservoirDebt(address safe) internal view returns (uint256) {
+        if (borrowVault == address(0)) return 0;
+        return IReservoirDebt(borrowVault).debtOf(safe) * 1e12;
     }
 
     /// @notice The live (spot) szipUSD NAV-per-share, 18-dp. Returns `GENESIS_NAV` at zero effective supply.

@@ -7,9 +7,10 @@
 ## Role
 An engine **Zodiac Module** enabled on the **rq/main Safe** (`avatar == target == rqSafe == Baal.avatar()`). It is
 the back-office leg of the szipUSD CoW-book exit (`claude-zipcode.md` §6.4): it turns the rq Safe's **basket zipUSD
-into USDC** by driving the BUILT senior `ZipRedemptionQueue` (item 9) at par over its 30-day epoch — sourcing the
-USDC the treasury's 8-B14 buy-and-burn bids exits with from un-lent EulerEarn cash. It is a **pure driver / C1
-only**: par, the epoch, and pro-rata partial fills are the queue's job; this module adds **no redemption logic**.
+into USDC** by driving the BUILT senior `ZipRedemptionQueue` (item 9) at par through its on-demand settle cycle
+(the 30-day epoch time gate was removed 2026-06-12 — see `9-ZipRedemptionQueue.md`) — sourcing the USDC the
+treasury's 8-B14 buy-and-burn bids exits with from un-lent EulerEarn cash. It is a **pure driver / C1 only**: par
+and the `min(available, pending)` settle fill are the queue's job; this module adds **no redemption logic**.
 Operator-gated and manual (the CRE sizes each `requestRedeem`/`claim`), never autonomic. It never touches the
 warehouse Safe and never sells xALPHA or any other basket leg.
 
@@ -18,8 +19,8 @@ warehouse Safe and never sells xALPHA or any other basket leg.
 |---|---|
 | `OffRampModule` (`is Module`) | The driver. `setUp(bytes)`-under-`initializer` decodes 5 addresses; `onlyOperator` `requestRedeem(zipAmount)` / `claim(assets)`; private bubbling `_exec`; 4 Timelock (`onlyOwner`) wiring setters. Set-once storage `rqSafe`/`operator`/`zipUSD`/`queue`, **not `immutable`** (§18.6 clone fact — a `ModuleProxyFactory` clone shares mastercopy bytecode). |
 | `IZipRedemptionQueue` (inline iface) | The minimal queue surface driven: `scaleUp() view`, `requestRedeem(shares, requester, owner)`, `withdraw(assets, receiver, requester)`. |
-| `ZipRedemptionQueue` (`src/supply/ZipRedemptionQueue.sol`, item 9 BUILT) | The par/epoch/pro-rata engine. `requestRedeem` is `onlyRedeemController` (C4 gate); `settleEpoch()` `onlyController` (CRE); `withdraw`/`redeem` claim at par; `scaleUp` = `10**(zipDec−usdcDec)` (mutable, re-derived on `setTokens`). |
-| `WarehouseAdminModule` (8-Bw BUILT) | **NOT called by this module.** The CRE separately drives REDEEM/REPAY through it to fund the queue's USDC per epoch. |
+| `ZipRedemptionQueue` (`src/supply/ZipRedemptionQueue.sol`, item 9 BUILT) | The par-burn sink (pro-rata engine collapsed out 2026-06-13 — single requester). `requestRedeem` is `onlyRedeemController` (C4 gate); `settleEpoch()` `onlyController` (CRE) fills `min(available, pending)` + burns; `withdraw`/`redeem` claim at par; `scaleUp` = `10**(zipDec−usdcDec)` (mutable, re-derived on `setTokens`). |
+| `WarehouseAdminModule` (8-Bw BUILT) | **NOT called by this module.** The CRE separately drives REDEEM/REPAY through it to fund the queue's USDC per settle. |
 
 ## Wiring — internal
 - **It is a `Module`.** `setUp(bytes initParams) public override initializer` decodes

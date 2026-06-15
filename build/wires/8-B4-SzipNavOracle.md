@@ -25,8 +25,9 @@ from gross.
 ## Contracts involved
 | Contract | What it does |
 |---|---|
-| `SzipNavOracle` (`is ReceiverTemplate`) | The whole primitive. Flat-ctor immutables for the basket tokens + both Safes + W/maxAge/maxDeviationBps; the `_processReport` reportType-7 leg-push path (Forwarder-gated by the base); `poke()`/`_accumulate()` TWAP ring; `grossBasketValue()` + per-leg valuation; `writeProvision` (DC-only); the four wiring setters + the fifth `setXAlphaRateOracle`; the consumer reads `navEntry`/`navExit`/`spotNavPerShare`/`twapNavPerShare`/`fresh`/`valueOf`. |
-| `DurationFreezeModule` (8-B / §6.4 freeze) | Reads this oracle's **ADDITIVE** per-Safe views `committedValue()` (= `_grossValueOf(sidecar)`) and `freeValue()` (= `_grossValueOf(mainSafe)`) as the freeze-floor back-pressure. These re-compute one Safe's holdings independently; for the five plain legs `committedValue()+freeValue() == grossBasketValue()` exactly, for a split LP within ≤2 wei. `grossBasketValue()` is unchanged by their addition. |
+| `SzipNavOracle` (`is ReceiverTemplate`) | The whole primitive. Flat-ctor immutables for the basket tokens + both Safes + W/maxAge/maxDeviationBps; the `_processReport` reportType-7 leg-push path (Forwarder-gated by the base); `poke()`/`_accumulate()` TWAP ring; `grossBasketValue()` (counts escrow-collateralized LP + subtracts reservoir debt) + per-leg valuation + `pathLockedLpEquity()`/`lpShareValue()`; `writeProvision` (DC-only); the wiring setters (`setShareToken`/`setLpPosition`/`setReservoirLeg`/`setEngineSafe`/`setDefaultCoordinator` + `setXAlphaRateOracle`); the consumer reads `navEntry`/`navExit`/`spotNavPerShare`/`twapNavPerShare`/`fresh`/`valueOf`. |
+| `DurationFreezeModule` (8-B / §6.4 freeze) | Reads `committedValue()` (= `_grossValueOf(sidecar)`), `freeValue()` (= `_grossValueOf(mainSafe)`), AND `pathLockedLpEquity()` — its coverage numerator is `committedValue() + pathLockedLpEquity()`, and `lpBurnKeepsCovered` reads `lpShareValue()`. `grossBasketValue()` now counts the escrow LP + subtracts reservoir debt (no longer "unchanged"), but the freeze module never moves the LP, so it stays rotation-invariant under `commit`/`release` (which move only the 5 plain legs). |
+| `IReservoirEscrow` / `IReservoirDebt` (declared inline in the .sol) | Minimal faces for the 8-B5 escrow vault (`balanceOf`/`convertToAssets` — the escrow-collateralized LP) and the borrow vault (`debtOf` — the strike debt subtracted). |
 | `IXAlphaRate` (`contracts/src/interfaces/bridge/IXAlphaRate.sol`) | The `exchangeRate()` face the xALPHA NAV leg reads (LST stake-accounting; non-manipulable in production, M1 stand-in mock). |
 | `IXAlphaRateFresh` (declared inline in the .sol) | The `fresh()` face of the wired Base `SzAlphaRateOracle` — issuance gates on it when `xAlphaRateOracle != 0`. |
 
@@ -50,9 +51,25 @@ is NOT renounce-frozen here, §17).
 3. `xAlpha` — `balanceOf × _xAlphaUSD() / 1e18`, where `_xAlphaUSD = IXAlphaRate(rateSrc).exchangeRate() × legCache[LEG_ALPHA_USD].price / 1e18` (the two-layer mark; `rateSrc` resolved below).
 4. `hydx` — `balanceOf × legCache[LEG_HYDX_USD].price / 1e18` (pushed leg).
 5. `oHydx` — `balanceOf × _oHydxUSD() / 1e18`, intrinsic `= HYDX/USD × (100 − IOptionToken(oHydx).discount())/100` (discount read on-chain).
-6. **LP leg** (only if `ichiVault != 0`): held shares = `IICHIVault.balanceOf(mainSafe)+balanceOf(sidecar)+IGauge(gauge).balanceOf(mainSafe)+IGauge(gauge).balanceOf(sidecar)` (unstaked + **staked** off the Hydrex gauge). Reserve share = `getTotalAmounts() × heldShares / totalSupply`, each reserve valued via `_tokenValue`/`_legPriceOfToken` (only `zipUSD`/`xAlpha` accepted — else `UnknownLpToken`, fail-closed). **IL is marked through** (true reserve value). Guarded by `supplyLp != 0`.
+6. **LP leg** (only if `ichiVault != 0`): held shares = loose ICHI share + gauge-staked + **escrow-collateralized**
+   across BOTH Safes — `_lpShares(safe) = IICHIVault.balanceOf(safe) + IGauge(gauge).balanceOf(safe) +
+   escrowVault.convertToAssets(escrowVault.balanceOf(safe))` (the escrow leg added only once `escrowVault != 0`).
+   Valued by `_lpValue(shares)`: `reserves × shares / totalSupply`, each reserve via
+   `_tokenValue`/`_legPriceOfToken` (only `zipUSD`/`xAlpha` — else `UnknownLpToken`, fail-closed). **IL marked
+   through**; guarded by `supplyLp != 0`. **Reserve source:** spot `getTotalAmounts()` by default; when the
+   Timelock-settable `lpTwapWindow != 0`, reserves are reconstructed at the Algebra pool's TWAP tick
+   (`IchiAlgebraFairReserves`) so an in-block swap cannot move the LP mark — the build/twap-ring.md +
+   build/fair-lp.md fair-LP defense-in-depth. Set `lpTwapWindow` (via `setLpTwapWindow`) only once the LP is a
+   live Algebra pool exposing a TWAP plugin (else `_lpValue` reverts `NoPlugin`).
+7. **Reservoir strike debt SUBTRACTED** (only if `borrowVault != 0`): `_reservoirDebt(safe) =
+   IReservoirDebt(borrowVault).debtOf(safe) × 1e12` (USDC 6-dp -> 18-dp). The loop's borrowed USDC is counted in
+   leg (2), so its debt must net out — making a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle
+   NAV-invariant (closes the §8.2 mid-loop blind spot; LP path-lock 2026-06-13).
 
-**`grossBasketValue()`** sums (1)–(6). **`spotNavPerShare()`** = `(gross − provision) / _effectiveSupply × 1e18`,
+**`grossBasketValue()`** sums legs (1)–(6) then SUBTRACTS the reservoir debt (saturating at 0). **New views:**
+`pathLockedLpEquity()` = `_lpValue(_lpShares(main)+_lpShares(sidecar)) − reservoirDebt` (the fenced LP equity the
+freeze module adds to `committedValue()` for its coverage floor); `lpShareValue(lpShares)` = the USD mark of an
+LP-share amount (the LP-dissolution gate reads it). **`spotNavPerShare()`** = `(gross − provision) / _effectiveSupply × 1e18`,
 returning `GENESIS_NAV (1e18)` at zero effective supply. `_effectiveSupply` = `shareToken.totalSupply −
 engineSafe balance` (the transient pre-burn szipUSD excluded), 0 if `shareToken` unset.
 
@@ -60,6 +77,11 @@ engineSafe balance` (the transient pre-burn szipUSD excluded), 0 if `shareToken`
 `CARDINALITY=65` observation ring, idempotent within a block (`dt==0 ⇒ no-op`). Called first inside both
 `_processReport` (before applying new prices) and `writeProvision` (before the provision step). `twapNavPerShare`
 walks the ring back to the observation at-or-before `now − W`, falling back to `spot` before `W` of history.
+The integral (`cumNav`/`lastUpdate`) advances on EVERY `dt>0`, but a NEW ring slot is consumed only once the
+immutable `obsSpacing` (`= ceil(1.25·W/(CARDINALITY−1))`, derived in the ctor) has elapsed since the newest
+checkpoint — otherwise the head slot refreshes in place. This bounds ring consumption so the `CARDINALITY−1`
+frozen checkpoints always span `≥ W` regardless of poke frequency, making the window immune to permissionless
+`poke()`-spam (the eviction/collapse vector). `build/twap-ring.md`.
 
 **`valueOf(asset, amount)`** — public projection of `_tokenValue`/`_legPriceOfToken` (the issuance valuation
 seam the Gate reads; supports `{zipUSD, xAlpha}`, else `UnknownLpToken`). The oracle owns valuation — no caller
@@ -70,11 +92,15 @@ asserts a price (§3.4/§7).
 lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wired it is the zero address ⇒
 `writeProvision` reverts for everyone (fail-closed).
 
-**The four wiring setters** (`onlyOwner`, Timelock; each emits an event; all zero-guarded):
+**The wiring setters** (`onlyOwner`, Timelock; each emits an event; all zero-guarded):
 - `setShareToken(szipUSD_)` → `shareToken` (the supply denominator).
 - `setLpPosition(ichiVault_, gauge_)` → `ichiVault` + `gauge` (the LP reserves + staked-LP source).
+- `setReservoirLeg(escrowVault_, borrowVault_)` → `escrowVault` + `borrowVault` (the 8-B5 reservoir leg: escrow-
+  collateralized LP counted + strike debt subtracted; both set together, both zero-guarded).
 - `setEngineSafe(engineSafe_)` → `engineSafe` (the 8-B14 buy-and-burn Safe, denominator-excluded).
 - `setDefaultCoordinator(dc_)` → `defaultCoordinator` (the sole `writeProvision` caller).
+- `setLpTwapWindow(window_)` → `lpTwapWindow` (**not** zero-guarded — `0` = the valid "use spot
+  `getTotalAmounts()`" default; non-zero = fair-LP TWAP reconstruction, build/fair-lp.md).
 
 (A **fifth** setter `setXAlphaRateOracle(rateOracle_)` exists — `onlyOwner`, **not** zero-guarded because
 `address(0)` is the valid "use M1 fallback" value. When set, `rateSrc = xAlphaRateOracle` and `navEntry`/`fresh`
@@ -92,17 +118,22 @@ additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
   `SzipBuyBurnModule.engineSafe` is asserted == `ExitGate.engineSafe()`.)
 - **LP position (ICHI vault + Hydrex gauge) → oracle.** Wired via `setLpPosition`; before it the LP leg
   contributes 0 (M1 pre-LP). The oracle reads both Safes' vault + gauge balances.
-- **DurationFreezeModule → oracle.** Reads `committedValue()`/`freeValue()` (ADDITIVE per-Safe views) as the
-  freeze-floor it bounds `release` against — does not write the oracle.
+- **Reservoir escrow + borrow vaults (8-B5) → oracle.** Wired via `setReservoirLeg`; before it the escrow leg +
+  debt contribute 0 (M1 pre-loop). Closes the mid-loop NAV blind spot (escrow-collateralized LP counted, strike
+  debt subtracted). Deploy wires it in P8 after the reservoir market (P5).
+- **DurationFreezeModule → oracle.** Reads `committedValue()`/`freeValue()`/`pathLockedLpEquity()`/
+  `lpShareValue()` for its coverage floor (`coverageValue = committedValue + pathLockedLpEquity`) — does not
+  write the oracle. The LP-dissolution + buy-burn exit gates read the freeze module's `covered()` (which reads
+  these views).
 - **CRE Forwarder → oracle.** Pushes reportType 7 `(uint8[] legs, uint256[] prices, uint32 ts)` for
   `{LEG_ALPHA_USD=0, LEG_HYDX_USD=1}`, all-or-nothing, deviation-circuit-broken per leg (`maxDeviationBps`).
 - **SzAlphaRateOracle → oracle (production).** Optionally wired via `setXAlphaRateOracle`; supplies the
   cross-chain xALPHA `exchangeRate()` + `fresh()`.
 
 ## Item-10 deploy facts (PROGRESS rows 324/326/327/328/329)
-- Deploy order: deploy the oracle, then szipUSD/Gate, the LP/gauge, the engine Safe, and the DefaultCoordinator;
-  **then call the four wiring setters** `setShareToken` / `setLpPosition` / `setEngineSafe` /
-  `setDefaultCoordinator` (Timelock-re-pointable, §17).
+- Deploy order: deploy the oracle, then szipUSD/Gate, the LP/gauge, the reservoir market, the engine Safe, and
+  the DefaultCoordinator; **then call the wiring setters** `setShareToken` / `setLpPosition` / `setReservoirLeg`
+  (escrow+borrow, P8) / `setEngineSafe` / `setDefaultCoordinator` (Timelock-re-pointable, §17).
 - **Assert `shareToken() != 0` before `transferOwnership(timelock)`** — else the oracle is stuck returning the
   genesis price (zero effective supply) forever.
 - **`transferOwnership(timelock)` LAST — NOT `renounceOwnership()`** (§17 build-phase: Forwarder/identity/wiring

@@ -85,6 +85,28 @@ contract MockGauge {
     }
 }
 
+/// @dev The reservoir LP escrow collateral vault — a bare 1:1 box (`convertToAssets(s) == s`).
+contract MockEscrowVault {
+    mapping(address => uint256) public balanceOf;
+
+    function setBalance(address a, uint256 v) external {
+        balanceOf[a] = v;
+    }
+
+    function convertToAssets(uint256 shares) external pure returns (uint256) {
+        return shares;
+    }
+}
+
+/// @dev The reservoir USDC borrow vault — only `debtOf` is read (USDC 6-dp).
+contract MockBorrowVault {
+    mapping(address => uint256) public debtOf;
+
+    function setDebt(address a, uint256 v) external {
+        debtOf[a] = v;
+    }
+}
+
 // --------------------------------------------------------------------------- tests
 contract SzipNavOracleTest is Test {
     SzipNavOracle oracle;
@@ -542,6 +564,65 @@ contract SzipNavOracleTest is Test {
         oracle.grossBasketValue();
     }
 
+    // ----------------------------------------------------------------- reservoir escrow leg + debt (path-lock)
+    function _wireReservoir() internal returns (MockEscrowVault e, MockBorrowVault b) {
+        e = new MockEscrowVault();
+        b = new MockBorrowVault();
+        oracle.setReservoirLeg(address(e), address(b));
+    }
+
+    function test_reservoir_escrow_leg_and_debt() public {
+        _wireLp(); // 1000 LP supply, reserves 200 zip + 100 xAlpha, xAlphaUSD 2.4
+        (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
+        // 500 LP posted as escrow collateral (1:1) -> heldShares 500/1000 = half -> 100 zip + 50 xAlpha*2.4 = 220e18
+        e.setBalance(mainSafe, 500e18);
+        b.setDebt(mainSafe, 30e6); // 30 USDC strike debt -> 30e18
+        assertEq(oracle.pathLockedLpEquity(), 220e18 - 30e18, "LP(all states) - debt");
+        assertEq(oracle.grossBasketValue(), 220e18 - 30e18, "escrow LP counted, debt subtracted");
+    }
+
+    function test_reservoir_nav_invariant_across_post() public {
+        (, MockGauge g) = _wireLp();
+        (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
+
+        // BEFORE the loop: 500 LP staked in the gauge. gross = 220e18 (the test_lp_marked_through basket).
+        g.setBalance(mainSafe, 500e18);
+        assertEq(oracle.grossBasketValue(), 220e18, "pre-loop: staked LP");
+
+        // SIMULATE postCollateral + borrow: unstake (gauge->0), escrow the 500 LP, +30 USDC borrowed into the Safe,
+        // +30 USDC debt. NAV must be INVARIANT (the blind spot closed).
+        g.setBalance(mainSafe, 0);
+        e.setBalance(mainSafe, 500e18);
+        usdc.setBalance(mainSafe, 30e6); // borrowed strike sits in the Safe
+        b.setDebt(mainSafe, 30e6);
+        assertEq(oracle.grossBasketValue(), 220e18, "mid-loop: NAV invariant (escrow + USDC - debt)");
+        // sanity: the un-fixed oracle would have read 0(escrow unseen) + 30(usdc) = 30e18 here, not 220.
+    }
+
+    function test_reservoir_debt_saturates_at_zero() public {
+        _wireLp();
+        (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
+        e.setBalance(mainSafe, 100e18); // 100/1000 -> 20 zip + 10 xAlpha*2.4 = 44e18 LP
+        b.setDebt(mainSafe, 1_000_000e6); // debt far exceeds the basket
+        assertEq(oracle.grossBasketValue(), 0, "debt > basket saturates to 0, no underflow");
+        assertEq(oracle.pathLockedLpEquity(), 0, "lp equity saturates to 0");
+    }
+
+    function test_reservoir_unset_contributes_zero() public {
+        _wireLp();
+        MockGauge(oracle.gauge()).setBalance(mainSafe, 500e18);
+        // escrowVault/borrowVault unset -> pathLockedLpEquity is just the LP, no debt; gross unchanged.
+        assertEq(oracle.grossBasketValue(), 220e18);
+        assertEq(oracle.pathLockedLpEquity(), 220e18);
+    }
+
+    function test_lpShareValue_pro_rata() public {
+        _wireLp(); // 1000 supply, reserves 200 zip + 100 xAlpha, xAlphaUSD 2.4
+        // 500/1000 -> 100 zip ($100) + 50 xAlpha*2.4 ($120) = 220e18
+        assertEq(oracle.lpShareValue(500e18), 220e18);
+        assertEq(oracle.lpShareValue(0), 0);
+    }
+
     // ----------------------------------------------------------------- TWAP + bracket
     function test_twap_fallback_to_spot_before_W() public {
         oracle.setShareToken(address(szip));
@@ -599,6 +680,58 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.obsIndex(), 5);
         // twap still computes (no revert) and is ~spot
         assertEq(oracle.twapNavPerShare(), 1e18);
+    }
+
+    /// @notice A poke BELOW obsSpacing advances the integral + refreshes the head in place, but does NOT consume
+    ///         a new ring slot (the decoupling that bounds ring consumption — build/twap-ring.md).
+    function test_poke_within_spacing_refreshes_head_no_advance() public {
+        oracle.setShareToken(address(szip));
+        szip.setTotalSupply(1000e18);
+        zip.setBalance(mainSafe, 1000e18);
+        vm.warp(block.timestamp + oracle.obsSpacing()); // first poke crosses obsSpacing -> one advance
+        oracle.poke();
+        uint16 idx = oracle.obsIndex();
+        uint256 cum = oracle.cumNav();
+        vm.warp(block.timestamp + 2); // dt>0 but < obsSpacing
+        oracle.poke();
+        assertEq(oracle.obsIndex(), idx, "no slot advance within obsSpacing");
+        assertGt(oracle.cumNav(), cum, "integral still advances (time-weighting exact)");
+    }
+
+    /// @notice REGRESSION (twap-ring.md): permissionless poke()-spam must NOT collapse the TWAP window to spot.
+    ///         Pre-fix, one slot per block meant ~CARDINALITY spam-pokes evicted all history older than a couple
+    ///         minutes, dropping twap to spot and degenerating max/min(spot,twap) to spot (re-enabling a one-block
+    ///         LP-mark manipulation). With obsSpacing the spam only refreshes the head; the frozen >= W of history
+    ///         survives, so the bracket keeps biting.
+    function test_twap_window_survives_poke_spam() public {
+        oracle.setShareToken(address(szip));
+        szip.setTotalSupply(1000e18);
+        zip.setBalance(mainSafe, 1000e18); // spot = 1e18
+        _pushBoth(1e18, 1e18);
+
+        // Build >= W of history at spot 1e18 (one checkpoint per obsSpacing).
+        uint32 spacing = oracle.obsSpacing();
+        for (uint256 i = 0; i < 80; i++) {
+            vm.warp(block.timestamp + spacing);
+            oracle.poke();
+        }
+        assertApproxEqAbs(oracle.twapNavPerShare(), 1e18, 1e9, "twap anchored at history");
+        uint16 idxBefore = oracle.obsIndex();
+
+        // ATTACK: jump spot, then poke-spam in consecutive ~2s blocks (the eviction attempt).
+        zip.setBalance(mainSafe, 3000e18); // spot = 3e18 (manipulated)
+        assertEq(oracle.spotNavPerShare(), 3e18);
+        for (uint256 i = 0; i < 200; i++) {
+            vm.warp(block.timestamp + 2);
+            oracle.poke();
+        }
+
+        // 200 spam pokes over ~400s consume only ~1-2 slots (400s / obsSpacing), NOT 200 — the window is intact.
+        uint256 advanced = (uint256(oracle.obsIndex()) + oracle.CARDINALITY() - idxBefore) % oracle.CARDINALITY();
+        assertLe(advanced, 3, "spam consumed <= 3 slots, not one-per-block");
+        // Decisive: twap did NOT collapse to the manipulated spot; the bracket still defends exit.
+        assertLt(oracle.twapNavPerShare(), 12e17, "twap stays near history, not the 3e18 spike");
+        assertLt(oracle.navExit(), oracle.spotNavPerShare(), "min(spot,twap) below spot -> no exit-rich");
     }
 
     // ----------------------------------------------------------------- staleness asymmetry

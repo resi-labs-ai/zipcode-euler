@@ -8,10 +8,19 @@
 The **third engine Zodiac Module** (after the 8-B14 buy-and-burn and the 8-B5 reservoir loop) and the **simplest**
 of the engine set: **no EVC leg, no oracle, no hook, no custody, no storage written in any mutating path**. It owns
 the LP's whole lifecycle on the szipUSD engine Safe: build the single-sided zipUSD/xALPHA ICHI LP (`addLiquidity` →
-`IICHIVault.deposit`), gauge-stake it to farm oHYDX (`stake` → `IGauge.deposit`), and unstake slices back to the
-Safe for the 8-B5 harvest loop (`unstake` → `IGauge.withdraw`). The module is **CRE-operator-gated**: the operator
-supplies only scalar amounts; the module builds all calldata to set-once wired targets and the deposit `to` / every
+`IICHIVault.deposit`), gauge-stake it to farm oHYDX (`stake` → `IGauge.deposit`), unstake slices back to the
+Safe for the 8-B5 harvest loop (`unstake` → `IGauge.withdraw`), and decompose LP back to its zipUSD/xALPHA legs
+(`removeLiquidity` → `IICHIVault.withdraw`). The module is **CRE-operator-gated**: the operator supplies only
+scalar amounts; the module builds all calldata to set-once wired targets and the deposit/withdraw `to` / every
 balance read is the literal `engineSafe`.
+
+**`removeLiquidity` is the LP→legs dissolution hop, now COVERAGE-GATED (LP path-lock, 2026-06-13).** It is the
+global-wind-down feeder (`unstake` → `removeLiquidity` → `SellModule.sellXAlpha` → zipUSD → senior par queue →
+buy-burn bid). It is the ONLY path that turns the fenced LP into exitable legs, so it is bounded to the coverage
+EXCESS: `removeLiquidity` reverts `Undercovered` unless `coverageGate.lpBurnKeepsCovered(shares)` (i.e.
+`coverageValue − lpShareValue(shares) >= requiredCommittedValue`). With debt outstanding the floor is tight and
+the excess is ~0, so it reverts (making the "wind-down only" NatSpec TRUE); as debt amortizes the floor drops and
+LP becomes dissolvable. `coverageGate == 0` is the M1 pre-wiring / kill-switch state (ungated, legacy).
 
 The module is **vault-agnostic** — it forwards `(deposit0, deposit1)` unchanged. Single-sidedness is **not a module
 gate**; it is the *wired vault's* `allowToken0()`/`allowToken1()` property, which rejects the disallowed leg
@@ -24,8 +33,9 @@ the staked LP.
 ## Contracts involved (what each does)
 | Contract / Interface | What it does |
 |---|---|
-| `LpStrategyModule` (`is Module`, zodiac-core) | The seam. `setUp` initializer + 6 `onlyOwner` build-phase wiring setters + 3 `onlyOperator` entrypoints (`addLiquidity`/`stake`/`unstake`) + 2 views (`stakedBalance`/`lpBalance`). Private `_exec` drives the Safe via inherited `execAndReturnData` (Call, value 0) and bubbles inner reverts. |
-| `IICHIVault` (`src/interfaces/ichi/IICHIVault.sol`) | The managed LP vault for zipUSD/xALPHA. `deposit(deposit0, deposit1, to) → shares`; `token0()`/`token1()`/`balanceOf()` read live. The vault contract **is** the LP share token. `allowToken0/1()` is where single-sidedness lives (fail-closed). |
+| `LpStrategyModule` (`is Module`, zodiac-core) | The seam. `setUp` initializer (6 args, +`coverageGate`) + 7 `onlyOwner` build-phase wiring setters (incl. `setCoverageGate`) + 4 `onlyOperator` entrypoints (`addLiquidity`/`removeLiquidity` (coverage-gated)/`stake`/`unstake`) + 2 views (`stakedBalance`/`lpBalance`). Private `_exec` drives the Safe via inherited `execAndReturnData` (Call, value 0) and bubbles inner reverts. |
+| `ICoverageGate` (declared inline in the .sol) | The coverage seam `removeLiquidity` reads (the `DurationFreezeModule`): `lpBurnKeepsCovered(uint256 lpShares) → bool`. Zero ⇒ gate OFF. |
+| `IICHIVault` (`src/interfaces/ichi/IICHIVault.sol`) | The managed LP vault for zipUSD/xALPHA. `deposit(deposit0, deposit1, to) → shares`; `withdraw(shares, to) → (amount0, amount1)`; `token0()`/`token1()`/`balanceOf()` read live. The vault contract **is** the LP share token. `allowToken0/1()` is where single-sidedness lives (fail-closed). |
 | `IGauge` (`src/interfaces/hydrex/IGauge.sol`) | The Hydrex gauge over our pool. `deposit(amount)`/`withdraw(amount)` stake/unstake the LP; `balanceOf(safe)` is the staked balance. Staking is REQUIRED to earn oHYDX (bare LP earns only swap fees). Must be `ALM_ICHI_UNIV3` type. |
 | `IERC20` (OZ 4.x) | `approve` selector encoded for the exact-amount approve / reset on both legs (token0/token1 → ichiVault; ichiVault → gauge). |
 | `Module` / `Operation` (zodiac-core) | Base: `avatar`/`target` (set to `engineSafe`), `onlyOwner`, `execAndReturnData`, `initializer`. |
@@ -36,26 +46,31 @@ the staked LP.
 shares the mastercopy runtime bytecode, so `immutable` would be identical for every clone and cannot carry per-clone
 config — the proven 8-B14/8-B5 clone fact).
 
-**`setUp(bytes initParams)`** decodes **five** addresses `(owner, engineSafe, operator, ichiVault, gauge)`. Order is
-load-bearing:
-1. Validate **all five** nonzero (`ZeroAddress`) FIRST — so an `ichiVault == 0` reverts cleanly, not via a staticcall
-   on a code-less address; then `owner != operator` (`OwnerIsOperator`).
+**`setUp(bytes initParams)`** decodes **six** params `(owner, engineSafe, operator, ichiVault, gauge,
+coverageGate)`. Order is load-bearing:
+1. Validate the **first five** addresses nonzero (`ZeroAddress`) FIRST — so an `ichiVault == 0` reverts cleanly,
+   not via a staticcall on a code-less address; then `owner != operator` (`OwnerIsOperator`). `coverageGate` MAY
+   be `address(0)` (gate OFF) — no zero-check (mirrors `setCoverageGate`).
 2. Set `avatar = target = engineSafe` (the module is enabled ON the engine Safe and only ever mutates it).
-3. Persist `engineSafe`/`operator`/`ichiVault`/`gauge`.
-4. Read `token0`/`token1` **LIVE** off the wired vault (`IICHIVault(ichiVault).token0()/token1()`), assert each
-   nonzero — this guarantees the approved tokens match the vault and removes two setUp args (the `SzipBuyBurnModule`
-   pattern).
-5. `_transferOwnership(owner_)`.
+3. Persist `engineSafe`/`operator`/`ichiVault`/`gauge`; read `token0`/`token1` LIVE; set `coverageGate`.
+4. `_transferOwnership(owner_)`.
 
-**Six storage slots** (all `public`): `engineSafe`, `operator`, `ichiVault`, `gauge`, `token0`, `token1`.
+**Seven storage slots** (all `public`): `engineSafe`, `operator`, `ichiVault`, `gauge`, `token0`, `token1`,
+`coverageGate` (the `DurationFreezeModule`; ARMED at deploy, Timelock-re-pointable / kill-switch via `setCoverageGate(0)`).
 
-**Three `onlyOperator` entrypoints** (scalar-only; the gate is `msg.sender != operator → NotOperator`):
+**Four `onlyOperator` entrypoints** (scalar-only; the gate is `msg.sender != operator → NotOperator`):
 - **`addLiquidity(deposit0, deposit1, minShares) → shares`** — guards `!(deposit0==0 && deposit1==0)` (`ZeroAmount`)
   and `minShares != 0` (`ZeroMinShares` — a zero floor would no-op the only sandwich protection on a direct ICHI
   deposit). Then, per non-zero leg: `_exec(tokenN, approve(ichiVault, depositN))`; `_exec(ichiVault,
   IICHIVault.deposit(deposit0, deposit1, engineSafe))` and `abi.decode` the returned `shares`; reset each approved leg
   to 0; finally `shares < minShares → Slippage`. Deposit `to` is the literal `engineSafe` — the minted LP lands in the
   Safe. No standing approvals (exact-amount, reset defensively).
+- **`removeLiquidity(shares, minAmount0, minAmount1) → (amount0, amount1)`** — `ZeroAmount` guard (shares); then
+  the **COVERAGE GATE**: `if coverageGate != 0 && !ICoverageGate(coverageGate).lpBurnKeepsCovered(shares) →
+  Undercovered` (only the coverage EXCESS may be liquefied). Then exactly 1 `exec`: `IICHIVault.withdraw(shares,
+  engineSafe)`, `abi.decode` the two leg amounts, then `amount0 < minAmount0 || amount1 < minAmount1 → Slippage`.
+  **No approval needed** — the LP shares are already in the Safe (unstaked first via `unstake`), and the vault
+  burns from / pays to the Safe because the Safe is the `exec` msg.sender. Decomposes LP → zipUSD/xALPHA into the Safe.
 - **`stake(lpAmount)`** — `ZeroAmount` guard, then exactly 3 `exec`s: `approve(gauge, lpAmount)` on `ichiVault` (the LP
   token) / `IGauge.deposit(lpAmount)` / `approve(gauge, 0)` reset.
 - **`unstake(lpAmount)`** — `ZeroAmount` guard, then exactly 1 `exec`: `IGauge.withdraw(lpAmount)`. The gauge returns
@@ -92,11 +107,14 @@ wired nor referenced.
   *simultaneously* be EVK collateral — collateralizing requires unstaking, and the unstaked slice stops earning oHYDX
   until re-staked. This is exactly why 8-B5 is a tight unstake→borrow→repay→re-stake loop, not a hold; 8-B6 supplies
   the `unstake` (loop step 1) and `stake` (loop step 7) ends.
-- **`owner` = the TimelockController** (governance) — holds the 6 `onlyOwner` build-phase wiring setters
-  (`setEngineSafe`/`setOperator`/`setIchiVault`/`setGauge`/`setToken0`/`setToken1`, each `ZeroAddress`-guarded,
-  emitting `WiringSet(slot, value)`) plus the inherited `setAvatar`/`setTarget`. `owner != operator` is enforced at
-  `setUp` and at `setOperator`. The hot CRE `operator` can never re-point wiring; a redirect is a deliberate
-  timelocked act.
+- **`coverageGate` = the `DurationFreezeModule`** — wired at `setUp` (ARMED at deploy), the seam `removeLiquidity`
+  reads to bound dissolution to the coverage excess. Timelock-settable via `setCoverageGate` (`address(0)` allowed
+  = OFF kill-switch). build/lp-path-lock.md.
+- **`owner` = the TimelockController** (governance) — holds the 7 `onlyOwner` build-phase wiring setters
+  (`setEngineSafe`/`setOperator`/`setIchiVault`/`setGauge`/`setToken0`/`setToken1`/`setCoverageGate`, each
+  `WiringSet`-emitting; the first six `ZeroAddress`-guarded, `setCoverageGate` allows 0) plus the inherited
+  `setAvatar`/`setTarget`. `owner != operator` is enforced at `setUp` and at `setOperator`. The hot CRE
+  `operator` can never re-point wiring; a redirect is a deliberate timelocked act.
 
 ## Item-10 deploy facts (PROGRESS rows 337/338/339)
 - **Create the POL vault** as a **single-sided zipUSD YieldIQ ICHI vault** via the ICHI factory `0x2b52c416…`
@@ -105,7 +123,9 @@ wired nor referenced.
 - **Resolve + wire the gauge** via `Voter.gauges(ourPool)` with the **hard gate `Voter.gauges(ourPool) != 0`** (the
   ALM_ICHI gauge must be Hydrex-whitelisted — external governance dep).
 - **CREATE2-clone** the module via `ModuleProxyFactory`, `enableModule` it on the engine Safe, `setUp` it with
-  `(owner=Timelock, engineSafe, operator, ichiVault, gauge)`, and **init-lock the mastercopy**.
+  `(owner=Timelock, engineSafe, operator, ichiVault, gauge, coverageGate=durationFreeze)`, and **init-lock the
+  mastercopy**. Deploy clones `DurationFreezeModule` at the TOP of P6 (before this module) so the gate is wired
+  LIVE; a `SeamCoverageGate` assert confirms `coverageGate() == durationFreeze`.
 - **`owner = TimelockController != operator`** (the hot CRE key).
 - **Assert** `LpStrategyModule.ichiVault() == reservoir-escrow vault asset() == lpOracle key` (the shared-LP-address
   invariant, row 338).

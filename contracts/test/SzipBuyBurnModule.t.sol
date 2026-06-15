@@ -95,6 +95,19 @@ contract MockNavOracle {
 
 // =========================================================================== tests
 
+/// @dev A settable coverage gate (`ICoverageGate`) for the postBid outflow-gate test.
+contract MockCoverageGate {
+    bool public ret;
+
+    function set(bool v) external {
+        ret = v;
+    }
+
+    function covered() external view returns (bool) {
+        return ret;
+    }
+}
+
 /// @notice 8-B14 buy-and-burn BID module. Unit tests (recording mock Safe) for validation/authority/atomicity/exec-
 ///         discipline + Base-mainnet fork tests for the LIVE GPv2Settlement PRESIGN + USDC allowance + uid vector.
 contract SzipBuyBurnModuleTest is ForkConfig {
@@ -153,7 +166,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         m = new SzipBuyBurnModule();
         m.setUp(
             abi.encode(
-                owner, engineSafe_, operator, address(oracle), szipUSD_, USDC, COW_SETTLEMENT, D_BPS, cap_
+                owner, engineSafe_, operator, address(oracle), szipUSD_, USDC, COW_SETTLEMENT, D_BPS, cap_, address(0)
             )
         );
     }
@@ -188,7 +201,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
 
     function test_setUp_initializer_once() public {
         bytes memory p =
-            abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP);
+            abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0));
         vm.expectRevert(); // zodiac-core AlreadyInitialized
         module.setUp(p);
     }
@@ -196,23 +209,23 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     function test_setUp_rejects_owner_equals_operator() public {
         SzipBuyBurnModule m = new SzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.OwnerIsOperator.selector);
-        m.setUp(abi.encode(owner, address(safe), owner, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP));
+        m.setUp(abi.encode(owner, address(safe), owner, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
     }
 
     function test_setUp_rejects_zero_address() public {
         SzipBuyBurnModule m = new SzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
-        m.setUp(abi.encode(owner, address(0), operator, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP));
+        m.setUp(abi.encode(owner, address(0), operator, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
     }
 
     function test_setUp_rejects_bad_discount() public {
         SzipBuyBurnModule m = new SzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.BadDiscount.selector);
-        m.setUp(abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, uint16(0), CAP));
+        m.setUp(abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, uint16(0), CAP, address(0)));
         SzipBuyBurnModule m2 = new SzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.BadDiscount.selector);
         m2.setUp(
-            abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, uint16(10_000), CAP)
+            abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, uint16(10_000), CAP, address(0))
         );
     }
 
@@ -355,6 +368,25 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         m.postBid(_order(1, 1e18, _validTo()));
     }
 
+    function test_postBid_coverage_gate() public {
+        MockCoverageGate gate = new MockCoverageGate();
+        vm.prank(owner);
+        module.setCoverageGate(address(gate));
+        uint32 vt = _validTo();
+
+        // coverage below the floor -> the free-side outflow is blocked
+        gate.set(false);
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.Undercovered.selector);
+        module.postBid(_order(5e5, 1e18, vt));
+
+        // covered -> the bid posts
+        gate.set(true);
+        vm.prank(operator);
+        module.postBid(_order(5e5, 1e18, vt));
+        assertTrue(module.currentUid().length != 0, "bid posts once covered");
+    }
+
     function test_single_resting_bid() public {
         // navExit $1, d 2% -> ceiling 0.98 USDC/share. Pay 0.5 USDC for 1 share (deep discount) -> passes.
         uint32 vt = _validTo();
@@ -444,7 +476,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         assertEq(real.navExit(), spot);
 
         SzipBuyBurnModule m = new SzipBuyBurnModule();
-        m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP));
+        m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
 
         // Choose a sellAmount that passes against TWAP but fails against SPOT (navExit).
         uint256 buy = 1e18;
@@ -466,7 +498,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         SzipNavOracle real = _realOracleFresh();
         assertTrue(real.fresh());
         SzipBuyBurnModule m = new SzipBuyBurnModule();
-        m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP));
+        m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
 
         // age past maxAge -> not fresh -> postBid reverts StaleNav
         vm.warp(block.timestamp + 1 days + 1);
@@ -481,7 +513,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         SzipNavOracle real = _realOracleBare();
         assertFalse(real.fresh());
         SzipBuyBurnModule m = new SzipBuyBurnModule();
-        m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP));
+        m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
         vm.prank(operator);
         vm.expectRevert(SzipBuyBurnModule.StaleNav.selector);
         m.postBid(_order(5e5, 1e18, uint32(block.timestamp + 1 hours)));
@@ -569,7 +601,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         // A module whose usdc/szipUSD/engineSafe match the OUT-OF-BAND cast vector inputs.
         SzipBuyBurnModule m = new SzipBuyBurnModule();
         m.setUp(
-            abi.encode(owner, VEC_ENGINE, operator, address(oracle), VEC_SZIPUSD, USDC, COW_SETTLEMENT, D_BPS, CAP)
+            abi.encode(owner, VEC_ENGINE, operator, address(oracle), VEC_SZIPUSD, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0))
         );
         SzipBuyBurnModule.GPv2OrderInput memory o = _order(VEC_SELL, VEC_BUY, VEC_VALIDTO);
         bytes memory uid = m._orderUid(o);

@@ -17,30 +17,48 @@ Two operator-gated rotations, no recipient parameter (source/dest are the litera
   an unbounded commit can freeze 100% (the intended squeeze). Over-commit is operator grief, not theft (the
   §12 metric-4 alarm watches it).
 - **`release(asset, amount)`** — SIDECAR→MAIN, **autonomously floor-gated**: reverts unless the sidecar still
-  holds at least `requiredFraction(U) × grossBasketValue`. This is the `DefaultCoordinator`
+  holds at least `requiredCommittedValue()`. This is the `DefaultCoordinator`
   "bounds-not-validates" pattern — the operator chooses which/how-much; the contract bounds the release value
-  on-chain so even a compromised operator cannot open the run hatch while utilization is breached.
+  on-chain so even a compromised operator cannot open the run hatch while debt is outstanding.
 
-`requiredFraction == utilization` exactly — **freeze% = utilization%, DEAD-SIMPLE** (superintendent
-2026-06-09; the §11-B `U_lock`/`U_max`/`maxLockFraction` escalation is NatSpec-only / post-M1, not built —
-no off-chain floor input exists in M1). The module gates the Exit Gate **structurally** — by what value is
+**FLOOR (2026-06-13, build/coverage-floor.md Phase 1):** the floor is pinned to the senior LIABILITY in
+absolute dollars, NOT a fraction of the junior basket: `requiredCommittedValue = min( max(coverageBps ×
+illiquidSeniorValue / 1e4, illiquidSeniorValue + dollarBuffer), grossBasketValue )` where
+`illiquidSeniorValue = (convertToAssets(balanceOf(warehouse)) − maxWithdraw(warehouse)) × 1e12` (the lent-out
+senior USDC, 6-dp→18-dp). Because the liability does not move when `grossBasketValue` shrinks, the
+re-leveling drain (sell the free side → lower the floor → release → loop) has **no denominator to game**.
+`coverageBps`/`dollarBuffer` are Timelock-settable (default `1e4`/`0` = freeze 100% of debt, no extra buffer).
+`utilization()`/`requiredFraction()` are RETAINED only as the §12 liquidity-run metric — they no longer gate
+`release`.
+
+**COVERAGE NUMERATOR = `committedValue() + pathLockedLpEquity()` (2026-06-13, build/lp-path-lock.md).** The
+floor is checked against `coverageValue() = committedValue() + pathLockedLpEquity()`, NOT `committedValue()`
+alone — the fenced ICHI LP (most of the basket) backs the floor IN PLACE, read from the oracle's
+`pathLockedLpEquity()`, so it need not be physically hoarded in the sidecar (this RESOLVES the former line-74
+LP gotcha — see Gotchas). `release` reads `coverageValue()` post-move; `covered() = coverageValue() >=
+requiredCommittedValue()` is the outflow predicate; `lpBurnKeepsCovered(lpShares)` is the dissolution-gate
+helper. Both outflow gates are BUILT + armed at deploy: `SzipBuyBurnModule.postBid` reverts while
+`!covered()`, and `LpStrategyModule.removeLiquidity` reverts `Undercovered` past the excess (each wires a
+Timelock-settable `coverageGate` -> this module; kill-switch = `setCoverageGate(0)`). The draw-gate is SKIPPED
+(junior over-collateralized). The module gates the Exit Gate **structurally** — by what value is
 held out of the main Safe at exit time — with **no ExitGate change** (the Gate's windowed in-kind ragequit
 reaches only the free main Safe). zipUSD never freezes (junior-only).
 
 ## Contracts involved (what each does)
 | Contract / interface | What it does |
 |---|---|
-| `DurationFreezeModule` (`is Module, ReentrancyGuard`) | The actuator. `setUp` initializer (clone-safe set-once storage, NOT immutable); `commit`/`release` rotations; the §11-B/§8.2 view math (`utilization`, `requiredFraction`, `committedValue`, `grossBasketValue`, `freeValue`, `requiredCommittedValue`); the 5-leg `onlyValued` whitelist; 11 onlyOwner (Timelock) wiring setters. |
-| `IEulerEarnUtil` (`interfaces/euler/`) | Minimal local interface for the §8.2 EulerEarn senior pool — exactly the three views the donation-immune `U` read needs: `maxWithdraw(owner)`, `convertToAssets(shares)`, `balanceOf(account)`. Source `reference/euler-earn/src/EulerEarn.sol` (0.8.26) — never compiled, fork-only. |
-| `ISzipNavBasket` (`interfaces/supply/`) | Minimal local interface for the `SzipNavOracle` seam: `grossBasketValue()` / `committedValue()` / `freeValue()` (18-dp USD) for the floor, plus the five movable plain-leg getters `zipUSD()/usdc()/xAlpha()/hydx()/oHydx()` (read LIVE at `setUp` to form the whitelist). The GPL oracle is not imported. |
+| `DurationFreezeModule` (`is Module, ReentrancyGuard`) | The actuator. `setUp` initializer (clone-safe set-once storage, NOT immutable); `commit`/`release` rotations; the floor + coverage math (`illiquidSeniorValue`, `requiredCommittedValue`, `committedValue`, `grossBasketValue`, `freeValue`, `pathLockedLpEquity`, `coverageValue`, `covered`, `lpBurnKeepsCovered`; `utilization`/`requiredFraction` retained as §12 metric); the 5-leg `onlyValued` whitelist (LP NOT movable — fenced in place); 13 onlyOwner (Timelock) setters (the 6 wired addrs + 5 legs + `setCoverageBps`/`setDollarBuffer`). |
+| `IEulerEarnUtil` (`interfaces/euler/`) | Minimal local interface for the §8.2 EulerEarn senior pool — exactly the three views the donation-immune `U`/`illiquidSeniorValue` read needs: `maxWithdraw(owner)`, `convertToAssets(shares)`, `balanceOf(account)`. Source `reference/euler-earn/src/EulerEarn.sol` (0.8.26) — never compiled, fork-only. |
+| `ISzipNavBasket` (`interfaces/supply/`) | Minimal local interface for the `SzipNavOracle` seam: `grossBasketValue()` / `committedValue()` / `freeValue()` / `pathLockedLpEquity()` / `lpShareValue(uint256)` (18-dp USD) for the floor + coverage, plus the five movable plain-leg getters `zipUSD()/usdc()/xAlpha()/hydx()/oHydx()` (read LIVE at `setUp` to form the whitelist). The GPL oracle is not imported. |
 
 ## Wiring — internal
 - **`setUp(bytes initParams)`** (one-shot via zodiac-core `initializer`; ALL wired fields are plain set-once
   storage, NOT `immutable` — a `ModuleProxyFactory` clone shares the mastercopy runtime so `immutable` can't
-  carry per-clone config). Decodes seven addresses `(owner_, mainSafe_, sidecar_, operator_, navOracle_,
-  eulerEarn_, warehouse_)`. Guards: every one non-zero (`ZeroAddress`); `owner_ != operator_`
-  (`OwnerIsOperator` — Timelock owner must not equal the hot operator key); `mainSafe_ != sidecar_`
-  (`BadParams` — equal Safes make a rotation a self-transfer that trivially passes the floor). Sets
+  carry per-clone config). Decodes seven addresses + two uints `(owner_, mainSafe_, sidecar_, operator_,
+  navOracle_, eulerEarn_, warehouse_, coverageBps_, dollarBuffer_)`. Guards: every address non-zero
+  (`ZeroAddress`); `owner_ != operator_` (`OwnerIsOperator` — Timelock owner must not equal the hot operator
+  key); `mainSafe_ != sidecar_` (`BadParams` — equal Safes make a rotation a self-transfer that trivially
+  passes the floor); `coverageBps_ != 0` (`BadParams`). Sets
   `avatar = target = mainSafe_` (the inherited single-avatar exec is **inert** — rotations use explicit
   `ISafe(src)` calls, not the avatar-bound path), writes the six wired addresses, then reads the five movable
   legs LIVE off `ISzipNavBasket(navOracle_)` (`zipUSD/usdc/xAlpha/hydx/oHydx`), and finally
@@ -54,8 +72,8 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 - **`release(asset, amount)`** — same gates; transfers `ISafe(sidecar).execTransactionFromModule(asset, 0,
   transfer(mainSafe, amount), 0)`, asserts the main delta `== amount`. THEN **THE FLOOR**, read AFTER the
   move (the revert atomically rolls the transfer back): `floor = requiredCommittedValue()`,
-  `c = committedValue()`; `if (c < floor) revert FreezeFloorBreach(c, floor)`. Emits `Released(asset,
-  amount, c, floor)`.
+  `c = coverageValue()` (= `committedValue() + pathLockedLpEquity()` — the fenced LP backs the floor in place);
+  `if (c < floor) revert FreezeFloorBreach(c, floor)`. Emits `Released(asset, amount, c, floor)`.
 - **The donation-immune `U` read** — `utilization()` (18-dp, in `[0,1e18]`):
   `sa = convertToAssets(balanceOf(warehouse))`; if `sa == 0` → 0; `free = maxWithdraw(warehouse)`; if
   `free >= sa` → 0; else `u = (sa - free) * 1e18 / sa`. This is `U = 1 −
@@ -70,19 +88,22 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   `release` of an oracle-unvalued asset would drain the sidecar **without** moving `committedValue()`, so the
   floor would pass while real value exits the freeze. Whitelisting to exactly the priced legs also closes the
   rebasing/FoT concern.
-- **The additive `SzipNavOracle` views it relies on** — `committedValue() = _grossValueOf(sidecar)`,
-  `freeValue() = _grossValueOf(mainSafe)` (`SzipNavOracle.sol:300-306`), a private `_grossValueOf(safe)`
-  per-Safe re-computation (`:312`). These are **additive**: `grossBasketValue()` (`:273`) is UNCHANGED, so
-  the oracle's 42-test suite + its `grossBasketValue` exact pins hold. For the five plain legs
-  `committedValue() + freeValue() == grossBasketValue()` EXACTLY; for a split LP it is within ≤2 wei. The
-  module never moves the LP, so `grossBasketValue` is exactly rotation-invariant — the floor is therefore a
-  pure "did the sidecar keep enough value" check. The module's own `freeValue()` view is
-  `grossBasketValue() − committedValue()`; `requiredCommittedValue() = requiredFraction() × grossBasketValue()
-  / 1e18` (a `gross == 0` basket floors to 0 — any release allowed, no div-by-zero).
-- **Timelock-settable wiring (build phase, §17)** — eleven `onlyOwner` setters, one per wired field
+- **The `SzipNavOracle` views it relies on** — `committedValue() = _grossValueOf(sidecar)`,
+  `freeValue() = _grossValueOf(mainSafe)`, and `pathLockedLpEquity()` (the fenced LP across all states net
+  reservoir debt). `grossBasketValue`/`_grossValueOf` now COUNT the escrow-collateralized LP + SUBTRACT the
+  reservoir strike debt (LP path-lock, 2026-06-13) — so they are no longer "unchanged", but the module still
+  never moves the LP, so `grossBasketValue` stays rotation-invariant under a `commit`/`release` (which only
+  move the 5 plain legs). The coverage numerator the floor checks is `coverageValue() = committedValue() +
+  pathLockedLpEquity()`; `requiredCommittedValue()` is the debt-pinned floor (FLOOR note above) —
+  `min( max(coverageBps × illiquidSeniorValue / 1e4, illiquidSeniorValue + dollarBuffer), grossBasketValue )`
+  (a `gross == 0` basket floors to 0 — any release allowed, no div-by-zero). `lpBurnKeepsCovered(lpShares) =
+  (coverageValue − lpShareValue(lpShares)) >= requiredCommittedValue` is the LP-dissolution gate's predicate.
+- **Timelock-settable wiring (build phase, §17)** — eleven `onlyOwner` wiring setters, one per wired field
   (`setMainSafe`/`setSidecar`/`setOperator`/`setNavOracle`/`setEulerEarn`/`setWarehouse` + the five legs
   `setZipUSD`/`setUsdc`/`setXAlpha`/`setHydx`/`setOHydx`), each zero-guarded and emitting
-  `WiringSet(slot, value)`. The CRE operator (hot key) cannot call them — only the Timelock owner. Inherited
+  `WiringSet(slot, value)`; PLUS `setCoverageBps` (rejects 0) / `setDollarBuffer` emitting
+  `CoverageParamSet(slot, value)`. (The ICHI LP `setIchiVault` setter was REMOVED — the LP is fenced in
+  place, not a movable whitelist asset.) The CRE operator (hot key) cannot call them — only the Timelock owner. Inherited
   `setAvatar`/`setTarget` are onlyOwner and INERT for rotation (rotation uses the explicit set-once
   `ISafe(mainSafe)`/`ISafe(sidecar)` calls, not the avatar-bound exec); they are not hard-locked (that would
   require marking vendored zodiac-core setters `virtual`).
@@ -155,3 +176,18 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 - `requiredFraction == utilization` is the final kept form. The report/§11-B escalation
   (`U_lock`/`U_max`/`maxLockFraction`) describes the as-first-built version — it was STRIPPED from the
   contract (NatSpec-only mention remains); do not treat it as live.
+- **RESOLVED 2026-06-13 (LP path-lock, build/lp-path-lock.md) — the two problems raised 2026-06-12:**
+  1. **Threat model clarified, not obviated.** The exit topology (ExitGate mints/burns only, CoW-only exits,
+     `burnFor` pays nothing out) does close the *ragequit* drain. But the freeze floor was REPURPOSED: it is
+     now the debt-pinned COVERAGE floor (`requiredCommittedValue = f(illiquidSeniorValue)`) that keeps the
+     junior backing the senior LIABILITY — and the same `covered()` predicate gates the two real outflows
+     (buy-burn `postBid`, LP `removeLiquidity`). So the freeze has a concrete, current job: keep coverage ≥
+     the outstanding-debt floor, and freeze outflow when it dips (incl. price-drift).
+  2. **The LP-unreachable / unsatisfiable-floor problem is GONE — by counting, not moving.** Resolution =
+     NONE of the old candidate fixes (don't whitelist the LP, don't make `commit` unwind it, don't trust the
+     CRE to keep zipUSD un-LP'd). Instead: the LP stays fenced in place (NOT movable) and is COUNTED toward
+     the floor via the oracle's `pathLockedLpEquity()` (LP across loose+gauge+escrow states, net reservoir
+     debt). The coverage numerator is `coverageValue() = committedValue() + pathLockedLpEquity()`, so the
+     floor is satisfiable from the productive LP without hoarding it idle in the sidecar. The LP's only
+     dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated to the excess, so it can't be
+     liquefied below the floor. This supersedes the former "movable whitelist (LP excluded)" framing entirely.

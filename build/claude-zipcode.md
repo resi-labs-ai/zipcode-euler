@@ -245,31 +245,28 @@ fills it just-in-time via buy-and-burn, §6.4), which fits the floating NAV, rem
 deters runs. Both ultimately hit the same liquidity ceiling: you can only get out as much USDC/value as the pool
 can free (§6.3).
 
-### 6.1 Epoch queue at par (primary, zipUSD) — `ZipRedemptionQueue`
-The USDC backing zipUSD is lent out to illiquid lien markets, so par redemption is a **30-day epoch
-queue** with **pro-rata partial fills** when the pool can't free enough cash. **(Locked: 30-day epoch; no
-mid-epoch cancellation** — a committed request keeps the pro-rata denominator stable until settle, and the
-secondary AMM (§6.2) is the early-exit path.**)**
+### 6.1 Par-burn sink (primary, zipUSD) — `ZipRedemptionQueue`
+> **As-built (2026-06-13):** this began as a 30-day epoch queue with pro-rata partial fills, but the time gate
+> (2026-06-12) and then the pro-rata / `era` / `cumRemaining` engine + 7540 operator surface (2026-06-13) were
+> removed. `requestRedeem` is gated to a **single requester** (the rq Safe), so pro-rata computed a fraction over a
+> set of size one. What remains is a **par-burn sink**: escrow → `min(available, pending)` fill + burn → claim at
+> par. Par redemption is **treasury-internal plumbing** — it converts the rq Safe's idle basket zipUSD into the USDC
+> that funds the CoW buy-burn bid; a real holder never redeems here (see `build/CoW-exit.md` and
+> `build/wires/9-ZipRedemptionQueue.md`). The prose below is retained as design history.
 
-- **Base:** fork `erc7540-reference` `BaseERC7540` + `ControlledAsyncRedeem` (MIT) for the
-  `requestRedeem → fulfill → claim` lifecycle + operator approval. A redeemer calls `requestRedeem(zipUSD)`;
-  the zipUSD is escrowed and the request joins the current epoch's queue. Redemption is at **par to 6-dp USDC**, so
-  a request must be a **whole USDC-unit** of zipUSD (`amount % 1e12 == 0`); a holder with an odd zipUSD balance
-  redeems the whole-unit floor and keeps/sells the sub-unit remainder on the AMM (§6.2). (This whole-unit
-  granularity also keeps the pro-rata epoch accounting exact — a sub-unit remainder can never be filled at par.)
-- **Epoch + pro-rata (clean-room, modeled on Maple):** at the 30-day boundary, `settleEpoch()`:
-  1. read the queue's **own** free USDC balance (`balanceOf(this) − reservedAssets`) — the cash the warehouse
-     **REDEEM → REPAY** already delivered to the queue (§8.5); the queue calls EulerEarn **never** (it is the
-     non-sweepable REPAY sink, not a pool client);
-  2. `redeemable = queued × freeable / totalQueuedValue` per requester (pro-rata; full fill if liquidity
-     suffices) — the `MapleWithdrawalManager:383` idea, reimplemented as a global cumulative-remaining factor
-     scoped by an `era` counter (O(1), iteration-free);
-  3. burn the filled zipUSD (own-balance burn — no allowance/capacity) and mark each requester `claimable` (the
-     USDC is already in the queue from the REPAY, so no withdraw step);
-  4. carry the unfilled remainder to the next epoch (`Maple:262-271` carry-forward idea).
-- **Trigger:** `settleEpoch()` is called by the controller on the 30-day boundary via a Go CRE
-  `cron.Trigger` (§8) — reuses the controller-as-privileged-caller and the cron workflow.
-- Claiming is a separate `withdraw`/`redeem` against the `claimable` balance (7540 semantics).
+The USDC backing zipUSD is lent out to illiquid lien markets, so par redemption fills only as far as the pool can
+free cash. Lifecycle (`requestRedeem → settleEpoch → withdraw`/`redeem`):
+
+- A redeemer (the rq Safe) calls `requestRedeem(zipUSD)`; the zipUSD is escrowed. Redemption is at **par to 6-dp
+  USDC**, so a request must be a **whole USDC-unit** of zipUSD (`amount % 1e12 == 0`); an odd balance redeems the
+  whole-unit floor and keeps/sells the sub-unit remainder on the AMM (§6.2).
+- `settleEpoch()` (controller-only, on-demand): read the queue's **own** free USDC balance (`balanceOf(this) −
+  reservedAssets`) — the cash the warehouse **REDEEM → REPAY** already delivered (§8.5); the queue calls EulerEarn
+  **never** (it is the non-sweepable REPAY sink). Fill `min(available, pending)` at par, burn the filled zipUSD
+  (own-balance burn — no allowance/capacity), bank the USDC as `claimable`. The unfilled remainder stays pending
+  for the next settle.
+- **Trigger:** `settleEpoch()` is called by the controller via a Go CRE `cron.Trigger` (§8) after the REDEEM/REPAY.
+- Claiming is a separate `withdraw`/`redeem` against the `claimable` balance.
 
 ### 6.2 Instant secondary (market)
 Sell zipUSD into a **zipUSD/USDC** AMM at the market price for an immediate exit (below par when the
@@ -561,13 +558,13 @@ deterministic actions:
   item-10 live-pool verification, not a free public lever.
 
 ### 8.3 Redemption settlement
-A `cron.Trigger` on the 30-day boundary calls `settleEpoch()` (§6.1), which settles against the queue's own
-REPAY-delivered USDC balance. When that balance is short of the epoch's fulfillable claims, the same cron
-**first** funds the queue via the warehouse **REDEEM** op (§8.5 — `EE_POOL.redeem(shares, receiver==SAFE, owner==SAFE)`
-through the Roles adapter, USDC into the Safe) **then** a **REPAY** to the queue sink, **then** calls `settleEpoch()`. Sizing the REDEEM (how
-many shares to release) is the producer's job; the on-chain Roles policy only pins the call shape, not the
-amount. (`ZipRedemptionQueue.settleEpoch` is controller-gated, not renounced — the controller keeps calling it
-each epoch, §4.5.)
+A `cron.Trigger` calls `settleEpoch()` (§6.1), which settles against the queue's own REPAY-delivered USDC balance
+(on-demand — no time gate). When that balance is short of the fulfillable claims, the same cron **first** funds the
+queue via the warehouse **REDEEM** op (§8.5 — `EE_POOL.redeem(shares, receiver==SAFE, owner==SAFE)` through the
+Roles adapter, USDC into the Safe) **then** a **REPAY** to the queue sink, **then** calls `settleEpoch()`. Sizing
+the REDEEM (how many shares to release) is the producer's job; the on-chain Roles policy only pins the call shape,
+not the amount. (`ZipRedemptionQueue.settleEpoch` is controller-gated, not renounced — the controller keeps calling
+it, §4.5.)
 
 ### 8.4 Default / recovery
 Delinquency status and recovery amounts are **off-chain truths** that arrive as DON-signed reports, **reportType 8**

@@ -127,6 +127,25 @@ contract MockICHIVault {
         balanceOf[to] += shares;
         totalSupply += shares;
     }
+
+    /// @notice Burn `shares` from `msg.sender` and return the proportional token0/token1 the vault holds, to `to`.
+    ///         Faithful enough for the module's `removeLiquidity` seam (the real ICHI `withdraw` decomposes the LP).
+    function withdraw(uint256 shares, address to) external returns (uint256 amount0, uint256 amount1) {
+        if (revertMode == 1) revert VaultBoom();
+        if (revertMode == 2) {
+            assembly {
+                revert(0, 0)
+            }
+        }
+        require(to != address(0), "IV.to=0");
+        uint256 ts = totalSupply;
+        amount0 = IERC20(token0).balanceOf(address(this)) * shares / ts;
+        amount1 = IERC20(token1).balanceOf(address(this)) * shares / ts;
+        balanceOf[msg.sender] -= shares;
+        totalSupply -= shares;
+        if (amount0 != 0) IERC20(token0).transfer(to, amount0);
+        if (amount1 != 0) IERC20(token1).transfer(to, amount1);
+    }
 }
 
 /// @notice A faithful Solidly-style gauge over the LP token: `deposit` pulls the LP from `msg.sender` via
@@ -217,6 +236,19 @@ contract RecordingSafe {
 
 // =========================================================================== unit tests (no fork)
 
+/// @dev A settable coverage gate (`ICoverageGate`) for the removeLiquidity excess-bound test.
+contract MockCoverageGate {
+    bool public ret;
+
+    function set(bool v) external {
+        ret = v;
+    }
+
+    function lpBurnKeepsCovered(uint256) external view returns (bool) {
+        return ret;
+    }
+}
+
 contract LpStrategyModuleUnitTest is Test {
     LpStrategyModule internal m;
     RecordingSafe internal safe;
@@ -236,7 +268,7 @@ contract LpStrategyModuleUnitTest is Test {
         gauge = new MockGauge(address(vault), address(0xDEAD));
         safe = new RecordingSafe();
         m = new LpStrategyModule();
-        m.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge)));
+        m.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge), address(0)));
     }
 
     // ----------------------------------------------------------------- setUp / authority / locks
@@ -255,32 +287,32 @@ contract LpStrategyModuleUnitTest is Test {
 
     function test_setUp_initializer_once() public {
         vm.expectRevert();
-        m.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge)));
+        m.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge), address(0)));
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
         LpStrategyModule x = new LpStrategyModule();
         vm.expectRevert(LpStrategyModule.OwnerIsOperator.selector);
-        x.setUp(abi.encode(owner, address(safe), owner, address(vault), address(gauge)));
+        x.setUp(abi.encode(owner, address(safe), owner, address(vault), address(gauge), address(0)));
     }
 
     function test_setUp_rejects_zero_gauge() public {
         LpStrategyModule x = new LpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
-        x.setUp(abi.encode(owner, address(safe), operator, address(vault), address(0)));
+        x.setUp(abi.encode(owner, address(safe), operator, address(vault), address(0), address(0)));
     }
 
     function test_setUp_rejects_zero_ichiVault_at_guard_not_staticcall() public {
         // ichiVault == 0 must revert ZeroAddress (the guard runs BEFORE the live token0() read).
         LpStrategyModule x = new LpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
-        x.setUp(abi.encode(owner, address(safe), operator, address(0), address(gauge)));
+        x.setUp(abi.encode(owner, address(safe), operator, address(0), address(gauge), address(0)));
     }
 
     function test_setUp_rejects_zero_engineSafe() public {
         LpStrategyModule x = new LpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
-        x.setUp(abi.encode(owner, address(0), operator, address(vault), address(gauge)));
+        x.setUp(abi.encode(owner, address(0), operator, address(vault), address(gauge), address(0)));
     }
 
     function test_setUp_rejects_zero_token_leg() public {
@@ -288,7 +320,7 @@ contract LpStrategyModuleUnitTest is Test {
         MockICHIVault badVault = new MockICHIVault(address(0), address(token1));
         LpStrategyModule x = new LpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
-        x.setUp(abi.encode(owner, address(safe), operator, address(badVault), address(gauge)));
+        x.setUp(abi.encode(owner, address(safe), operator, address(badVault), address(gauge), address(0)));
     }
 
     function test_operator_cannot_redirect_safe() public {
@@ -315,6 +347,8 @@ contract LpStrategyModuleUnitTest is Test {
         mc.stake(1e18);
         vm.expectRevert(LpStrategyModule.NotOperator.selector);
         mc.unstake(1e18);
+        vm.expectRevert(LpStrategyModule.NotOperator.selector);
+        mc.removeLiquidity(1e18, 0, 0);
         vm.stopPrank();
     }
 
@@ -449,6 +483,101 @@ contract LpStrategyModuleUnitTest is Test {
         m.unstake(20e18);
         assertEq(safe.callCount() - base2, 1, "unstake = 1 exec");
         _assertCall(base2 + 0, address(gauge), abi.encodeCall(IGauge.withdraw, (uint256(20e18))));
+    }
+
+    // ----------------------------------------------------------------- removeLiquidity (the wind-down LP->legs hop)
+
+    function test_removeLiquidity_returns_legs_to_safe_and_emits() public {
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        token1.mint(address(safe), 100e18);
+        vm.prank(operator);
+        uint256 shares = m.addLiquidity(100e18, 100e18, 1); // both legs into the vault (permissive mock)
+        uint256 baseT0 = token0.balanceOf(address(safe));
+        uint256 baseT1 = token1.balanceOf(address(safe));
+
+        vm.expectEmit(false, false, false, true, address(m));
+        emit LpStrategyModule.LiquidityRemoved(shares, 100e18, 100e18);
+        vm.prank(operator);
+        (uint256 a0, uint256 a1) = m.removeLiquidity(shares, 0, 0);
+
+        assertEq(a0, 100e18, "all token0 returned");
+        assertEq(a1, 100e18, "all token1 returned");
+        assertEq(token0.balanceOf(address(safe)) - baseT0, 100e18, "token0 landed in the Safe");
+        assertEq(token1.balanceOf(address(safe)) - baseT1, 100e18, "token1 landed in the Safe");
+        assertEq(m.lpBalance(), 0, "LP burned");
+    }
+
+    function test_removeLiquidity_zero_reverts() public {
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.ZeroAmount.selector);
+        m.removeLiquidity(0, 0, 0);
+    }
+
+    function test_removeLiquidity_coverage_gate() public {
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        uint256 shares = m.addLiquidity(100e18, 0, 1);
+
+        MockCoverageGate gate = new MockCoverageGate();
+        vm.prank(owner);
+        m.setCoverageGate(address(gate));
+
+        // gate says dissolution would breach coverage -> revert Undercovered
+        gate.set(false);
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.Undercovered.selector);
+        m.removeLiquidity(shares, 0, 0);
+
+        // gate says still covered (excess) -> dissolution clears
+        gate.set(true);
+        vm.prank(operator);
+        (uint256 a0,) = m.removeLiquidity(shares, 0, 0);
+        assertEq(a0, 100e18, "dissolved once within the excess");
+
+        // gate OFF (address 0) -> ungated legacy behavior
+        vm.prank(owner);
+        m.setCoverageGate(address(0));
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        uint256 s2 = m.addLiquidity(100e18, 0, 1);
+        vm.prank(operator);
+        m.removeLiquidity(s2, 0, 0); // no gate -> ok
+        assertEq(m.lpBalance(), 0, "ungated dissolution ok");
+    }
+
+    function test_removeLiquidity_only_operator() public {
+        vm.prank(rando);
+        vm.expectRevert(LpStrategyModule.NotOperator.selector);
+        m.removeLiquidity(1e18, 0, 0);
+    }
+
+    function test_removeLiquidity_slippage_floor() public {
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        uint256 shares = m.addLiquidity(100e18, 0, 1); // single-sided; vault holds 100 token0
+        // withdraw returns 100e18 token0, 0 token1 -> minAmount0 one above the floor reverts Slippage.
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.Slippage.selector);
+        m.removeLiquidity(shares, 100e18 + 1, 0);
+        // at the achievable floor it passes.
+        vm.prank(operator);
+        (uint256 a0,) = m.removeLiquidity(shares, 100e18, 0);
+        assertEq(a0, 100e18);
+    }
+
+    function test_exec_discipline_removeLiquidity() public {
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        uint256 shares = m.addLiquidity(100e18, 0, 1);
+        uint256 base = safe.callCount();
+        vm.prank(operator);
+        m.removeLiquidity(shares, 0, 0);
+        assertEq(safe.callCount() - base, 1, "removeLiquidity = 1 exec");
+        _assertCall(base + 0, address(vault), abi.encodeCall(IICHIVault.withdraw, (shares, address(safe))));
     }
 
     // ----------------------------------------------------------------- views read engineSafe (not address(this))
@@ -598,7 +727,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
     function test_fork_real_vault_single_sided_deposit() public {
         LpStrategyModule m = new LpStrategyModule();
         address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE));
+        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
         // the module read token0/token1 live off the real vault.
         assertEq(m.token0(), WETH, "token0 == WETH (live read)");
@@ -618,7 +747,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
     function test_fork_slippage_floor_snapshot_guarded() public {
         LpStrategyModule m = new LpStrategyModule();
         address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE));
+        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
         uint256 amt = 1e18;
         deal(WETH, engineSafe, amt);
@@ -645,7 +774,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
 
         LpStrategyModule m = new LpStrategyModule();
         address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE));
+        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
         deal(BaseAddresses.USDC, engineSafe, 1_000e6);
         vm.prank(operator);
@@ -677,7 +806,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
 
         LpStrategyModule m = new LpStrategyModule();
         address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, address(vault), address(gauge)));
+        m.setUp(abi.encode(owner, engineSafe, operator, address(vault), address(gauge), address(0)));
 
         // fund the Safe with zipUSD (the single-sided deposit leg).
         z.mint(engineSafe, 1000e18);

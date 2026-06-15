@@ -239,10 +239,11 @@ Numbering follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the sp
 |---|---|---|
 | CRE-00 | Project + secrets scaffold (`cre-templates` layout, `wasip1` build, DON-only `GetSecret`) + the shared §8.0 report-encoding package the workflows reuse | §8.11 / §8.0 — *(was NEXT; deferred behind the FE↔anvil push the user prioritized 2026-06-10 — head of the CRE track when released)* |
 | CRE-01 | Origination / draw / close / status → controller (rt 1/2/4/5,6); revaluation → registry (rt3, gas-bounded sharded); default/recovery → `DefaultCoordinator` (rt8 action family) | §8.1 / §8.4 |
-| CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call | §8.3 / §8.5 |
+| CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call. *(2026-06-12: `settleEpoch` is now ON-DEMAND — the 30-day epoch gate was removed — so this can be event-driven off the queue's `RedemptionSettled` event rather than a fixed cron: settle → if backlog remains, sequence another REDEEM→REPAY. See `build/wires/9-ZipRedemptionQueue.md`.)* **Scope: `build/tickets/cre/CRE-02-redemption-settle.md`.** | §8.3 / §8.5 |
 | CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` — and the xALPHA-APR feed (the 8x-02 receiver is built; the Go producer remains) | §8.6 / §8.8 |
 | CRE-04 | Senior-warehouse **SUPPLY / APPROVE / REPAY** ops via the Roles adapter | §8.5 |
-| CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy) | §8.7 |
+| CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy). *(2026-06-12 design inputs: (a) the DurationFreeze main↔sidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth; see `build/CoW-exit.md`.)* | §8.7 |
+| CRE-06 | **CROSS-CUTTING — exit-vs-harvest capital allocation (NOT owned by a single ticket above).** One reservoir funds two competing claims: the CoW exit bid (CRE-02 REDEEM→REPAY→CoW) and the 8-B5 strike borrow (CRE-05 harvest working capital). A harvest borrow raises `U`, which shrinks redeemable liquidity AND raises the freeze floor — in real time. The CRE must arbitrate this split; it is currently unencoded discretion. Scope this policy explicitly when CRE-02/04/05 are written. See `build/CoW-exit.md` (structural coupling). | §8.5 / §8.7 |
 
 ### Frontend ↔ anvil (Vue/viem, in the `zipcode-finance-euler` LAYER over a read-only `euler-lite` base)
 **Goal: make the team's skinned borrower/lender app interactive against the live local protocol — "fuck around
@@ -275,6 +276,55 @@ track on it.
 ---
 
 ## Open obligations / seams
+
+- **TODO (raised 2026-06-12) — `DurationFreezeModule` is INCOMPLETE; rethink its premise + accounting at rebuild.**
+  Two independent problems, the first deeper than the second:
+  1. **Threat model may be obviated.** The freeze keeps utilization-committed equity (sidecar floor = U × gross)
+     unreachable by a ragequit/window exit draining the main Safe. But all legitimate Loot is custodied by the
+     `ExitGate`, which only mints/burns and NEVER ragequits (depositors hold only szipUSD — no rq-to-extract-LP
+     path), and exits are CoW-only (sell the share; `burnFor` pays nothing out — no basket extraction). So the
+     liquidity drain the freeze defends against is already closed by the exit topology. Re-derive what it actually
+     protects against before extending it.
+  2. **Can't act on the dominant asset.** Most TVL is the zipUSD/xALPHA ICHI LP, STAKED in the Hydrex gauge to earn
+     oHYDX. Staked LP is not a transferable ERC20 and `commit`/`release` move by plain transfer, so the freeze can
+     only touch the (near-zero, oscillating) UNSTAKED LP — the floor is physically unreachable when staked-LP value
+     > (1−U) × gross. Unstaking lives in `LpStrategyModule` (8-B6) on the main Safe; the freeze has no unstake path
+     and the sidecar can't restake. NAV is fine (the oracle already counts the LP per-Safe incl. gauge stakes) —
+     the gap is purely actuation/accounting.
+  Interim code (2026-06-12): `ichiVault` added as a 6th whitelisted/movable asset in `DurationFreezeModule.sol`
+  (leak-safe, with a loud `TODO(freeze-lp)`) — a placeholder that forces the decision, NOT a fix. Full context:
+  `build/wires/DurationFreezeModule.md` (OPEN gotcha). Decide at rebuild: (a) CRE unstakes via 8-B6 then commits;
+  (b) give the freeze an unstake leg; (c) let the sidecar stake; and/or (d) retire/redesign the module given (1).
+
+- **TODO (raised 2026-06-12) — `ZipRedemptionQueue` pro-rata machinery is DORMANT under single-requester; simplify
+  or keep as optionality.** The 30-day epoch *time gate* was removed 2026-06-12 (`EPOCH_DURATION`/`lastEpochTime`/
+  `EpochNotElapsed` deleted; `settleEpoch` is now on-demand, controller-only; the `epoch` counter was renamed
+  `settleCount`, event `EpochSettled` → `RedemptionSettled`). What remains: the `era` / `cumRemaining` / per-requester
+  (`sharesAt`/`cumAt`/`eraAt`) carry-forward engine. It is **correct but degenerate** with a single requester (C4
+  gates `requestRedeem` to the rq Safe): every fill ratio is trivially 100% to that one requester, so `sharesAt[rq]`
+  always equals `totalPending` and the ratio math collapses. `era` only bumps on a full drain (its sole job is the
+  zero-safe reset of `cumRemaining`, avoiding a div-by-zero); `settleCount` is cosmetic (read by nothing on-chain,
+  only emitted). **At rebuild:** either collapse the whole apparatus to `totalPending` + a single `claimableAssets`
+  accumulator (far less code), OR keep it as dormant optionality for reopening `requestRedeem` to many external
+  redeemers later — that reopening is the only world where the pro-rata dimension becomes load-bearing again. See
+  `build/wires/9-ZipRedemptionQueue.md` (gate-removal gotcha).
+
+- **TODO (raised 2026-06-13) — `SzipNavOracle` is NOT yet wired to OUR zipUSD/xALPHA LP; the junior NAV does not
+  price our pool. Promoted here from `build/anvil/zipusd-xalpha-pool.md` (was only tracked in that fork-setup doc).**
+  A real single-sided-zipUSD ICHI YieldIQ vault over the zipUSD/xALPHA pool now **exists on the fork**
+  (`0x4731d24b…`, 8-B6/DEC-03), but `SzipNavOracle.ichiVault` still points at the **WETH/USDC ICHI stand-in**
+  (`0x07e72E46…`), so `grossBasketValue()`'s LP leg values the wrong pool. The LP code path itself (read ICHI +
+  Hydrex gauge shares across both Safes, pro-rata `getTotalAmounts()`, value reserves via `_legPriceOfToken`) is
+  built but **only ever exercised by the demo vAMM fork** (`SzipNavOracleDemoVAMM`, HYDX/USDC — showcase seam below),
+  never against our real pool. **Remaining steps** (mirror `zipusd-xalpha-pool.md` lines 86-92): (a) create + stake a
+  Hydrex gauge for the LP share (farms oHYDX); (b) deploy an escrow collateral EVK vault over `0x4731d24b…` + add it
+  to the reservoir borrow market; (c) `setLpPosition(0x4731d24b…, <gauge>)` so the junior basket prices OUR LP;
+  (d) confirm the `LP_MARK`(7)→`SzipReservoirLpOracle` feed flows (= CRE-03); (e) verify `_legPriceOfToken` reserve
+  valuation (`zipUSD`→`1e18`, `xAlpha`→`_xAlphaUSD()`) is non-manipulable for the real pool — spot `getTotalAmounts()`
+  reserves are JIT/flash-skewable, so confirm the NAV-per-share TWAP bracket defends the LP leg or harden the read.
+  NB SP-04/SP-06 fork trap: while `ichiVault` points at the WETH/USDC vault, ANY of that LP in a Safe reverts
+  `UnknownLpToken(WETH)` and bricks all NAV reads. Cross-refs: the DurationFreezeModule staked-LP gap (below) and the
+  showcase note both hinge on this same LP leg.
 
 - **FE-00 DONE (2026-06-10) — the layer boots + reads the fork.** Committed to the layer repo (`resi-labs-ai`,
   commit `1ace24b`): `.env.example` (anvil dev config), `public/labels/8453/{products,earn-vaults,entities}.json`

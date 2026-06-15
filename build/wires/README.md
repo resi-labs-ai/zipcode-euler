@@ -75,6 +75,53 @@ The minimal local interfaces for the deployed-on-Base protocols (interface+fork)
 | `supply/` | `interfaces-supply.md` | internal (`ISzipNavBasket`) |
 | `zodiac/` | `interfaces-zodiac.md` | external (Roles v2, ModuleProxyFactory) |
 
+## Safe topology (who is who — what the Safes actually are)
+
+There are only **three Gnosis Safes** across the whole protocol, in two deployments. The thing that trips people
+up: **"engineSafe" and "rqSafe" are not separate Safes — they are names for the main Baal Safe.** In
+`DeployZipcode.s.sol` the engine modules are wired with `engineSafe = d.sub.mainSafe` (≈ line 370), and the
+redemption queue's `redeemController` is `setRedeemController(d.sub.mainSafe)` (≈ line 448). So one address wears
+the basket / ragequit / engine / rq hats at once.
+
+```
+DEPLOYMENT 1 — szipUSD junior substrate  (SummonSubstrate → BaalAndVaultSummoner)
+┌───────────────────────────────────────────────────────────────────────────┐
+│  Baal DAO (Moloch v3)   —   Shares = 0 forever; authority = Safe ownership  │
+│                                                                             │
+│   MAIN SAFE   ( = Baal.avatar() == target )      ◄── ONE Safe, many hats    │
+│     hats:  • basket (holds zipUSD/xALPHA; backs szipUSD NAV)                 │
+│            • ragequit target (the "free equity")                            │
+│            • engineSafe  ── all engine modules bolt on here:                │
+│                 SzipBuyBurnModule (8-B14), ReservoirLoopModule (8-B5),       │
+│                 LpStrategyModule (8-B6), HarvestVoteModule (8-B7),           │
+│                 ExerciseModule (8-B8), SellModule (8-B9),                    │
+│                 RecycleModule (8-B10), OffRampModule                         │
+│            • rqSafe  (redeemController for ZipRedemptionQueue)               │
+│            • Baal enabled as a module (ragequit path); team multisig = owner │
+│                                                                             │
+│   SIDECAR SAFE   ◄── the one genuinely separate Safe in Deployment 1        │
+│     • non-ragequittable "committed equity" (the §11 structural freeze)      │
+│     • DurationFreezeModule enabled on BOTH main + sidecar                   │
+│     • LienXAlphaEscrow targets it; Baal enabled as a module; team = owner   │
+│     • SzipNavOracle sums balances across main + sidecar to price NAV        │
+└───────────────────────────────────────────────────────────────────────────┘
+
+DEPLOYMENT 2 — credit warehouse   (CreditWarehouseDeployer; asserted != mainSafe)
+┌───────────────────────────────────────────────────────────────────────────┐
+│   WAREHOUSE SAFE                                                            │
+│     • holds the EulerEarn shares (the resting USDC depositors fund)         │
+│     • WarehouseAdminModule bolts on here (REDEEM / REPAY)                   │
+│     • the REPAY sink is the ZipRedemptionQueue (non-sweepable, par burn)    │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+**Mental model:** modules are scoped admin-governors bolted onto a Safe; the **Timelock owns the modules**
+(re-points wiring / swaps them), the **CRE operator** is the hot key that fires their entrypoints, and the Safe
+is the account they move. `engineSafe` is a *separately-settable wire* (`setEngineSafe`), so it could be split
+into its own Safe later — but in the M1 deploy it points at the main Baal Safe. Cross-deployment, the warehouse
+Safe is explicitly asserted **not** to equal the main Safe (`SeamWarehouseCommingled`), keeping senior custody
+and the junior basket non-commingled.
+
 ## Cross-cutting wiring patterns (the load-bearing seams)
 These recur across many components and are where the item-10 deploy script lives or dies.
 

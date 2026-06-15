@@ -1,4 +1,4 @@
-# 8-B9 SellModule — Algebra swap seam (sellHydx HYDX→USDC + buyXAlpha zipUSD→xALPHA) (wiring map)
+# 8-B9 SellModule — Algebra swap seam (sellHydx HYDX→USDC + buyXAlpha zipUSD→xALPHA + sellXAlpha xALPHA→zipUSD) (wiring map)
 
 > Source of truth = `contracts/src/supply/szipUSD/SellModule.sol` (the kept code is FINAL/AUTHORITATIVE — code
 > wins). Ticket `tickets/sodo/8-B9-sell-module.md` + report `reports/8-B9-report.md` are intent only.
@@ -16,10 +16,16 @@ free-value accumulator** (those are 8-B5/8-B6/8-B7/8-B8/SzipNavOracle/8-B10). Th
 8-B5's `ReservoirLoopModule.repay`; the free-value crediting is 8-B10's `creditFreeValue` — both CRE-sequenced **after**
 this sell. The operator supplies **only scalars** (`amountIn`, `minOut`, `deadline`); the module builds all calldata.
 
+It also exposes **`sellXAlpha` (xALPHA→zipUSD)** — the reverse of `buyXAlpha` on the same POL pair. No live-ops loop
+uses it; it exists to (a) **unstrand the xALPHA leg in the global wind-down** — after `LpStrategyModule.removeLiquidity`
+decomposes the LP into zipUSD + xALPHA, `sellXAlpha` routes the xALPHA back to zipUSD (which then exits to USDC via the
+senior par queue — xALPHA has no direct USDC pool, it is the bridge stand-in), and (b) let the protocol **accept/recycle
+xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down orchestration.
+
 ## Contracts involved (what each does)
 | Contract | What it does |
 |---|---|
-| `SellModule` (`is Module`) | The swap driver. `setUp(bytes)`-under-`initializer` decodes **8 addresses + 1 uint256**; two `onlyOperator` entrypoints `sellHydx`/`buyXAlpha` sharing a private `_swap` (approve→`exactInputSingle`→reset-approve); private bubbling `_exec`; an `onlyOwner` `setMaxSellHydx`; 7 Timelock (`onlyOwner`) address-wiring setters. Set-once storage `engineSafe`/`operator`/`swapRouter`/`hydx`/`usdc`/`zipUSD`/`xAlpha` + the `maxSellHydx` cap — **not `immutable`** (§18.6 clone fact: a `ModuleProxyFactory` clone shares mastercopy bytecode, so per-clone config must be `setUp` storage). |
+| `SellModule` (`is Module`) | The swap driver. `setUp(bytes)`-under-`initializer` decodes **8 addresses + 1 uint256**; three `onlyOperator` entrypoints `sellHydx`/`buyXAlpha`/`sellXAlpha` sharing a private `_swap` (approve→`exactInputSingle`→reset-approve); private bubbling `_exec`; an `onlyOwner` `setMaxSellHydx`; 7 Timelock (`onlyOwner`) address-wiring setters. Set-once storage `engineSafe`/`operator`/`swapRouter`/`hydx`/`usdc`/`zipUSD`/`xAlpha` + the `maxSellHydx` cap — **not `immutable`** (§18.6 clone fact: a `ModuleProxyFactory` clone shares mastercopy bytecode, so per-clone config must be `setUp` storage). |
 | `ISwapRouter` (`src/interfaces/algebra/ISwapRouter.sol`) | The minimal Algebra **Integral** `SwapRouter` surface the module calls — only `exactInputSingle(ExactInputSingleParams)`. The struct carries `(tokenIn, tokenOut, deployer, recipient, deadline, amountIn, amountOutMinimum, limitSqrtPrice)` — **no `fee` field**, a `deployer` field, and `limitSqrtPrice` (NOT `sqrtPriceLimitX96`) ⇒ Algebra Integral, not Uniswap V3. On-chain-verified selector `0x1679c792` against the deployed router `0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e`. |
 | `IERC20` (`@openzeppelin/contracts/token/ERC20/IERC20.sol`) | Supplies the `approve.selector` for the swap-allowance set + reset legs of `_swap`. |
 
@@ -40,6 +46,12 @@ this sell. The operator supplies **only scalars** (`amountIn`, `minOut`, `deadli
   — the **POL buy leg** (Mode-B/C, consumed by 8-B10/8-B13). Identical mechanism on the wired POL pair:
   `amountOut = _swap(zipUSD, xAlpha, amountIn, minOut, deadline)`. **Uncapped here** — no `maxSellHydx` check (different
   token; bounded upstream by 8-B10's `freeValueAccrued` gate). xALPHA lands in the engine Safe.
+- **`sellXAlpha(uint256 amountIn, uint256 minOut, uint256 deadline) external onlyOperator returns (uint256 amountOut)`**
+  — the **reverse POL leg** (wind-down LP→legs→USDC hop + xALPHA recycle): `amountOut = _swap(xAlpha, zipUSD, amountIn,
+  minOut, deadline)`. zipUSD lands in the engine Safe. **Deliberately uncapped** — `maxSellHydx` exists only because the
+  oHYDX harvest system becomes unprofitable past a clip (a HYDX-specific ceiling); xALPHA is our own POL asset sold back
+  into our own pair, so a size cap would be arbitrary. `minOut`+`deadline` remain the price/staleness guards; throughput
+  stays 8-B11/8-B12 CRE/off-chain policy.
 - **The shared `_swap(tokenIn, tokenOut, amountIn, minOut, deadline)` private helper.** Guard `amountIn == 0 ||
   minOut == 0` reverts `ZeroAmount` (a zero slippage floor = no protection — fail fast). Then exactly **three**
   `_exec`s, in order:
@@ -82,7 +94,7 @@ this sell. The operator supplies **only scalars** (`amountIn`, `minOut`, `deadli
   swap entrypoints. `owner` (Timelock) != `operator` (CRE) is enforced at `setUp`.
 
 ## Wiring — cross-component (who points at whom)
-- **operator = the CRE robot (8-B11).** The single `operator` slot is the sole caller of `sellHydx`/`buyXAlpha`. The
+- **operator = the CRE robot (8-B11).** The single `operator` slot is the sole caller of `sellHydx`/`buyXAlpha`/`sellXAlpha`. The
   CRE sizes `amountIn` + `minOut` off `pool.globalState()` off-chain (the §9.3 per-order slippage cap → a modest
   cushion) and sequences sell → 8-B5 `repay` → 8-B6 re-stake → 8-B10 `creditFreeValue`. The module is correctly
   agnostic to regime / cutoff / loop-size / per-epoch throughput (all 8-B11 CRE policy).
@@ -96,13 +108,13 @@ this sell. The operator supplies **only scalars** (`amountIn`, `minOut`, `deadli
   `(tokenIn, tokenOut, deployer=0)` — no pool address, no `zeroToOne` is passed. `pool.token0() == HYDX`,
   `pool.token1() == USDC`. **HYDX in** is handed off from 8-B8 `exercise`; **USDC out** is the input to the 8-B5 repay,
   then the residual feeds 8-B10 `creditFreeValue`.
-- **zipUSD / xAlpha — the `buyXAlpha` POL pair.** `zipUSD` = our `ESynth` (deployed at runtime, no fixed constant);
-  `xAlpha` = the 8x bridge stand-in (runtime). Both wired at deploy and mocked in unit tests — **no `BaseAddresses`
-  constants** (runtime addresses). **The POL pool identity is load-bearing:** because `_swap` hard-pins
-  `deployer: address(0)` for BOTH legs, the wired POL pool **must itself be a base-factory (deployer-0) Algebra pool**
-  or `buyXAlpha` reverts. There is no live zipUSD/xALPHA POL pool on Base yet, so `buyXAlpha` is **unit-proven only**
-  this window; its live-pool fork proof is deferred to 8-B10/8-B13 integration (the router calldata shape is
-  fork-grounded by the shared sell-leg sig-verify).
+- **zipUSD / xAlpha — the `buyXAlpha`/`sellXAlpha` POL pair (both directions).** `zipUSD` = our `ESynth` (deployed at
+  runtime, no fixed constant); `xAlpha` = the 8x bridge stand-in (runtime). Both wired at deploy and mocked in unit
+  tests — **no `BaseAddresses` constants** (runtime addresses). **The POL pool identity is load-bearing:** because
+  `_swap` hard-pins `deployer: address(0)` for ALL legs, the wired POL pool **must itself be a base-factory (deployer-0)
+  Algebra pool** or both POL legs revert. There is no live zipUSD/xALPHA POL pool on Base yet, so `buyXAlpha`/`sellXAlpha`
+  are **unit-proven only** this window; their live-pool fork proof is deferred to 8-B10/8-B13 integration (the router
+  calldata shape is fork-grounded by the shared sell-leg sig-verify).
 - **recipient / output destination = the engine Safe, always.** `exactInputSingle.recipient` is hard-pinned to
   `engineSafe` — the output token (USDC or xALPHA) can only ever land in the basket, never the operator or a third
   party. `tokenIn` is pulled FROM the same Safe (it holds the input + grants the transient allowance).
@@ -150,9 +162,12 @@ this sell. The operator supplies **only scalars** (`amountIn`, `minOut`, `deadli
   (on-chain-verified; `algebraSwapCallback(int256,int256,bytes)` `0x2c8958f6` also present). The two non-Algebra
   candidates are ABSENT (`0xbc651188` Algebra-classic-no-deployer, `0x04e45aaf` UniV3-with-fee). The typed
   `abi.encodeCall` pins the field order at compile time.
-- **`deployer == address(0)` is hard-coded for BOTH legs.** Verified base-factory for HYDX/USDC; it must be
-  re-verified for the not-yet-created POL pair (see item-10 row 353). A custom-deployer POL pool would require a code
-  change, not a re-wire.
+- **`deployer == address(0)` is hard-coded for ALL legs** (sellHydx, buyXAlpha, sellXAlpha). Verified base-factory for
+  HYDX/USDC; it must be re-verified for the not-yet-created POL pair (see item-10 row 353) — and it now covers BOTH POL
+  directions. A custom-deployer POL pool would require a code change, not a re-wire.
+- **`sellXAlpha` is intentionally uncapped.** Only `sellHydx` carries `maxSellHydx`, because the oHYDX system has a
+  profitability ceiling; xALPHA (our own POL asset) has none, so no size cap. Throughput for `sellXAlpha` is the same
+  8-B12 off-chain tripwire concern as the other legs.
 - **On-chain bounds = `minOut` (price) + `maxSellHydx` (per-call size); throughput = off-chain.** `minOut` bounds the
   price (slippage abort), `maxSellHydx` bounds the per-call HYDX size; multi-call per-epoch throughput is the 8-B12
   off-chain tripwire, NOT a module accumulator. The compromised-operator economic risk is **accepted** under §17's

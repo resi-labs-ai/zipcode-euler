@@ -3,14 +3,18 @@
 Provable completeness check for the wiring map. Every Solidity file under `contracts/` is mapped to the
 `wires/` doc that documents it. Inventory taken 2026-06-10, updated 2026-06-12 (8x-01 lock/release rework
 added `SzAlphaLockReleasePool.sol`; deploy-track sweep added `DeployLocal.s.sol`/`DeployMainnet.s.sol`/
-`test/DeployZipcode.t.sol`, forgotten since the smoke-suite commit): **33 product contracts + 8 scripts +
-30 interface shims + 29 test/helper files**, plus a **demo/fork-only addendum** (section E): **2 showcase
-contracts + 1 demo interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody
-forgotten.
+`test/DeployZipcode.t.sol`), updated 2026-06-14 (fair-LP oracle added `ConcentratedLiquidity.sol` +
+`IchiAlgebraFairReserves.sol` + `AlgebraIchiFairLpOracle.sol` + `IAlgebraOraclePlugin.sol` +
+`AlgebraIchiFairLpOracle.t.sol`): **36 product contracts + 8 scripts + 31 interface shims + 30 test/helper
+files**, plus a **demo/fork-only addendum** (section E): **2 showcase contracts + 1 demo interface + 1 demo
+deploy script**, kept SEPARATE from the audited core counts. Nobody forgotten.
 
-## A. Product contracts (`src/`, non-interface) — 33 files
+## A. Product contracts (`src/`, non-interface) — 36 files
 | File | Doc |
 |---|---|
+| `src/libraries/ConcentratedLiquidity.sol` | `FairLpOracle.md` |
+| `src/supply/lib/IchiAlgebraFairReserves.sol` | `FairLpOracle.md` |
+| `src/supply/AlgebraIchiFairLpOracle.sol` | `FairLpOracle.md` |
 | `src/CREGatingHook.sol` | `WOOF-03.md` |
 | `src/LienCollateralToken.sol` | `WOOF-01.md` |
 | `src/LienTokenFactory.sol` | `WOOF-01.md` |
@@ -57,11 +61,12 @@ forgotten.
 | `script/ReservoirMarketDeployer.sol` | `8-B5-ReservoirLoop.md` |
 | `script/DeploySzAlphaBridge.s.sol` | `8x-01-szALPHA-bridge.md` |
 
-## C. Interface shims (`src/interfaces/`) — 30 files, cataloged per folder
+## C. Interface shims (`src/interfaces/`) — 31 files, cataloged per folder
 Each file is cataloged file-by-file inside its `interfaces-<folder>.md`.
 | File | Doc |
 |---|---|
 | `src/interfaces/algebra/IAlgebraFactory.sol` | `interfaces-algebra.md` |
+| `src/interfaces/algebra/IAlgebraOraclePlugin.sol` | `interfaces-algebra.md` |
 | `src/interfaces/algebra/IAlgebraPool.sol` | `interfaces-algebra.md` |
 | `src/interfaces/algebra/INonfungiblePositionManager.sol` | `interfaces-algebra.md` |
 | `src/interfaces/algebra/ISwapRouter.sol` | `interfaces-algebra.md` |
@@ -92,7 +97,7 @@ Each file is cataloged file-by-file inside its `interfaces-<folder>.md`.
 | `src/interfaces/zodiac/IModuleProxyFactory.sol` | `interfaces-zodiac.md` |
 | `src/interfaces/zodiac/IRoles.sol` | `interfaces-zodiac.md` |
 
-## D. Tests & helpers (`test/`) — 29 files (verification, covered by their component doc)
+## D. Tests & helpers (`test/`) — 30 files (verification, covered by their component doc)
 Tests are the verification artifact for a component, not a separate component — each is covered by the
 component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" are what the test proves).
 | Test/helper file | Component doc |
@@ -112,6 +117,7 @@ component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" 
 | `test/ZipDepositModule.t.sol` | `WOOF-06.md` |
 | `test/SummonSubstrate.t.sol` | `8-B1.md` |
 | `test/SzipNavOracle.t.sol` | `8-B4-SzipNavOracle.md` |
+| `test/AlgebraIchiFairLpOracle.t.sol` | `FairLpOracle.md` |
 | `test/ExitGate.t.sol` | `ExitGate-szipUSD.md` |
 | `test/WarehouseAdminModule.t.sol` | `8-Bw-CreditWarehouse.md` |
 | `test/ZipRedemptionQueue.t.sol` | `9-ZipRedemptionQueue.md` |

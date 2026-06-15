@@ -25,4 +25,8 @@ interface IAlgebraPool {
     /// @dev Standard pair getters. Verified on-chain this window for pool 0x51f0…: token0() == HYDX, token1() == USDC.
     function token0() external view returns (address);
     function token1() external view returns (address);
+
+    /// @dev The attached Algebra plugin (volatility/TWAP oracle). Verified live: pool 0x51f0… ->
+    ///      plugin 0xe33a242990780Ab872Ae986AD68206478Fc85Ae1 (supports `getTimepoints`).
+    function plugin() external view returns (address);
 }

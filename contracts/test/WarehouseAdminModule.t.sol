@@ -277,6 +277,15 @@ contract WarehouseAdminModuleTest is ForkConfig {
         assertEq(IERC20(usdc).balanceOf(safe), SUPPLY_AMT - amount, "Safe drawn down");
     }
 
+    /// @notice Self-enforced sink: a REPAY payload with a `dest` other than `repaySink` reverts in the adapter
+    ///         (belt-and-suspenders), not only at the Roles scope.
+    function test_Repay_RevertsOnWrongSink() public {
+        _fundSafe(SUPPLY_AMT);
+        address attacker = makeAddr("attacker");
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.WrongRepaySink.selector, attacker));
+        _onReport(REPAY, abi.encode(attacker, uint256(250_000e6)));
+    }
+
     // ============================================================
     // (6) Scope pin load-bearing (a real role MEMBER cannot redirect params)
     // ============================================================

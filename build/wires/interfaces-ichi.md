@@ -39,6 +39,11 @@ a live HYDX ICHI vault `0x07e72E46C319a6d5aCA28Ad52f5C41a7821989Ad` (`allVaults(
   - `allowToken0() view returns (bool)`, `allowToken1() view returns (bool)` — **single-sidedness is a
     property of the vault itself**: the vault's `allowToken*` flags gate which leg(s) a deposit may
     fund. The shim does not encode single-sidedness; it reads the vault's flags.
+  - Position introspection (added 2026-06-14 for the fair-LP oracle, `FairLpOracle.md`): `pool()`,
+    `getBasePosition()`/`getLimitPosition() → (uint128 liquidity, uint256 amount0, uint256 amount1)`,
+    `baseLower()`/`baseUpper()`/`limitLower()`/`limitUpper() → int24`. These let `IchiAlgebraFairReserves`
+    reconstruct each position's reserves at the pool's TWAP tick (liquidity + bounds are swap-immune),
+    instead of trusting the in-block-manipulable `getTotalAmounts()` split.
 
 **Consumed by.**
 - `contracts/src/supply/szipUSD/LpStrategyModule.sol` — reads `token0()`/`token1()`, executes

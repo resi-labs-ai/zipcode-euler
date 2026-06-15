@@ -303,6 +303,12 @@ contract SellModuleUnitTest is Test {
         m.buyXAlpha(1e18, 1, block.timestamp + 1 hours);
     }
 
+    function test_sellXAlpha_only_operator() public {
+        vm.prank(rando);
+        vm.expectRevert(SellModule.NotOperator.selector);
+        m.sellXAlpha(1e18, 1, block.timestamp + 1 hours);
+    }
+
     // ----------------------------------------------------------------- guards (both entrypoints)
 
     function test_sellHydx_guards_zero_amountIn_and_zero_minOut() public {
@@ -320,6 +326,15 @@ contract SellModuleUnitTest is Test {
         m.buyXAlpha(0, 1, block.timestamp + 1 hours);
         vm.expectRevert(SellModule.ZeroAmount.selector);
         m.buyXAlpha(1e18, 0, block.timestamp + 1 hours);
+        vm.stopPrank();
+    }
+
+    function test_sellXAlpha_guards_zero_amountIn_and_zero_minOut() public {
+        vm.startPrank(operator);
+        vm.expectRevert(SellModule.ZeroAmount.selector);
+        m.sellXAlpha(0, 1, block.timestamp + 1 hours);
+        vm.expectRevert(SellModule.ZeroAmount.selector);
+        m.sellXAlpha(1e18, 0, block.timestamp + 1 hours);
         vm.stopPrank();
     }
 
@@ -345,6 +360,14 @@ contract SellModuleUnitTest is Test {
         safe.setReturnData(abi.encode(uint256(1)));
         vm.prank(operator);
         m.buyXAlpha(MAX_SELL + 1, 1, block.timestamp + 1 hours); // no ExceedsMaxSell
+    }
+
+    /// @dev (cap) `sellXAlpha` (xALPHA, our own POL asset — no oHYDX-style profitability ceiling) is deliberately NOT
+    ///      size-capped: an amount above MAX_SELL passes the cap layer (only `sellHydx` carries the HYDX backstop).
+    function test_sellXAlpha_not_capped_by_maxSellHydx() public {
+        safe.setReturnData(abi.encode(uint256(1)));
+        vm.prank(operator);
+        m.sellXAlpha(MAX_SELL + 1, 1, block.timestamp + 1 hours); // no ExceedsMaxSell
     }
 
     /// @dev (cap) the owner (Timelock) can re-size the cap; emits `MaxSellHydxSet`; a sell at the new larger cap passes.
@@ -386,6 +409,46 @@ contract SellModuleUnitTest is Test {
 
     function test_buyXAlpha_exec_shape_fully_pinned() public {
         _assertExecShape(false);
+    }
+
+    /// @dev exec-shape for `sellXAlpha` (xALPHA → zipUSD) — fully pinned, mirrors `_assertExecShape` for the reverse pair.
+    function test_sellXAlpha_exec_shape_fully_pinned() public {
+        address tokenIn = address(xAlpha);
+        address tokenOut = address(zipUSD);
+        uint256 amountIn = 5e18;
+        uint256 minOut = 12_000;
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 expectedOut = 10_556;
+        safe.setReturnData(abi.encode(expectedOut));
+
+        vm.expectEmit(true, true, true, true, address(m));
+        emit SellModule.Sold(tokenIn, tokenOut, amountIn, expectedOut);
+        vm.prank(operator);
+        uint256 ret = m.sellXAlpha(amountIn, minOut, deadline);
+        assertEq(ret, expectedOut, "return value == amountOut");
+
+        assertEq(safe.callCount(), 3, "swap = 3 execs");
+        _assertCall(0, tokenIn, abi.encodeWithSelector(IERC20.approve.selector, address(router), amountIn));
+        _assertCall(
+            1,
+            address(router),
+            abi.encodeCall(
+                ISwapRouter.exactInputSingle,
+                (
+                    ISwapRouter.ExactInputSingleParams({
+                        tokenIn: tokenIn,
+                        tokenOut: tokenOut,
+                        deployer: address(0),
+                        recipient: address(safe),
+                        deadline: deadline,
+                        amountIn: amountIn,
+                        amountOutMinimum: minOut,
+                        limitSqrtPrice: 0
+                    })
+                )
+            )
+        );
+        _assertCall(2, tokenIn, abi.encodeWithSelector(IERC20.approve.selector, address(router), uint256(0)));
     }
 
     /// @dev exec-shape, fully pinned for BOTH entrypoints (sell == true → HYDX/USDC, else zipUSD/xAlpha).

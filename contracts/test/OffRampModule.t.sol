@@ -438,7 +438,7 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
         for (uint256 i = 0; i < logs.length; i++) {
             if (
                 logs[i].emitter == address(queue)
-                    && logs[i].topics[0] == keccak256("RedeemRequest(address,address,uint256,address,uint256)")
+                    && logs[i].topics[0] == keccak256("RedeemRequest(address,address,address,uint256)")
             ) {
                 (address sender, uint256 shares) = abi.decode(logs[i].data, (address, uint256));
                 assertEq(sender, rqSafe, "RedeemRequest.sender == rqSafe (real exec-driven msg.sender)");
@@ -461,10 +461,9 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
         uint256 par = Q / SCALE; // 1M USDC
         deal(usdc, warehouseSafe, par);
         _repay(par);
-        vm.warp(queue.lastEpochTime() + queue.EPOCH_DURATION());
         vm.prank(controller);
         queue.settleEpoch();
-        assertEq(queue.era(), 1, "full drain");
+        assertEq(queue.totalPending(), 0, "full drain");
 
         // --- leg 3: claim the USDC back into the rq Safe (the basket) ---
         vm.prank(operator);

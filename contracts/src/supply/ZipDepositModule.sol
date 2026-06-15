@@ -130,6 +130,11 @@ contract ZipDepositModule is ReentrancyGuard {
         if (usdcIn == 0) revert ZeroAmount();
         if (gate == address(0)) revert NotWired();
 
+        // Snapshot the pre-zap zipUSD balance: the cleanliness invariant is that the Gate pulls exactly the
+        // transient `zipAmount` we mint (net module delta == 0), NOT that the module holds zero absolutely. A
+        // stray external donation (zipUSD is freely transferable) must not be able to brick the zap.
+        uint256 zipBefore = IESynth(zipUSD).balanceOf(address(this));
+
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcIn);
         uint256 zipAmount = usdcIn * scaleUp;
         IESynth(zipUSD).mint(address(this), zipAmount); // transient — handed to the Gate below
@@ -142,7 +147,9 @@ contract ZipDepositModule is ReentrancyGuard {
 
         // "holds nothing" enforcement (F1/F7) — never trust the Gate to leave the module clean.
         if (shares == 0) revert ZeroShares(); // fail closed on a no-op/paused Gate
-        if (IESynth(zipUSD).balanceOf(address(this)) != 0) revert ResidualBalance(); // the Gate must have pulled the FULL zipAmount
+        // Delta check (not absolute): the Gate must have pulled exactly the minted `zipAmount` — net module
+        // zipUSD balance unchanged. Tolerates a pre-existing donation (`zipBefore`) so 1 wei cannot brick the zap.
+        if (IESynth(zipUSD).balanceOf(address(this)) != zipBefore) revert ResidualBalance();
         IERC20(zipUSD).forceApprove(gate, 0); // defensively reset the per-zap allowance
 
         emit Zapped(msg.sender, usdcIn, zipAmount, shares);

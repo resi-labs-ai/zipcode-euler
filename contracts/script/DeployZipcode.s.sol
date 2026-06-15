@@ -29,6 +29,7 @@ import {SzipUSD} from "../src/supply/szipUSD/SzipUSD.sol";
 import {ZipDepositModule} from "../src/supply/ZipDepositModule.sol";
 import {ZipRedemptionQueue} from "../src/supply/ZipRedemptionQueue.sol";
 import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {AlgebraIchiFairLpOracle} from "../src/supply/AlgebraIchiFairLpOracle.sol";
 
 // --- engine modules (Zodiac mastercopies; cloned via ModuleProxyFactory) ---
 import {SzipBuyBurnModule} from "../src/supply/szipUSD/SzipBuyBurnModule.sol";
@@ -83,6 +84,7 @@ contract DeployZipcode is SummonSubstrate {
     error SeamEngineSafe();
     error SeamEscrowCoordinator();
     error SeamNavShareTokenUnset();
+    error SeamCoverageGate();
 
     // ----------------------------------------------------------------- inputs (env / stand-ins)
     struct Inputs {
@@ -103,6 +105,9 @@ contract DeployZipcode is SummonSubstrate {
         address baseUsdcMarket; // BASE_USDC_MARKET — the no-borrow USDC EVault at the EE supply-queue head
         // numeric knobs
         uint256 validityWindow; // registry + lpOracle read-staleness window
+        uint32 lpTwapWindow; // 0 = CRE-push lpOracle + spot NAV LP leg (M1 default); >0 = trustless fair-LP
+            // (AlgebraIchiFairLpOracle) for the reservoir collateral AND the NAV LP leg. Opt-in once the
+            // zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin. build/fair-lp.md.
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV pushed-leg staleness
         uint256 maxDeviationBps; // NAV per-push deviation circuit-break
@@ -337,10 +342,19 @@ contract DeployZipcode is SummonSubstrate {
     ///      the market build: EVK `setLTV` (step 24) calls `getQuote` on the `SzipReservoirLpOracle`, which reverts
     ///      `PriceOracle_NotSupported` until a fresh mark exists. In production the CRE `LP_MARK` push seeds it here.
     function _phaseP5() internal virtual {
-        // 23. LP oracle.
-        d.lpOracle = new SzipReservoirLpOracle(
-            BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
-        );
+        // 23. LP oracle. Trustless fair-LP (Algebra TWAP, build/fair-lp.md) when `lpTwapWindow` is set — it reads
+        //     the price live on-chain, so it needs NO CRE seed before the step-24 `setLTV` getQuote (it resolves
+        //     immediately on a live Algebra pool). Else the CRE-pushed mark (`SzipReservoirLpOracle`), which this
+        //     phase is `virtual` to let a local/fork harness seed before `setLTV`.
+        address lpOracleAddr;
+        if (i.lpTwapWindow != 0) {
+            lpOracleAddr = address(new AlgebraIchiFairLpOracle(i.polIchiVault, i.lpTwapWindow));
+        } else {
+            d.lpOracle = new SzipReservoirLpOracle(
+                BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
+            );
+            lpOracleAddr = address(d.lpOracle);
+        }
 
         // 24. reservoir market (governor = the Timelock; engineSafe = the main basket Safe).
         (d.escrowVault, d.borrowVault, d.router) = new ReservoirMarketDeployer().deploy(
@@ -350,7 +364,7 @@ contract DeployZipcode is SummonSubstrate {
                 governor: address(d.timelock),
                 lpToken: i.polIchiVault,
                 usdc: BaseAddresses.USDC,
-                lpOracle: address(d.lpOracle),
+                lpOracle: lpOracleAddr,
                 irm: i.irm,
                 engineSafe: d.sub.mainSafe,
                 borrowLTV: i.borrowLTV,
@@ -369,15 +383,32 @@ contract DeployZipcode is SummonSubstrate {
         address op = i.creOperator;
         address engineSafe = d.sub.mainSafe; // the basket Safe (buy-burn denominator-excluded address)
 
-        // -- SzipBuyBurnModule (engineSafe) --
+        // -- DurationFreezeModule FIRST (enabled on BOTH the main Safe AND the sidecar) — it is the coverage gate the
+        //    buy-burn + LP-strategy modules wire to at construction, so it must exist before them.
+        //    coverageBps = 1e4 (freeze 100% of the senior liability), dollarBuffer = 0. The floor is debt-pinned (NOT
+        //    a junior-basket fraction) so it cannot be drained by shrinking gross — build/coverage-floor.md Phase 1.
+        //    All deps exist by P6 (navOracle/warehouse/Safes/eePool); Timelock re-settable post-deploy.
+        d.durationFreeze = _cloneModule(
+            address(new DurationFreezeModule()),
+            abi.encode(
+                tl, d.sub.mainSafe, d.sub.sidecar, op, address(d.navOracle), i.eePool, d.warehouse.safe,
+                uint256(1e4), uint256(0)
+            ),
+            d.sub.mainSafe
+        );
+        _enableModuleOnSafe(d.sub.sidecar, d.durationFreeze);
+
+        // -- SzipBuyBurnModule (engineSafe) — coverageGate = durationFreeze: postBid blocked while !covered() --
         d.buyBurn = _cloneModule(
             address(new SzipBuyBurnModule()),
             abi.encode(
                 tl, engineSafe, op, address(d.navOracle), address(d.szip), BaseAddresses.USDC,
-                BaseAddresses.COW_SETTLEMENT, i.dBps, i.buybackCap
+                BaseAddresses.COW_SETTLEMENT, i.dBps, i.buybackCap, d.durationFreeze
             ),
             engineSafe
         );
+        // path-lock arming seam: the buy-burn exit gate is wired LIVE to the freeze module (Timelock re-pointable).
+        if (SzipBuyBurnModule(d.buyBurn).coverageGate() != d.durationFreeze) revert SeamCoverageGate();
         // engineSafe denominator-exclusion seam (#3): navOracle + gate must equal the buy-burn engineSafe.
         d.navOracle.setEngineSafe(engineSafe);
         d.gate.setEngineSafe(engineSafe);
@@ -393,10 +424,10 @@ contract DeployZipcode is SummonSubstrate {
             engineSafe
         );
 
-        // -- LpStrategyModule (engineSafe) --
+        // -- LpStrategyModule (engineSafe) — coverageGate = durationFreeze: removeLiquidity bounded to the excess --
         d.lpStrategy = _cloneModule(
             address(new LpStrategyModule()),
-            abi.encode(tl, engineSafe, op, i.polIchiVault, i.polGauge),
+            abi.encode(tl, engineSafe, op, i.polIchiVault, i.polGauge, d.durationFreeze),
             engineSafe
         );
         // shared-LP seam (#4): LpStrategyModule.ichiVault == POL_ICHI_VAULT == escrow.asset().
@@ -404,6 +435,8 @@ contract DeployZipcode is SummonSubstrate {
             LpStrategyModule(d.lpStrategy).ichiVault() != i.polIchiVault
                 || i.polIchiVault != IEVault(d.escrowVault).asset()
         ) revert SeamSharedLp();
+        // path-lock arming seam: the LP-dissolution gate is wired LIVE to the freeze module (Timelock re-pointable).
+        if (LpStrategyModule(d.lpStrategy).coverageGate() != d.durationFreeze) revert SeamCoverageGate();
 
         // -- HarvestVoteModule (engineSafe) --
         d.harvestVote = _cloneModule(
@@ -447,13 +480,10 @@ contract DeployZipcode is SummonSubstrate {
         );
         d.queue.setRedeemController(d.sub.mainSafe);
 
-        // -- DurationFreezeModule (enabled on BOTH the main Safe AND the sidecar) --
-        d.durationFreeze = _cloneModule(
-            address(new DurationFreezeModule()),
-            abi.encode(tl, d.sub.mainSafe, d.sub.sidecar, op, address(d.navOracle), i.eePool, d.warehouse.safe),
-            d.sub.mainSafe
-        );
-        _enableModuleOnSafe(d.sub.sidecar, d.durationFreeze);
+        // NOTE (path-lock arming, build/lp-path-lock.md): the coverage gates are now wired LIVE at construction —
+        // `DurationFreezeModule` is cloned at the TOP of this phase and passed into the buy-burn + LP-strategy
+        // `setUp` as their `coverageGate`, asserted by the two `SeamCoverageGate` checks above. Both remain
+        // Timelock-re-pointable via `setCoverageGate` (the kill-switch: `setCoverageGate(0)` disables in one tx).
     }
 
     // ================================================================= P7 — loss side (circular escrow <-> coordinator)
@@ -479,6 +509,12 @@ contract DeployZipcode is SummonSubstrate {
     function _phaseP8() internal {
         // 29.
         d.navOracle.setLpPosition(i.polIchiVault, i.polGauge);
+        // reservoir escrow + borrow vaults (P5) -> NAV closes the mid-loop blind spot (counts escrow-collateralized
+        // LP + subtracts strike debt; build/lp-path-lock.md). Both exist by P5 (step 24).
+        d.navOracle.setReservoirLeg(d.escrowVault, d.borrowVault);
+        // Fair-LP NAV LP leg (build/twap-ring.md + build/fair-lp.md): when set, the NAV LP leg reconstructs reserves
+        // at the Algebra TWAP tick instead of spot getTotalAmounts. Same window the reservoir collateral oracle uses.
+        if (i.lpTwapWindow != 0) d.navOracle.setLpTwapWindow(i.lpTwapWindow);
         d.navOracle.setXAlphaRateOracle(address(d.rateOracle));
         if (d.navOracle.shareToken() == address(0)) revert SeamNavShareTokenUnset();
     }
@@ -504,7 +540,8 @@ contract DeployZipcode is SummonSubstrate {
         d.hook.transferOwnership(tl); // manual-owner hook (not OZ Ownable)
         d.adapter.transferOwnership(tl);
         d.navOracle.transferOwnership(tl);
-        d.lpOracle.transferOwnership(tl);
+        // The CRE-push lpOracle is OZ-Ownable; the fair-LP oracle is ownerless (immutable params) ⇒ unset here.
+        if (address(d.lpOracle) != address(0)) d.lpOracle.transferOwnership(tl);
         d.rateOracle.transferOwnership(tl);
         d.gate.transferOwnership(tl);
         d.szip.transferOwnership(tl);

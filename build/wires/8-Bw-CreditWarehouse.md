@@ -6,6 +6,13 @@
 > (Build-phase doctrine, §17/2026-06-09: the adapter's cross-component pointers are **Timelock-settable**, not
 > immutable, and ownership is **transferred to the Timelock**, not renounced; re-freeze to immutable is DEFERRED
 > to pre-prod. The older "six immutables" / "renounce" wording in the ticket/report is reconciled here.)
+>
+> Last reconciled against the kept code @ `5f3706d` (2026-06-10). If the contract has moved past that commit,
+> re-diff this doc before trusting its claims.
+
+**In one breath:** a Gnosis Safe holds the EulerEarn shares that back every zipUSD in circulation. A Chainlink
+CRE workflow can move funds between exactly three places — the Safe, the EulerEarn pool, and the redemption
+queue — and nowhere else. This doc maps how that "nowhere else" is enforced.
 
 ## Role
 The **senior-backing custody** — the SENIOR side of the protocol, structurally separate from the junior
@@ -49,7 +56,7 @@ Timelock-re-point seam. The setters re-assert non-zero (and `setRoleKey` re-asse
 | `SUPPLY = 1` | `(uint256 amount)` | `to = eePool`; `IEulerEarn.deposit(amount, safe)` | `receiver = safe` injected |
 | `APPROVE = 2` | `(uint256 amount)` | `to = usdc`; `IERC20.approve(eePool, amount)` | `spender = eePool` injected |
 | `REDEEM = 3` | `(uint256 shares)` | `to = eePool`; `IEulerEarn.redeem(shares, safe, safe)` | `receiver = owner = safe` injected (owner is the **3rd** arg, `EulerEarn.sol:596`) |
-| `REPAY = 4` | `(address dest, uint256 amount)` | `to = usdc`; `IERC20.transfer(dest, amount)` | `dest` is the ONE field carried from the payload — scope-pinned `EqualTo(repaySink)` |
+| `REPAY = 4` | `(address dest, uint256 amount)` | `to = usdc`; `IERC20.transfer(repaySink, amount)` | `dest` asserted `== repaySink` (`revert WrongRepaySink(dest)`), then `repaySink` injected — self-enforced AND scope-pinned `EqualTo(repaySink)` |
 
 Then `emit WarehouseOp(opType, to, data)` and `bool ok = roles.execTransactionWithRole(to, 0, data, OP_CALL,
 roleKey, true); if (!ok) revert RoleExecFailed();`. The three trailing args are **hardcoded literals, never
@@ -78,8 +85,21 @@ root at index 0 = `{parent:0, Calldata(5), Matches(5), ""}`):
 32-byte `abi.encode(address)`. **APPROVE/REPAY amounts are `Pass` (scope-free)** — they vary per op; the CRE
 sizes them, the policy pins only identities. **Tree D's `to` is `EqualTo(repaySink)`, never `Pass`** — a `Pass`
 would let a compromised CRE `transfer` to any address (full drain). The adapter injecting `safe`/`eePool` is
-belt-and-suspenders **with** these pins, not a substitute for them (the qa "scope-is-load-bearing" test drives a
-second role member with redirected params → `ConditionViolation(ParameterNotAllowed)`).
+belt-and-suspenders **with** these pins, not a substitute for them (the qa scope-is-load-bearing tests —
+`contracts/test/WarehouseAdminModule.t.sol` section (6), `test_Scope_PinsParams_*` — drive a **second** role
+member (`MockMember`) through `Roles.execTransactionWithRole` directly with redirected params →
+`ConditionViolation(ParameterNotAllowed)`).
+
+### Compromised-CRE blast radius (the consolidated threat model)
+A fully compromised CRE (or a stolen workflow identity) controls **amounts and timing only**. Every destination
+is pinned by the scope: SUPPLY/REDEEM receiver/owner are `EqualToAvatar` (the Safe), APPROVE's spender is
+`EqualTo(eePool)`, REPAY's `to` is `EqualTo(repaySink)` (the non-sweepable queue), and the Safe itself is never
+a scoped target (no `enableModule` / owner-rotation escalation through the role). The worst cases are therefore
+**griefing, not extraction**: refusing to fund redemptions (the senior exit stalls), shuffling float between the
+Safe and the pool at bad times, or over-filling the queue (USDC parks in the non-sweepable sink, claimable only
+at par by requesters). The residual sharp edge is **unbounded amounts** — a single REDEEM→REPAY can move the
+entire float into the queue — which is exactly what the deferred item-10 drain-defense (row 364c:
+`WithinAllowance` rate-limit and/or Delay Modifier) exists to bound.
 
 ## Wiring — cross-component (who points at whom)
 - **Safe = the EE-share `receiver` for deposits.** The re-authored `ZipDepositModule` zap

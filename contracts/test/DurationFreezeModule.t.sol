@@ -128,12 +128,14 @@ contract MockEulerEarn {
 contract MockNavBasket {
     uint256 public committedValue;
     uint256 public grossBasketValue;
+    uint256 public pathLockedLpEquity; // default 0 -> coverageValue == committedValue (unchanged for legacy tests)
 
     address public zipUSD;
     address public usdc;
     address public xAlpha;
     address public hydx;
     address public oHydx;
+    address public ichiVault; // defaults to address(0) (pre-LP) — keeps the unit suite's 5-leg whitelist
 
     constructor(address z, address u, address x, address h, address oh) {
         zipUSD = z;
@@ -143,9 +145,22 @@ contract MockNavBasket {
         oHydx = oh;
     }
 
+    function setIchiVault(address v) external {
+        ichiVault = v;
+    }
+
     function setValues(uint256 committed, uint256 gross) external {
         committedValue = committed;
         grossBasketValue = gross;
+    }
+
+    function setPathLockedLpEquity(uint256 v) external {
+        pathLockedLpEquity = v;
+    }
+
+    /// @dev 1:1 for clean gate math in the unit suite (dissolving `shares` removes `shares` of coverage value).
+    function lpShareValue(uint256 shares) external pure returns (uint256) {
+        return shares;
     }
 
     function freeValue() external view returns (uint256) {
@@ -224,7 +239,8 @@ abstract contract FreezeBase is Test {
         address ee_,
         address wh_
     ) internal pure returns (bytes memory) {
-        return abi.encode(owner_, main_, side_, op_, oracle_, ee_, wh_);
+        // coverageBps = 1e4 (100% of the liability), dollarBuffer = 0 — the default Phase-1 floor.
+        return abi.encode(owner_, main_, side_, op_, oracle_, ee_, wh_, uint256(1e4), uint256(0));
     }
 
     function _deploy() internal {
@@ -253,6 +269,13 @@ abstract contract FreezeBase is Test {
         // u = (sa-free)*1e18/sa with sa=1e18 -> free = 1e18 - u
         ee.setBacking(1, 1e18, 1e18 - u);
     }
+
+    /// @dev Set the mock EulerEarn so illiquidSeniorValue() == `debtUsd18` (18-dp USD). The module scales the
+    ///      USDC-6dp senior numerator by 1e12, so set `sa = debtUsd18/1e12` (6-dp) and `free = 0`. `debtUsd18` MUST
+    ///      be a clean multiple of 1e12 (use whole-dollar 18-dp values like 60e18).
+    function _setDebt(uint256 debtUsd18) internal {
+        ee.setBacking(1, debtUsd18 / 1e12, 0);
+    }
 }
 
 // =========================================================================================== setUp / ctor suite
@@ -278,6 +301,40 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         assertEq(m.xAlpha(), address(xalpha));
         assertEq(m.hydx(), address(hydx));
         assertEq(m.oHydx(), address(ohydx));
+        // coverage params default to 100% / no buffer
+        assertEq(m.coverageBps(), 1e4);
+        assertEq(m.dollarBuffer(), 0);
+    }
+
+    function test_setUp_rejects_zero_coverageBps() public {
+        DurationFreezeModule x = new DurationFreezeModule();
+        bytes memory bad = abi.encode(
+            owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
+            uint256(0), uint256(0)
+        );
+        vm.expectRevert(DurationFreezeModule.BadParams.selector);
+        x.setUp(bad);
+    }
+
+    function test_setCoverageBps_and_setDollarBuffer_onlyOwner() public {
+        // owner can set; effect lands.
+        vm.prank(owner);
+        m.setCoverageBps(12000);
+        assertEq(m.coverageBps(), 12000);
+        vm.prank(owner);
+        m.setDollarBuffer(5e18);
+        assertEq(m.dollarBuffer(), 5e18);
+        // zero coverageBps rejected.
+        vm.prank(owner);
+        vm.expectRevert(DurationFreezeModule.BadParams.selector);
+        m.setCoverageBps(0);
+        // non-owner rejected (OZ Ownable).
+        vm.prank(rando);
+        vm.expectRevert();
+        m.setCoverageBps(1e4);
+        vm.prank(rando);
+        vm.expectRevert();
+        m.setDollarBuffer(0);
     }
 
     function test_setUp_initializer_once() public {
@@ -410,26 +467,90 @@ contract DurationFreezeModuleMathTest is FreezeBase {
         assertEq(m.requiredFraction(), m.utilization());
     }
 
-    // -------------------------------------------------------------- truncation pin (qa #2)
-    function test_requiredCommittedValue_truncation_pin() public {
-        // sa=3, free=1 -> U = (3-1)*1e18/3 = 666666666666666666 (truncates DOWN)
-        ee.setBacking(1, 3, 1);
-        uint256 u = m.utilization();
-        assertEq(u, uint256(2) * 1e18 / 3, "U truncated down");
-        // requiredFraction == utilization exactly
-        assertEq(m.requiredFraction(), u);
-        // gross = a prime-ish value
-        uint256 gross = 777_777_777; // non-dividing
-        basket.setValues(0, gross);
-        // floor = requiredFraction * gross / 1e18, truncated DOWN
-        uint256 expected = u * gross / 1e18;
-        assertEq(m.requiredCommittedValue(), expected, "exact integer floor (rounding-direction pin)");
+    // -------------------------------------------------------------- debt-pinned floor (Phase 1)
+    function test_illiquidSeniorValue_scales_6dp_to_18dp() public {
+        // sa = 70e6 USDC, free = 0 -> illiquid = 70e6 * 1e12 = 70e18 ($70).
+        ee.setBacking(1, 70e6, 0);
+        assertEq(m.illiquidSeniorValue(), 70e18, "(sa - free) * 1e12");
+        // free >= sa -> 0; sa == 0 -> 0.
+        ee.setBacking(1, 70e6, 70e6);
+        assertEq(m.illiquidSeniorValue(), 0, "free >= sa -> 0");
+        ee.setBacking(0, 70e6, 0);
+        assertEq(m.illiquidSeniorValue(), 0, "no position -> 0");
+    }
+
+    function test_requiredCommittedValue_debt_pinned_at_100pct() public {
+        _setDebt(70e18);
+        basket.setValues(0, 100e18);
+        assertEq(m.requiredCommittedValue(), 70e18, "floor = debt at 100% coverage (< gross)");
+    }
+
+    function test_requiredCommittedValue_capped_at_gross() public {
+        _setDebt(120e18); // debt above gross
+        basket.setValues(0, 100e18);
+        assertEq(m.requiredCommittedValue(), 100e18, "floor capped at gross (cannot freeze more than exists)");
+    }
+
+    function test_requiredCommittedValue_coverageBps_overcollateralizes() public {
+        _setDebt(70e18);
+        basket.setValues(0, 1000e18); // gross high so the cap does not bind
+        vm.prank(owner);
+        m.setCoverageBps(12000); // 120%
+        assertEq(m.requiredCommittedValue(), 84e18, "120% of 70");
+    }
+
+    function test_requiredCommittedValue_dollarBuffer_adds_floor() public {
+        _setDebt(70e18);
+        basket.setValues(0, 1000e18);
+        vm.prank(owner);
+        m.setDollarBuffer(10e18); // max(70, 70 + 10) = 80
+        assertEq(m.requiredCommittedValue(), 80e18, "debt + buffer");
+    }
+
+    /// @dev The KEY anti-drain property: the floor is invariant to shrinking the junior basket (so long as gross
+    ///      stays above it). Shrinking gross from 1000 to 100 leaves the floor at debt=70 — the re-leveling loop has
+    ///      no denominator to game. Contrast the OLD `U × gross` floor, which would have fallen with gross.
+    function test_requiredCommittedValue_invariant_to_basket_shrink() public {
+        _setDebt(70e18);
+        basket.setValues(0, 1000e18);
+        assertEq(m.requiredCommittedValue(), 70e18, "floor = debt at gross 1000");
+        basket.setValues(0, 100e18); // junior basket shrank 10x
+        assertEq(m.requiredCommittedValue(), 70e18, "floor UNCHANGED - debt did not move");
     }
 
     function test_requiredCommittedValue_zero_gross_floor_zero() public {
-        _setU(1e18); // requiredFraction 1.0
+        _setDebt(50e18);
         basket.setValues(0, 0);
-        assertEq(m.requiredCommittedValue(), 0, "gross 0 -> floor 0, no div-by-zero");
+        assertEq(m.requiredCommittedValue(), 0, "gross 0 -> floor 0 (capped), no div issue");
+    }
+
+    function test_covered_true_at_or_above_floor_false_below() public {
+        _setDebt(70e18);
+        basket.setValues(70e18, 100e18); // committed == floor
+        assertTrue(m.covered(), "committed == floor -> covered");
+        basket.setValues(69e18, 100e18); // committed < floor (price-drift breach, NO release)
+        assertFalse(m.covered(), "committed < floor -> not covered");
+    }
+
+    function test_coverageValue_counts_pathLockedLp() public {
+        _setDebt(70e18);
+        basket.setValues(40e18, 100e18); // sidecar liquid = 40
+        basket.setPathLockedLpEquity(50e18); // fenced LP = 50
+        assertEq(m.coverageValue(), 90e18, "committed 40 + LP 50");
+        assertTrue(m.covered(), "90 >= 70 -> covered by LP in place");
+        basket.setPathLockedLpEquity(20e18); // LP mark drops -> coverage 60 < 70
+        assertEq(m.coverageValue(), 60e18);
+        assertFalse(m.covered(), "60 < 70 -> price-drift breach");
+    }
+
+    function test_lpBurnKeepsCovered_excess_bound() public {
+        _setDebt(70e18); // floor 70
+        basket.setValues(40e18, 100e18); // committed 40
+        basket.setPathLockedLpEquity(50e18); // LP 50 -> coverage 90; excess over floor = 20
+        // dissolving 15 (1:1 mock) -> 90 - 15 = 75 >= 70 -> allowed
+        assertTrue(m.lpBurnKeepsCovered(15e18), "dissolve within the 20 excess");
+        // dissolving 25 -> 90 - 25 = 65 < 70 -> NOT allowed (would eat into the floor-backing LP)
+        assertFalse(m.lpBurnKeepsCovered(25e18), "dissolve beyond the excess");
     }
 
     function test_freeValue_is_gross_minus_committed() public {
@@ -554,8 +675,8 @@ contract DurationFreezeModuleRotationTest is FreezeBase {
     }
 
     function test_release_above_floor_succeeds_and_emits() public {
-        // U=0.6 -> requiredFraction 0.6; gross=100 -> floor 60. sidecar holds 80 (real zip), release 10 -> 70 >= 60.
-        _setU(0.6e18);
+        // debt=60 -> floor 60 (100% coverage, < gross 100). sidecar holds 80 (real zip), release 10 -> 70 >= 60.
+        _setDebt(60e18);
         zip.mint(address(sidecar), 80e18);
         // committedValue reflects what sidecar holds AFTER the move; with the MockNavBasket we set it to the
         // post-move value 70, gross 100 (the module reads these post-transfer).
@@ -570,9 +691,21 @@ contract DurationFreezeModuleRotationTest is FreezeBase {
         assertEq(zip.balanceOf(address(sidecar)), 70e18, "sidecar drained by 10");
     }
 
+    function test_release_floor_uses_coverage_incl_pathLockedLp() public {
+        // floor 70. Post-move sidecar committed is only 30 — but the fenced LP adds 50 -> coverage 80 >= 70, so the
+        // release CLEARS even though committedValue alone (30) is below the floor. The LP backs the floor in place.
+        _setDebt(70e18);
+        zip.mint(address(sidecar), 40e18);
+        basket.setValues(30e18, 100e18); // post-move committed 30 (committed alone would breach)
+        basket.setPathLockedLpEquity(50e18); // + LP 50 -> coverage 80
+        vm.prank(operator);
+        m.release(address(zip), 10e18); // 80 >= 70 -> succeeds
+        assertEq(zip.balanceOf(address(mainSafe)), 10e18, "release cleared on coverage incl. LP");
+    }
+
     function test_release_below_floor_reverts_and_rolls_back() public {
-        // U=1.0 -> floor 100% of gross. gross=100, required committed=100. Post-move committed would be 50 < 100.
-        _setU(1e18);
+        // debt=100 == gross -> floor 100. Post-move committed would be 50 < 100.
+        _setDebt(100e18);
         zip.mint(address(sidecar), 100e18);
         basket.setValues(50e18, 100e18); // post-move committed 50 < floor 100
 
@@ -602,8 +735,8 @@ contract DurationFreezeModuleRotationTest is FreezeBase {
     }
 
     function test_release_required_full_sidecar_eq_gross_one_wei_release_reverts() public {
-        // requiredFraction==1e18 with sidecar value == gross: a 1-wei release drops committed below gross -> revert.
-        _setU(1e18); // requiredFraction 1.0
+        // debt >= gross -> floor capped at gross: a 1-wei release drops committed below gross -> revert.
+        _setDebt(100e18); // debt == gross 100 -> floor 100
         zip.mint(address(sidecar), 100e18);
         basket.setValues(100e18 - 1, 100e18); // after a 1-wei release, committed = gross-1 < gross
         vm.prank(operator);
@@ -622,20 +755,20 @@ contract DurationFreezeModuleRotationTest is FreezeBase {
     }
 
     // -------------------------------------------------------------- the autonomous-trigger flip (qa #9)
-    function test_release_U_rise_flips_legal_to_breach() public {
+    function test_release_debt_rise_flips_legal_to_breach() public {
         // sidecar holds 70 (real); a fixed release of 10 -> post-move 60. gross 100.
-        // At U=0.6 floor=60 -> 60>=60 passes. Raise U=0.7 -> floor=70 -> 60<70 reverts (operator call FIXED).
+        // At debt=60 floor=60 -> 60>=60 passes. Raise debt=70 -> floor=70 -> 60<70 reverts (operator call FIXED).
         zip.mint(address(sidecar), 70e18);
-        basket.setValues(60e18, 100e18); // post-move committed 60 (fixed across the U walk)
+        basket.setValues(60e18, 100e18); // post-move committed 60 (fixed across the debt walk)
 
-        _setU(0.6e18);
-        // snapshot then release at U=0.6 (passes), then revert state and re-run at U=0.7 (breach).
+        _setDebt(60e18);
+        // snapshot then release at debt=60 (passes), then revert state and re-run at debt=70 (breach).
         uint256 snap = vm.snapshot();
         vm.prank(operator);
-        m.release(address(zip), 10e18); // passes at U=0.6
+        m.release(address(zip), 10e18); // passes at debt=60
         vm.revertTo(snap);
 
-        _setU(0.7e18);
+        _setDebt(70e18);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(DurationFreezeModule.FreezeFloorBreach.selector, 60e18, 70e18));
         m.release(address(zip), 10e18);
@@ -970,7 +1103,8 @@ contract DurationFreezeModuleInvariantTest is Test {
         m = new DurationFreezeModule();
         m.setUp(
             abi.encode(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse
+                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
+                uint256(1e4), uint256(0)
             )
         );
 
@@ -1069,7 +1203,8 @@ contract DurationFreezeModuleForkTest is ForkConfig, SummonSubstrate {
         bytes memory init = abi.encodeWithSelector(
             DurationFreezeModule.setUp.selector,
             abi.encode(
-                owner, mainSafe, sidecar, operator, address(oracle), address(ee), warehouse
+                owner, mainSafe, sidecar, operator, address(oracle), address(ee), warehouse,
+                uint256(1e4), uint256(0)
             )
         );
         address clone = IModuleProxyFactory(BaseAddresses.ZODIAC_MODULE_PROXY_FACTORY)
@@ -1116,10 +1251,10 @@ contract DurationFreezeModuleForkTest is ForkConfig, SummonSubstrate {
         m.commit(address(zip), 100e18); // freeze everything
         assertEq(oracle.committedValue(), 100e18);
 
-        // now set U high -> requiredFraction 1.0 -> floor == gross == 100. Any release breaches.
-        ee.setBacking(1, 100e18, 0); // free 0 -> U 1.0
-        assertEq(m.requiredFraction(), 1e18);
-        assertEq(m.requiredCommittedValue(), 100e18);
+        // now set debt huge (free 0) -> illiquidSeniorValue >> gross -> floor CAPPED at gross == 100. Any release breaches.
+        ee.setBacking(1, 100e18, 0); // free 0 -> debt = 100e18 * 1e12, capped at gross
+        assertEq(m.requiredFraction(), 1e18); // utilization() retained as the §12 metric
+        assertEq(m.requiredCommittedValue(), 100e18); // floor capped at gross
 
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(DurationFreezeModule.FreezeFloorBreach.selector, 99e18, 100e18));

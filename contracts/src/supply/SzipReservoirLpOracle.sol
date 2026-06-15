@@ -15,8 +15,9 @@ import {ScaleUtils, Scale} from "euler-price-oracle/lib/ScaleUtils.sol";
 ///         and pushed via `_processReport` (reportType `LP_MARK`); a stale/missing mark FAILS THE BORROW CLOSED
 ///         (`_getQuote` reverts → the EVC account-status check reverts). Differences from the registry: a single fixed
 ///         key (`lpToken`, not a per-key map), the dedicated `LP_MARK` reportType, and NO controller-seed path (the
-///         only writer is the Forwarder push). The inherited OZ-5 Ownable is renounced at deploy — re-pointing is the
-///         router governor's job (the retained §17 Timelock), not an oracle-local owner.
+///         only writer is the Forwarder push). The inherited OZ-5 Ownable is transferred to the §17 Timelock at deploy
+///         (`transferOwnership(tl)` in the deploy script) — NOT renounced: the three build-phase re-point setters
+///         (`setQuote`/`setLpToken`/`setValidityWindow`) stay live behind the Timelock until they are frozen pre-prod.
 contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
     /// @notice The ICHI LP share decimals (18-dp). The base must be exactly this key.
     uint8 public constant LP_DECIMALS = 18;
@@ -67,6 +68,7 @@ contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
     constructor(address forwarder, address quote_, uint256 validityWindow_, address lpToken_)
         ReceiverTemplate(forwarder)
     {
+        if (quote_ == address(0) || lpToken_ == address(0)) revert ZeroAddress();
         quote = quote_;
         lpToken = lpToken_;
         validityWindow = validityWindow_;

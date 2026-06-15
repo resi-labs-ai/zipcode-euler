@@ -29,4 +29,21 @@ interface IICHIVault {
     function allowToken0() external view returns (bool);
 
     function allowToken1() external view returns (bool);
+
+    // -- position introspection (for fair-value reconstruction; verified on-chain 2026-06-14 against
+    //    vault 0xfF8B29e9f536F9A43DA7868011b7B667fa8d73f7, pool 0x51f0…D3D2) --
+    /// @notice The Algebra pool the vault provides liquidity to.
+    function pool() external view returns (address);
+
+    /// @notice The base position's `(liquidity, amount0, amount1)` (amounts at the pool's CURRENT tick).
+    function getBasePosition() external view returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    /// @notice The limit position's `(liquidity, amount0, amount1)` (amounts at the pool's CURRENT tick).
+    function getLimitPosition() external view returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    /// @notice Base/limit position tick bounds (the AMM range each position is minted across).
+    function baseLower() external view returns (int24);
+    function baseUpper() external view returns (int24);
+    function limitLower() external view returns (int24);
+    function limitUpper() external view returns (int24);
 }
