@@ -19,7 +19,7 @@ documented blast radius) are excluded from findings and listed separately as pos
 | 8 | MED | high | szipUSD | Coverage gate defaults OFF (`coverageGate==0`) leaves buy-burn outflow + LP dissolution unfenced |
 | 9 | LOW | high | szipUSD | `requiredCommittedValue` gross-cap can make `covered()` permanently false → bricks release/postBid/removeLiquidity |
 | 10 | LOW | high | venue | `openLine` atomicity silently depends on un-asserted EulerEarn preconditions (zero timelock + perspective allow-list) |
-| 11 | LOW | high | bridge | CCT TokenAdminRegistry admin left as the transient deploy contract, never handed to Timelock → pool re-point bricked |
+| 11 | LOW | high | bridge | CCT TokenAdminRegistry admin left as the transient deploy contract, never handed to Timelock → pool re-point bricked — ✅ RESOLVED 2026-06-15 (SEC-03, escalated to H4) |
 | 12 | LOW | med | szipUSD | NAV-freshness `validTo` fence permits a fill against an effectively-stale mark at the edge of the bid window |
 
 **Cross-cutting theme:** the protocol enforces freshness/monotonicity on *some* oracle read surfaces
@@ -167,7 +167,8 @@ coverage/freeze decisions.
   off-contract EE settings with no birth-time assert analogous to `_assertWired`. **fix:** defensive
   precondition check / deploy-time assert.
 
-### 11. CCT TokenAdminRegistry admin left as the transient deploy contract
+### 11. CCT TokenAdminRegistry admin left as the transient deploy contract — ✅ RESOLVED 2026-06-15 (SEC-03)
+- **RESOLVED 2026-06-15 (SEC-03 / kill-list H4, escalated to HIGH via ref-B2):** explicit `transferAdminRole(<durable>)` added to `deploy964`+`deployBase` (964→`ccipAdmin`, Base→`timelock`) + the 2-step `acceptAdminRole` runbook; `ICctRegistry` extended with `transferAdminRole`/`getTokenConfig`; the assert now checks `pendingAdministrator`. See ref-B2 + `reports/SEC-03-report.md`.
 - `SzAlpha`/`DeploySzAlphaBridge` — `script/DeploySzAlphaBridge.s.sol:120-131`; `src/bridge/SzAlpha.sol:301-310`
 - access-control. The registry-level token administrator (which can call `setPool`/`transferAdminRole`)
   is set to the deploy-script contract and never handed to the Timelock; `setCCIPAdmin` only changes a

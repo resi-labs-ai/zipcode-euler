@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-03 — CCIP admin handoff (H4).** Ticket: `build/tickets/sec/SEC-03-ccip-admin-handoff.md`.
-- **Deliverable:** `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + `pendingAdministrator` assert.
-- **Source:** `build/kill-list.md` H4. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC03_*` regression; test output quoted in the ticket.
+**SEC-04 — `_xAlphaUSD()` fail-close on unseeded rate (H5).** Ticket: `build/tickets/sec/SEC-04-xalphausd-fail-close.md`.
+- **Deliverable:** fail-closed in `_xAlphaUSD()` (`SzipNavOracle.sol`) — `if (rate == 0) revert RateUnseeded();` — keep the §7 asymmetry (do NOT gate exit/coverage on `fresh()`).
+- **Source:** `build/kill-list.md` H5. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC04_*` regression; test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 are DONE (2026-06-15); SEC-03 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 are DONE (2026-06-15); SEC-04 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -40,8 +40,8 @@ doc/comment-only (no regression test).
 |---|---|---|---|
 | SEC-01 | Group 1 (H1/M1/L3) | Oracle monotonic-timestamp guard at 3 write sites + `error StaleReport()` decls | **DONE 2026-06-15** — `sec/SEC-01-oracle-monotonic-guard.md` |
 | SEC-02 | Group 2 (M2/L14/L1) | Coverage sidecar-LP double-count — scope oracle `pathLockedLpEquity()` mainSafe-only | **DONE 2026-06-15** — `sec/SEC-02-coverage-sidecar-lp-double-count.md` |
-| SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **NEXT** — `sec/SEC-03-ccip-admin-handoff.md` |
-| SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **TICKETED** — `sec/SEC-04-xalphausd-fail-close.md` |
+| SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **DONE 2026-06-15** — `sec/SEC-03-ccip-admin-handoff.md` |
+| SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **NEXT** — `sec/SEC-04-xalphausd-fail-close.md` |
 | SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **TICKETED** — `sec/SEC-05-seal-lporacle-identity.md` |
 | SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **TICKETED** — `sec/SEC-06-closeline-queue-prune.md` |
 | SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **TICKETED** — `sec/SEC-07-closeline-defund-to-base.md` |
@@ -58,6 +58,32 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-03 (2026-06-15)
+**CCIP `TokenAdminRegistry` registry-admin handoff closed** (kill-list H4, escalated DECIDE→FIX HIGH via audit
+ref-B2 / finding #11). `DeploySzAlphaBridge` accepted the registry `administrator` role onto the ephemeral deploy
+Script (to wire `setPool` in-broadcast) and never handed it on — `setCCIPAdmin` only mutates the token's
+`getCCIPAdmin()` view, which the registry consumed once at registration and never re-reads. So post-deploy the
+pool could never be re-pointed/delisted (RMN/CCIP upgrade, incident response), and the `:131`
+`getCCIPAdmin()==ccipAdmin` assert gave false confidence on the wrong slot.
+- **Fix (3 files):** extended `ICctRegistry.ITokenAdminRegistry` with `transferAdminRole` + `TokenConfig`/
+  `getTokenConfig` (reference field names); `deploy964` now `transferAdminRole(token, ccipAdmin)` and `deployBase`
+  `transferAdminRole(token, timelock)` after `setPool` (the durable authority each chain's `setCCIPAdmin` already
+  intends — kept `setCCIPAdmin` for `getCCIPAdmin()` alignment per the Do-NOT). The `:131` assert is **replaced**
+  by `getTokenConfig(token).pendingAdministrator == ccipAdmin` (analogue added to `deployBase`). The 2-step
+  `acceptAdminRole` is documented as a mandatory post-deploy runbook step in both functions' NatDoc.
+- **Per-chain target note:** the kill-list's "timelock both chains" was shorthand; the real durable target is
+  964→`ccipAdmin`, Base→`timelock`. Both critics (spec-fidelity, reference-verifier) PASS on this reading.
+- **Gate green:** `forge build` clean; new `SzAlphaAdminHandoffTest` (`test/bridge/SzAlphaBridge.t.sol`, 2
+  `test_SEC03_*`) drives `deploy964`/`deployBase` against a mock CCT stack etched at the script's hard-coded
+  addresses (new `MockTokenAdminRegistry`/`MockRegistryModuleOwnerCustom`/`MockTokenPoolFactory` in
+  `BridgeMocks.sol`) — asserts the script is still `administrator` pre-accept AND `pendingAdministrator==<durable>`,
+  then runs the runbook `acceptAdminRole` → durable is sole admin + the script's `setPool` reverts. **Fail-before/
+  pass-after confirmed** (removing the two `transferAdminRole` calls → `registry admin handoff failed` on both).
+  Full suite **769 passed / 0 failed / 3 skipped** (+2 over SEC-02's 767). **No spec change** (interface-level
+  deploy fix; intent unchanged). **No back-pressure** (no contract surface owed — the fix is the deploy script
+  using a real reference registry method). New standing runbook obligation logged below.
+  Ticket (full output): `build/tickets/sec/SEC-03-ccip-admin-handoff.md`. Report: `build/reports/SEC-03-report.md`.
 
 ### Just done — SEC-02 (2026-06-15)
 **Coverage sidecar-LP double-count closed** (kill-list Group 2: M2 + L14 + the real content of L1). One-line scope
@@ -357,6 +383,16 @@ track on it.
 ---
 
 ## Open obligations / seams
+
+- **RUNBOOK (raised 2026-06-15, SEC-03) — durable admin MUST `acceptAdminRole` post-deploy to finalize the CCT
+  registry-admin handoff (both chains).** `DeploySzAlphaBridge` hands the `TokenAdminRegistry` administrator to the
+  durable authority via a 2-step `transferAdminRole` (964 → `ccipAdmin`, Base → `timelock`) but cannot accept on
+  its behalf mid-broadcast. So after `deploy964`/`deployBase`, the durable authority MUST call
+  `ITokenAdminRegistry(tokenAdminRegistry).acceptAdminRole(token)` to become the registry `administrator`. Until it
+  does, the ephemeral deploy Script remains a live registry admin — the one residual interruption window; accept
+  promptly and verify `getTokenConfig(token).administrator == <durable>`. Documented in both deploy functions'
+  NatDoc + `build/wires/8x-01-szALPHA-bridge.md` (Item-10 deploy facts step 4b). Not a contract change owed; an
+  operational deploy-runbook step.
 
 - **TODO (raised 2026-06-15, SEC-01) — CRE-01 must not co-locate two same-lien `seedPrice` writes in one block.**
   The oracle monotonic guard (SEC-01) lives in `ZipcodeOracleRegistry._writePrice` and rejects a write whose `ts` is

@@ -34,16 +34,25 @@ interface ITokenAdminRegistry {
     function acceptAdminRole(address localToken) external;
     function setPool(address localToken, address pool) external;
     function getPool(address token) external view returns (address);
+    // SEC-03/H4: 2-step registry-admin handoff.
+    struct TokenConfig { address administrator; address pendingAdministrator; address tokenPool; }
+    function transferAdminRole(address localToken, address newAdmin) external;
+    function getTokenConfig(address token) external view returns (TokenConfig memory);
 }
 ```
 
 **Consumed by.** `contracts/script/DeploySzAlphaBridge.s.sol` only (the `_wire` step:
-`registerAdminViaGetCCIPAdmin` → `acceptAdminRole` → `setPool`; `getPool` is read in the deploy asserts).
+`registerAdminViaGetCCIPAdmin` → `acceptAdminRole` → `setPool` → **`transferAdminRole`** to the durable
+authority; `getPool` + **`getTokenConfig`** are read in the deploy asserts).
 
 **Gotchas.** Self-registration goes via `registerAdminViaGetCCIPAdmin` (NOT `registerAdminViaOwner`): the
 canonical `BurnMintERC20` Base mirror is AccessControl-based with no `owner()`, and `SzAlpha.owner()` is the
 TimelockController from genesis — so the CCIP admin is a *separate* `ccipAdmin` role returned by
-`getCCIPAdmin()` (caller must equal it). See `reports/8x-01-report.md`.
+`getCCIPAdmin()` (caller must equal it). **SEC-03/H4:** `setCCIPAdmin` only mutates that token-level
+`getCCIPAdmin()` view — it does NOT move the registry `TokenConfig.administrator` slot (which only
+`transferAdminRole`/`acceptAdminRole` change). The deploy script now `transferAdminRole`s the registry admin to
+the durable authority (964→ccipAdmin, Base→timelock) and asserts `pendingAdministrator`; that authority must
+`acceptAdminRole` post-deploy to finalize (2-step, runbook). See `reports/8x-01-report.md` + `SEC-03-report.md`.
 
 ---
 

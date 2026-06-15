@@ -52,7 +52,7 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
 | `src/bridge/SzAlphaTokenPool.sol` (`is BurnMintTokenPool`) | Base only | Same S8/S9 ctor asserts; hooks pinned. `typeAndVersion() = "SzAlphaTokenPool 1.0.0"`. |
 | `script/DeploySzAlphaBridge.s.sol` (`is Script`) | both | `deploy964` / `deployBase` / `seedDeposit` / `setRemoteLane` + the assert battery (incl. the 964 Alpha-precompile probe). Holds the verified 964 + Base CCT address books. |
 | `src/interfaces/bridge/ISubtensorPrecompiles.sol` | — | Minimal local `IStakingV2` (`addStake`/`removeStake`/`getStake`) + `IAlpha` (`getAlphaPrice`/`getMovingAlphaPrice`/`simSwapTaoForAlpha`/`simSwapAlphaForTao`) + `IAddressMapping` — **selectors only**, never used as a call target. Units pinned per function. |
-| `src/interfaces/bridge/ICctRegistry.sol` | — | Minimal `IRegistryModuleOwnerCustom.registerAdminViaGetCCIPAdmin` + `ITokenAdminRegistry.{acceptAdminRole,setPool,getPool}`. |
+| `src/interfaces/bridge/ICctRegistry.sol` | — | Minimal `IRegistryModuleOwnerCustom.registerAdminViaGetCCIPAdmin` + `ITokenAdminRegistry.{acceptAdminRole,setPool,getPool,transferAdminRole,getTokenConfig}` (the last two added SEC-03/H4 for the 2-step registry-admin handoff). |
 | `src/interfaces/bridge/IXAlphaRate.sol` | — | The `exchangeRate()` face the NAV oracle (8-B4) + CRE-03 (8x-02) read. |
 
 ## Wiring — internal (per chain)
@@ -124,14 +124,19 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
   our netuid — proves address, uint16 netuid, 9-dp sims, and the subnet pool in one read; auto-skipped
   off-964) → deploy `SzAlpha` impl + proxy (owner=timelock, **ccipAdmin=the script** so `acceptAdminRole`
   can run in-tx) → `new ERC20LockBox(token)` → `new SzAlphaLockReleasePool(...)` → authorize the pool on the
-  lockbox → register via `registerAdminViaGetCCIPAdmin` → `acceptAdminRole` → `setPool` → hand off:
-  `setCCIPAdmin(ccipAdmin)` + `lockBox.transferOwnership(timelock)` (**2-step** — the timelock must
-  `acceptOwnership()`, a runbook step) → asserts.
+  lockbox → register via `registerAdminViaGetCCIPAdmin` → `acceptAdminRole` → `setPool` →
+  **`transferAdminRole(token, ccipAdmin)` (SEC-03/H4: hand the REGISTRY admin to the durable ccipAdmin — 2-step,
+  the ccipAdmin must `acceptAdminRole` post-deploy)** → hand off: `setCCIPAdmin(ccipAdmin)` (aligns the token's
+  `getCCIPAdmin()` view) + `lockBox.transferOwnership(timelock)` (**2-step** — the timelock must
+  `acceptOwnership()`, a runbook step) → asserts (incl. **`getTokenConfig(token).pendingAdministrator==ccipAdmin`**,
+  NOT the old false-confidence `getCCIPAdmin()==ccipAdmin` view check).
 - **`seedDeposit(token)` payable:** the genesis seed (run immediately after `deploy964`; ~1 TAO). Closes the
   first-depositor griefing window; the seed shares are a burnt cost — transfer them to `0xdead` per runbook.
 - **`deployBase(timelock)`:** `_assertCctAddresses(baseConfig())` → `new SzAlphaMirror` → pool →
-  `grantMintAndBurnRoles(pool)` → register → accept → `setPool` → asserts → hand the mirror's authority to
-  the timelock and revoke the deployer.
+  `grantMintAndBurnRoles(pool)` → register → accept → `setPool` → **`transferAdminRole(token, timelock)` (SEC-03/H4:
+  hand the REGISTRY admin to the durable timelock — 2-step `acceptAdminRole` runbook)** → asserts (incl.
+  **`getTokenConfig(token).pendingAdministrator==timelock`**) → hand the mirror's authority (ccipAdmin view +
+  `DEFAULT_ADMIN_ROLE`) to the timelock and revoke the deployer.
 - **`setRemoteLane(...)`:** one `TokenPool.ChainUpdate` → `applyChainUpdates`. Run once both chains' pools
   exist, per direction, under the timelock.
 - **The 5-address re-read battery** (`_assertCctAddresses`) re-reads `typeAndVersion()` for router / TAR /
@@ -166,6 +171,12 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
    un-fork-testable here (no public Subtensor fork node).
 3. **Run `seedDeposit` (~1 TAO) immediately after**, before announcing; transfer the seed shares to `0xdead`.
 4. **Timelock accepts lockbox ownership** (`lockBox.acceptOwnership()` — 2-step handoff from the script).
+4b. **Durable admin finalizes the REGISTRY-admin handoff (SEC-03/H4 — MANDATORY).** The deploy script
+   `transferAdminRole`s the `TokenAdminRegistry` administrator to the durable authority (964 → `ccipAdmin`,
+   Base → `timelock`) but cannot accept on its behalf mid-broadcast, so that authority MUST call
+   `ITokenAdminRegistry(tokenAdminRegistry).acceptAdminRole(token)` post-deploy. Until it does, the ephemeral
+   deploy Script remains a live registry admin — the one residual interruption window; accept promptly. Verify
+   `getTokenConfig(token).administrator == <durable>` after.
 5. **Wire the lane.** Once BOTH pools exist, call `setRemoteLane` per direction with ops-decided rate
    limits, under the timelock. Then transfer pool ownership to the timelock (2-step `Ownable2Step`).
 6. ~~Calibrate denomination~~ **RESOLVED:** the unit table above is verified against the live runtime

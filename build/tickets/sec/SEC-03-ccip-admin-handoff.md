@@ -2,7 +2,7 @@
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` H4 (escalated DECIDE→FIX, HIGH);
 audit `role-based-findings.md`, `reference-diff-findings.md`; `reference/chainlink-ccip/.../tokenAdminRegistry/TokenAdminRegistry.sol` ·
-**Status:** PROPOSED
+**Status:** DONE 2026-06-15
 
 > Scope authored 2026-06-15. Pass-2 escalated this to HIGH: the CCIP admin loss is **guaranteed on every
 > deploy, both chains** — not an interruption-window risk. The "atomic deploy + runbook" option is NOT
@@ -87,3 +87,54 @@ After deploy nobody can ever re-point or delist the pool (RMN/CCIP upgrades, inc
 ## Depends on
 - None. On land: `PROGRESS.md` "Just done — SEC-03" with the finding note + the standing runbook obligation
   (durable admin must `acceptAdminRole` post-deploy).
+
+---
+
+## DONE-note (2026-06-15)
+**Implemented exactly as ticketed.** The registry-admin handoff is now an explicit 2-step `transferAdminRole`,
+the false-confidence assert is replaced by a `pendingAdministrator` check, and the mandatory `acceptAdminRole`
+runbook is documented in both deploy functions' NatDoc.
+
+**Changes (3 files):**
+- `src/interfaces/bridge/ICctRegistry.sol` — extended `ITokenAdminRegistry` with
+  `transferAdminRole(address,address)` + `struct TokenConfig{administrator,pendingAdministrator,tokenPool}` +
+  `getTokenConfig(address) returns(TokenConfig memory)` (reference field names/order). Kept the existing
+  selectors; updated the header note.
+- `script/DeploySzAlphaBridge.s.sol` —
+  - `deploy964`: after `setPool`, `transferAdminRole(token, ccipAdmin)`; kept `setCCIPAdmin(ccipAdmin)`;
+    **replaced** the `:131` `getCCIPAdmin()==ccipAdmin` require with
+    `getTokenConfig(token).pendingAdministrator == ccipAdmin`; runbook in NatDoc.
+  - `deployBase`: after `setPool`, `transferAdminRole(token, timelock)`; kept `setCCIPAdmin(timelock)`; **added**
+    `getTokenConfig(token).pendingAdministrator == timelock` assert; runbook in NatDoc.
+- `test/bridge/BridgeMocks.sol` — added `MockTokenAdminRegistry` (records admin/pending/pool; `onlyTokenAdmin`
+  on `setPool`/`transferAdminRole`; module-gated `proposeAdministrator`; pending-gated `acceptAdminRole`;
+  `getTokenConfig`; identity strings are `constant` to survive `vm.etch`), `MockRegistryModuleOwnerCustom`
+  (`immutable` registry pointer, `registerAdminViaGetCCIPAdmin` → self-register → `proposeAdministrator`),
+  `MockTokenPoolFactory` (typeAndVersion only), and `typeAndVersion()` on `MockRouter`.
+- `test/bridge/SzAlphaBridge.t.sol` — new `SzAlphaAdminHandoffTest`: etches the mock CCT infra at the
+  deploy script's hard-coded addresses (both chains), drives `deploy964`/`deployBase`, asserts the script is
+  still `administrator` pre-accept AND `pendingAdministrator == <durable>`, then runs the runbook
+  `acceptAdminRole` and asserts the durable authority is the sole admin + the script's `setPool` reverts.
+
+**Per-chain target (note for the reviewer):** the kill-list H4 prose says `transferAdminRole(token, timelock)` on
+both chains + `pendingAdministrator==timelock` — that "timelock" is shorthand. The actual durable target is
+per-chain (964 → `ccipAdmin`, Base → `timelock`), the SAME authority each chain's existing `setCCIPAdmin`
+already hands to. Spec-fidelity + reference-verifier critics both PASS on this reading.
+
+**Gate (quoted `forge test`):**
+- `cd contracts && forge build` → **BUILD CLEAN**.
+- `forge test --match-contract SzAlphaAdminHandoffTest`:
+  ```
+  Ran 2 tests for test/bridge/SzAlphaBridge.t.sol:SzAlphaAdminHandoffTest
+  [PASS] test_SEC03_deploy964_handsRegistryAdminToCcipAdmin() (gas: 9304020)
+  [PASS] test_SEC03_deployBase_handsRegistryAdminToTimelock() (gas: 6854618)
+  Suite result: ok. 2 passed; 0 failed; 0 skipped
+  ```
+- **Fail-before/pass-after confirmed:** removing only the two `transferAdminRole` calls →
+  `[FAIL: registry admin handoff failed]` on both (pre-fix `pendingAdministrator == address(0)`).
+- Full suite: **769 passed / 0 failed / 3 skipped** (the 3 are the pre-existing `DeployZipcode.t.sol` skips;
+  +2 over SEC-02's 767).
+
+**Standing runbook obligation (logged in PROGRESS Open obligations):** the durable admin (964 `ccipAdmin`,
+Base `timelock`) MUST call `acceptAdminRole(token)` post-deploy; until then the ephemeral script remains a live
+registry admin (the one residual interruption window).

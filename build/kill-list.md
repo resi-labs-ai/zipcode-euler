@@ -93,12 +93,20 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   probe vault built identically to `openLine`'s.
 
 ### Standalone FIX
-- [ ] **H4** (HIGH) — *overturned from DECIDE.* Registry `administrator` is left as the deploy Script on
+- [x] **H4** (HIGH) — *overturned from DECIDE.* Registry `administrator` is left as the deploy Script on
   both chains (`DeploySzAlphaBridge.s.sol:121,162`); `setCCIPAdmin` (`:126`) only mutates `getCCIPAdmin()`, which
   the registry never re-reads. Pool can never be re-pointed/delisted. The `:131` assert checks only
   `getCCIPAdmin` → false confidence. **Fix:** add `transferAdminRole(localToken,newAdmin)` to `ICctRegistry`,
   call `transferAdminRole(token, timelock)` in `deploy964`+`deployBase`, document the timelock `acceptAdminRole`
-  runbook step (2-step, unavoidable), and assert `pendingAdministrator==timelock`.
+  runbook step (2-step, unavoidable), and assert `pendingAdministrator==timelock`. **DONE 2026-06-15 (SEC-03).**
+  Per-chain durable target (the kill-list's "timelock both chains" was shorthand): **964 → `ccipAdmin`**, **Base →
+  `timelock`** — the same durable authority each chain's existing `setCCIPAdmin` already intends (`setCCIPAdmin`
+  kept, aligns `getCCIPAdmin()` for future re-registration). Extended `ICctRegistry.ITokenAdminRegistry` with
+  `transferAdminRole` + `TokenConfig`/`getTokenConfig`; replaced the `:131` false-confidence `getCCIPAdmin` assert
+  with `getTokenConfig(token).pendingAdministrator == <durable>` (added analogue to `deployBase`); runbook
+  `acceptAdminRole` documented in both functions' NatDoc + the report (the one residual interruption window).
+  Regression: `test/bridge/SzAlphaBridge.t.sol::SzAlphaAdminHandoffTest` (2 `test_SEC03_*`, mock CCT infra etched
+  at the hard-coded addresses) — fail-before/pass-after confirmed. **Standing runbook obligation logged in PROGRESS.**
 - [ ] **H5** (HIGH-ish) — *DECIDE resolved → fail-close only, keep the asymmetry.* `_xAlphaUSD()`
   (`SzipNavOracle.sol:508-514`) returns 0 when the rate is unseeded (`exchangeRate()==0` never reverts), silently
   underpricing xALPHA in three ungated consumers: `navExit`, `coverageValue`, and `ExitGate` tvlCap. **Fix:**
