@@ -29,6 +29,10 @@ library ZipcodeDeployAsserts {
     ///         unseeded (F7 brick) — a `renounceOwnership()` here is fail-closed BLOCKED.
     error IdentityNotWired(address controller, address registry);
 
+    /// @notice A single `ReceiverTemplate` (here: the un-looped CRE-push `lpOracle`) whose workflow identity is
+    ///         unset — its dormant-identity check would let any co-tenant Forwarder workflow push its mark (M4).
+    error ReceiverIdentityNotWired(address receiver);
+
     /// @notice The combined fail-closed S11 pre-gate. Reverts `IdentityNotWired` if EITHER the controller's
     ///         `getExpectedWorkflowId()` is `bytes32(0)` (identity unset) OR the registry's `controller()` is
     ///         `address(0)` (registry unseedable). Passes only when BOTH are wired.
@@ -40,5 +44,17 @@ library ZipcodeDeployAsserts {
             IReceiverIdentity(controller).getExpectedWorkflowId() == bytes32(0)
                 || IOracleRegistryController(registry).controller() == address(0)
         ) revert IdentityNotWired(controller, registry);
+    }
+
+    /// @notice Fail-closed per-receiver identity gate for a `ReceiverTemplate` NOT covered by the S10b
+    ///         "same WORKFLOW_ID on every subclass" assumption of `requireIdentityWired`. Reverts
+    ///         `ReceiverIdentityNotWired` when the receiver's `getExpectedWorkflowId()` is `bytes32(0)`
+    ///         (dormant identity ⇒ any co-tenant Forwarder workflow can push its mark, M4).
+    /// @param receiver The un-looped CRE-push `SzipReservoirLpOracle` (the deploy guards the call on
+    ///        `lpOracle != address(0)`; the fair-LP branch has no identity surface to assert).
+    function requireReceiverIdentityWired(address receiver) internal view {
+        if (IReceiverIdentity(receiver).getExpectedWorkflowId() == bytes32(0)) {
+            revert ReceiverIdentityNotWired(receiver);
+        }
     }
 }

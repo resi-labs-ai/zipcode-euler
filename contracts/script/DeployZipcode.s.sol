@@ -529,9 +529,18 @@ contract DeployZipcode is SummonSubstrate {
         _sealIdentity(address(d.coord));
         _sealIdentity(address(d.navOracle));
         _sealIdentity(address(d.rateOracle));
+        // The CRE-push lpOracle is a `ReceiverTemplate` too, but it is NOT in the S10b same-WORKFLOW_ID loop the
+        // pre-gate's "representative controller" assertion covers — seal it explicitly (M4 dormant-identity). The
+        // fair-LP branch leaves `d.lpOracle == address(0)` (an ownerless `AlgebraIchiFairLpOracle`, no identity).
+        if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle));
 
         // 31. the fail-closed pre-gate (identity unset OR registry controller unset => revert).
         ZipcodeDeployAsserts.requireIdentityWired(address(d.controller), address(d.registry));
+        // ...and the un-looped lpOracle's identity, explicitly (the representative-controller assert above does
+        // not cover it). Conditional on the CRE-push branch — the fair-LP oracle has no identity surface (M4).
+        if (address(d.lpOracle) != address(0)) {
+            ZipcodeDeployAsserts.requireReceiverIdentityWired(address(d.lpOracle));
+        }
 
         // 32. transferOwnership(timelock) on every owned contract — NOT renounce (build-phase §17).
         address tl = address(d.timelock);
