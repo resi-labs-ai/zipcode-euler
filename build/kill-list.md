@@ -107,12 +107,16 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   `acceptAdminRole` documented in both functions' NatDoc + the report (the one residual interruption window).
   Regression: `test/bridge/SzAlphaBridge.t.sol::SzAlphaAdminHandoffTest` (2 `test_SEC03_*`, mock CCT infra etched
   at the hard-coded addresses) — fail-before/pass-after confirmed. **Standing runbook obligation logged in PROGRESS.**
-- [ ] **H5** (HIGH-ish) — *DECIDE resolved → fail-close only, keep the asymmetry.* `_xAlphaUSD()`
-  (`SzipNavOracle.sol:508-514`) returns 0 when the rate is unseeded (`exchangeRate()==0` never reverts), silently
+- [x] **H5** (HIGH-ish) — *DECIDE resolved → fail-close only, keep the asymmetry.* `_xAlphaUSD()`
+  (`SzipNavOracle.sol:517-525`) returns 0 when the rate is unseeded (`exchangeRate()==0` never reverts), silently
   underpricing xALPHA in three ungated consumers: `navExit`, `coverageValue`, and `ExitGate` tvlCap. **Fix:**
   fail-closed in `_xAlphaUSD()` — `if (rate == 0) revert RateUnseeded();`. **Decision: do NOT gate exit/coverage
   on `fresh()`** — that breaks the deliberate §7 max-entry/min-exit (last-good-mark) asymmetry; failing closed on
-  *unseeded* (≠ stale) is the correct, narrow fix.
+  *unseeded* (≠ stale) is the correct, narrow fix. **DONE 2026-06-15 (SEC-04).** `error RateUnseeded()` declared
+  + the `rate == 0` guard in the shared `_xAlphaUSD()`; all four named consumers inherit it (navExit /
+  grossBasketValue / freeze coverageValue / ExitGate deposit). Regression: 5 `test_SEC04_*` across
+  `SzipNavOracle.t.sol` (unseeded fail-close + seeded-correct + asymmetry-preserved), `DurationFreezeModule.t.sol`
+  (real freeze coverageValue), `ExitGate.t.sol` (real deposit path) — fail-before/pass-after confirmed.
 - [ ] **M4** (MED) · `SzipReservoirLpOracle` deployed with zero author/workflowId so its CRE identity check is
   skipped; the P9 seal loop omits it (`DeployZipcode.s.sol:526-531`). Default mainnet path (`LP_TWAP_WINDOW=0`)
   is the vulnerable one. **Fix:** `if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle));`

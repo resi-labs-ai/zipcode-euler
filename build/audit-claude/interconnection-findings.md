@@ -6,13 +6,22 @@ seams, and escalated the xALPHA-rate issue to HIGH by tracing its full cross-cha
 
 ## HIGH
 
-### C1 — xALPHA rate freshness gate is wired into issuance only, NOT into the coverage/exit/release path
+### C1 — xALPHA rate freshness gate is wired into issuance only, NOT into the coverage/exit/release path — ✅ PARTIALLY RESOLVED 2026-06-15 (SEC-04)
 - **flow:** bridge → rate → NAV → coverage. **contracts:** `SzAlphaRateOracle` → `SzipNavOracle._xAlphaUSD`/`grossBasketValue`/`navExit`/`committedValue`/`pathLockedLpEquity` → `DurationFreezeModule.coverageValue`/`covered`/`release` → `SzipBuyBurnModule`/`LpStrategyModule`.
 - **location:** `SzipNavOracle.sol:508-514` (`_xAlphaUSD`, no freshness) vs `:476,492` (gate exists only in `navEntry`/`fresh`); `DurationFreezeModule.sol:319-321,344-360,405-423`.
 - **class:** cross-chain rate-lag / freshness-gate-bypass · **severity: HIGH · confidence: high** (escalation of #6 / R2)
 - **invariant_broken:** §4.8 "`release` cannot drop coverage below the senior liability floor"; §4.10 "consumers fail-closed on staleness via `fresh()`."
 - **interaction:** the freeze floor `requiredCommittedValue()` is **rate-independent** (USDC from EulerEarn), but `coverageValue()` is **rate-dependent** (xALPHA sidecar balance + the zipUSD/xALPHA LP leg, both via `_xAlphaUSD`). The `StaleRate`/`fresh()` gate is absent from this path. So during the cross-chain push lag after a validator slash (the rate oracle is strictly-newer + no deviation band, so the stale-HIGH rate is served until the next push) — or whenever the rate is 0 (never-pushed) — `coverageValue` is over-stated, `covered()` returns true, and `release` opens the freeze hatch (rotates committed xALPHA/LP into the exit-reachable main Safe) and buy-burn/LP-dissolution proceed **below the true floor**. The TWAP-lag defense the spec relies on does not protect against an *upward-stale* rate feeding exit. This is the rate version of the coverage-floor break, with the full 964→Base→NAV→coverage path traced.
 - **fix:** gate every `_xAlphaUSD` consumer (or `covered()`/`release()`) on `xAlphaRateOracle.fresh()`; treat `exchangeRate()==0` as fail-closed.
+- **PARTIALLY RESOLVED 2026-06-15 (SEC-04 / kill-list H5).** The **`exchangeRate()==0` (never-pushed)** half is fixed:
+  `error RateUnseeded()` + `if (rate == 0) revert` in the shared `_xAlphaUSD()` — `coverageValue`/`covered`/`release`/
+  exit/tvlCap now ALL fail-closed on the genesis zero rather than reading an understated basket. The **stale-HIGH
+  (moving-rate) half is INTENTIONALLY left open**: gating exit/coverage on `fresh()` was the kill-list's explicit
+  DECIDE→reject (it breaks the §7 max-entry/min-exit last-good-mark asymmetry, ratified in `exit-topology-intentional`).
+  So the upward-stale-after-slash scenario in this finding is NOT closed by SEC-04 and is accepted as residual — the
+  TWAP-lag (`min(spot,twap)`) + the per-push deviation band remain the defense for a *moving* rate; only the *unseeded*
+  zero is fenced. If the upward-stale path must later be closed without sacrificing the asymmetry, it needs a
+  rate-specific deviation/sanity bound on the bridge push (NOT a `fresh()` gate on exit). See `reports/SEC-04-report.md`.
 
 ## MEDIUM
 

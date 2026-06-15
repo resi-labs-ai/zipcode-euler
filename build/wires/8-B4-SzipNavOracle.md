@@ -14,7 +14,9 @@ over a governed window `W`. Consumers read a **bracketed** 18-dp share price (`1
   Reverts `StalePrice`/`StaleRate` if a required pushed leg or the wired xALPHA rate is stale ⇒ **staleness
   pauses issuance only**.
 - **`navExit() = min(spot, twap)`** — exit (CoW buy-and-burn / windowed reads). **Never** reverts on staleness
-  (prices off the last good mark) — the §7 asymmetry, defended by the TWAP lag.
+  (prices off the last good mark) — the §7 asymmetry, defended by the TWAP lag. It DOES revert `RateUnseeded` if the
+  xALPHA rate was never seeded (`exchangeRate()==0`, genesis) — fail-closed on an absent rate, distinct from a
+  stale-but-nonzero one (SEC-04 / H5; see leg 3 below).
 
 The bracket defends the profitable direction both ways: a one-block spot spike UP only makes minting more
 expensive (`max`) and is ignored on exit (`min`); a DOWN spike is ignored on entry. The Gate MUST `poke()`
@@ -48,7 +50,7 @@ is NOT renounce-frozen here, §17).
 **The basket legs** (summed across `mainSafe` + `sidecar` via `_bal`):
 1. `zipUSD` — 18-dp, valued $1 (added as raw balance).
 2. `usdc` — 6-dp, scaled `× 1e12` to 18-dp $1.
-3. `xAlpha` — `balanceOf × _xAlphaUSD() / 1e18`, where `_xAlphaUSD = IXAlphaRate(rateSrc).exchangeRate() × legCache[LEG_ALPHA_USD].price / 1e18` (the two-layer mark; `rateSrc` resolved below).
+3. `xAlpha` — `balanceOf × _xAlphaUSD() / 1e18`, where `_xAlphaUSD = IXAlphaRate(rateSrc).exchangeRate() × legCache[LEG_ALPHA_USD].price / 1e18` (the two-layer mark; `rateSrc` resolved below). **Fail-closed on an UNSEEDED rate (SEC-04 / H5):** `_xAlphaUSD()` captures `rate = exchangeRate()` and reverts `RateUnseeded()` if `rate == 0` — the never-pushed genesis zero can no longer be silently served (which underpriced every consumer: `navExit`, `grossBasketValue`, freeze `coverageValue`, `ExitGate` tvlCap, all of which route through this shared internal). This is distinct from STALENESS: a stale-but-nonzero rate is NOT gated here (exit keeps pricing off the last good mark — the §7 max-entry/min-exit asymmetry; freshness is gated only at issuance, `navEntry`/`fresh`).
 4. `hydx` — `balanceOf × legCache[LEG_HYDX_USD].price / 1e18` (pushed leg).
 5. `oHydx` — `balanceOf × _oHydxUSD() / 1e18`, intrinsic `= HYDX/USD × (100 − IOptionToken(oHydx).discount())/100` (discount read on-chain).
 6. **LP leg** (only if `ichiVault != 0`): held shares = loose ICHI share + gauge-staked + **escrow-collateralized**

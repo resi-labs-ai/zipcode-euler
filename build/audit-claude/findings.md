@@ -14,7 +14,7 @@ documented blast radius) are excluded from findings and listed separately as pos
 | 3 | MED | high | core | Backdated revaluation arbitrarily rewinds/extends a mark's staleness window — ✅ **RESOLVED (SEC-01, 2026-06-15)** |
 | 4 | MED | high | venue | No defund path — USDC stranded in closed line vaults drains base liquidity, DoS's `fund`/`draw` |
 | 5 | MED | high | szipUSD | Resting CoW buy-burn bid keeps filling after coverage drops below floor (gate is post-time only) |
-| 6 | MED | high | bridge/NAV | `navExit`/`grossBasketValue` price the xALPHA leg off a **zero** rate when the rate oracle is never seeded |
+| 6 | MED | high | bridge/NAV | `navExit`/`grossBasketValue` price the xALPHA leg off a **zero** rate when the rate oracle is never seeded — ✅ **RESOLVED (SEC-04, 2026-06-15)** |
 | 7 | MED | med | szipUSD | `coverageValue()` double-counts sidecar ICHI-LP, inflating coverage + corrupting the LP-dissolution gate |
 | 8 | MED | high | szipUSD | Coverage gate defaults OFF (`coverageGate==0`) leaves buy-burn outflow + LP dissolution unfenced |
 | 9 | LOW | high | szipUSD | `requiredCommittedValue` gross-cap can make `covered()` permanently false → bricks release/postBid/removeLiquidity |
@@ -116,7 +116,7 @@ coverage/freeze decisions.
   `cancelBid`, contradicting the documented autonomous gate.
 - **fix:** a CoW pre/post-interaction hook that re-checks `covered()` at fill, or short bid TTLs.
 
-### 6. `navExit`/`grossBasketValue` price the xALPHA leg off a *zero* rate when the rate oracle is never seeded
+### 6. `navExit`/`grossBasketValue` price the xALPHA leg off a *zero* rate when the rate oracle is never seeded — ✅ RESOLVED 2026-06-15 (SEC-04)
 - **contract/fn:** `SzAlphaRateOracle.exchangeRate` (root) → `SzipNavOracle._xAlphaUSD`, `grossBasketValue`, `navExit`
 - **location:** `src/bridge/SzAlphaRateOracle.sol:111-113`; `src/supply/SzipNavOracle.sol:508-514, 483-487, 345`
 - **class:** oracle · **invariant_broken:** §4.10 "navExit prices off the *last good mark*, defense =
@@ -127,6 +127,20 @@ coverage/freeze decisions.
   Issuance and buy-burn fail-closed via `fresh()`, but `DurationFreezeModule` coverage/freeze-floor and
   `ExitGate` tvlCap consume the understated basket → coverage decisions on a wrong (low) value.
 - **fix:** gate `_xAlphaUSD`/`grossBasketValue` on rate freshness, or treat `exchangeRate()==0` as fail-closed.
+- **RESOLVED 2026-06-15 (SEC-04 / kill-list H5).** Adopted the **fail-closed-on-unseeded** half: `error RateUnseeded()`
+  declared on `SzipNavOracle`; `_xAlphaUSD()` (`:517-525`) captures `uint256 rate = IXAlphaRate(rateSrc).exchangeRate()`
+  then `if (rate == 0) revert RateUnseeded();`. The degenerate zero can no longer be served — all four consumers
+  (`navExit`, `grossBasketValue`, freeze `coverageValue`, `ExitGate` deposit) inherit the revert via the shared
+  internal. **The "gate every consumer on `fresh()`" alternative was deliberately NOT taken** — gating exit/coverage on
+  staleness would break the §7 max-entry/min-exit (last-good-mark) asymmetry that the spec relies on (`exit-topology-intentional`
+  is ratified). Failing closed on *unseeded* (`rate==0`, genesis) — distinct from *stale-but-nonzero* — is the narrow,
+  correct fix. Regression: 5 `test_SEC04_*` (oracle unit + real freeze + real ExitGate), fail-before/pass-after confirmed.
+  See `reports/SEC-04-report.md`.
+
+  > **Residual (intended, not a gap):** a stale-HIGH rate after a validator slash (the upward-stale exit-pricing concern
+  > raised in `interconnection-findings.md` C1) is NOT closed by this fix and is NOT meant to be — closing it requires
+  > gating exit on `fresh()`, which the §7 asymmetry forbids. The TWAP-lag + deviation-band remain the defense for a
+  > *moving* rate; the unseeded *genesis* zero is the only piece SEC-04 fences.
 
 ### 7. `coverageValue()` double-counts sidecar ICHI-LP
 - **contract/fn:** `DurationFreezeModule` (math from `SzipNavOracle`) / `coverageValue`, `covered`, `lpBurnKeepsCovered`

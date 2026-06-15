@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-04 — `_xAlphaUSD()` fail-close on unseeded rate (H5).** Ticket: `build/tickets/sec/SEC-04-xalphausd-fail-close.md`.
-- **Deliverable:** fail-closed in `_xAlphaUSD()` (`SzipNavOracle.sol`) — `if (rate == 0) revert RateUnseeded();` — keep the §7 asymmetry (do NOT gate exit/coverage on `fresh()`).
-- **Source:** `build/kill-list.md` H5. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC04_*` regression; test output quoted in the ticket.
+**SEC-05 — Seal `lpOracle` CRE identity in P9 + extend pre-gate (M4).** Ticket: `build/tickets/sec/SEC-05-seal-lporacle-identity.md`.
+- **Deliverable:** in `DeployZipcode.s.sol` P9, `if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle));` + extend `requireIdentityWired` — both conditional on `d.lpOracle != 0` (the fair-LP branch leaves it unset).
+- **Source:** `build/kill-list.md` M4. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC05_*` regression (deploy-script ticket: re-run `DeployLocal` against a fresh anvil fork); test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 are DONE (2026-06-15); SEC-04 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 + SEC-04 are DONE (2026-06-15); SEC-05 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -41,8 +41,8 @@ doc/comment-only (no regression test).
 | SEC-01 | Group 1 (H1/M1/L3) | Oracle monotonic-timestamp guard at 3 write sites + `error StaleReport()` decls | **DONE 2026-06-15** — `sec/SEC-01-oracle-monotonic-guard.md` |
 | SEC-02 | Group 2 (M2/L14/L1) | Coverage sidecar-LP double-count — scope oracle `pathLockedLpEquity()` mainSafe-only | **DONE 2026-06-15** — `sec/SEC-02-coverage-sidecar-lp-double-count.md` |
 | SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **DONE 2026-06-15** — `sec/SEC-03-ccip-admin-handoff.md` |
-| SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **NEXT** — `sec/SEC-04-xalphausd-fail-close.md` |
-| SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **TICKETED** — `sec/SEC-05-seal-lporacle-identity.md` |
+| SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **DONE 2026-06-15** — `sec/SEC-04-xalphausd-fail-close.md` |
+| SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **NEXT** — `sec/SEC-05-seal-lporacle-identity.md` |
 | SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **TICKETED** — `sec/SEC-06-closeline-queue-prune.md` |
 | SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **TICKETED** — `sec/SEC-07-closeline-defund-to-base.md` |
 | SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **TICKETED** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
@@ -58,6 +58,37 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-04 (2026-06-15)
+**`_xAlphaUSD()` fail-closed on an UNSEEDED xALPHA rate** (kill-list H5; audit finding #6 / interconnection C1). Pre-fix
+`_xAlphaUSD()` returned `exchangeRate() × alphaUSD`, and `exchangeRate()` returns **0** (does not revert) when the
+CRE-pushed cross-chain rate was never seeded — so the whole xALPHA leg was silently valued at **0**, underpricing three
+ungated consumers (`navExit` underpays junior exits; freeze `coverageValue` under-counts the floor → can mis-gate
+outflow; `ExitGate` tvlCap under-reads gross → lets deposits exceed the cap). The narrow fix fails closed on the
+*genesis* zero only — distinct from a stale-but-seeded mark.
+- **Fix (1 file, `SzipNavOracle.sol`):** declared `error RateUnseeded();`; `_xAlphaUSD()` (`:517-525`) now captures
+  `uint256 rate = IXAlphaRate(rateSrc).exchangeRate();` then `if (rate == 0) revert RateUnseeded();` before the mark.
+  The guard lives in the **shared internal**, so all four consumers (`navExit`, `grossBasketValue`, freeze
+  `coverageValue` via `committedValue`/`freeValue`, `ExitGate` deposit) inherit it with no consumer edits. Docstring
+  updated to state fail-closed-on-unseeded ≠ stale.
+- **§7 asymmetry preserved (the Do-NOT):** staleness is still NOT gated on the exit/coverage path — only `rate == 0`
+  reverts. `navEntry`/`navExit`/`fresh`/`_legStale`/`StalePrice`/`StaleRate` are byte-for-byte unchanged. The
+  "gate every consumer on `fresh()`" alternative the audit floated was **deliberately rejected** (it breaks the
+  ratified `exit-topology-intentional` last-good-mark asymmetry). The upward-stale-after-slash half of C1 is therefore
+  accepted as residual (TWAP-lag + deviation-band remain its defense) — logged in the C1 finding.
+- **Gate green:** `forge build` clean; `forge test` **774 passed / 0 failed / 3 skipped** (the 3 skips are the
+  pre-existing `DeployZipcode.t.sol` skips; +5 over SEC-03's 769). 5 new `test_SEC04_*` regressions:
+  `SzipNavOracle.t.sol` (3 — unseeded fail-close across navExit/grossBasketValue/spot/valueOf; seeded-correct;
+  asymmetry-preserved-when-stale), `DurationFreezeModule.t.sol::SzipNavOracleParityTest` (1 — REAL freeze
+  `coverageValue()` over the REAL oracle reverts unseeded), `ExitGate.t.sol` (1 — REAL deposit path reverts unseeded,
+  re-seed succeeds). **Fail-before/pass-after confirmed** — removing the guard reproduces all 3 revert tests as
+  "next call did not revert as expected."
+- **No spec change** (interface-level fix; the §7 intent is unchanged — the spec already prescribed fail-closed-on-stale
+  for issuance, and this fences a genesis hole the spec implicitly assumed away). **No back-pressure / no new
+  obligation** (no contract surface owed). Per the ticket's flagged check: the alphaUSD leg `legCache[LEG_ALPHA_USD].price`
+  cannot be seeded to 0 (`_processReport` rejects `ZeroPrice`), so only the rate's genesis zero slipped through — scope
+  correctly stayed on the rate. Ticket (full output): `build/tickets/sec/SEC-04-xalphausd-fail-close.md`. Report:
+  `build/reports/SEC-04-report.md`.
 
 ### Just done — SEC-03 (2026-06-15)
 **CCIP `TokenAdminRegistry` registry-admin handoff closed** (kill-list H4, escalated DECIDE→FIX HIGH via audit
