@@ -132,6 +132,10 @@ ticket and the build re-runs. The code is the proof, the ticket is the intent �
 committed. No findings is a flag to be skeptical, not a win.
 
 ### Step 5 — Conclude (leave a resumable on-disk state, then STOP)
+- **Run the full doc-sync: `build/doc-sync-checklist.md`** — ticket DONE-note, `PROGRESS.md`, the kill-list
+  checkbox, the `audit-claude/` finding(s), the `wires/` truth-source for every CHANGED contract (via
+  `wires/COVERAGE.md`), any `claude-zipcode.md` spec fix, and the report. A FIX that changes built-contract
+  behavior has backward-facing truth-sources to keep in sync, not just the forward ones below.
 - Ticket filed under `build/tickets/<track>/`.
 - `build/tickets/PROGRESS.md` updated — mark the item done, set the next `NEXT`, log any spec fix.
 - Any `build/claude-zipcode.md` spec fix saved.
