@@ -916,6 +916,46 @@ contract SzipNavOracleTest is Test {
         vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.UnknownLpToken.selector, address(hydx)));
         oracle.valueOf(address(hydx), 1e18);
     }
+
+    // ----------------------------------------------------------------- SEC-04: unseeded xALPHA rate fail-close (H5)
+    /// @notice With the xALPHA exchange rate UNSEEDED (`exchangeRate() == 0`) but the protocol holding xALPHA, every
+    ///         consumer that marks the xALPHA leg through `_xAlphaUSD()` must FAIL CLOSED (`RateUnseeded`) rather than
+    ///         silently value the leg at 0. Pre-fix `_xAlphaUSD()` returned 0, so navExit underpaid exits and
+    ///         grossBasketValue/valueOf under-read the basket — the H5 silent-zero. Fail-before/pass-after: pre-fix
+    ///         these reads RETURN (a silently-underpriced value), so the `expectRevert`s here would fail.
+    function test_SEC04_unseeded_rate_fails_closed() public {
+        _wireFullBasket(); // seeds exchangeRate 1.2e18 + holds 10 xALPHA + pushes the alphaUSD leg
+        xa.setExchangeRate(0); // genesis/unseeded rate (the CRE cross-chain rate before its first push)
+
+        vm.expectRevert(SzipNavOracle.RateUnseeded.selector);
+        oracle.navExit(); // exit consumer
+        vm.expectRevert(SzipNavOracle.RateUnseeded.selector);
+        oracle.grossBasketValue(); // freeze coverage + ExitGate tvlCap leg
+        vm.expectRevert(SzipNavOracle.RateUnseeded.selector);
+        oracle.spotNavPerShare(); // navEntry/navExit share this
+        vm.expectRevert(SzipNavOracle.RateUnseeded.selector);
+        oracle.valueOf(address(xa), 5e18); // the ExitGate issuance valuation seam
+    }
+
+    /// @notice With the rate SEEDED (>0) the same reads price the xALPHA leg correctly — the par baseline (identical
+    ///         to `test_nav_composition_handcomputed` + `test_valueOf_xAlpha_two_layer_mark`).
+    function test_SEC04_seeded_rate_prices_correctly() public {
+        _wireFullBasket(); // exchangeRate 1.2e18, alphaUSD 2e18, 10 xALPHA -> xa leg = 10*1.2*2 = 24e18
+        assertEq(oracle.grossBasketValue(), 11779e17);
+        assertEq(oracle.valueOf(address(xa), 5e18), 12e18); // 5 * (1.2*2)
+        oracle.navExit(); // no revert
+    }
+
+    /// @notice The fix gates ONLY on unseeded, NEVER on staleness — a SEEDED-but-stale rate/legs must keep the §7
+    ///         max-entry/min-exit asymmetry: navExit prices off the last good mark (no revert) while navEntry pauses
+    ///         issuance. Proves the fix did not collapse the asymmetry.
+    function test_SEC04_asymmetry_preserved_when_stale() public {
+        _wireFullBasket(); // rate seeded 1.2e18, legs fresh
+        vm.warp(block.timestamp + MAX_AGE + 1); // legs go stale; the rate stays nonzero (seeded)
+        oracle.navExit(); // exit still prices off the last good mark (NO revert)
+        vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.StalePrice.selector, uint8(0)));
+        oracle.navEntry(); // issuance still pauses on stale legs
+    }
 }
 
 /// @notice Minimal stand-in for `SzAlphaRateOracle` — exposes `exchangeRate()` + `fresh()` for the gate test.

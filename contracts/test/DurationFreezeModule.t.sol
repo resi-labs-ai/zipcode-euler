@@ -990,6 +990,31 @@ contract SzipNavOracleParityTest is Test {
         // and the LP-dissolution gate tightens: from a breached state, burning fenced LP cannot keep coverage.
         assertFalse(m.lpBurnKeepsCovered(1e18), "burning fenced LP from a breach stays uncovered");
     }
+
+    // ----------------------------------------------------------- SEC-04: unseeded xALPHA rate fail-close (H5)
+    /// @dev An UNSEEDED xALPHA rate (`exchangeRate() == 0`) must FAIL CLOSED the freeze coverage read rather than
+    ///      silently under-count the coverage floor (which could mis-gate outflow). `coverageValue()` -> the real
+    ///      oracle `committedValue()` -> `_grossValueOf(sidecar)` -> `_xAlphaUSD()` reverts `RateUnseeded`. Pre-fix the
+    ///      same path returned a silently-underpriced number, so this `expectRevert` would fail (fail-before/pass-after).
+    function test_SEC04_unseeded_rate_reverts_coverageValue() public {
+        MockEulerEarn ee = new MockEulerEarn();
+        ee.setBacking(1, 100e6, 0);
+        DurationFreezeModule m = new DurationFreezeModule();
+        m.setUp(
+            abi.encode(
+                makeAddr("owner"), mainSafe, sidecar, makeAddr("operator"),
+                address(oracle), address(ee), makeAddr("warehouse"), uint256(1e4), uint256(0)
+            )
+        );
+
+        xalpha.setExchangeRate(0); // unseeded rate
+        vm.expectRevert(SzipNavOracle.RateUnseeded.selector);
+        m.coverageValue();
+
+        // re-seed -> coverage reads cleanly again (fail-close was the only gate)
+        xalpha.setExchangeRate(1e18);
+        m.coverageValue(); // no revert
+    }
 }
 
 /// @dev An ICHI-vault stand-in for the LP-split parity vector (settable per-Safe balances + pool globals).

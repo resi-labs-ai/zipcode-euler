@@ -333,6 +333,26 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         vm.stopPrank();
     }
 
+    /// @notice SEC-04 (H5): an UNSEEDED xALPHA rate (`exchangeRate() == 0`) must FAIL CLOSED the deposit path rather
+    ///         than let a silently-underpriced gross slip a deposit past the cap (under-read tvlCap). With fresh legs
+    ///         but the rate unseeded, `depositFor` reverts `RateUnseeded` (via `navEntry`/`grossBasketValue`, both
+    ///         routing through `_xAlphaUSD`). Pre-fix the rate read 0 and the deposit SUCCEEDED — so this reverts only
+    ///         after the fix (fail-before/pass-after).
+    function test_SEC04_unseeded_rate_reverts_deposit() public {
+        xa.setExchangeRate(0); // rate unseeded; legs are fresh from setUp
+        zip.mint(alice, 1e18);
+        vm.startPrank(alice);
+        zip.approve(address(gate), 1e18);
+        vm.expectRevert(SzipNavOracle.RateUnseeded.selector);
+        gate.depositFor(address(zip), 1e18, alice);
+        vm.stopPrank();
+
+        // re-seed -> the same deposit succeeds (fail-close was the only gate)
+        xa.setExchangeRate(1e18);
+        vm.prank(alice);
+        gate.depositFor(address(zip), 1e18, alice);
+    }
+
     function test_depositFor_stale_reverts() public {
         vm.warp(block.timestamp + MAX_AGE + 1); // legs go stale
         zip.mint(alice, 1e18);

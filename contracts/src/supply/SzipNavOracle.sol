@@ -163,6 +163,7 @@ contract SzipNavOracle is ReceiverTemplate {
     error ZeroAddress();
     error StaleRate(); // the wired xALPHA rate oracle is stale — issuance halts (exit still prices off last rate)
     error StaleReport(); // a leg push not strictly newer than the cached mark (replay / out-of-order). Mirrors `SzAlphaRateOracle`.
+    error RateUnseeded(); // the xALPHA exchange rate was never seeded (genesis/uninitialized, ≠ stale) — fail closed rather than silently value xALPHA at 0
 
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
@@ -509,12 +510,18 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @dev USD per 1.0 xALPHA (18-dp): on-chain LST exchangeRate × the pushed alphaUSD.
+    ///      Fail-closed on an UNSEEDED rate (`exchangeRate() == 0`, genesis/uninitialized) — reverts `RateUnseeded`
+    ///      rather than silently valuing the entire xALPHA leg at 0. This is distinct from STALENESS, which is still
+    ///      NOT gated here: a stale-but-nonzero rate keeps pricing off the last good mark, preserving the §7
+    ///      max-entry/min-exit asymmetry (freshness is gated only at issuance — `navEntry`/`fresh`).
     function _xAlphaUSD() internal view returns (uint256) {
         // Rate source: the wired Base rate oracle (CRE-pushed cross-chain rate) when set, else the direct read
         // (M1 stand-in). Value (not freshness) is read here — freshness is gated at issuance (`navEntry`/`fresh`),
         // so `grossBasketValue`/exit keep pricing off the last good rate (the §7 asymmetry).
         address rateSrc = xAlphaRateOracle == address(0) ? xAlpha : xAlphaRateOracle;
-        return IXAlphaRate(rateSrc).exchangeRate() * legCache[LEG_ALPHA_USD].price / 1e18;
+        uint256 rate = IXAlphaRate(rateSrc).exchangeRate();
+        if (rate == 0) revert RateUnseeded();
+        return rate * legCache[LEG_ALPHA_USD].price / 1e18;
     }
 
     /// @dev USD per 1.0 oHYDX (18-dp): intrinsic = HYDX/USD × (100 - discount)/100, discount read on-chain.
