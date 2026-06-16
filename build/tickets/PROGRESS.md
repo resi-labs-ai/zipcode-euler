@@ -34,15 +34,10 @@ SEC-DOC, all DONE 2026-06-16). Per the kill-list "Next phase": **fresh anvil dep
 Every fix is in the committed, fork-tested code (`forge test` **829 passed / 0 failed / 3 skipped**) and
 truth-sourced in `build/wires/` (index `build/wires/COVERAGE.md`).
 
-The 16 per-ticket narratives + their `build/reports/SEC-*` files were pruned 2026-06-16 (superseded by
-kill-list + wires + code; recoverable in git history). **5 tickets retained** in `build/tickets/sec/` for rationale
-not fully captured elsewhere:
-- **SEC-07** — `closeLine` line→base USDC defund (reclaim stranded liquidity).
-- **SEC-08** — `openLine` runtime EE-timelock precheck + deploy perspective probe (incl. the "perspective is
-  provenance-only" framing correction — the dominant brick the audit named doesn't exist under the live perspective).
-- **SEC-13** — `postBid` `validTo` leg-anchor (caps fill-time mark age at `maxAge`, not `2·maxAge`).
-- **SEC-14** — mastercopy init-lock via `MastercopyInitLock` (+ the ~85-site test-rework discovery folded in).
-- **SEC-DOC** — the 14-item doc-sweep checklist + the 4 explicit code-change rejections (M8/L4/L6r/L15).
+All 16 SEC ticket files + their `build/reports/SEC-*` window reports were pruned 2026-06-16 — they were build-time
+scratch, fully superseded by **kill-list + wires + code** (the durable record; recoverable in git history). No SEC
+tickets or reports remain on disk. The conceptual findings that weren't obvious from code live in the wires —
+e.g. SEC-08's "perspective is provenance-only" finding is in `wires/WOOF-04.md`.
 
 DISMISS (H3/L5/L10/M5) + DEFER (drawgate/covguard/exitbook/M9) are recorded in `build/kill-list.md`.
 

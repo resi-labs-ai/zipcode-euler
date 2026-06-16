@@ -101,7 +101,7 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   is `EVKFactoryPerspective` — **provenance-only** (`isVerified = isProxy`), so it never inspects IRM/hook/governor;
   the "dominant brick" does NOT exist under the *current* perspective. The probe's real value is guarding a
   **future** external `setPerspective` swap (e.g. to a config-inspecting/ungoverned-only perspective that would
-  reject the governed+hooked line vault and brick origination). See the retained ticket `tickets/sec/SEC-08-openline-timelock-precheck-perspective-probe.md`.
+  reject the governed+hooked line vault and brick origination). See `wires/WOOF-04.md` (SEC-08 perspective-probe — the provenance-only finding).
 
 ### Standalone FIX
 - [x] **H4** (HIGH) — *overturned from DECIDE.* Registry `administrator` is left as the deploy Script on
@@ -183,7 +183,7 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
 
 > **ALL 14 DOC dispositions DONE 2026-06-16 (SEC-DOC).** Landed as NatDoc / comment / spec edits with zero behavioral
 > code (4 explicit rejections recorded: M8, L4, L6r, L15). `forge build` clean + `forge test` **829 passed / 0 failed
-> / 3 skipped** (no regression — doc-only). See the retained ticket `build/tickets/sec/SEC-DOC-doc-runbook-sweep.md` for the per-item checklist. Each
+> / 3 skipped** (no regression — doc-only). The per-item dispositions + the 4 rejections are tagged in this §B below; the wire edits are in `wires/` (8-B14, 8-Bw, 9-ZipRedemptionQueue). Each
 > item below is tagged `[x] … DONE (SEC-DOC)`.
 
 - [x] **M3** (LOW) — *DECIDE → DOC.* **DONE (SEC-DOC).** The fill-after-coverage-drop can't breach the floor: buy-burn USDC is

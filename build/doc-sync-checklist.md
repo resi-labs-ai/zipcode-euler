@@ -35,7 +35,7 @@ focused commits (SEC-01 did: one for code+tests, one for the doc sync). Never st
 monorepo.
 
 ## Worked example
-The SEC track (SEC-01…SEC-15 + SEC-DOC, 2026-06-15/16) is the reference application of this list. The per-ticket
-reports were pruned 2026-06-16 (superseded by `build/kill-list.md` + `build/wires/` + the committed code), but the
-retained ticket DONE-notes (`build/tickets/sec/SEC-DOC-*.md` has the fullest, with a per-item checklist + the doc-sync
-list it ran) and the git commit history (e.g. SEC-01's `dcc6417` code+tests / `73685f6` doc-sync) show the pattern.
+The SEC track (SEC-01…SEC-15 + SEC-DOC, 2026-06-15/16) is the reference application of this list. Its tickets +
+reports were pruned 2026-06-16 once the work landed — the durable record is `build/kill-list.md` (per-item decision)
++ `build/wires/` (built-contract truth) + the committed code; the git commit history (e.g. SEC-01's `dcc6417`
+code+tests / `73685f6` doc-sync) shows the per-ticket pattern.
