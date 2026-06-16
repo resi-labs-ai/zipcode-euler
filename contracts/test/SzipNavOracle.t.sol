@@ -6,6 +6,8 @@ import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IICHIVault} from "../src/interfaces/ichi/IICHIVault.sol";
+import {IAlgebraPool} from "../src/interfaces/algebra/IAlgebraPool.sol";
+import {IAlgebraOraclePlugin} from "../src/interfaces/algebra/IAlgebraOraclePlugin.sol";
 import {IGauge} from "../src/interfaces/hydrex/IGauge.sol";
 import {IOptionToken} from "../src/interfaces/hydrex/IOptionToken.sol";
 
@@ -59,6 +61,7 @@ contract MockICHIVault {
     uint256 internal t0;
     uint256 internal t1;
     mapping(address => uint256) public balanceOf;
+    address public pool; // SEC-10: the Algebra pool the vault provides liquidity to (settable)
 
     function set(address _t0, address _t1, uint256 _supply, uint256 _total0, uint256 _total1) external {
         token0 = _t0;
@@ -72,8 +75,73 @@ contract MockICHIVault {
         balanceOf[a] = v;
     }
 
+    function setPool(address _pool) external {
+        pool = _pool;
+    }
+
     function getTotalAmounts() external view returns (uint256, uint256) {
         return (t0, t1);
+    }
+
+    // SEC-10 fair-reserves introspection. Liquidity L = 0 for both positions so
+    // LiquidityAmounts.getAmountsForLiquidity yields (0,0) regardless of tick — the
+    // reconstructed reserves then come purely from the vault's idle IERC20 token balances.
+    function getBasePosition() external pure returns (uint128, uint256, uint256) {
+        return (0, 0, 0);
+    }
+
+    function getLimitPosition() external pure returns (uint128, uint256, uint256) {
+        return (0, 0, 0);
+    }
+
+    // Valid in-range ticks within TickMath's [-887272, 887272].
+    function baseLower() external pure returns (int24) {
+        return -887220;
+    }
+
+    function baseUpper() external pure returns (int24) {
+        return 887220;
+    }
+
+    function limitLower() external pure returns (int24) {
+        return -887220;
+    }
+
+    function limitUpper() external pure returns (int24) {
+        return 887220;
+    }
+}
+
+/// @dev SEC-10: minimal Algebra pool with a settable `plugin()` — `address(0)` for the no-plugin case,
+///      the mock plugin otherwise.
+contract MockAlgebraPool {
+    address public plugin;
+
+    function setPlugin(address _plugin) external {
+        plugin = _plugin;
+    }
+}
+
+/// @dev SEC-10: minimal Algebra oracle plugin. `isInitialized()` settable; `getTimepoints` returns the real
+///      on-chain cumulatives cited in IAlgebraOraclePlugin.sol:6-8 — getTimepoints([3600,0]) ->
+///      tickCumulatives [-1380399043048, -1381518031724] (mean tick ≈ -310830, a valid TickMath tick) so the
+///      ready-pool case reads through `fairReserves` without reverting in TickMath.
+contract MockAlgebraPlugin {
+    bool public isInitialized;
+
+    function setInitialized(bool v) external {
+        isInitialized = v;
+    }
+
+    function getTimepoints(uint32[] calldata)
+        external
+        pure
+        returns (int56[] memory tickCumulatives, uint88[] memory volatilityCumulatives)
+    {
+        tickCumulatives = new int56[](2);
+        tickCumulatives[0] = -1380399043048; // window-ago (3600)
+        tickCumulatives[1] = -1381518031724; // now (0)
+        volatilityCumulatives = new uint88[](2); // unused by fairReserves
     }
 }
 
@@ -955,6 +1023,87 @@ contract SzipNavOracleTest is Test {
         oracle.navExit(); // exit still prices off the last good mark (NO revert)
         vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.StalePrice.selector, uint8(0)));
         oracle.navEntry(); // issuance still pauses on stale legs
+    }
+
+    // ----------------------------------------------------------------- SEC-10: setLpTwapWindow(>0) plugin/init validation (L2)
+    /// @dev Wire an LP whose pool/plugin readiness is configurable. Mirrors `_wireLp`: pool = zipUSD/xALPHA, 1000 LP
+    ///      shares, but TWAP reserves come from the vault's IDLE token balances (L=0), so set the vault's token
+    ///      balances to the same 200 zip / 100 xAlpha — the pro-rata mark is then identical to the spot path. The
+    ///      held shares (500/1000 = half) give a non-zero `grossBasketValue()` so the TWAP-path read is asserted live.
+    function _wireLpForTwap()
+        internal
+        returns (MockICHIVault iv, MockGauge g, MockAlgebraPool pool, MockAlgebraPlugin plugin)
+    {
+        iv = new MockICHIVault();
+        g = new MockGauge();
+        pool = new MockAlgebraPool();
+        plugin = new MockAlgebraPlugin();
+        // spot reserves 200 zip + 100 xAlpha; idle balances match so the TWAP reconstruction == spot reserves.
+        iv.set(address(zip), address(xa), 1000e18, 200e18, 100e18);
+        iv.setPool(address(pool));
+        zip.setBalance(address(iv), 200e18); // idle token0 the fair-reserves reconstruction reads
+        xa.setBalance(address(iv), 100e18); // idle token1
+        oracle.setLpPosition(address(iv), address(g));
+        oracle.setShareToken(address(szip));
+        szip.setTotalSupply(1000e18);
+        xa.setExchangeRate(12e17);
+        _pushBoth(2e18, 5e17); // xAlphaUSD = 1.2*2 = 2.4
+        g.setBalance(mainSafe, 500e18); // held 500/1000 = half
+    }
+
+    /// @notice No plugin: `ichiVault` points at a pool whose `plugin() == address(0)` → `setLpTwapWindow(3600)`
+    ///         reverts `LpTwapPluginNotReady`. Pre-fix the setter succeeds and a subsequent `grossBasketValue()`
+    ///         reverts (NAV bricked) — the fail-before evidence.
+    function test_SEC10_no_plugin_reverts() public {
+        (,, MockAlgebraPool pool,) = _wireLpForTwap();
+        pool.setPlugin(address(0)); // pool exposes no TWAP plugin
+        vm.expectRevert(SzipNavOracle.LpTwapPluginNotReady.selector);
+        oracle.setLpTwapWindow(3600);
+    }
+
+    /// @notice Uninitialized plugin: plugin present but `isInitialized() == false` → setter reverts.
+    function test_SEC10_uninitialized_plugin_reverts() public {
+        (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();
+        pool.setPlugin(address(plugin));
+        plugin.setInitialized(false); // under-seeded plugin
+        vm.expectRevert(SzipNavOracle.LpTwapPluginNotReady.selector);
+        oracle.setLpTwapWindow(3600);
+    }
+
+    /// @notice Ready pool: plugin present + initialized → setter succeeds and `grossBasketValue()` reads through the
+    ///         TWAP path (`_lpValue`→`fairReserves`) without reverting, returning the same non-zero mark as spot.
+    function test_SEC10_ready_pool_succeeds_and_reads_twap() public {
+        (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();
+        pool.setPlugin(address(plugin));
+        plugin.setInitialized(true);
+
+        // spot-path baseline: 500/1000 -> 100 zip ($100) + 50 xAlpha*2.4 ($120) = 220e18.
+        uint256 spotGross = oracle.grossBasketValue();
+        assertEq(spotGross, 220e18, "spot-path baseline");
+
+        oracle.setLpTwapWindow(3600); // succeeds
+        assertEq(oracle.lpTwapWindow(), 3600);
+
+        // now the LP leg reads through fairReserves (TWAP path); idle reserves == spot, so mark is unchanged + non-zero.
+        uint256 twapGross = oracle.grossBasketValue();
+        assertGt(twapGross, 0, "TWAP-path read is non-zero (did not brick)");
+        assertEq(twapGross, spotGross, "TWAP reconstruction == spot reserves (idle balances match)");
+    }
+
+    /// @notice Escape always open: `setLpTwapWindow(0)` succeeds regardless of pool state (recovers a bricked NAV).
+    function test_SEC10_escape_zero_always_succeeds() public {
+        (,, MockAlgebraPool pool,) = _wireLpForTwap();
+        pool.setPlugin(address(0)); // worst case: no plugin
+        oracle.setLpTwapWindow(0); // must NOT revert
+        assertEq(oracle.lpTwapWindow(), 0);
+
+        // also succeeds before the LP is even wired (ichiVault could be 0 on a fresh oracle).
+        SzipNavOracle freshOracle = new SzipNavOracle(
+            forwarder, address(zip), address(usdc), address(xa), address(hydx),
+            address(ohydx), mainSafe, sidecar, W, MAX_AGE, DEV_BPS
+        );
+        freshOracle.setLpTwapWindow(0); // unconditionally valid
+        assertEq(freshOracle.lpTwapWindow(), 0);
     }
 }
 

@@ -4,6 +4,8 @@ pragma solidity 0.8.24;
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IICHIVault} from "../interfaces/ichi/IICHIVault.sol";
+import {IAlgebraPool} from "../interfaces/algebra/IAlgebraPool.sol";
+import {IAlgebraOraclePlugin} from "../interfaces/algebra/IAlgebraOraclePlugin.sol";
 import {IGauge} from "../interfaces/hydrex/IGauge.sol";
 import {IOptionToken} from "../interfaces/hydrex/IOptionToken.sol";
 import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
@@ -164,6 +166,7 @@ contract SzipNavOracle is ReceiverTemplate {
     error StaleRate(); // the wired xALPHA rate oracle is stale — issuance halts (exit still prices off last rate)
     error StaleReport(); // a leg push not strictly newer than the cached mark (replay / out-of-order). Mirrors `SzAlphaRateOracle`.
     error RateUnseeded(); // the xALPHA exchange rate was never seeded (genesis/uninitialized, ≠ stale) — fail closed rather than silently value xALPHA at 0
+    error LpTwapPluginNotReady(); // setLpTwapWindow(>0) against a pool with no plugin / an uninitialized plugin — would brick every NAV read; reject at set-time
 
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
@@ -243,10 +246,25 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @notice Wire/re-point the LP TWAP window (the fair-LP reconstruction window, build/twap-ring.md). Zero ⇒ the
-    ///         LP leg reads spot `getTotalAmounts()` (the M1 / non-Algebra default). Set non-zero (e.g. 3600) only
-    ///         once the LP is a live Algebra pool exposing a TWAP plugin, else `_lpValue` would revert `NoPlugin`.
-    ///         `onlyOwner` (Timelock).
+    ///         LP leg reads spot `getTotalAmounts()` (the M1 / non-Algebra default) — unconditionally valid. Set
+    ///         non-zero (e.g. 3600) only once the LP is a live Algebra pool exposing a TWAP plugin, else every NAV
+    ///         read (`navEntry`/`navExit`/`grossBasketValue` via `_lpValue`→`fairReserves`) would brick.
+    /// @dev SEC-10: a non-zero window is validated at set-time — it requires `ichiVault` wired and the vault's pool
+    ///      to expose a plugin that reports `isInitialized() == true`, else reverts `LpTwapPluginNotReady()`. This
+    ///      guards ONLY the gross "no plugin / uninitialized plugin" brick. `isInitialized() == true` is a
+    ///      NECESSARY-NOT-SUFFICIENT precheck: a window longer than the plugin's accumulated history can still revert
+    ///      in `getTimepoints` on the first read (observation cardinality is NOT on-chain-queryable). That residual
+    ///      fails closed at read-time and is recoverable via `setLpTwapWindow(0)`. The setter's `isInitialized()`
+    ///      check and the read-time `getTimepoints` revert are therefore DIFFERENT conditions. `onlyOwner` (Timelock).
     function setLpTwapWindow(uint32 lpTwapWindow_) external onlyOwner {
+        if (lpTwapWindow_ != 0) {
+            if (ichiVault == address(0)) revert LpTwapPluginNotReady();
+            address pool = IICHIVault(ichiVault).pool();
+            address plugin = IAlgebraPool(pool).plugin();
+            if (plugin == address(0) || !IAlgebraOraclePlugin(plugin).isInitialized()) {
+                revert LpTwapPluginNotReady();
+            }
+        }
         lpTwapWindow = lpTwapWindow_; // zero is a valid "use spot" value
         emit LpTwapWindowSet(lpTwapWindow_);
     }
