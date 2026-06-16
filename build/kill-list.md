@@ -150,11 +150,12 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   single re-markable scalar — keying by value is buggy). Use `lastSeenProvision` + `divertedSinceProvisionChange`,
   reset on any provision change; assert `diverted + amount*1e12 <= hole`. (Do not have `divert` write provision.)
   **DONE 2026-06-15 (SEC-09).**
-- [ ] **I6** (LOW) — *upgraded DOC → FIX.* 8 of 9 szipUSD modules drop the init-time `operator != owner`
+- [x] **I6** (LOW) — *upgraded DOC → FIX.* 8 of 9 szipUSD modules drop the init-time `operator != owner`
   invariant on `setOperator` re-point; `LpStrategyModule.sol:141` is the only one that re-checks. The
   `OwnerIsOperator` error already exists in each. **Fix:** add `if (operator_ == owner) revert OwnerIsOperator();`
   to each sibling's `setOperator` (RecycleModule, ReservoirLoop, SzipBuyBurn, HarvestVote, Sell, Exercise, OffRamp,
-  + DurationFreeze for consistency).
+  + DurationFreeze for consistency). **DONE 2026-06-16 (SEC-15).** All 8 patched (verbatim from the model); each
+  suite gained `test_SEC15_setOperator_owner_recheck` (fail-before/pass-after confirmed). Now all 9 modules re-check.
 - [x] **L11** (info) · `ZipRedemptionQueue.redeem()` emits raw caller `shares` on sub-unit input (`:248`).
   **Fix:** recompute `shares = assets * scaleUp` before emit (mirror `withdraw()` `:221`). *Prefer this over adding
   a `% scaleUp` revert guard — the guard changes currently-accepted inputs.* Redeem is effectively dead in the

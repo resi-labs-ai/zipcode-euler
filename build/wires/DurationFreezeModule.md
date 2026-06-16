@@ -103,7 +103,9 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   `setZipUSD`/`setUsdc`/`setXAlpha`/`setHydx`/`setOHydx`), each zero-guarded and emitting
   `WiringSet(slot, value)`; PLUS `setCoverageBps` (rejects 0) / `setDollarBuffer` emitting
   `CoverageParamSet(slot, value)`. (The ICHI LP `setIchiVault` setter was REMOVED — the LP is fenced in
-  place, not a movable whitelist asset.) The CRE operator (hot key) cannot call them — only the Timelock owner. Inherited
+  place, not a movable whitelist asset.) `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`,
+  SEC-15) so a re-point cannot collapse the Timelock owner and the CRE operator into one key. The CRE operator (hot
+  key) cannot call them — only the Timelock owner. Inherited
   `setAvatar`/`setTarget` are onlyOwner and INERT for rotation (rotation uses the explicit set-once
   `ISafe(mainSafe)`/`ISafe(sidecar)` calls, not the avatar-bound exec); they are not hard-locked (that would
   require marking vendored zodiac-core setters `virtual`).

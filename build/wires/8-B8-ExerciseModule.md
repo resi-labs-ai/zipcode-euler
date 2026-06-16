@@ -70,6 +70,8 @@ ever mutates it (`avatar == target == engineSafe`).
   `avatar`/`target` in sync), `setOperator`, `setOHYDX` (**re-reads `paymentToken` LIVE off the new option**,
   fail-closed, emits both `WiringSet("oHYDX",…)` and `WiringSet("paymentToken",…)`), and `setPaymentToken` (a
   direct override should the option's payment token need pinning). All revert `ZeroAddress` on a zero arg.
+  `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse
+  the Timelock owner and the CRE operator into one key — preserving the init-time (`setUp`) role separation.
 - **`setAvatar`/`setTarget`** are inherited zodiac-core `onlyOwner` — the CRE `operator` (hot key) CANNOT call
   them; only the Timelock owner can. Not hard-locked (that would require marking the vendored setters `virtual`;
   reference deps stay pristine) — a non-owner caller reverts (tested).

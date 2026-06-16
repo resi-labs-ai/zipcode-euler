@@ -52,6 +52,8 @@ warehouse Safe and never sells xALPHA or any other basket leg.
 - **Timelock-settable wiring (build phase, §17).** Each slot has an `onlyOwner` setter, `ZeroAddress`-guarded,
   emitting `WiringSet(bytes32 slot, address value)`: `setRqSafe` (**also re-points avatar+target in lock-step**),
   `setOperator`, `setZipUSD`, `setQueue`. Slots are **re-pointable, not set-once-frozen** (§17 build-phase doctrine).
+  `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse
+  the two roles into one key.
   The inherited `setAvatar`/`setTarget` are `onlyOwner` (Timelock only, never the operator) — deliberately not
   hard-locked (would dirty the vendored zodiac-core setters).
 

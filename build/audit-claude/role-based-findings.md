@@ -65,10 +65,14 @@ explains why the guard is mandatory — yet three sibling oracles omit it. Fix i
   documented design trade-off, surfaced for the liveness lens. `ExitGate.sol:199-206`.
 
 ### Informational (doc-vs-reality / hygiene)
-- **R9 — `setOperator` peer-guard divergence.** `LpStrategyModule.setOperator` re-checks
-  `operator != owner` on re-point; its **7 sibling modules do not**. Only the (trusted) Timelock can
-  exploit, so not a break — but a real inconsistency the spec's "`OwnerIsOperator` at every module" wording
-  papers over.
+- **R9 — `setOperator` peer-guard divergence. — RESOLVED 2026-06-16 (SEC-15 / kill-list I6).**
+  `LpStrategyModule.setOperator` re-checked `operator != owner` on re-point; its sibling modules did not. Only the
+  (trusted) Timelock could exploit, so not a break — but a real inconsistency the spec's "`OwnerIsOperator` at every
+  module" wording papered over. **Fix:** added `if (operator_ == owner) revert OwnerIsOperator();` (verbatim from the
+  model `LpStrategyModule.sol:141`) to the `setOperator` body of all 8 siblings (`RecycleModule`, `ReservoirLoopModule`,
+  `SzipBuyBurnModule`, `HarvestVoteModule`, `SellModule`, `ExerciseModule`, `OffRampModule`, `DurationFreezeModule` — the
+  audit counted 7; the kill-list added `DurationFreezeModule` for consistency, making it 8). All 9 modules now re-check.
+  Each suite gained a `test_SEC15_setOperator_owner_recheck` regression (fail-before/pass-after confirmed).
 - **R10 — Zodiac mastercopies are never init-locked. — RESOLVED 2026-06-16 (SEC-14 / kill-list L18).** Every
   module's header claimed "mastercopy is init-locked at deploy"; in fact no constructor/`_disableInitializers`
   existed and the deploy script never `setUp`s the mastercopy → anyone could initialize it. Benign today

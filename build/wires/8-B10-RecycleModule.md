@@ -124,6 +124,9 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
   `setNavOracle`/`setEePool`/`setWarehouse`, each `onlyOwner` + zero-guard + `WiringSet` event) — build-phase §17,
   not set-once-renounce-frozen. `setAvatar`/`setTarget` are inherited `onlyOwner` (the hot operator key CANNOT
   call them).
+- **`setOperator` re-checks `operator != owner` (`OwnerIsOperator`), SEC-15.** Beyond the zero-guard, the re-point
+  preserves the init-time (`setUp`) role separation across re-points — it cannot collapse the Timelock owner and the
+  CRE operator into one key.
 
 ## Gotchas
 - **DELETED in the single-sink rework** (do not look for them — the historical `RecyclePayoutModule` carried

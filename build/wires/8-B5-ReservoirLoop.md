@@ -72,7 +72,9 @@ bit**.
 
 ### ReservoirLoopModule — §17 Timelock-settable wiring
 `setEngineSafe` / `setOperator` / `setEvc` / `setBorrowVault` / `setEscrowVault` / `setLpToken` / `setUsdc` are
-all `onlyOwner`, each with a zero-address guard, each emitting `WiringSet(slot, value)`. `setEngineSafe` keeps
+all `onlyOwner`, each with a zero-address guard, each emitting `WiringSet(slot, value)`. `setOperator` additionally
+re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse the Timelock owner and the
+CRE operator into one key — preserving the init-time (`setUp`) role separation across re-points. `setEngineSafe` keeps
 `avatar`/`target` in **lockstep** with `engineSafe` so the borrower-of-record + every receiver/owner invariant
 holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key cannot call any of these.
 

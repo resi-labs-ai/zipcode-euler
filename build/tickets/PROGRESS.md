@@ -10,20 +10,16 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-15 — `setOperator` re-check `operator != owner` on 8 modules (I6).** Ticket: `build/tickets/sec/SEC-15-setoperator-owner-recheck.md`.
-- **Deliverable:** add `if (operator_ == owner) revert OwnerIsOperator();` to the `setOperator` re-point path of the 8
-  engine modules that drop it (`Recycle`/`ReservoirLoop`/`SzipBuyBurn`/`HarvestVote`/`Sell`/`Exercise`/`OffRamp`/
-  `DurationFreeze`), mirroring `LpStrategyModule.sol:140` (the only module that already re-checks). `OwnerIsOperator` is
-  already declared in each (used by `setUp`). Audit I6 (upgraded DOC→FIX).
-- **Source:** `build/kill-list.md` I6. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + a named `SEC15_*` regression (a `setOperator(owner)` re-point
-  reverts `OwnerIsOperator` on each of the 8; a non-owner re-point still succeeds); test output quoted in the ticket.
-- **SEC-14 landed aware of this:** SEC-14 added the ctor lock to the same 9 modules' inheritance line; SEC-15 touches a
-  different surface (`setOperator` body) — non-conflicting.
+**SEC-DOC — Doc / runbook sweep (14 DOC dispositions).** Ticket: `build/tickets/sec/SEC-DOC-doc-runbook-sweep.md`.
+- **Deliverable:** land all 14 DOC dispositions (M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 + prorata) as doc/NatDoc/runbook
+  edits in one sweep — **NO behavioral code** (4 items explicitly REJECT a proposed code change; the rejection IS the
+  finding). The FINAL SEC item — **all 15 FIX tickets (SEC-01…SEC-15) are now DONE.**
+- **Source:** `build/kill-list.md` §B (DOC). Driver: `build/kill-list-driver.md`.
+- **Done when:** per-item checklist landed; `forge build` + `forge test` stay green (no regression test — doc-only).
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
-> 11 → 12 → 13 → 14 → 15 → SEC-DOC. After each lands, set the next `SEC-NN` as NEXT.
+> 11 → 12 → 13 → 14 → 15 → SEC-DOC. After each lands, set the next `SEC-NN` as NEXT. **SEC-DOC is the last item.**
 >
 > **The Frontend ↔ anvil track is COMPLETE** (FE-00…FE-07, 2026-06-10/11). The **CRE track** (CRE-00…CRE-06) is
 > DEFERRED behind the SEC remediation push; its head is CRE-00 (scope retained in the Backlog table below).
@@ -37,7 +33,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-13 DONE (2026-06-15), SEC-14 DONE (2026-06-16); SEC-15 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-13 DONE (2026-06-15), SEC-14 + SEC-15 DONE (2026-06-16); the 15 FIX tickets are complete and SEC-DOC (doc/runbook sweep) is now NEXT — the final SEC item.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -58,12 +54,43 @@ doc/comment-only (no regression test).
 | SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **DONE 2026-06-15** — `sec/SEC-12-redeem-canonical-shares-event.md` |
 | SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **DONE 2026-06-15** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
 | SEC-14 | L18 | Init-lock 9 mastercopies (shared `MastercopyInitLock` empty `initializer` ctor — NOT `_disableInitializers`) + fix docstrings | **DONE 2026-06-16** — `sec/SEC-14-mastercopy-init-lock.md` |
-| SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **NEXT** — `sec/SEC-15-setoperator-owner-recheck.md` |
+| SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **DONE 2026-06-16** — `sec/SEC-15-setoperator-owner-recheck.md` |
 | SEC-DOC | M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 prorata | Doc/runbook sweep (no behavioral code; 4 explicit rejects) | **TICKETED** — `sec/SEC-DOC-doc-runbook-sweep.md` |
 
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-15 (2026-06-16)
+**The `operator != owner` re-check is now on all 9 szipUSD engine modules' `setOperator`** (audit R9; kill-list I6,
+upgraded DOC→FIX). `setUp` enforces `owner != operator` at init, but the build-phase `setOperator` re-point on 8 of 9
+modules rejected only the zero address — a re-point could silently collapse the Timelock owner and the CRE operator
+into one key, defeating the role separation the init invariant established. `LpStrategyModule` was the only module
+that already re-checked. Mechanical, fully-verified mirror (all three critics ran clean: spec-fidelity PASS incl. §17,
+reference-verifier confirmed `owner`/`OwnerIsOperator` resolve identically in all 8, junior-dev's only gaps were in the
+test fixture — folded in).
+- **Fix (8 src files):** after the existing `if (operator_ == address(0)) revert ZeroAddress();`, added
+  `if (operator_ == owner) revert OwnerIsOperator();` — copied verbatim from the model `LpStrategyModule.sol:141` — to
+  `RecycleModule:195`, `ReservoirLoopModule:158`, `SzipBuyBurnModule:235`, `HarvestVoteModule:139`, `SellModule:157`,
+  `ExerciseModule:124`, `OffRampModule:119`, `DurationFreezeModule:179`. The inherited (zodiac-core `Ownable`) `owner`
+  storage var resolves in all 8 (`is MastercopyInitLock → Module → Ownable`); `OwnerIsOperator` was already declared in
+  each. `setOperator` stays `onlyOwner` and still emits `WiringSet("operator", ...)` — no other surface touched.
+  **Non-conflicting with SEC-14** (which edited the same 9 modules' ctor inheritance line, a different surface).
+- **§17 honored (not a freeze):** the pointer stays re-pointable to any non-owner/non-zero address — this is input
+  validation, not a set-once/immutable freeze (same reading the spec-fidelity critic cleared for SEC-10).
+- **Gate green:** `forge build` clean (lint notes only). `forge test` **829 passed / 0 failed / 3 skipped** (+8 over
+  SEC-14's 821; the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold). Each of the 8 suites gained one
+  `test_SEC15_setOperator_owner_recheck()` reusing its existing live-module fixture (the contract-level `m` field, or
+  `module` for SzipBuyBurn, or `_deployModule(...)` for ReservoirLoop): a non-owner/non-zero re-point succeeds + updates
+  `operator`; `setOperator(owner)` reverts `OwnerIsOperator` (pranked as owner so the auth layer doesn't mask it);
+  `setOperator(address(0))` still reverts `ZeroAddress`. **Fail-before/pass-after confirmed** — stripping the guard from
+  all 8 src (leaving only `LpStrategyModule`) makes all 8 `test_SEC15_*` FAIL (`next call did not revert as expected`);
+  restored → 8/8 pass.
+- **No spec change** (interface-level input-validation; §17 "settable-not-frozen" intent unchanged). **No back-pressure /
+  no new obligation.** Doc-sync: kill-list I6 `[x]`; audit R9 RESOLVED; all 8 module wire-doc setter sections note the
+  re-check (`8-B10`/`8-B5`/`8-B14`/`8-B7`/`8-B9`/`8-B8`/`OffRampModule`/`DurationFreezeModule`). **This completes the 15
+  FIX tickets; SEC-DOC is the final SEC item.** Ticket: `build/tickets/sec/SEC-15-setoperator-owner-recheck.md`.
+  Report: `build/reports/SEC-15-report.md`.
 
 ### Just done — SEC-14 (2026-06-16)
 **The 9 szipUSD Zodiac-module mastercopies are now genuinely init-locked at construction** (kill-list L18; audit R10).

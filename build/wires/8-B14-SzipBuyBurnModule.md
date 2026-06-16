@@ -110,7 +110,9 @@ liveness only).
 - `setDiscountBps(dBps_)` — re-asserts `0 < dBps_ < 10_000`; `setBuybackCap(buybackCap_)` — unguarded (0 = kill-switch).
 - **8 wiring setters** (emit `WiringSet(slot, value)`): `setOperator`, `setEngineSafe`,
   `setNavOracle`, `setSzipUSD`, `setUsdc`, `setSettlement`, `setVaultRelayer` (each zero-guarded), plus
-  `setCoverageGate` (allows `address(0)` = gate OFF kill-switch / re-point the `DurationFreezeModule`). A
+  `setCoverageGate` (allows `address(0)` = gate OFF kill-switch / re-point the `DurationFreezeModule`).
+  `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse
+  the Timelock owner and the CRE operator into one key. A
   redeployed oracle/Safe/settlement/gate is a one-call re-point, not a redeploy cascade
   ([[oracle-replaceable-timelock-wiring]]).
 - **`setAvatar`/`setTarget`** are inherited from zodiac-core `Module` as `onlyOwner` — the CRE `operator` (hot key)

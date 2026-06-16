@@ -87,7 +87,8 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
 - **Timelock-settable wiring (build phase, §17).** Each of the 7 address slots has an `onlyOwner` setter,
   `ZeroAddress`-guarded, emitting `WiringSet(bytes32 slot, address value)`: `setEngineSafe` (**also re-points
   avatar+target in lock-step**), `setOperator`, `setSwapRouter`, `setHydx`, `setUsdc`, `setZipUSD`, `setXAlpha`. Slots
-  are **re-pointable, not set-once-frozen** (§17 build-phase doctrine). The inherited `setAvatar`/`setTarget` are
+  are **re-pointable, not set-once-frozen** (§17 build-phase doctrine). `setOperator` additionally re-checks
+  `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse the two roles into one key. The inherited `setAvatar`/`setTarget` are
   zodiac-core `onlyOwner` (Timelock only, never the operator) — deliberately not hard-locked (marking the vendored
   zodiac-core setters `virtual` would dirty the pristine reference dep).
 - **`onlyOperator` gate.** `modifier onlyOperator { if (msg.sender != operator) revert NotOperator(); }` gates **both**

@@ -67,6 +67,8 @@ msg.sender, and the Hydrex Voter is **account-keyed** (no per-NFT id is ever tra
   are `onlyOwner` (the Timelock). `setAvatar`/`setTarget` are inherited `onlyOwner` (zodiac-core); the operator
   CANNOT reach them — a redirect is a deliberate timelocked governance act, not an attack path. They are NOT
   hard-locked (that would require marking vendored zodiac-core setters `virtual` — reference deps stay pristine).
+  `setOperator` re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse the two roles
+  into one key — preserving the init-time (`setUp`) separation across re-points.
 
 ## Wiring — cross-component (who points at whom)
 - **`gauge` → resolved via `Voter.gauges(ourPool)` with the hard gate `Voter.gauges(ourPool) != 0`** (item-10).

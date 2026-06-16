@@ -1,10 +1,42 @@
 # SEC-15 — `setOperator` re-checks `operator != owner` on 8 modules (I6)
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` I6 (upgraded DOC→FIX); audit
-`role-based-findings.md` (I6); `build/claude-zipcode.md` §17 (Timelock-settable wiring) · **Status:** PROPOSED
+`role-based-findings.md` (I6); `build/claude-zipcode.md` §17 (Timelock-settable wiring) · **Status:** DONE 2026-06-16
 
 > Scope authored 2026-06-15. Mechanical one-line guard across 8 modules, mirroring the one module that already
 > has it. The `OwnerIsOperator` error already exists in each (used by `setUp`).
+
+## DONE-note (2026-06-16)
+**The `operator != owner` re-check is now on all 9 szipUSD engine modules' `setOperator`** (audit R9; kill-list I6).
+`setUp` enforces `owner != operator` at init, but the build-phase `setOperator` re-point on 8 of 9 modules rejected
+only the zero address — a re-point could silently collapse the two roles. Added
+`if (operator_ == owner) revert OwnerIsOperator();` after the existing `ZeroAddress` check in each of the 8
+(`RecycleModule:195`, `ReservoirLoopModule:158`, `SzipBuyBurnModule:235`, `HarvestVoteModule:139`, `SellModule:157`,
+`ExerciseModule:124`, `OffRampModule:119`, `DurationFreezeModule:179`), copied verbatim from the model
+`LpStrategyModule.sol:141`. The inherited (zodiac-core `Ownable`) `owner` storage var resolves identically in all 8
+(all `is MastercopyInitLock → Module → Ownable`); `OwnerIsOperator` was already declared in each. `setOperator` stays
+`onlyOwner` and still emits `WiringSet("operator", ...)`. **No other surface touched** — non-conflicting with SEC-14
+(ctor inheritance line vs `setOperator` body).
+
+- **Cold-build folded the test fixture** (junior-dev critic's most-blocking item): each of the 8 suites already
+  exposes a live module (owner ≠ operator) via its existing clone/`setUp` fixture — `RecycleModule`/`HarvestVote`/
+  `Sell`/`Exercise`/`OffRamp`/`DurationFreeze`(SetupTest) use the contract-level `m` field; `SzipBuyBurn` uses its `module`
+  field; `ReservoirLoop` builds one via `_deployModule(...)`. Each suite gained one
+  `test_SEC15_setOperator_owner_recheck()` reusing that fixture: a non-owner/non-zero re-point succeeds + updates
+  `operator`; `setOperator(owner)` reverts `OwnerIsOperator` (pranked as owner, so the auth layer doesn't mask it);
+  `setOperator(address(0))` still reverts `ZeroAddress`.
+- **Gate green:** `forge build` clean (lint notes only). `forge test`:
+  ```
+  Ran 52 test suites in 29.78s (84.12s CPU time): 829 tests passed, 0 failed, 3 skipped (832 total tests)
+  ```
+  +8 over SEC-14's 821 (the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold). **Fail-before/pass-after
+  confirmed** — stripping the guard from all 8 src files (via `perl`, leaving only `LpStrategyModule`) makes all 8
+  `test_SEC15_*` FAIL (`next call did not revert as expected`); restoring → 8/8 pass.
+- **Stale line refs in this ticket's "Binds to" block corrected** (SEC-14 landed after authoring, shifting bodies):
+  actual `setOperator` lines are Recycle:193, ReservoirLoop:156, SzipBuyBurn:233, HarvestVote:137, Sell:155,
+  Exercise:122, OffRamp:117, DurationFreeze:177; model `LpStrategyModule.sol:141`.
+- **No spec change** (interface-level input-validation; §17 "settable-not-frozen" honored — the pointer stays
+  re-pointable to any non-owner/non-zero address, validation not a freeze). **No back-pressure / no new obligation.**
 
 ## Deliverable
 Add the `operator_ == owner` re-check to the `setOperator` re-point path on the 8 engine modules that drop it,
