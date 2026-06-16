@@ -84,10 +84,15 @@ second *distinct* requester while pending is open reverts **`MultipleRequesters`
 **`withdraw` / `redeem`.** Claim USDC at par to an arbitrary `receiver`; gated `requester == msg.sender`
 (`NotAuthorized` otherwise — the EIP-7540 operator delegation was removed). Effects-before-interaction: decrement
 `claimableAssets` and `reservedAssets`, then `safeTransfer`. `redeem(shares < scaleUp)` reverts `ZeroAssets`
-rather than a phantom zero-transfer.
+rather than a phantom zero-transfer. **Both emit the CANONICAL `shares = assets * scaleUp`** in `Withdraw` — `redeem`
+recomputes it from the floored `assets` before the emit (SEC-12 / B9), so a sub-unit-excess input
+(`redeem(scaleUp + scaleUp/2)` → `assets == 1`) reports `shares == scaleUp`, NOT the raw `1.5·scaleUp`; the event
+field matches the USDC actually paid. (No `% scaleUp` revert guard — the recompute is preferred over rejecting
+currently-accepted inputs.)
 
 **Events.** `RedeemRequest(requester, owner, sender, shares)`, `RedemptionSettled(pending, filledShares,
-fillAssets, availableAssets)`, `Withdraw(sender, receiver, requester, assets, shares)`, plus the three wiring
+fillAssets, availableAssets)`, `Withdraw(sender, receiver, requester, assets, shares)` (`shares` always canonical
+`assets * scaleUp`, both claim paths — SEC-12), plus the three wiring
 events. (`OperatorSet` and the `era`/`settleCount` event fields were removed with the collapse.)
 
 **Views.** `pendingRedeemRequest(uint256, r) → pendingShares[r]` and `maxWithdraw(r) → claimableAssets[r]` (the

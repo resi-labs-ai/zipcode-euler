@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-12 — `ZipRedemptionQueue.redeem()` emits canonical shares (L11, event-only).** Ticket: `build/tickets/sec/SEC-12-redeem-canonical-shares-event.md`.
-- **Deliverable:** emit the actually-redeemed zipUSD-equivalent (`assets * scaleUp`) in `redeem`'s `Withdraw` event instead of the raw caller-supplied `shares` — which overstates the redeemed amount on sub-unit-excess input (USDC out already correct; feed/accounting-drift fix, no state/transfer change). Mirror the sibling `withdraw`'s canonical emit. Audit ref-B9.
-- **Source:** `build/kill-list.md` L11. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC12_*` regression; test output quoted in the ticket.
+**SEC-13 — `postBid` `validTo` anchored to oldest required leg (L12).** Ticket: `build/tickets/sec/SEC-13-postbid-validto-leg-anchor.md`.
+- **Deliverable:** add an additive `SzipNavOracle.oldestRequiredLegTs()` view, then bound a resting buy-burn bid's `validTo` to `min(required leg.ts) + maxAge` (the oldest NAV leg's age, not post-time) so a bid can never fill against a NAV mark older than `maxAge` (pre-fix worst case is `2·maxAge`). Spans two of our own contracts (same track, not external back-pressure). Audit L12.
+- **Source:** `build/kill-list.md` L12. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC13_*` regression; test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-11 are DONE (2026-06-15); SEC-12 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-12 are DONE (2026-06-15); SEC-13 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -49,8 +49,8 @@ doc/comment-only (no regression test).
 | SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **DONE 2026-06-15** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
 | SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **DONE 2026-06-15** — `sec/SEC-10-setlptwapwindow-validation.md` |
 | SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **DONE 2026-06-15** — `sec/SEC-11-fund-previewredeem-sizing.md` |
-| SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **NEXT** — `sec/SEC-12-redeem-canonical-shares-event.md` |
-| SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **TICKETED** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
+| SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **DONE 2026-06-15** — `sec/SEC-12-redeem-canonical-shares-event.md` |
+| SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **NEXT** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
 | SEC-14 | L18 | Init-lock 9 mastercopies (empty `initializer` ctor lock — NOT `_disableInitializers`) + fix docstrings | **TICKETED** — `sec/SEC-14-mastercopy-init-lock.md` |
 | SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **TICKETED** — `sec/SEC-15-setoperator-owner-recheck.md` |
 | SEC-DOC | M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 prorata | Doc/runbook sweep (no behavioral code; 4 explicit rejects) | **TICKETED** — `sec/SEC-DOC-doc-runbook-sweep.md` |
@@ -58,6 +58,31 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-12 (2026-06-15)
+**`ZipRedemptionQueue.redeem()` now emits the CANONICAL `shares = assets * scaleUp` in its `Withdraw` event**
+(kill-list L11; audit ref-B9). `redeem(shares,...)` pays `assets = shares / scaleUp` USDC at par (floor), but emitted
+the **raw** caller input — so a sub-unit-excess input (e.g. `redeem(scaleUp + scaleUp/2)` → `assets == 1`) reported
+`shares == 1.5·scaleUp` while only `scaleUp`-worth was actually redeemed. The event overstated the redeemed amount and
+disagreed with `assets` (USDC out was always correct — feed/accounting-drift only, no solvency impact). The sibling
+`withdraw` already emits the canonical `assets * scaleUp`; `redeem` now matches.
+- **Fix (1 file, `ZipRedemptionQueue.sol`):** inserted `shares = assets * scaleUp;` after the `:240-242` guards and
+  before the `:248` `emit Withdraw(...)`, mirroring `withdraw`'s `:221`. Event-field-only — `assets`, the transfers,
+  `claimableAssets`/`reservedAssets` effects, and the return value (`assets`) byte-for-byte unchanged. **No `% scaleUp`
+  revert guard added** (Do-NOT honored — the kill-list explicitly prefers the recompute over a guard that would reject
+  currently-accepted inputs). Floor-redeem semantics intact (`redeem(shares < scaleUp)` still reverts `ZeroAssets`).
+  All three critics ran clean (spec-fidelity PASS incl. §17 — nothing §17 governs the event field; reference-verifier
+  — every binding usable, zero line drift, `assets * scaleUp ≤ shares` so no overflow; junior-dev — no blocking item,
+  the existing `_fullFillAlice` settle-path helper funds the regression).
+- **Gate green:** `forge build` clean; `forge test` **806 passed / 0 failed / 3 skipped** (+3 over SEC-11's 803; the 3
+  skips are the pre-existing `DeployZipcode.t.sol` scaffold). 3 new `test_SEC12_*` in `test/ZipRedemptionQueue.t.sol`
+  (sub-unit-excess emits canonical `shares == scaleUp` not raw `1.5·scaleUp`; clean-multiple `k·scaleUp` unchanged;
+  return value still `assets`). **Fail-before/pass-after confirmed** — removing the one-line recompute makes the
+  sub-unit-excess test FAIL (`log != expected log`, event carried the raw input); restored → `[PASS] (gas: 302552)`.
+- **No spec change** (interface-level event-correctness fix; §12 senior-exit intent unchanged — `redeem` is a par claim
+  path, this only fixes the emitted figure). **No back-pressure / no new obligation** (uses existing surfaces). Wire doc
+  `9-ZipRedemptionQueue.md` updated (both claim paths now documented as emitting canonical `assets * scaleUp`). Ticket:
+  `build/tickets/sec/SEC-12-redeem-canonical-shares-event.md`. Report: `build/reports/SEC-12-report.md`.
 
 ### Just done — SEC-11 (2026-06-15)
 **`fund` (and `closeLine`'s defund) now size their `reallocate` targets off the EE's TRACKED supplied position,

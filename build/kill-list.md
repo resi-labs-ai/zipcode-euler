@@ -155,10 +155,10 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   `OwnerIsOperator` error already exists in each. **Fix:** add `if (operator_ == owner) revert OwnerIsOperator();`
   to each sibling's `setOperator` (RecycleModule, ReservoirLoop, SzipBuyBurn, HarvestVote, Sell, Exercise, OffRamp,
   + DurationFreeze for consistency).
-- [ ] **L11** (info) · `ZipRedemptionQueue.redeem()` emits raw caller `shares` on sub-unit input (`:248`).
+- [x] **L11** (info) · `ZipRedemptionQueue.redeem()` emits raw caller `shares` on sub-unit input (`:248`).
   **Fix:** recompute `shares = assets * scaleUp` before emit (mirror `withdraw()` `:221`). *Prefer this over adding
   a `% scaleUp` revert guard — the guard changes currently-accepted inputs.* Redeem is effectively dead in the
-  single-requester topology anyway.
+  single-requester topology anyway. **DONE 2026-06-15 (SEC-12).**
 - [ ] **L12** (LOW) · `postBid` `validTo` ceiling is anchored to post-time, so worst-case fill age is `2·maxAge`
   (`SzipBuyBurnModule.sol:304`). **Fix:** cap `validTo <= min(required leg.ts) + maxAge`; guard the `maxAge==0`/oldest-leg-age==maxAge
   underflow edge.

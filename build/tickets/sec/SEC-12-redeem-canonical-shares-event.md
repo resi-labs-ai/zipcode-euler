@@ -1,7 +1,7 @@
 # SEC-12 — `ZipRedemptionQueue.redeem()` emits canonical shares (L11)
 
-**Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` L11 (info); audit `findings.md` (L11) ·
-**Status:** PROPOSED
+**Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` L11 (info); audit `reference-diff-findings.md` B9 ·
+**Status:** DONE 2026-06-15
 
 > Scope authored 2026-06-15. Event-correctness only — no state/transfer change. `redeem` is effectively dead
 > in the single-requester topology, but the emitted figure should still be accurate for off-chain consumers.
@@ -50,3 +50,34 @@ emits the canonical `assets * scaleUp`; `redeem` should match.
 
 ## Depends on
 - None. On land: `PROGRESS.md` "Just done — SEC-12".
+
+## Done note (2026-06-15)
+**Fix (1 file, `ZipRedemptionQueue.sol`):** inserted `shares = assets * scaleUp;` in `redeem` after the
+`:240-242` guards (`assets = shares / scaleUp` floor → `assets == 0` reject → over-claim reject) and before the
+`:248` `emit Withdraw(...)`, mirroring `withdraw`'s `:221`. The `Withdraw` event now reports the canonical
+zipUSD-equivalent actually redeemed instead of the raw caller input. `assets`, the transfers,
+`claimableAssets`/`reservedAssets` effects, and the return value (`assets`) are byte-for-byte unchanged
+(event-field-only). No `% scaleUp` revert guard added (Do-NOT honored — recompute preferred over rejecting
+currently-accepted inputs). Floor-redeem semantics intact: `redeem(shares < scaleUp)` still reverts `ZeroAssets`.
+
+**Binding verified by all three critics (clean, zero line drift):** `:248` emits raw input `shares`; `:240`
+floors; `withdraw` `:221`/`:227` is the canonical mirror; `Withdraw(sender, receiver, requester, uint256 assets,
+uint256 shares)` declared `:92-94` (recompute is type-correct); `scaleUp` is `uint256 = 1e12` (18/6 dp) and
+`assets * scaleUp ≤ shares` so the product cannot overflow for any valid input (and Solidity 0.8 reverts, not wraps).
+
+**Gate green:** `forge build` clean; `forge test` **806 passed / 0 failed / 3 skipped** (+3 over SEC-11's 803; the
+3 skips are the pre-existing `DeployZipcode.t.sol` scaffold). 3 new `test_SEC12_*` in `test/ZipRedemptionQueue.t.sol`
+(funded via the existing `_fullFillAlice` settle-path helper, single-requester):
+- `test_SEC12_redeem_subUnitExcess_emits_canonical_shares` — `redeem(scaleUp + scaleUp/2)` pays `assets == 1` and
+  emits `Withdraw(..., 1, SCALE)` (canonical), NOT the raw `1.5·scaleUp`.
+- `test_SEC12_redeem_cleanMultiple_emits_unchanged` — `redeem(k·scaleUp)` emits `shares == k·scaleUp` (recompute is
+  a no-op for exact inputs).
+- `test_SEC12_redeem_returnValue_unchanged` — `redeem` still returns `assets` (`400e6`).
+
+**Fail-before/pass-after confirmed:** removing the one-line recompute makes
+`test_SEC12_redeem_subUnitExcess_emits_canonical_shares` FAIL (`log != expected log` — event carried the raw
+`1.5·scaleUp`); restored → `[PASS] (gas: 302552)`, full suite green.
+
+**No spec change** (interface-level event-correctness fix; §12 senior-exit intent unchanged — `redeem` is a par
+claim path, this only fixes the emitted figure). **No back-pressure / no new obligation** (uses existing surfaces).
+Report: `build/reports/SEC-12-report.md`.
