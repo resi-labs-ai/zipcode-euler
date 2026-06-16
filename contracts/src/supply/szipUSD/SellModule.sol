@@ -154,6 +154,7 @@ contract SellModule is MastercopyInitLock {
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
     function setOperator(address operator_) external onlyOwner {
         if (operator_ == address(0)) revert ZeroAddress();
+        if (operator_ == owner) revert OwnerIsOperator();
         operator = operator_;
         emit WiringSet("operator", operator_);
     }

@@ -310,6 +310,24 @@ contract RecycleModuleUnitTest is Test {
         m.setUp(_params(owner, address(safe), operator, zdm, address(usdc)));
     }
 
+    /// @dev SEC-15 (I6): `setOperator` re-point must preserve the init-time owner != operator separation.
+    ///      Pre-fix the re-point only rejected the zero address, so it could silently collapse the two roles.
+    function test_SEC15_setOperator_owner_recheck() public {
+        // a valid non-owner, non-zero re-point still succeeds
+        address newOp = makeAddr("sec15NewOp");
+        vm.prank(owner);
+        m.setOperator(newOp);
+        assertEq(m.operator(), newOp);
+        // re-pointing operator to the owner now reverts OwnerIsOperator (pre-fix it succeeded)
+        vm.prank(owner);
+        vm.expectRevert(RecycleModule.OwnerIsOperator.selector);
+        m.setOperator(owner);
+        // zero still rejected
+        vm.prank(owner);
+        vm.expectRevert(RecycleModule.ZeroAddress.selector);
+        m.setOperator(address(0));
+    }
+
     function test_setUp_rejects_owner_equals_operator() public {
         RecycleModule x = _cloneRecycleModule();
         vm.expectRevert(RecycleModule.OwnerIsOperator.selector);

@@ -234,6 +234,24 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         module.setUp(p);
     }
 
+    /// @dev SEC-15 (I6): `setOperator` re-point must preserve the init-time owner != operator separation.
+    ///      Pre-fix the re-point only rejected the zero address, so it could silently collapse the two roles.
+    function test_SEC15_setOperator_owner_recheck() public {
+        // a valid non-owner, non-zero re-point still succeeds
+        address newOp = makeAddr("sec15NewOp");
+        vm.prank(owner);
+        module.setOperator(newOp);
+        assertEq(module.operator(), newOp);
+        // re-pointing operator to the owner now reverts OwnerIsOperator (pre-fix it succeeded)
+        vm.prank(owner);
+        vm.expectRevert(SzipBuyBurnModule.OwnerIsOperator.selector);
+        module.setOperator(owner);
+        // zero still rejected
+        vm.prank(owner);
+        vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
+        module.setOperator(address(0));
+    }
+
     function test_setUp_rejects_owner_equals_operator() public {
         SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.OwnerIsOperator.selector);
