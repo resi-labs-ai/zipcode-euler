@@ -11,6 +11,7 @@ import {LineAccount} from "../src/venue/LineAccount.sol";
 import {CREGatingHook} from "../src/CREGatingHook.sol";
 import {ZipcodeOracleRegistry} from "../src/ZipcodeOracleRegistry.sol";
 import {LienCollateralToken} from "../src/LienCollateralToken.sol";
+import {SzipPerspectiveProbe} from "../script/SzipPerspectiveProbe.sol";
 
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault, IBorrowing} from "evk/EVault/IEVault.sol";
@@ -40,9 +41,18 @@ contract MockEulerEarn {
     uint256 internal constant MAX_QUEUE_LENGTH = 30; // ConstantsLib.MAX_QUEUE_LENGTH
 
     error MaxQueueLengthExceeded();
+    /// @dev Mirrors EulerEarn's `afterTimelock` (reference EulerEarn.sol:185-189,507): a same-tx `acceptCap` after a
+    ///      `submitCap` that set `validAt = now + timelock` reverts while `timelock != 0`. SEC-08's openLine precheck
+    ///      fires BEFORE this — so without the fix, openLine builds all line proxies, THEN reverts here (orphaned).
+    error TimelockNotElapsed();
 
     /// @notice The pool asset (USDC) the mock moves between markets during a faithful reallocate.
     address public immutable asset;
+
+    /// @notice The EE pool timelock (SEC-08). Default 0 (immediate cap config); a test raises it as the EE owner.
+    uint256 public timelock;
+    /// @notice The EE pool's factory (SEC-08); `SzipPerspectiveProbe` reaches it via `creator()` to gate the probe.
+    address public creator;
 
     address[] public submittedCaps;
     address[] public acceptedCaps;
@@ -62,7 +72,18 @@ contract MockEulerEarn {
     }
 
     function acceptCap(IOZERC4626 id) external {
+        if (timelock != 0) revert TimelockNotElapsed(); // faithful afterTimelock: same-tx accept fails while > 0
         acceptedCaps.push(address(id));
+    }
+
+    /// @dev SEC-08 test hook: the external EE owner raises the timelock post-deploy.
+    function setTimelock(uint256 t) external {
+        timelock = t;
+    }
+
+    /// @dev SEC-08 test hook: point the probe at a given factory (the live EE factory, or a mock that rejects).
+    function setCreator(address c) external {
+        creator = c;
     }
 
     function setSupplyQueue(IOZERC4626[] calldata q) external {
@@ -173,6 +194,14 @@ contract MisWiringAdapter is EulerVenueAdapter {
     function _assertWired(address router, address collat, address) internal view override {
         // Pass the WRONG expected lien -> the real resolve (correct lien) must trip WireMismatch.
         super._assertWired(router, collat, wrongLien);
+    }
+}
+
+/// @notice SEC-08: a minimal EE factory whose perspective REJECTS the line vault — proves the deploy-time probe bites
+///         (models a future external `setPerspective` swap to a config-inspecting perspective).
+contract MockRejectingEarnFactory {
+    function isStrategyAllowed(address) external pure returns (bool) {
+        return false;
     }
 }
 
@@ -822,5 +851,63 @@ contract EulerVenueAdapterTest is ForkConfig {
 
         assertEq(ee.reallocCount(), reallocBefore, "no defund reallocate on a never-funded line");
         assertFalse(adapter.getLine(lineRef).open, "line closed");
+    }
+
+    // ============================================================
+    // (P) SEC-08 — openLine timelock precheck + deploy-time perspective probe (M6)
+    // ============================================================
+
+    /// @dev Timelock precheck fails LOUD + EARLY: with the EE pool's timelock raised (> 0) by its external owner,
+    ///      openLine reverts the legible `EulerEarnTimelockNonZero` and builds NO line proxies. Pre-fix (precheck
+    ///      removed) it builds the LineAccount + escrow + router + borrow vault, THEN reverts opaquely inside the
+    ///      faithful mock's `acceptCap` (`TimelockNotElapsed`) — orphaning the proxies (the factory list grows).
+    function test_SEC08_TimelockPrecheck_RevertsEarly_NoOrphan() public {
+        ee.setTimelock(1 days); // external EE owner raises the timelock post-deploy
+
+        uint256 proxiesBefore = factory.getProxyListLength();
+        vm.expectRevert(EulerVenueAdapter.EulerEarnTimelockNonZero.selector);
+        adapter.openLine(LIEN_ID_A, address(LIEN_A), 1e18);
+        assertEq(factory.getProxyListLength(), proxiesBefore, "no line proxies built on the timelock brick");
+        assertFalse(adapter.getLine(address(0)).open, "no line recorded");
+    }
+
+    /// @dev Happy path intact: with timelock == 0 (default) openLine still succeeds end-to-end.
+    function test_SEC08_TimelockZero_HappyPath() public {
+        assertEq(ee.timelock(), 0, "default timelock is 0");
+        (address lineRef,) = _openA();
+        assertTrue(lineRef != address(0), "line opened");
+        assertTrue(adapter.getLine(lineRef).open, "line is open");
+    }
+
+    /// @dev Deploy probe passes LIVE: a vault built with `openLine`'s exact shape passes the live EE factory's
+    ///      configured (provenance-only) perspective via the full `SzipPerspectiveProbe` path (reaching the real
+    ///      factory through `creator()`). No revert == accepted.
+    function test_SEC08_DeployProbe_PassesLive() public {
+        ee.setCreator(BaseAddresses.EULER_EARN_FACTORY);
+        address probe = new SzipPerspectiveProbe().assertLineVaultAllowed(
+            factory, address(ee), address(evc), usdc, address(registry), address(irm), address(hook), address(LIEN_A)
+        );
+        assertTrue(probe != address(0), "probe vault built");
+        assertTrue(factory.isProxy(probe), "probe is an EVK-factory proxy (what the live perspective verifies)");
+    }
+
+    /// @dev Deploy probe BITES: point `creator()` at a factory whose perspective rejects the line vault — the probe
+    ///      reverts `LineVaultPerspectiveRejected` (models a future `setPerspective` swap that bricks origination).
+    function test_SEC08_DeployProbe_Bites() public {
+        MockRejectingEarnFactory bad = new MockRejectingEarnFactory();
+        ee.setCreator(address(bad));
+        SzipPerspectiveProbe probe = new SzipPerspectiveProbe();
+        // The probe vault address is created inside the call (so its revert ARGS are unpredictable); catch and match
+        // the selector only.
+        bool reverted;
+        try probe.assertLineVaultAllowed(
+            factory, address(ee), address(evc), usdc, address(registry), address(irm), address(hook), address(LIEN_A)
+        ) returns (address) {} catch (bytes memory reason) {
+            reverted = true;
+            assertEq(
+                bytes4(reason), SzipPerspectiveProbe.LineVaultPerspectiveRejected.selector, "wrong revert selector"
+            );
+        }
+        assertTrue(reverted, "probe must revert when the EE perspective rejects the line vault");
     }
 }

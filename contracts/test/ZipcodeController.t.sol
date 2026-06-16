@@ -54,6 +54,11 @@ contract MockEulerEarn {
         usdc = usdc_;
     }
 
+    /// @dev SEC-08: openLine reads `eulerEarn.timelock()` as a precheck; 0 == immediate cap config (happy path).
+    function timelock() external pure returns (uint256) {
+        return 0;
+    }
+
     function submitCap(IOZERC4626, uint256) external {}
     function acceptCap(IOZERC4626) external {}
 

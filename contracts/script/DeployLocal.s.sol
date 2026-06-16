@@ -5,6 +5,7 @@ import {DeployZipcode} from "./DeployZipcode.s.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
 import {ReservoirMarketDeployer} from "./ReservoirMarketDeployer.sol";
 import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {SzipPerspectiveProbe} from "./SzipPerspectiveProbe.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
 
@@ -144,6 +145,24 @@ contract DeployLocal is DeployZipcode {
         _eeCall(ee, abi.encodeWithSignature("setSupplyQueue(address[])", q));
 
         _eeCall(ee, abi.encodeWithSignature("setCurator(address)", address(d.adapter)));
+
+        // SEC-08 (kill-list M6): deploy-time perspective probe. Build a throwaway vault with the SAME shape `openLine`
+        // mints for a credit line and assert the EE factory's CONFIGURED perspective accepts it (reach the factory via
+        // `creator()`). The live perspective is provenance-only so this passes today; its value is failing LOUDLY at
+        // deploy if a FUTURE external perspective swap (e.g. an ungoverned-only perspective) would reject the
+        // governed+hooked line vault and brick origination — instead of an opaque mid-`openLine` revert. The probe lien
+        // is a throwaway 18-dp token (`i.polIchiVault`); the perspective never resolves the oracle so the choice is
+        // immaterial to the result.
+        new SzipPerspectiveProbe().assertLineVaultAllowed(
+            GenericFactory(BaseAddresses.EVAULT_FACTORY),
+            ee,
+            BaseAddresses.EVC,
+            BaseAddresses.USDC,
+            address(d.registry),
+            i.irm,
+            address(d.hook),
+            i.polIchiVault
+        );
     }
 
     /// @dev Low-level EE admin call (the EulerEarn admin ABI is deliberately not compiled into the repo), bubbling the

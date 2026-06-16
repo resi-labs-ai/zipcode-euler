@@ -75,6 +75,9 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     error ZeroCap();
     error InvalidCollateralAmount();
     error ZeroAddress();
+    /// @notice `openLine` aborts early: the EE pool's timelock is non-zero, so the same-tx `submitCap`+`acceptCap`
+    ///         onboarding (`afterTimelock`) would revert mid-origination — fail loud BEFORE any line state is built.
+    error EulerEarnTimelockNonZero();
 
     // ----- events -----
     /// @notice Emitted when an owner (Timelock) re-points a wiring slot (build phase, §17).
@@ -197,6 +200,13 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         // bare `!= 0` is too loose — reject both 0 (EVK deposit(0,..) does NOT revert → silent zero-share line)
         // and any partial.
         if (collateralAmount != 1e18) revert InvalidCollateralAmount();
+
+        // SEC-08 (kill-list M6): runtime timelock precheck. `submitCap` sets `pendingCap.validAt = now + timelock`
+        // and the SAME-TX `acceptCap` carries `afterTimelock(validAt)` (EulerEarn.sol:507) — so a non-zero EE
+        // timelock makes step-4 onboarding revert AFTER the LineAccount + both EVK proxies + router are already
+        // built (orphaned state). The EE owner is EXTERNAL and can RAISE the timelock post-deploy, so a deploy-time
+        // `timelock()==0` snapshot is insufficient; this reads it LIVE per origination and aborts before step 0.
+        if (eulerEarn.timelock() != 0) revert EulerEarnTimelockNonZero();
 
         // step 0: fresh per-line borrower account + its operator grant (the adapter is the granted operator).
         LineAccount la = new LineAccount{salt: lienId}(address(evc), address(this));
