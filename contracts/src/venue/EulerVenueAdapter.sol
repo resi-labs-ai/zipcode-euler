@@ -355,6 +355,24 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
             abi.encodeCall(IEVKERC4626.redeem, (shares, controller, L.borrowAccount))
         );
 
+        // Prune the closed line's borrow vault from the EE supply queue (security H2). `openLine` appends every
+        // new EVAULT to the queue (:227-233); without this prune the queue grows monotonically toward the hard
+        // MAX_QUEUE_LENGTH = 30 cap, and once ~29 lines exist the next openLine's setSupplyQueue reverts
+        // MaxQueueLengthExceeded -> origination permanently bricks even though most lines are long since closed.
+        // Rebuild into a qlen-1 array, skipping `lineRef` by ADDRESS match (do NOT assume it is the last entry —
+        // interleaved opens/closes move it). Every surviving entry still has cap != 0 (base market + other open
+        // lines), so EE's per-entry cap check passes; no cap-revoke / withdraw-queue / timelock path is needed.
+        // The collateral was just redeemed, so the removed market carries no balance.
+        uint256 qlen = eulerEarn.supplyQueueLength();
+        IOZERC4626[] memory newQueue = new IOZERC4626[](qlen - 1);
+        uint256 j;
+        for (uint256 i; i < qlen; ++i) {
+            IOZERC4626 m = eulerEarn.supplyQueue(i);
+            if (address(m) == lineRef) continue;
+            newQueue[j++] = m;
+        }
+        eulerEarn.setSupplyQueue(newQueue);
+
         L.open = false; // keep the record readable so post-close observeDebt == 0 stays queryable
         emit LineClosed(lineRef);
     }

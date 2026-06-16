@@ -36,6 +36,11 @@ contract ZeroIRM {
 ///         cannot be `new`-ed under 0.8.24; the adapter imports only the interface, so a focused recording mock
 ///         suffices for the unit/fork test (the live EE path is the audit S9/L4 integration).
 contract MockEulerEarn {
+    // Mirror the real EulerEarn supply-queue cap so the H2 brick (SEC-06) is reproducible at the unit level.
+    uint256 internal constant MAX_QUEUE_LENGTH = 30; // ConstantsLib.MAX_QUEUE_LENGTH
+
+    error MaxQueueLengthExceeded();
+
     address[] public submittedCaps;
     address[] public acceptedCaps;
     IOZERC4626[] internal _queue;
@@ -54,10 +59,21 @@ contract MockEulerEarn {
     }
 
     function setSupplyQueue(IOZERC4626[] calldata q) external {
+        // Faithful to EulerEarn.setSupplyQueue (reference :328): reject a queue past the hard cap. This is the
+        // exact revert SEC-06's prune prevents — without the prune the queue grows unboundedly to this bound.
+        if (q.length > MAX_QUEUE_LENGTH) revert MaxQueueLengthExceeded();
         delete _queue;
         for (uint256 i; i < q.length; ++i) {
             _queue.push(q[i]);
         }
+    }
+
+    /// @dev test helper: is `market` present in the current supply queue?
+    function queueContains(address market) external view returns (bool) {
+        for (uint256 i; i < _queue.length; ++i) {
+            if (address(_queue[i]) == market) return true;
+        }
+        return false;
     }
 
     function supplyQueueLength() external view returns (uint256) {
@@ -645,5 +661,58 @@ contract EulerVenueAdapterTest is ForkConfig {
         // EulerVenueAdapter is IZipcodeVenue — assignable to the interface type (compile-time proof).
         IZipcodeVenue v = IZipcodeVenue(address(adapter));
         assertEq(address(v), address(adapter));
+    }
+
+    // ============================================================
+    // (N) SEC-06 — closeLine prunes the closed line from the EE supply queue (H2)
+    // ============================================================
+
+    /// @dev Prune happens: a closed line's borrow vault is removed from the supply queue (length drops by 1).
+    function test_SEC06_CloseLine_PrunesSupplyQueue() public {
+        (address lineRef,) = _openA();
+        assertEq(ee.supplyQueueLength(), 2, "queue = [base, line] after open");
+        assertTrue(ee.queueContains(lineRef), "line present in queue after open");
+
+        adapter.closeLine(lineRef);
+
+        // Pre-fix this stays 2 (no prune) and the vault remains in the queue.
+        assertEq(ee.supplyQueueLength(), 1, "queue dropped to [base] after close");
+        assertFalse(ee.queueContains(lineRef), "closed line pruned from queue");
+        assertTrue(ee.queueContains(baseUsdcMarket), "base market preserved");
+    }
+
+    /// @dev Other open lines untouched: closing one line leaves the other in the queue and still fundable.
+    function test_SEC06_CloseLine_LeavesOtherOpenLineFundable() public {
+        _fundBaseMarket(1_000_000e6);
+        (address lineA,) = _openA();
+        (address lineB,) = _openB();
+        assertEq(ee.supplyQueueLength(), 3, "queue = [base, A, B] after two opens");
+
+        adapter.closeLine(lineA);
+
+        assertEq(ee.supplyQueueLength(), 2, "queue = [base, B] after closing A");
+        assertFalse(ee.queueContains(lineA), "A pruned");
+        assertTrue(ee.queueContains(lineB), "B retained");
+        assertTrue(ee.queueContains(baseUsdcMarket), "base retained");
+
+        // B is still routable: fund() reallocates into it without reverting.
+        adapter.fund(lineB, 100_000e6);
+        assertEq(ee.reallocCount(), 1, "B still fundable after A closed");
+    }
+
+    /// @dev No brick across churn: run open->close more than MAX_QUEUE_LENGTH (30) total originations, closing each
+    ///      before the next. Post-fix the queue stays bounded at [base, line] and every open succeeds. Pre-fix the
+    ///      queue grows by 1 per open and never shrinks, so the ~30th open's setSupplyQueue reverts
+    ///      MaxQueueLengthExceeded. The single 1e18 LIEN_A is recycled — each close redeems it back to the controller.
+    function test_SEC06_NoBrickAcrossChurnPastQueueCap() public {
+        uint256 n = 33; // comfortably past MAX_QUEUE_LENGTH (30)
+        for (uint256 i; i < n; ++i) {
+            bytes32 lienId = keccak256(abi.encode("SEC06", i));
+            (address lineRef,) = adapter.openLine(lienId, address(LIEN_A), 1e18);
+            assertEq(ee.supplyQueueLength(), 2, "queue bounded at [base, line] every cycle");
+            adapter.closeLine(lineRef);
+            assertEq(ee.supplyQueueLength(), 1, "queue back to [base] after each close");
+            assertEq(LIEN_A.balanceOf(controller), 1e18, "lien recycled to controller after close");
+        }
     }
 }
