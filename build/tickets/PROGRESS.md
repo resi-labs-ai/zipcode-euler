@@ -77,8 +77,14 @@ could push an arbitrary LP-share mark → mismark reservoir collateral → over-
   skips are the pre-existing `DeployZipcode.t.sol` scaffold). 7 new `test_SEC05_*` in `test/ZipcodeDeployIdentityGate.t.sol`
   (no fork — the oracle ctor only reads `quote.decimals()`): identity-sealed; the **dormant-accepts-wrong-id vs
   sealed-rejects-`InvalidWorkflowId` behavioral pair on the REAL oracle**; sealed-accepts-correct-id (no false lockout);
-  pre-gate negative/positive; fair-LP guard semantics. **Fail-before/pass-after confirmed** (removing the `:535` seal →
-  the wrong-id push is accepted again).
+  pre-gate negative/positive; fair-LP guard semantics. These 7 prove the FIX MECHANISM but do NOT run the deploy script.
+- **End-to-end (the genuine deploy-script gate) — `DeployLocal` against a fresh Base-fork anvil** (`DeployLocal` is
+  `DeployZipcode`; `_phaseP9` runs verbatim, CRE-push branch ⇒ `d.lpOracle` set): **before** = the live `:8545`
+  pre-fix stack's lpOracle reads `getExpectedWorkflowId()==0x0` (the real dormant vuln); **after** = a fresh deploy with
+  this fix seals it (`==0x..01`, author + `owner()==Timelock`); **fail-closed** = removing only the seal call makes
+  `DeployLocal` revert `ReceiverIdentityNotWired` at the pre-gate before ownership transfer. (An earlier note claimed
+  the unit behavioral test flips when the seal is removed — that was wrong; those tests never run the script. The
+  script wiring is proven here instead.)
 - **No spec change** (interface-level deploy fix; §9/§17 intent unchanged — the spec already prescribed sealing every
   receiver's identity; this fences the one the loop omitted). **No back-pressure / no new obligation** (uses the
   receiver's existing `setExpected*` surface + a new deploy-time lib fn). The standing **WOOF-10 deploy-bar obligation**

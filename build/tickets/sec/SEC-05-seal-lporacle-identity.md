@@ -110,8 +110,26 @@ ctor only reads `quote.decimals()`):
 - `FairLpBranch_GuardSemantics` — pins that the script's `!= address(0)` guard is what keeps the ownerless fair-LP
   branch from fail-closing (the full fair-LP deploy path is the skipped WOOF-10 fork harness's bar).
 
-**Fail-before/pass-after confirmed:** commenting out the `:535` seal call → `Behavioral_SealedRejectsWrongIdentity`
-flips back to accepting the wrong-id push (the dormant vuln). **`forge build` clean.**
+⚠️ **These 7 unit tests prove the FIX MECHANISM (the gate + that sealing closes the hole) but do NOT run the deploy
+script — they construct + seal a standalone oracle.** So they cannot, by themselves, prove P9 actually performs the
+seal. (An earlier draft of this note claimed "commenting out the `:535` seal flips the behavioral test" — that was
+WRONG: those tests never touch the script, so the edit had no effect on them.) The script wiring is verified
+separately, end-to-end, below.
+
+**End-to-end verification — genuine fail-before/pass-after through the REAL deploy script (`DeployLocal` is
+`DeployZipcode`; `_phaseP9` runs verbatim; its `_phaseP5` override always takes the CRE-push branch ⇒ `d.lpOracle`
+is set):**
+- **Before (the real deployed vuln):** the live `:8545` anvil stack (deployed 2026-06-10, pre-fix) — its lpOracle
+  `0x4505…0D42` reads `getExpectedWorkflowId() == 0x0` and `getExpectedAuthor() == 0x0` (dormant identity, the M4
+  hole, confirmed via `cast call`).
+- **After (the fix):** a fresh Base-fork `DeployLocal` broadcast with this working tree → the same-nonce lpOracle
+  `0x4505…0D42` reads `getExpectedWorkflowId() == 0x…01` (the local `WORKFLOW_ID`), `getExpectedAuthor() ==
+  0x90F7…b906` (the `workflowAuthor`), `owner() == 0x89ae…3B27` (the Timelock). **Sealed.**
+- **Fail-closed (the pre-gate bites in the real deploy):** removing ONLY the `:535` seal call (leaving the `:542`
+  assert) and re-broadcasting `DeployLocal` to a fresh fork → the deploy **reverts**
+  `ReceiverIdentityNotWired(0x4505…0D42)` at the pre-gate, fail-closing **before** any ownership transfer.
+
+**`forge build` clean.**
 
 **Gate output (`forge test`):**
 ```

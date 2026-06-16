@@ -125,7 +125,9 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   requireReceiverIdentityWired(address)` per-receiver gate (`error ReceiverIdentityNotWired`) asserts it (`:542`),
   both guarded `!= address(0)`. 7 new `test_SEC05_*` in `ZipcodeDeployIdentityGate.t.sol` (identity sealed,
   dormant-accepts-vs-sealed-rejects behavioral pair on the REAL oracle, pre-gate negative/positive, fair-LP guard)
-  — fail-before/pass-after confirmed (seal removed → wrong-id push accepted again).
+  prove the fix mechanism; the SCRIPT WIRING is proven end-to-end via `DeployLocal` on a fresh Base-fork anvil —
+  before: live pre-fix lpOracle `getExpectedWorkflowId()==0x0`; after: sealed `==0x..01` + owner=Timelock;
+  fail-closed: seal removed → deploy reverts `ReceiverIdentityNotWired` at the pre-gate.
 - [ ] **L2** (LOW→MED) · `setLpTwapWindow(>0)` against a plugin-less/under-seeded Algebra pool bricks *every*
   NAV read; setter has zero validation (`SzipNavOracle.sol:247-250`). **Fix:** in the setter, for non-zero window
   assert `IAlgebraPool(pool).plugin() != 0` and `IAlgebraOraclePlugin(plugin).isInitialized()`. (Full cardinality
