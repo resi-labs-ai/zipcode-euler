@@ -139,8 +139,10 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 - **Enable on BOTH Safes.** Enable the module on the main Safe; enable on the sidecar **only after**
   `isOwner(team)` on the sidecar (so the team has proven it can drive the sidecar). Both enables are required
   before any `commit`/`release` round-trip.
-- **CREATE2-clone + `setUp` + init-lock.** The mastercopy is deployed and init-locked at deploy; per-line/
-  per-deploy instances are `ModuleProxyFactory` clones whose `setUp` writes the set-once storage. Pass
+- **CREATE2-clone + `setUp`.** The mastercopy is locked AUTOMATICALLY by its constructor (`MastercopyInitLock`,
+  SEC-14) the instant it is deployed — NO separate deploy-time lock step, and `setUp` on the mastercopy reverts
+  `AlreadyInitialized`; per-line/per-deploy instances are `ModuleProxyFactory` clones whose `setUp` writes the
+  set-once storage. Pass
   `owner_ = Timelock`. Wire the warehouse/navOracle/eulerEarn reads via the `setUp` tuple; the five legs are
   derived LIVE from `navOracle` (not passed).
 - **Oracle-consumer re-point reconcile.** This module holds a set-once `navOracle` (settable by the Timelock

@@ -69,10 +69,13 @@ explains why the guard is mandatory — yet three sibling oracles omit it. Fix i
   `operator != owner` on re-point; its **7 sibling modules do not**. Only the (trusted) Timelock can
   exploit, so not a break — but a real inconsistency the spec's "`OwnerIsOperator` at every module" wording
   papers over.
-- **R10 — Zodiac mastercopies are never init-locked.** Every module's header claims "mastercopy is
-  init-locked at deploy"; in fact no constructor/`_disableInitializers` exists and the deploy script never
-  `setUp`s the mastercopy → anyone can initialize it. Benign today (CALL-only, not enabled on any Safe,
-  no delegatecall/UUPS) but a false safety claim + foot-gun for any future delegatecall variant.
+- **R10 — Zodiac mastercopies are never init-locked. — RESOLVED 2026-06-16 (SEC-14 / kill-list L18).** Every
+  module's header claimed "mastercopy is init-locked at deploy"; in fact no constructor/`_disableInitializers`
+  existed and the deploy script never `setUp`s the mastercopy → anyone could initialize it. Benign today
+  (CALL-only, not enabled on any Safe, no delegatecall/UUPS) but a false safety claim + foot-gun for any future
+  delegatecall variant. **Fix:** shared `MastercopyInitLock is Module` base — `constructor()` runs an empty
+  `initializer`-guarded `_lockMastercopy()` flipping the inherited `_initialized`; the 9 modules inherit it, so a
+  bare mastercopy's `setUp` now reverts `AlreadyInitialized` (clones unaffected). Docstrings corrected.
 - **R11 — `SzAlphaRateOracle` "no owner / all knobs immutable" is inaccurate.** The *economic* knobs are
   immutable, but it inherits `ReceiverTemplate(Ownable)` with Timelock-mutable Forwarder + workflow
   identity (incl. Forwarder→0 disabling validation), like every other receiver. Correct the §2/§6 wording.

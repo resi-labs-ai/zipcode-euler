@@ -165,10 +165,16 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   pushed legs + the wired xALPHA rate's `lastUpdate()` when seeded) and anchored the fence to `anchor + maxAge` (pure
   addition — no underflow). Side effect (intended, fail-closed): an age-stale pushed leg now trips this fence BEFORE
   `fresh()`/`StaleNav` (the fence is strictly tighter); `StaleNav` stays reachable via the rate-stale path.
-- [ ] **L18** (info/QA) · 9 module mastercopies aren't init-locked despite the docstring claim. *The proposed
+- [x] **L18** (info/QA) · 9 module mastercopies aren't init-locked despite the docstring claim. *The proposed
   `_disableInitializers()` does NOT exist in zodiac-core's `Initializable` (OZ-only) — won't compile.* **Fix:**
   use the zodiac-core `TestModule` idiom (constructor calls `setUp` under the `initializer` modifier) or add a
   `_disableInitializers`-equivalent to the base; **and** correct all 9 docstrings. Non-exploitable (never enabled).
+  **DONE 2026-06-16 (SEC-14).** New shared abstract `MastercopyInitLock is Module` whose `constructor()` calls a
+  private empty `initializer`-guarded `_lockMastercopy()` (flips the inherited zodiac-core `_initialized` WITHOUT
+  running `setUp`, sidestepping the non-zero/`owner!=operator` validation — the `TestModule` idiom would revert
+  `ZeroAddress`). All 9 modules now inherit it; later `setUp` on a bare mastercopy reverts `AlreadyInitialized`,
+  clones (fresh proxy storage) `setUp` normally. All 9 docstrings + the wire-doc runbooks corrected (the old
+  "deploy then call `setUp` once to lock" runbook was itself wrong — the deploy never touched the mastercopy).
 
 ---
 

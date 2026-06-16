@@ -41,7 +41,8 @@ the staked LP.
 | `Module` / `Operation` (zodiac-core) | Base: `avatar`/`target` (set to `engineSafe`), `onlyOwner`, `execAndReturnData`, `initializer`. |
 
 ## Wiring — internal (ctor / setUp / entrypoints)
-**No constructor logic** — the mastercopy ships uninitialized and is init-locked at deploy. All per-clone config is
+**No constructor logic of its own** — the mastercopy is init-locked in its constructor (see `MastercopyInitLock`,
+SEC-14). All per-clone config is
 **plain set-once storage written in `setUp` under `initializer`, NOT `immutable`** (a `ModuleProxyFactory` clone
 shares the mastercopy runtime bytecode, so `immutable` would be identical for every clone and cannot carry per-clone
 config — the proven 8-B14/8-B5 clone fact).
@@ -122,9 +123,11 @@ wired nor referenced.
   the emissions flywheel (exact vault config pending an ICHI conversation — single-sided zipUSD is the decided shape).
 - **Resolve + wire the gauge** via `Voter.gauges(ourPool)` with the **hard gate `Voter.gauges(ourPool) != 0`** (the
   ALM_ICHI gauge must be Hydrex-whitelisted — external governance dep).
-- **CREATE2-clone** the module via `ModuleProxyFactory`, `enableModule` it on the engine Safe, `setUp` it with
-  `(owner=Timelock, engineSafe, operator, ichiVault, gauge, coverageGate=durationFreeze)`, and **init-lock the
-  mastercopy**. Deploy clones `DurationFreezeModule` at the TOP of P6 (before this module) so the gate is wired
+- **CREATE2-clone** the module via `ModuleProxyFactory`, `enableModule` it on the engine Safe, and `setUp` it with
+  `(owner=Timelock, engineSafe, operator, ichiVault, gauge, coverageGate=durationFreeze)`. The mastercopy is locked
+  AUTOMATICALLY by its constructor (`MastercopyInitLock`, SEC-14) the instant it is deployed — NO separate
+  deploy-time lock step, and `setUp` on the mastercopy reverts `AlreadyInitialized`. Deploy clones
+  `DurationFreezeModule` at the TOP of P6 (before this module) so the gate is wired
   LIVE; a `SeamCoverageGate` assert confirms `coverageGate() == durationFreeze`.
 - **`owner = TimelockController != operator`** (the hot CRE key).
 - **Assert** `LpStrategyModule.ichiVault() == reservoir-escrow vault asset() == lpOracle key` (the shared-LP-address

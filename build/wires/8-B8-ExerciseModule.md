@@ -29,7 +29,8 @@ ever mutates it (`avatar == target == engineSafe`).
 ## Wiring — internal (ctor/setUp + the one entrypoint)
 - **No constructor logic** — the module is a zodiac-core clone target. All per-clone wiring is plain **set-once
   storage written in `setUp`** under the zodiac-core `initializer` (CLONE FACT, §18.6: `immutable` lives in the
-  shared mastercopy runtime and cannot carry per-clone config). The mastercopy is init-locked at deploy.
+  shared mastercopy runtime and cannot carry per-clone config). The mastercopy is init-locked in its constructor
+  (see `MastercopyInitLock`, SEC-14).
 - **`setUp(bytes initParams)`** decodes **4 addresses** `(owner, engineSafe, operator, oHYDX)`. ORDER is
   load-bearing: (1) validate all four decoded addresses nonzero **and** `owner != operator` FIRST (so a zero
   `oHYDX` reverts `ZeroAddress`, not a confusing staticcall-to-zero); (2) set `avatar = target = engineSafe`
@@ -91,9 +92,10 @@ ever mutates it (`avatar == target == engineSafe`).
 ## Item-10 deploy facts (PROGRESS row 346)
 - **Wire the single CRE operator** as `ExerciseModule.operator` (the sole `exercise` caller); **wire `oHYDX`** to
   the live option token `0xA113…` (its `paymentToken` live-read = USDC).
-- **Deploy the clone via `ModuleProxyFactory` CREATE2 + `setUp` ATOMICALLY in one factory tx (front-run-safe) +
-  init-lock the mastercopy** — the 8-B5/8-B14 pattern (`ZODIAC_MODULE_PROXY_FACTORY 0x0000…a236`); **never a
-  two-tx deploy-then-init**.
+- **Deploy the clone via `ModuleProxyFactory` CREATE2 + `setUp` ATOMICALLY in one factory tx (front-run-safe)** —
+  the 8-B5/8-B14 pattern (`ZODIAC_MODULE_PROXY_FACTORY 0x0000…a236`); **never a two-tx deploy-then-init**. The
+  mastercopy is locked AUTOMATICALLY by its constructor (`MastercopyInitLock`, SEC-14) the instant it is deployed —
+  NO separate deploy-time lock step, and `setUp` on the mastercopy reverts `AlreadyInitialized`.
 - **`owner = Timelock`, distinct from `operator`** (enforced by the `OwnerIsOperator` guard in `setUp`). The
   Timelock holds the re-wiring + `setAvatar`/`setTarget`; the operator holds only the hot exercise entrypoint.
 - **The gates live in 8-B11 CRE policy, NOT contract constants:**

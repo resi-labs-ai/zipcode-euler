@@ -36,8 +36,8 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
   (`OwnerIsOperator`), then `maxSellHydx > 0` (`ZeroAmount` — a zero cap would brick `sellHydx`), then set
   `avatar = target = engineSafe`, store the 7 wiring slots + the cap (emitting `MaxSellHydxSet`), **then**
   `_transferOwnership(owner)`. **No live-read / staticcall in `setUp`** — every token is wired directly (unlike 8-B8,
-  which live-read `paymentToken` off oHYDX). `initializer` makes it callable once (mastercopy init-locked at deploy;
-  re-`setUp` reverts).
+  which live-read `paymentToken` off oHYDX). `initializer` makes it callable once (mastercopy init-locked in its
+  constructor (see `MastercopyInitLock`, SEC-14); re-`setUp` reverts).
 - **`sellHydx(uint256 amountIn, uint256 minOut, uint256 deadline) external onlyOperator returns (uint256 amountOut)`**
   — the **8-B5 strike-loop repay leg**. Guard `amountIn > maxSellHydx` reverts `ExceedsMaxSell` (the `>` guard, so
   `amountIn == maxSellHydx` is allowed), then `amountOut = _swap(hydx, usdc, amountIn, minOut, deadline)`. USDC lands
@@ -129,9 +129,10 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
   deploy-then-init (the proven 8-B5/8-B8/8-B14 pattern). `setUpCalldata = abi.encode(owner, engineSafe, operator,
   swapRouter, hydx, usdc, zipUSD, xAlpha, maxSellHydx)`. Set-once storage (not `immutable`) is exactly what makes the
   shared-bytecode clone work.
-- **Init-lock the mastercopy.** After deploying the `SellModule` mastercopy, consume its `initializer` once so it is
-  inert and cannot be hijacked (the un-setUp mastercopy is already inert — `sellHydx` reverts `NotOperator`, every
-  getter returns 0).
+- **Init-lock the mastercopy.** The mastercopy is locked AUTOMATICALLY by its constructor (`MastercopyInitLock`,
+  SEC-14) the instant it is deployed — NO separate deploy-time lock step, and `setUp` on the mastercopy reverts
+  `AlreadyInitialized`. (The un-setUp mastercopy is also already inert by storage — `sellHydx` reverts
+  `NotOperator`, every getter returns 0.)
 - **`enableModule` on the engine Safe.** The deployed clone must be enabled as a Zodiac module on the engine Safe so
   its `exec…FromModule` calls are authorized.
 - **owner = Timelock, != operator (row 350).** Wire the single CRE operator as `SellModule.operator` (sole caller);

@@ -26,7 +26,8 @@ msg.sender, and the Hydrex Voter is **account-keyed** (no per-NFT id is ever tra
 
 ## Wiring — internal (ctor / setUp / mutators / views)
 - **No constructor logic** — `is Module`; all per-clone config is decoded in `setUp` under the zodiac-core
-  `initializer` (one-shot; the mastercopy is init-locked at deploy). **CLONE FACT** (§18.6): a `ModuleProxyFactory`
+  `initializer` (one-shot; the mastercopy is init-locked in its constructor (see `MastercopyInitLock`, SEC-14)).
+  **CLONE FACT** (§18.6): a `ModuleProxyFactory`
   clone shares mastercopy bytecode, so `immutable` cannot carry per-clone config — EVERY wired address is plain
   set-once storage, NOT `immutable`.
 - **`setUp(bytes initParams)`** decodes 6 addresses `(owner, engineSafe, operator, gauge, voter,
@@ -83,9 +84,11 @@ msg.sender, and the Hydrex Voter is **account-keyed** (no per-NFT id is ever tra
   enumeration), purely as a batch convenience — wrong ids are harmless.
 
 ## Item-10 deploy facts (PROGRESS rows 342 / 343 / 344)
-- **Deploy:** CREATE2-clone via `ModuleProxyFactory` + `enableModule` on the engine Safe + `setUp` + init-lock the
-  mastercopy + an initial lock (init-lock). `owner = TimelockController != operator` (the `OwnerIsOperator`
-  invariant). (The 8-B5/8-B6/8-B14 atomic clone+setUp factory pattern — never two-tx deploy-then-init.)
+- **Deploy:** CREATE2-clone via `ModuleProxyFactory` + `enableModule` on the engine Safe + `setUp`. The mastercopy
+  is locked AUTOMATICALLY by its constructor (`MastercopyInitLock`, SEC-14) the instant it is deployed — NO separate
+  deploy-time lock step, and `setUp` on the mastercopy reverts `AlreadyInitialized`. `owner = TimelockController !=
+  operator` (the `OwnerIsOperator` invariant). (The 8-B5/8-B6/8-B14 atomic clone+setUp factory pattern — never
+  two-tx deploy-then-init.)
 - **Wiring (row 342):** wire the single CRE operator as `HarvestVoteModule.operator` (sole caller); resolve+wire
   `gauge` via `Voter.gauges(ourPool)` with the hard gate `!= 0`; pass the live `rewardsDistributor`
   (= `Minter._rewards_distributor()` read at deploy).

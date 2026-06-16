@@ -10,14 +10,16 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-14 — init-lock 9 module mastercopies (L18).** Ticket: `build/tickets/sec/SEC-14-mastercopy-init-lock.md`.
-- **Deliverable:** init-lock the 9 Zodiac-module mastercopies via the zodiac-core `TestModule` idiom (an empty
-  `constructor` that calls `setUp("")`/marks the mastercopy initialized under the `initializer` modifier) — NOT
-  `_disableInitializers()`, which does not exist in zodiac-core's `Initializable` (OZ-only, won't compile) — and fix the
-  docstrings that claim the lock already exists. Audit L18 (info/QA).
-- **Source:** `build/kill-list.md` L18. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC14_*` regression (each mastercopy's `setUp`
-  reverts post-deploy); test output quoted in the ticket.
+**SEC-15 — `setOperator` re-check `operator != owner` on 8 modules (I6).** Ticket: `build/tickets/sec/SEC-15-setoperator-owner-recheck.md`.
+- **Deliverable:** add `if (operator_ == owner) revert OwnerIsOperator();` to the `setOperator` re-point path of the 8
+  engine modules that drop it (`Recycle`/`ReservoirLoop`/`SzipBuyBurn`/`HarvestVote`/`Sell`/`Exercise`/`OffRamp`/
+  `DurationFreeze`), mirroring `LpStrategyModule.sol:140` (the only module that already re-checks). `OwnerIsOperator` is
+  already declared in each (used by `setUp`). Audit I6 (upgraded DOC→FIX).
+- **Source:** `build/kill-list.md` I6. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + a named `SEC15_*` regression (a `setOperator(owner)` re-point
+  reverts `OwnerIsOperator` on each of the 8; a non-owner re-point still succeeds); test output quoted in the ticket.
+- **SEC-14 landed aware of this:** SEC-14 added the ctor lock to the same 9 modules' inheritance line; SEC-15 touches a
+  different surface (`setOperator` body) — non-conflicting.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -35,7 +37,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-13 are DONE (2026-06-15); SEC-14 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-13 DONE (2026-06-15), SEC-14 DONE (2026-06-16); SEC-15 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -55,13 +57,49 @@ doc/comment-only (no regression test).
 | SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **DONE 2026-06-15** — `sec/SEC-11-fund-previewredeem-sizing.md` |
 | SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **DONE 2026-06-15** — `sec/SEC-12-redeem-canonical-shares-event.md` |
 | SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **DONE 2026-06-15** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
-| SEC-14 | L18 | Init-lock 9 mastercopies (empty `initializer` ctor lock — NOT `_disableInitializers`) + fix docstrings | **NEXT** — `sec/SEC-14-mastercopy-init-lock.md` |
-| SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **TICKETED** — `sec/SEC-15-setoperator-owner-recheck.md` |
+| SEC-14 | L18 | Init-lock 9 mastercopies (shared `MastercopyInitLock` empty `initializer` ctor — NOT `_disableInitializers`) + fix docstrings | **DONE 2026-06-16** — `sec/SEC-14-mastercopy-init-lock.md` |
+| SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **NEXT** — `sec/SEC-15-setoperator-owner-recheck.md` |
 | SEC-DOC | M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 prorata | Doc/runbook sweep (no behavioral code; 4 explicit rejects) | **TICKETED** — `sec/SEC-DOC-doc-runbook-sweep.md` |
 
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-14 (2026-06-16)
+**The 9 szipUSD Zodiac-module mastercopies are now genuinely init-locked at construction** (kill-list L18; audit R10).
+Every module header claimed "the mastercopy is init-locked at deploy," but none had a constructor running `initializer`,
+and the deploy never `setUp`s the mastercopy — so `_initialized` stayed false and anyone could `setUp` the bare
+mastercopy. Non-exploitable (CALL-only, never enabled on a Safe) but a false safety claim + a foot-gun for any future
+delegatecall variant. The audit's proposed `_disableInitializers()` does NOT exist in zodiac-core's `Initializable`
+(OZ-only) and won't compile.
+- **Fix (1 new src file + 9 modules):** new `src/supply/szipUSD/MastercopyInitLock.sol` —
+  `abstract MastercopyInitLock is Module { constructor() { _lockMastercopy(); } function _lockMastercopy() private initializer {} }`.
+  The empty `initializer`-guarded body flips the inherited (private) `Initializable._initialized` WITHOUT running `setUp`,
+  so it sidesteps `setUp`'s non-zero / `owner!=operator` validation (the literal `TestModule` `setUp(abi.encode(zeros))`
+  idiom would revert `ZeroAddress`). All 9 modules changed `is Module` → `is MastercopyInitLock` (DurationFreeze:
+  `is MastercopyInitLock, ReentrancyGuard`); `Module` was inheritance-only in every file, so its import swapped cleanly.
+  A bare-mastercopy `setUp` now reverts `AlreadyInitialized`; EIP-1167 clones (fresh proxy storage, never run the impl
+  ctor) `setUp` normally — the deploy path is unchanged. All 9 docstrings corrected.
+- **Test rework (scope the original ticket missed — discovered at cold-build, folded into the ticket):** the 9 unit
+  suites deployed bare mastercopies and `setUp` them directly (~85 sites) — incompatible with the ctor lock. Reworked
+  production-faithfully via OZ `Clones.clone(address(new XModule()))` behind a file-scope `_clone<X>()` free function
+  (a clone has fresh storage, so it `setUp`s exactly as the old bare instance did); the `test_mastercopy_inert` sites
+  route through the clone (still valid). The one DurationFreeze fork **ModuleProxyFactory clone-SOURCE** (`:1314`) was
+  kept bare. Each suite gained `test_SEC14_mastercopy_setUp_reverts()` (bare impl + the suite's existing valid-param
+  helper → `AlreadyInitialized`).
+- **Gate green:** `forge build` clean (warnings only — pre-existing `asm-keccak256` lint notes). `forge test`
+  **821 passed / 0 failed / 3 skipped** (+9 SEC14 over SEC-13's 812; the 3 skips are the pre-existing
+  `DeployZipcode.t.sol` scaffold). **Fail-before/pass-after confirmed** — neutering `_lockMastercopy()` makes all 9
+  `test_SEC14_*` FAIL (`next call did not revert as expected` — bare `setUp` succeeds); restored → 9/9 pass.
+  **Deploy intact (deploy-script gate):** fresh anvil Base fork @47096000 (port 8546) + `DeployLocal runLocal
+  --broadcast --slow` → `ONCHAIN EXECUTION COMPLETE & SUCCESSFUL` (all 9 module clones `setUp` + enable end-to-end).
+- **No spec change** (interface-level QA fix; the spec carries no init-lock claim). **No back-pressure / no new
+  obligation.** Doc-sync: kill-list L18 `[x]`; audit R10 RESOLVED (role-based + reference-diff + SUMMARY); 8 module
+  wire-doc runbooks corrected — the old "deploy then call `setUp` once to lock the mastercopy" runbook step was itself
+  WRONG (the deploy never touched the mastercopy; calling `setUp` on it now reverts `AlreadyInitialized`). The
+  `8-B5-ReservoirLoop` wire doc carried no init-lock claim (nothing to correct). **Coordinate note for SEC-15:** both
+  edit the same 9 modules but different surfaces (ctor inheritance vs `setOperator` body) — non-conflicting.
+  Ticket: `build/tickets/sec/SEC-14-mastercopy-init-lock.md`. Report: `build/reports/SEC-14-report.md`.
 
 ### Just done — SEC-13 (2026-06-15)
 **`postBid`'s `validTo` fence is now LEG-ANCHORED, not post-time-anchored** (kill-list L12; audit finding #12). The fence

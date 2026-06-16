@@ -38,8 +38,9 @@ the **first engine Zodiac Module** — it set the `is Module` / `setUp`-under-`i
 A `ModuleProxyFactory` clone shares the mastercopy runtime bytecode, so `immutable` values are baked into the
 mastercopy at ITS construction and are identical for every clone — they **cannot** carry per-clone `setUp`
 config. EVERY wired address/param is therefore plain **set-once storage written in `setUp`** under
-`initializer`, NOT `immutable`. The mastercopy is init-locked at deploy (a bare mastercopy that was never
-`setUp` has zero `operator`/`engineSafe` ⇒ every `postBid` reverts `NotOperator`).
+`initializer`, NOT `immutable`. The mastercopy is init-locked in its constructor (see `MastercopyInitLock`,
+SEC-14) — a bare mastercopy `setUp` reverts `AlreadyInitialized`, and one that was never `setUp` has zero
+`operator`/`engineSafe` ⇒ every `postBid` reverts `NotOperator`).
 
 ### `setUp(bytes initParams)` (`public override initializer`)
 Decodes **10 fields** `(address owner_, address engineSafe_, address operator_, address navOracle_, address
@@ -147,8 +148,10 @@ on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for mon
 
 ## Item-10 deploy facts (PROGRESS rows 325 / 346 / 350 / 357)
 - **Clone via `ModuleProxyFactory` CREATE2 + `setUp` ATOMICALLY in ONE factory tx** (front-run-safe — never the
-  two-tx deploy-then-init), then **init-lock the mastercopy** (the canonical 8-B5/8-B8/8-B9/8-B14 engine-module
-  pattern). After cloning, **`enableModule(module)` on the engine Safe** so the clone can `exec` through it.
+  two-tx deploy-then-init) (the canonical 8-B5/8-B8/8-B9/8-B14 engine-module pattern). The mastercopy is locked
+  AUTOMATICALLY by its constructor (`MastercopyInitLock`, SEC-14) the instant it is deployed — NO separate
+  deploy-time lock step, and `setUp` on the mastercopy reverts `AlreadyInitialized`. After cloning,
+  **`enableModule(module)` on the engine Safe** so the clone can `exec` through it.
 - **`owner = Timelock`, `operator = CRE` — and `owner != operator` is asserted in `setUp`** (the hot key must not
   be the governance owner). Wire the single CRE operator via the `operator` `setUp` field (or `setOperator`).
 - **`coverageGate = durationFreeze` wired at `setUp` (ARMED at deploy).** Deploy clones `DurationFreezeModule` at

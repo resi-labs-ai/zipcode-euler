@@ -107,7 +107,9 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
 
 ## Item-10 deploy facts
 - **Deploy** the module clone via `ModuleProxyFactory` CREATE2 **+ `setUp` ATOMICALLY in one factory tx**
-  (front-run-safe) **+ init-lock the mastercopy** (the 8-B5/8-B8/8-B9/8-B14 pattern; never two-tx).
+  (front-run-safe) (the 8-B5/8-B8/8-B9/8-B14 pattern; never two-tx). The mastercopy is locked AUTOMATICALLY by its
+  constructor (`MastercopyInitLock`, SEC-14) the instant it is deployed — NO separate deploy-time lock step, and
+  `setUp` on the mastercopy reverts `AlreadyInitialized`.
 - **Recycle wiring (PROGRESS row 357, RECYCLE-ONLY):** wire the single CRE operator as `RecycleModule.operator`;
   `zipDepositModule` → the deployed WOOF-06 module; `usdc` → the live token. (No `xAlpha`/`distributor`/
   `compounder` — deleted in the rework.) `owner` = the Timelock, `!= operator` (asserted in `setUp`).

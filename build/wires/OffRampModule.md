@@ -27,7 +27,7 @@ warehouse Safe and never sells xALPHA or any other basket leg.
   `(owner, rqSafe, operator, zipUSD, queue)` (5 addresses). ORDER is load-bearing: validate **all five nonzero**
   (`ZeroAddress`) and `owner != operator` (`OwnerIsOperator`) FIRST, then set `avatar = target = rqSafe`, store the
   4 wiring slots, **then** `_transferOwnership(owner)`. No live-read / staticcall in `setUp`. `initializer` makes it
-  callable once (mastercopy init-locked at deploy; re-`setUp` reverts).
+  callable once (mastercopy init-locked in its constructor (see `MastercopyInitLock`, SEC-14); re-`setUp` reverts).
 - **`requestRedeem(uint256 zipAmount) external onlyOperator`** — the off-ramp entrypoint. Guards: `zipAmount != 0`
   (`ZeroAmount`) and `zipAmount % IZipRedemptionQueue(queue).scaleUp() == 0` (`NotWholeUnit`) — `scaleUp()` is read
   **LIVE** off the queue each call, never the hard-coded `1e12` (it is mutable, re-derived on `setTokens`). Then it
@@ -79,8 +79,9 @@ warehouse Safe and never sells xALPHA or any other basket leg.
 - **Clone, not `new`.** Deploy via the zodiac-core `ModuleProxyFactory.deployModule(mastercopy, setUpCalldata, salt)`
   (CREATE2) — the clone `setUp`s **atomically** with the deploy. `setUpCalldata` = `abi.encode(owner, rqSafe,
   operator, zipUSD, queue)`. Set-once storage (not `immutable`) is exactly what makes the shared-bytecode clone work.
-- **Init-lock the mastercopy.** After deploying the `OffRampModule` mastercopy, call `setUp` on it once (or otherwise
-  consume its `initializer`) so the mastercopy is inert and cannot be hijacked.
+- **Init-lock the mastercopy.** The mastercopy is locked AUTOMATICALLY by its constructor (`MastercopyInitLock`,
+  SEC-14) the instant it is deployed — NO separate deploy-time lock step, and `setUp` on the mastercopy reverts
+  `AlreadyInitialized` (so it is inert and cannot be hijacked).
 - **`enableModule` on the rq Safe.** The deployed clone must be enabled as a Zodiac module on the rq Safe
   (`Baal.avatar()`) so its `exec…FromModule` calls are authorized.
 - **owner = Timelock, != operator (CRE).** `owner_` decoded in `setUp` becomes the module owner via
