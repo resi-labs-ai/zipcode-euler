@@ -79,10 +79,10 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   → origination permanently bricks after ~29 lines. **Fix:** prune the closed-line vault in `closeLine`
   (`setSupplyQueue` only requires `cap!=0` on *remaining* entries — no timelock/removal path needed).
   **DONE 2026-06-15 (SEC-06).**
-- [ ] **L8** (MED) · `fund` only withdraws from base; closed-line USDC strands, `baseBalance` underflows
+- [x] **L8** (MED) · `fund` only withdraws from base; closed-line USDC strands, `baseBalance` underflows
   on a later `fund` (`:285-292`). **Fix:** add a line→base defund `reallocate` in `closeLine` (`assets:0` on
   the line leg redeems all shares; base leg absorbs it; market must still be EE-enabled). *Distinct from H2 —
-  queue-prune vs USDC-reclaim; both in `closeLine`, neither subsumes the other.*
+  queue-prune vs USDC-reclaim; both in `closeLine`, neither subsumes the other.* **DONE 2026-06-15 (SEC-07).**
 - [ ] **L9** (LOW grief) · `fund` sizes off `convertToAssets(balanceOf(EE))`; a 1-share donation reverts
   `reallocate` (`:285-287`). **Fix:** use `config[id].balance` run through **`previewRedeem`** (not
   `convertToAssets`) to byte-match EE's internal rounding.

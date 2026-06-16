@@ -12,7 +12,7 @@ documented blast radius) are excluded from findings and listed separately as pos
 | 1 | **HIGH** | high | core | Registry has no monotonic-timestamp guard → out-of-order / replayed revaluation overwrites a fresher mark — ✅ **RESOLVED (SEC-01, 2026-06-15)** |
 | 2 | **HIGH** | high | venue | Unbounded supply-queue growth in `openLine` bricks all origination after ~29 lines |
 | 3 | MED | high | core | Backdated revaluation arbitrarily rewinds/extends a mark's staleness window — ✅ **RESOLVED (SEC-01, 2026-06-15)** |
-| 4 | MED | high | venue | No defund path — USDC stranded in closed line vaults drains base liquidity, DoS's `fund`/`draw` |
+| 4 | MED | high | venue | No defund path — USDC stranded in closed line vaults drains base liquidity, DoS's `fund`/`draw` — ✅ **RESOLVED (SEC-07, 2026-06-15)** |
 | 5 | MED | high | szipUSD | Resting CoW buy-burn bid keeps filling after coverage drops below floor (gate is post-time only) |
 | 6 | MED | high | bridge/NAV | `navExit`/`grossBasketValue` price the xALPHA leg off a **zero** rate when the rate oracle is never seeded — ✅ **RESOLVED (SEC-04, 2026-06-15)** |
 | 7 | MED | med | szipUSD | `coverageValue()` double-counts sidecar ICHI-LP, inflating coverage + corrupting the LP-dissolution gate |
@@ -96,7 +96,7 @@ coverage/freeze decisions.
   rewind/extend vector is closed by the #1 guard. (Re-pushing the *same* price at `ts = now` is still admissible by
   design — that is a strictly-newer write; the deviation-band-can't-see-unchanged-value posture is unchanged.)
 
-### 4. No defund path — USDC stranded in closed line vaults drains base liquidity
+### 4. No defund path — USDC stranded in closed line vaults drains base liquidity ✅ RESOLVED 2026-06-15 (SEC-07)
 - **contract/fn:** `EulerVenueAdapter` / `fund`, `closeLine` — `src/venue/EulerVenueAdapter.sol:278-295, 343-360`
 - **class:** economic/dos. `fund` hardcodes the withdraw leg to `baseUsdcMarket` and only ever moves
   base→line; there is no line→base reallocation. `closeLine` reclaims only the lien token, leaving
@@ -104,7 +104,13 @@ coverage/freeze decisions.
   shrinks until `baseBalance − amount` underflows and blocks funding/draws — capital trapped, not stolen.
 - **actor:** legitimate controller flow over time. *(Rests on EulerEarn keeping the closed-line supply
   shares — verified nothing removes them, but flagged as resting on EE accounting.)*
-- **fix:** add a line→base defund/reallocation path invoked on `closeLine`.
+- **fix:** add a line→base defund/reallocation path invoked on `closeLine`. **RESOLVED 2026-06-15 (SEC-07):**
+  `closeLine` now runs a zero-sum INVERSE of `fund`'s reallocate — `{lineRef, assets:0}` (redeem the EE's full
+  line position) + `{baseUsdcMarket, assets: base+line}` (base absorbs it) — sequenced BEFORE the SEC-06
+  queue-prune, guarded `lineBalance != 0` (never-funded lines skip). `EulerVenueAdapter.sol:367-378`. Regression
+  (`test_SEC07_*` in `EulerVenueAdapter.t.sol`) made `MockEulerEarn.reallocate` faithful (actually moves USDC) so
+  the strand + the `:290` underflow are reproduced fail-before/pass-after. The L9/SEC-11 donation-immune sizing
+  (B7 below, `previewRedeem(config[id].balance)`) remains open and will flow into this defund's base-leg read.
 
 ### 5. Resting CoW buy-burn bid keeps filling after coverage drops below floor
 - **contract/fn:** `SzipBuyBurnModule` / `postBid` — `src/supply/szipUSD/SzipBuyBurnModule.sol:289-337` (gate 297-298)
