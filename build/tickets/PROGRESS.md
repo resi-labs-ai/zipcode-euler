@@ -44,6 +44,9 @@ dismissals (the old H3/L5/L10/M5) needed no code and are recoverable from git if
 
 ### CRE (Go → wasip1) — spec §8
 Numbering follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the spec rules intent.
+> **The szipUSD CoW-exit workstream (CRE-05 bid-loop + CRE-06 split + the net-new FE exit-book page) has a driver:
+> `build/CoW.md`** — paste it to a fresh session to author + build those tickets through the harness (design source:
+> `build/CoW-exit.md`). Both drivers retire once the work lands.
 
 | Item | What | Spec § |
 |---|---|---|
