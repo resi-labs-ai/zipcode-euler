@@ -110,7 +110,7 @@ wired nor referenced.
   the `unstake` (loop step 1) and `stake` (loop step 7) ends.
 - **`coverageGate` = the `DurationFreezeModule`** — wired at `setUp` (ARMED at deploy), the seam `removeLiquidity`
   reads to bound dissolution to the coverage excess. Timelock-settable via `setCoverageGate` (`address(0)` allowed
-  = OFF kill-switch). build/lp-path-lock.md.
+  = OFF kill-switch).
 - **`owner` = the TimelockController** (governance) — holds the 7 `onlyOwner` build-phase wiring setters
   (`setEngineSafe`/`setOperator`/`setIchiVault`/`setGauge`/`setToken0`/`setToken1`/`setCoverageGate`, each
   `WiringSet`-emitting; the first six `ZeroAddress`-guarded, `setCoverageGate` allows 0) plus the inherited

@@ -9,7 +9,7 @@ import {IGauge} from "../../interfaces/hydrex/IGauge.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice The coverage seam the LP-dissolution gate reads (the `DurationFreezeModule`): `removeLiquidity` may only
-///         dissolve LP that is EXCESS over the coverage floor (build/lp-path-lock.md). Local interface, not imported.
+///         dissolve LP that is EXCESS over the coverage floor. Local interface, not imported.
 interface ICoverageGate {
     function lpBurnKeepsCovered(uint256 lpShares) external view returns (bool);
 }
@@ -51,7 +51,7 @@ contract LpStrategyModule is MastercopyInitLock {
     /// @notice The coverage gate (`DurationFreezeModule`) the `removeLiquidity` dissolution is bounded by. Zero ⇒
     ///         gate OFF (M1 pre-wiring; dissolution ungated, the legacy behavior). Wired by the Timelock post-deploy
     ///         (the module is Timelock-owned at `setUp`, and the gate is created after this module) — once set,
-    ///         `removeLiquidity` may only liquefy LP that is EXCESS over the coverage floor (build/lp-path-lock.md).
+    ///         `removeLiquidity` may only liquefy LP that is EXCESS over the coverage floor.
     address public coverageGate;
 
     // --------------------------------------------------------------------- errors
@@ -262,7 +262,7 @@ contract LpStrategyModule is MastercopyInitLock {
         returns (uint256 amount0, uint256 amount1)
     {
         if (shares == 0) revert ZeroAmount();
-        // PATH-LOCK (build/lp-path-lock.md): only LP that is EXCESS over the coverage floor may be liquefied —
+        // PATH-LOCK: only LP that is EXCESS over the coverage floor may be liquefied —
         // dissolution converts path-locked LP into exitable legs, so it must respect the same floor as release/exit.
         // Gate OFF (`coverageGate == 0`) is the M1 pre-wiring state (ungated, legacy). Wired by the Timelock.
         address gate = coverageGate;

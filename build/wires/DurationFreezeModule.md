@@ -32,7 +32,7 @@ mark already reacts to xALPHA price moves so a static over-collateralization buf
 `utilization()`/`requiredFraction()` are RETAINED only as the §12 liquidity-run metric — they no longer gate
 `release`.
 
-**COVERAGE NUMERATOR = `committedValue() + pathLockedLpEquity()` (2026-06-13, build/lp-path-lock.md).** The
+**COVERAGE NUMERATOR = `committedValue() + pathLockedLpEquity()` (2026-06-13).** The
 floor is checked against `coverageValue() = committedValue() + pathLockedLpEquity()`, NOT `committedValue()`
 alone — the fenced ICHI LP (most of the basket) backs the floor IN PLACE, read from the oracle's
 `pathLockedLpEquity()`, so it need not be physically hoarded in the sidecar (this RESOLVES the former line-74
@@ -182,7 +182,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 - `requiredFraction == utilization` is the final kept form. The report/§11-B escalation
   (`U_lock`/`U_max`/`maxLockFraction`) describes the as-first-built version — it was STRIPPED from the
   contract (NatSpec-only mention remains); do not treat it as live.
-- **RESOLVED 2026-06-13 (LP path-lock, build/lp-path-lock.md) — the two problems raised 2026-06-12:**
+- **RESOLVED 2026-06-13 (LP path-lock) — the two problems raised 2026-06-12:**
   1. **Threat model clarified, not obviated.** The exit topology (ExitGate mints/burns only, CoW-only exits,
      `burnFor` pays nothing out) does close the *ragequit* drain. But the freeze floor was REPURPOSED: it is
      now the debt-pinned COVERAGE floor (`requiredCommittedValue = f(illiquidSeniorValue)`) that keeps the

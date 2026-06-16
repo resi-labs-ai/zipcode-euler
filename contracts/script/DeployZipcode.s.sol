@@ -480,7 +480,7 @@ contract DeployZipcode is SummonSubstrate {
         );
         d.queue.setRedeemController(d.sub.mainSafe);
 
-        // NOTE (path-lock arming, build/lp-path-lock.md): the coverage gates are now wired LIVE at construction —
+        // NOTE (path-lock arming): the coverage gates are now wired LIVE at construction —
         // `DurationFreezeModule` is cloned at the TOP of this phase and passed into the buy-burn + LP-strategy
         // `setUp` as their `coverageGate`, asserted by the two `SeamCoverageGate` checks above. Both remain
         // Timelock-re-pointable via `setCoverageGate` (the kill-switch: `setCoverageGate(0)` disables in one tx).
@@ -510,7 +510,7 @@ contract DeployZipcode is SummonSubstrate {
         // 29.
         d.navOracle.setLpPosition(i.polIchiVault, i.polGauge);
         // reservoir escrow + borrow vaults (P5) -> NAV closes the mid-loop blind spot (counts escrow-collateralized
-        // LP + subtracts strike debt; build/lp-path-lock.md). Both exist by P5 (step 24).
+        // LP + subtracts strike debt). Both exist by P5 (step 24).
         d.navOracle.setReservoirLeg(d.escrowVault, d.borrowVault);
         // Fair-LP NAV LP leg (build/fair-lp.md): when set, the NAV LP leg reconstructs reserves
         // at the Algebra TWAP tick instead of spot getTotalAmounts. Same window the reservoir collateral oracle uses.

@@ -58,7 +58,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     address public warehouse;
 
     // -- the movable whitelist: the FIVE oracle plain legs ONLY (read LIVE at setUp). The ICHI LP share is NOT
-    //    movable: it is fenced in place and counted via the oracle's `pathLockedLpEquity()` (build/lp-path-lock.md).
+    //    movable: it is fenced in place and counted via the oracle's `pathLockedLpEquity()`.
     //    This RESOLVES the former line-74 freeze-lp gotcha — we never try to physically commit the staked LP (which
     //    isn't a transferable ERC20 in the Safe); instead the floor's coverage numerator ADDS the LP equity in place
     //    (`coverageValue() = committedValue() + pathLockedLpEquity()`), and the LP's only dissolution path
@@ -221,7 +221,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @notice Only the FIVE oracle-valued plain legs may rotate. Releasing/committing an unvalued asset is barred — a
     ///         release of an unvalued asset would leave the sidecar without moving `committedValue()`, so the floor
     ///         would pass while real value exits the freeze (the non-basket-asset leak, security #6). The ICHI LP
-    ///         share is deliberately NOT here: it is fenced in place, not rotated (build/lp-path-lock.md).
+    ///         share is deliberately NOT here: it is fenced in place, not rotated.
     modifier onlyValued(address asset) {
         if (asset != zipUSD && asset != usdc && asset != xAlpha && asset != hydx && asset != oHydx) {
             revert UnvaluedAsset(asset);
@@ -275,7 +275,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @notice The path-locked LP equity (18-dp USD), read FROM the oracle: the fenced zipUSD/xALPHA ICHI LP in every
     ///         state (loose + gauge-staked + escrow-collateralized) net of reservoir strike debt. It backs the floor
     ///         IN PLACE — the LP's only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it
-    ///         cannot reach an exit below the floor (build/lp-path-lock.md).
+    ///         cannot reach an exit below the floor.
     function pathLockedLpEquity() public view returns (uint256) {
         return ISzipNavBasket(navOracle).pathLockedLpEquity();
     }
@@ -318,7 +318,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///         outflow predicate: `release` enforces it post-move, and the free-side outflow gates (buy-and-burn
     ///         `postBid`, the LP-dissolution `removeLiquidity`) read it so a PRICE-DRIFT breach —
     ///         coverage falling below the floor with no `release` — freezes outflow until a `commit`/re-stake tops it
-    ///         back up (build/lp-path-lock.md).
+    ///         back up.
     /// @dev DOUBLE-SQUEEZE — bucket holds, the "debt nets out consistently" rationale was wrong: a
     ///      reservoir borrow against the fenced LP pushes BOTH sides of this inequality the wrong way at once —
     ///      (1) the NUMERATOR drops, because `pathLockedLpEquity()` subtracts the reservoir strike debt from the LP
@@ -332,7 +332,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
 
     /// @notice True iff dissolving `lpShares` of the fenced LP would leave coverage still at/above the floor — the
     ///         excess bound the LP-dissolution gate (`LpStrategyModule.removeLiquidity`) enforces so the floor-backing
-    ///         LP cannot be liquefied into exitable legs (build/lp-path-lock.md). Dissolving the LP drops the coverage
+    ///         LP cannot be liquefied into exitable legs. Dissolving the LP drops the coverage
     ///         numerator by exactly its mark (the legs land free/exitable, no longer path-locked), so the check is
     ///         `coverageValue − lpShareValue(lpShares) >= requiredCommittedValue`. Saturating.
     function lpBurnKeepsCovered(uint256 lpShares) external view returns (bool) {
@@ -385,7 +385,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         if (IERC20(asset).balanceOf(mainSafe) - beforeBal != amount) revert TransferShortfall();
 
         // THE FLOOR — read AFTER the move; the revert atomically rolls the transfer back. The coverage numerator is
-        // `committedValue + pathLockedLpEquity` (the fenced LP backs the floor in place; build/lp-path-lock.md).
+        // `committedValue + pathLockedLpEquity` (the fenced LP backs the floor in place).
         uint256 floor = requiredCommittedValue();
         uint256 c = coverageValue();
         if (c < floor) revert FreezeFloorBreach(c, floor);

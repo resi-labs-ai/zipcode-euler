@@ -159,7 +159,7 @@ on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for mon
 - **`coverageGate = durationFreeze` wired at `setUp` (ARMED at deploy).** Deploy clones `DurationFreezeModule` at
   the TOP of P6 (before this module) and passes it as the 10th `setUp` arg; a `SeamCoverageGate` assert confirms
   `coverageGate() == durationFreeze`. `postBid` then blocks while `!covered()`. Kill-switch: Timelock
-  `setCoverageGate(0)`. build/lp-path-lock.md.
+  `setCoverageGate(0)`.
 - **Wire `module.engineSafe == ExitGate.engineSafe == SzipNavOracle.engineSafe == order.receiver`** (PROGRESS row
   325). The module side is proven (`module.engineSafe() == ExitGate.engineSafe()`); the **oracle-side**
   `SzipNavOracle.setEngineSafe(engineSafe)` (denominator exclusion of the transient pre-burn szipUSD) is the

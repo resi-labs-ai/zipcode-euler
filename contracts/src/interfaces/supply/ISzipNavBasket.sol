@@ -18,11 +18,11 @@ interface ISzipNavBasket {
 
     /// @notice The path-locked LP equity (18-dp USD): the ICHI LP in every state (loose + gauge + escrow) across
     ///         both Safes, net of reservoir strike debt. The freeze module adds it to `committedValue()` for the
-    ///         coverage floor (the LP is fenced — its dissolution is coverage-gated). build/lp-path-lock.md.
+    ///         coverage floor (the LP is fenced — its dissolution is coverage-gated).
     function pathLockedLpEquity() external view returns (uint256);
 
     /// @notice The 18-dp USD value of `lpShares` ICHI LP shares — the dissolution gate bounds `removeLiquidity` to
-    ///         the coverage excess by reading this. build/lp-path-lock.md.
+    ///         the coverage excess by reading this.
     function lpShareValue(uint256 lpShares) external view returns (uint256);
 
     // -- the five movable plain legs (the whitelist source) --

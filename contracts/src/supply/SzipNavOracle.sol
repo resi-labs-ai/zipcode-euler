@@ -414,7 +414,7 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         `coverageValue()` counts every Safe's LP exactly once (double-count fix).
     ///         The freeze module adds this to `committedValue()` for its coverage floor because the LP is fenced — its
     ///         only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it cannot reach an exit
-    ///         below the floor. build/lp-path-lock.md.
+    ///         below the floor.
     function pathLockedLpEquity() public view returns (uint256) {
         uint256 lpValue = _lpValue(_lpShares(mainSafe));
         uint256 debt = _reservoirDebt(mainSafe);

@@ -21,7 +21,7 @@ interface IERC20Approve {
 }
 
 /// @dev The coverage seam the `postBid` outflow gate reads (the `DurationFreezeModule`): a buy-and-burn bid is a
-///      free-side outflow, blocked while coverage is below the liability floor (build/lp-path-lock.md).
+///      free-side outflow, blocked while coverage is below the liability floor.
 interface ICoverageGate {
     function covered() external view returns (bool);
 }
@@ -106,7 +106,7 @@ contract SzipBuyBurnModule is MastercopyInitLock {
     /// @notice The CoW `GPv2VaultRelayer` (the USDC `approve` spender; read live in `setUp`).
     address public vaultRelayer;
     /// @notice The coverage gate (`DurationFreezeModule`) — `postBid` is blocked while `!covered()`. Zero ⇒ gate OFF
-    ///         (M1 pre-wiring; legacy behavior). Wired by the Timelock post-deploy (build/lp-path-lock.md).
+    ///         (M1 pre-wiring; legacy behavior). Wired by the Timelock post-deploy.
     address public coverageGate;
     /// @notice The CoW EIP-712 domain separator for this chain (read live in `setUp`).
     bytes32 public domainSeparator;
@@ -300,7 +300,7 @@ contract SzipBuyBurnModule is MastercopyInitLock {
         if (order.sellAmount == 0 || order.buyAmount == 0) revert ZeroAmount();
         if (order.buyAmount > MAX_BUY_AMOUNT) revert BuyAmountTooLarge();
         if (order.sellAmount > buybackCap) revert CapExceeded();
-        // PATH-LOCK outflow gate (build/lp-path-lock.md): a buy-and-burn bid spends basket USDC to retire szipUSD — a
+        // PATH-LOCK outflow gate: a buy-and-burn bid spends basket USDC to retire szipUSD — a
         // free-side outflow. Block it while sidecar+LP coverage is below the floor (a price-drift breach), so exits
         // cannot drain coverage. Gate OFF (coverageGate == 0) is the M1 pre-wiring state. Wired by the Timelock.
         address gate = coverageGate;
