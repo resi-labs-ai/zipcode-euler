@@ -67,6 +67,8 @@ contract MockNavOracle {
     uint256 public navExitV;
     bool public freshV;
     uint256 public maxAgeV = 1 days; // default == MAX_BID_TTL, so the NAV-freshness fence is a no-op at default
+    uint48 public oldestTsV; // 0 ⇒ report block.timestamp ("legs just pushed"), so the leg-anchored fence (SEC-13)
+        // coincides with the old post-time anchor and existing fence tests behave identically
 
     function setNavExit(uint256 v) external {
         navExitV = v;
@@ -80,6 +82,10 @@ contract MockNavOracle {
         maxAgeV = v;
     }
 
+    function setOldestTs(uint48 v) external {
+        oldestTsV = v;
+    }
+
     function navExit() external view returns (uint256) {
         return navExitV;
     }
@@ -90,6 +96,10 @@ contract MockNavOracle {
 
     function maxAge() external view returns (uint256) {
         return maxAgeV;
+    }
+
+    function oldestRequiredLegTs() external view returns (uint48) {
+        return oldestTsV == 0 ? uint48(block.timestamp) : oldestTsV;
     }
 }
 
@@ -500,23 +510,140 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         SzipBuyBurnModule m = new SzipBuyBurnModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
 
-        // age past maxAge -> not fresh -> postBid reverts StaleNav
+        // Age both pushed legs past maxAge -> fresh() false. SEC-13 (L12): the leg-anchored `validTo` fence now
+        // binds BEFORE the `fresh()` gate for an age-stale leg — once a leg is older than maxAge,
+        // `oldestRequiredLegTs() + maxAge < now < validTo`, so the fence reverts `ValidToBeyondNavFreshness` first.
+        // The bid is still rejected fail-closed; only the selector differs (StaleNav remains reachable via the rate
+        // path — fresh legs but a stale cross-chain rate — which the fence's leg-only anchor does not pre-empt).
         vm.warp(block.timestamp + 1 days + 1);
         assertFalse(real.fresh());
         vm.prank(operator);
-        vm.expectRevert(SzipBuyBurnModule.StaleNav.selector);
+        vm.expectRevert(SzipBuyBurnModule.ValidToBeyondNavFreshness.selector);
         m.postBid(_order(5e5, 1e18, uint32(block.timestamp + 1 hours)));
     }
 
     function test_freshness_never_pushed_reverts() public {
-        // oracle with no legs ever pushed -> fresh() == false
+        // oracle with no legs ever pushed -> fresh() == false, and oldestRequiredLegTs() == 0 (unset legs).
         SzipNavOracle real = _realOracleBare();
         assertFalse(real.fresh());
+        assertEq(real.oldestRequiredLegTs(), 0, "unset legs -> anchor 0");
         SzipBuyBurnModule m = new SzipBuyBurnModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
+        // SEC-13 (L12): with the anchor at 0, `0 + maxAge < now < validTo`, so the leg-anchored fence reverts
+        // `ValidToBeyondNavFreshness` before the `fresh()`/`StaleNav` gate — the never-pushed oracle is rejected
+        // fail-closed at the fence (the design's unset-leg path).
         vm.prank(operator);
-        vm.expectRevert(SzipBuyBurnModule.StaleNav.selector);
+        vm.expectRevert(SzipBuyBurnModule.ValidToBeyondNavFreshness.selector);
         m.postBid(_order(5e5, 1e18, uint32(block.timestamp + 1 hours)));
+    }
+
+    // ----------------------------------------------------------------- SEC-13 (L12): validTo anchored to oldest leg
+    // The resting-bid `validTo` ceiling is anchored to the OLDEST required NAV leg's timestamp + maxAge (not
+    // post-time), so the worst-case mark age at fill is `maxAge`, not `2·maxAge`. Real oracle (real legCache ts) with
+    // maxAge < MAX_BID_TTL so the leg-anchored fence binds before BadValidTo.
+    uint256 internal constant SEC13_MAX_AGE = 1 hours; // < MAX_BID_TTL (1 day)
+
+    // Build a real oracle with a chosen maxAge (the `_newRealOracle` builder hard-codes 1 days == MAX_BID_TTL).
+    function _realOracleMaxAge(uint256 maxAge_) internal returns (SzipNavOracle o, address fwd) {
+        fwd = makeAddr("fwdSEC13");
+        o = new SzipNavOracle(
+            fwd,
+            address(new OracleMockToken(18)),
+            address(new OracleMockToken(6)),
+            address(new OracleMockXAlpha()),
+            address(new OracleMockToken(18)),
+            address(new OracleMockOHydx(30)),
+            makeAddr("oracMainSEC13"),
+            makeAddr("oracSideSEC13"),
+            4 hours,
+            maxAge_,
+            2000
+        );
+    }
+
+    function _moduleFor(SzipNavOracle o) internal returns (SzipBuyBurnModule m) {
+        m = new SzipBuyBurnModule();
+        m.setUp(abi.encode(owner, address(safe), operator, address(o), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
+    }
+
+    /// @notice 2·maxAge window CLOSED: legs at t0, warp by a (0<a<maxAge, still fresh); a `validTo` at the OLD
+    ///         post-time ceiling (now + maxAge = t0 + a + maxAge) now reverts — the new ceiling is t0 + maxAge.
+    function test_SEC13_two_maxAge_window_closed() public {
+        (SzipNavOracle o, address fwd) = _realOracleMaxAge(SEC13_MAX_AGE);
+        uint256 t0 = block.timestamp;
+        _pushBoth(o, fwd, 1e18, 5e17); // legs at t0
+        SzipBuyBurnModule m = _moduleFor(o);
+
+        uint256 a = 30 minutes; // 0 < a < maxAge
+        vm.warp(t0 + a);
+        assertTrue(o.fresh(), "legs still fresh at t0 + a");
+        assertEq(o.oldestRequiredLegTs(), t0, "anchor is the leg ts, not post-time");
+
+        uint256 sell = _maxSell(1e18, o.navExit(), D_BPS); // deep-discount sized so the price bound never masks
+
+        // OLD post-time ceiling (now + maxAge) is now PAST the leg-anchored ceiling (t0 + maxAge) — reverts.
+        uint32 oldCeil = uint32(t0 + a + SEC13_MAX_AGE);
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ValidToBeyondNavFreshness.selector);
+        m.postBid(_order(sell, 1e18, oldCeil));
+
+        // The NEW ceiling (t0 + maxAge), only `maxAge - a` ahead, posts cleanly.
+        vm.prank(operator);
+        m.postBid(_order(sell, 1e18, uint32(t0 + SEC13_MAX_AGE)));
+    }
+
+    /// @notice Fill-age bound: the maximum postable `validTo` is exactly `oldestLegTs + maxAge`, so a fill can land
+    ///         against a mark at most `maxAge` old (not `2·maxAge`). `+1` past that ceiling reverts.
+    function test_SEC13_fill_age_capped_at_maxAge() public {
+        (SzipNavOracle o, address fwd) = _realOracleMaxAge(SEC13_MAX_AGE);
+        uint256 t0 = block.timestamp;
+        _pushBoth(o, fwd, 1e18, 5e17);
+        SzipBuyBurnModule m = _moduleFor(o);
+
+        vm.warp(t0 + 10 minutes);
+        uint256 sell = _maxSell(1e18, o.navExit(), D_BPS);
+
+        // exact ceiling posts (fence uses strict `>`); the implied max fill-time leg age is maxAge.
+        vm.prank(operator);
+        m.postBid(_order(sell, 1e18, uint32(t0 + SEC13_MAX_AGE)));
+
+        // one second past the leg-anchored ceiling reverts (would imply a fill-age > maxAge).
+        SzipBuyBurnModule m2 = _moduleFor(o);
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ValidToBeyondNavFreshness.selector);
+        m2.postBid(_order(sell, 1e18, uint32(t0 + SEC13_MAX_AGE + 1)));
+    }
+
+    /// @notice Edge fail-closed: legs aged EXACTLY maxAge (anchor + maxAge == now), so no forward-resting window
+    ///         exists — any `validTo > now` reverts cleanly (no underflow/panic), legs still technically fresh.
+    function test_SEC13_edge_legs_at_freshness_limit_fail_closed() public {
+        (SzipNavOracle o, address fwd) = _realOracleMaxAge(SEC13_MAX_AGE);
+        uint256 t0 = block.timestamp;
+        _pushBoth(o, fwd, 1e18, 5e17);
+        SzipBuyBurnModule m = _moduleFor(o);
+
+        vm.warp(t0 + SEC13_MAX_AGE); // age == maxAge: _legStale uses strict `>`, so still fresh
+        assertTrue(o.fresh(), "exactly maxAge old is still fresh");
+        assertEq(o.oldestRequiredLegTs() + SEC13_MAX_AGE, block.timestamp, "anchor + maxAge == now");
+
+        uint256 sell = _maxSell(1e18, o.navExit(), D_BPS);
+        // validTo must be > now (BadValidTo guards <= now); the smallest legal validTo (now+1) trips the fence.
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ValidToBeyondNavFreshness.selector);
+        m.postBid(_order(sell, 1e18, uint32(block.timestamp + 1)));
+    }
+
+    /// @notice Fresh legs still postable: with a small age, a near-term `validTo` posts successfully.
+    function test_SEC13_fresh_legs_near_term_validTo_posts() public {
+        (SzipNavOracle o, address fwd) = _realOracleMaxAge(SEC13_MAX_AGE);
+        uint256 t0 = block.timestamp;
+        _pushBoth(o, fwd, 1e18, 5e17);
+        SzipBuyBurnModule m = _moduleFor(o);
+
+        vm.warp(t0 + 1 minutes);
+        uint256 sell = _maxSell(1e18, o.navExit(), D_BPS);
+        vm.prank(operator);
+        m.postBid(_order(sell, 1e18, uint32(block.timestamp + 10 minutes))); // well within t0 + maxAge
     }
 
     // ----------------------------------------------------------------- exec discipline (recording mock)

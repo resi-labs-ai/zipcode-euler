@@ -12,6 +12,7 @@ interface INavOracle {
     function navExit() external view returns (uint256);
     function fresh() external view returns (bool);
     function maxAge() external view returns (uint256);
+    function oldestRequiredLegTs() external view returns (uint48);
 }
 
 /// @dev The minimal ERC20 surface the module needs (the USDC `approve` the module builds calldata for).
@@ -299,9 +300,14 @@ contract SzipBuyBurnModule is Module {
         if (order.validTo <= block.timestamp || order.validTo > block.timestamp + MAX_BID_TTL) revert BadValidTo();
         // NAV-freshness fence (the collapsed "fulfillment controller", 2026-06-09): a resting bid must not be able
         // to fill against a NAV mark that has since gone stale. `navExit` is priced now off `fresh()` legs, but the
-        // order rests until `validTo` — bound it to the oracle's freshness window so the price the buyer relies on
-        // cannot age past `maxAge`. Binds before `BadValidTo` whenever `maxAge < MAX_BID_TTL`.
-        if (order.validTo > block.timestamp + INavOracle(navOracle).maxAge()) revert ValidToBeyondNavFreshness();
+        // order rests until `validTo`. The legs feeding `navExit` may already be up to `maxAge` old at post-time
+        // (`fresh()` only requires age ≤ `maxAge`), so anchoring the ceiling to POST-time (`now + maxAge`) allowed a
+        // worst-case fill-time mark age of `2·maxAge` (SEC-13 / kill-list L12). Anchor instead to the OLDEST required
+        // leg's timestamp, so the mark a fill lands against is at most `maxAge` old. Pure addition (`anchor + maxAge`,
+        // never subtraction): the oldest-leg-age==maxAge / unset-leg / maxAge==0 edges fail closed via this fence plus
+        // the `:299` `validTo > now` check — no underflow. Binds before `BadValidTo` whenever `anchor + maxAge < now + MAX_BID_TTL`.
+        uint256 anchor = INavOracle(navOracle).oldestRequiredLegTs();
+        if (order.validTo > anchor + INavOracle(navOracle).maxAge()) revert ValidToBeyondNavFreshness();
         if (!INavOracle(navOracle).fresh()) revert StaleNav();
         if (dBps == 0 || dBps >= 10_000) revert BadDiscount();
 

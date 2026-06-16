@@ -383,6 +383,37 @@ contract SzipNavOracleTest is Test {
         assertTrue(oracle.fresh());
     }
 
+    // ----------------------------------------------------------------- SEC-13 (L12): oldestRequiredLegTs view
+    /// @notice The new additive view returns the MIN of the two required pushed-leg timestamps — the anchor the §7
+    ///         buy-burn fence uses (SEC-13 / kill-list L12). Push the legs at different times and assert the older.
+    function test_SEC13_oldestRequiredLegTs_min_of_two_legs() public {
+        uint48 t0 = uint48(block.timestamp);
+        _push(1, 5e17); // HYDX at t0 (older)
+        vm.warp(t0 + 3 hours);
+        _push(0, 1e18); // ALPHA at t0+3h (newer)
+        assertEq(oracle.oldestRequiredLegTs(), t0, "anchor = older (HYDX) leg ts");
+    }
+
+    /// @notice When the xALPHA rate oracle is wired, its `lastUpdate()` is folded into the min when older than both
+    ///         legs; a never-seeded rate (`lastUpdate()==0`) is excluded so the anchor is not clamped to 0.
+    function test_SEC13_oldestRequiredLegTs_folds_rate_ts_when_wired() public {
+        MockRateOracle rateOracle = new MockRateOracle();
+        rateOracle.setRate(1e18);
+        rateOracle.setFresh(true);
+        oracle.setXAlphaRateOracle(address(rateOracle));
+
+        uint48 t0 = uint48(block.timestamp);
+        _pushBoth(1e18, 5e17); // both legs at t0
+        // rate unseeded (lastUpdate==0) ⇒ excluded; anchor stays at the legs' t0
+        assertEq(oracle.oldestRequiredLegTs(), t0, "unseeded rate excluded from min");
+        // rate stamped OLDER than the legs ⇒ becomes the anchor
+        rateOracle.setLastUpdate(t0 - 1 hours);
+        assertEq(oracle.oldestRequiredLegTs(), t0 - 1 hours, "older rate ts folds into min");
+        // rate stamped NEWER than the legs ⇒ legs remain the anchor
+        rateOracle.setLastUpdate(t0 + 1 hours);
+        assertEq(oracle.oldestRequiredLegTs(), t0, "newer rate ts does not raise the anchor");
+    }
+
     // ----------------------------------------------------------------- push path (reportType 7)
     function test_push_updates_cache_and_emits() public {
         vm.expectEmit(true, false, false, true);
@@ -1107,10 +1138,12 @@ contract SzipNavOracleTest is Test {
     }
 }
 
-/// @notice Minimal stand-in for `SzAlphaRateOracle` — exposes `exchangeRate()` + `fresh()` for the gate test.
+/// @notice Minimal stand-in for `SzAlphaRateOracle` — exposes `exchangeRate()` + `fresh()` for the gate test and
+///         `lastUpdate()` for the SEC-13 `oldestRequiredLegTs()` rate-leg fold.
 contract MockRateOracle {
     uint256 public r;
     bool public f;
+    uint48 public lu;
 
     function setRate(uint256 x) external {
         r = x;
@@ -1120,11 +1153,19 @@ contract MockRateOracle {
         f = x;
     }
 
+    function setLastUpdate(uint48 x) external {
+        lu = x;
+    }
+
     function exchangeRate() external view returns (uint256) {
         return r;
     }
 
     function fresh() external view returns (bool) {
         return f;
+    }
+
+    function lastUpdate() external view returns (uint48) {
+        return lu;
     }
 }

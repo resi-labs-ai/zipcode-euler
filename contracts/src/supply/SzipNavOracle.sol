@@ -11,9 +11,12 @@ import {IOptionToken} from "../interfaces/hydrex/IOptionToken.sol";
 import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
 import {IchiAlgebraFairReserves} from "./lib/IchiAlgebraFairReserves.sol";
 
-/// @notice The freshness face of `SzAlphaRateOracle` — issuance gates on this for the CRE-pushed cross-chain rate.
+/// @notice The freshness + last-update face of `SzAlphaRateOracle` — issuance gates on `fresh()` for the CRE-pushed
+///         cross-chain rate; `lastUpdate()` (the 964 read-time of the latest push, `0` ⇒ unset) is folded into
+///         `oldestRequiredLegTs()` so a resting §7 buy-burn bid's freshness anchor reflects the rate leg too (SEC-13).
 interface IXAlphaRateFresh {
     function fresh() external view returns (bool);
+    function lastUpdate() external view returns (uint48);
 }
 
 /// @notice The reservoir LP escrow collateral vault (8-B5) — only the two views the NAV needs to value the
@@ -514,6 +517,31 @@ contract SzipNavOracle is ReceiverTemplate {
         if (_legStale(LEG_ALPHA_USD) || _legStale(LEG_HYDX_USD)) return false;
         if (xAlphaRateOracle != address(0) && !IXAlphaRateFresh(xAlphaRateOracle).fresh()) return false;
         return true;
+    }
+
+    /// @notice The oldest CRE-push timestamp among the marks `navExit()`/`fresh()` are built from — the two required
+    ///         pushed legs (`LEG_ALPHA_USD`, `LEG_HYDX_USD`) and, when wired (`xAlphaRateOracle != 0`), the
+    ///         cross-chain xALPHA rate's `lastUpdate()`. A resting §7 buy-burn bid anchors its `validTo` ceiling to
+    ///         `oldestRequiredLegTs() + maxAge` (SEC-13 / kill-list L12) so the NAV mark it can fill against is at
+    ///         most `maxAge` old at fill, not `2·maxAge` (the pre-fix post-time anchor allowed legs already up to
+    ///         `maxAge` old at post-time to age another full `maxAge` while the bid rests).
+    /// @dev    Unset-leg / unseeded-rate handling: an unpushed required leg (`ts == 0`) yields `0`, which fails the
+    ///         bid closed at the module's anchor fence. The rate leg is folded only when its own `lastUpdate() != 0`
+    ///         so an unseeded-but-wired rate routes to the cleaner `fresh()`/`StaleNav` gate instead of clamping the
+    ///         anchor to `0`. Window note: the rate leg's native freshness is the rate oracle's own `maxStaleness`
+    ///         (tighter than `maxAge`), still enforced at post-time by the module's `fresh()` check; this anchor
+    ///         additionally caps every fed mark — rate included — to at most `maxAge` at fill. Folding more terms
+    ///         into the `min` only LOWERS the anchor, so the per-leg `maxAge` guarantee is never weakened.
+    function oldestRequiredLegTs() external view returns (uint48) {
+        uint48 a = legCache[LEG_ALPHA_USD].ts;
+        uint48 h = legCache[LEG_HYDX_USD].ts;
+        uint48 oldest = a < h ? a : h;
+        address rate = xAlphaRateOracle;
+        if (rate != address(0)) {
+            uint48 r = IXAlphaRateFresh(rate).lastUpdate();
+            if (r != 0 && r < oldest) oldest = r;
+        }
+        return oldest;
     }
 
     // --------------------------------------------------------------------- internals
