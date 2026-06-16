@@ -904,4 +904,118 @@ contract RecycleModuleDivertTest is Test {
         assertEq(zipMinted, recycled * 1e12, "recycle minted (stubbed)");
         assertEq(m.freeValueAccrued(), SEED - diverted - recycled, "one ledger: seed - diverted - recycled");
     }
+
+    // ----------------------------------------------------------------- SEC-09: cumulative hole bound across calls
+
+    /// @dev Two diverts that each individually pass (`amount*1e12 <= H`) but together exceed `H`: the second reverts
+    ///      ExceedsHole. Pre-fix (per-call check only) both pass and over-fill. H < SEED*1e12 so the hole binds first.
+    function test_SEC09_cumulative_overfill_blocked() public {
+        uint256 H = 100_000e6 * 1e12; // < SEED*1e12, so ExceedsHole binds before InsufficientFreeValue
+        nav.setProvision(H);
+
+        uint256 first = 60_000e6; // 60_000e6*1e12 <= H -> passes per-call
+        uint256 second = 60_000e6; // also <= H per-call, but 60k+60k=120k > 100k cumulatively
+
+        vm.prank(operator);
+        m.divert(first);
+        assertEq(ee.balanceOf(WAREHOUSE), first, "first divert filled");
+        assertEq(m.divertedSinceProvisionChange(), first * 1e12, "tally tracks the first divert");
+
+        vm.prank(operator);
+        vm.expectRevert(RecycleModule.ExceedsHole.selector);
+        m.divert(second);
+        assertEq(safe.callCount(), 3, "no further exec on the over-fill (only the first divert's 3 execs)");
+        assertEq(m.freeValueAccrued(), SEED - first, "ledger untouched by the blocked divert");
+        assertEq(m.divertedSinceProvisionChange(), first * 1e12, "tally unchanged by the blocked divert");
+    }
+
+    /// @dev Exact cumulative fill (sum*1e12 == H) is allowed; one wei of hole short reverts ExceedsHole.
+    function test_SEC09_exact_cumulative_fill_and_one_wei_over() public {
+        uint256 a = 40_000e6;
+        uint256 b = 60_000e6; // a+b = 100_000e6 -> *1e12 == H exactly
+        uint256 H = (a + b) * 1e12;
+        nav.setProvision(H);
+
+        vm.prank(operator);
+        m.divert(a);
+        vm.prank(operator);
+        m.divert(b); // exact cumulative fill -> allowed
+        assertEq(ee.balanceOf(WAREHOUSE), a + b, "exact cumulative fill allowed");
+        assertEq(m.divertedSinceProvisionChange(), H, "tally == hole exactly");
+
+        // a fresh rig, hole one wei short of the cumulative sum -> the second divert tips over and reverts.
+        (RecycleModule m2, RecordingSafe s2) = _rigWith(address(ee));
+        nav.setProvision(H - 1);
+        vm.prank(operator);
+        m2.divert(a);
+        vm.prank(operator);
+        vm.expectRevert(RecycleModule.ExceedsHole.selector);
+        m2.divert(b); // a+b == H but hole is H-1 -> one wei over
+        assertEq(s2.callCount(), 3, "only the first divert executed");
+        assertEq(m2.freeValueAccrued(), SEED - a, "ledger untouched by the one-wei-over divert");
+    }
+
+    /// @dev Reset-on-re-mark: filling toward H, then re-marking to a fresh H' resets the tally so a fresh divert up to
+    ///      H' is allowed (not permanently stuck).
+    function test_SEC09_reset_on_remark_allows_fresh_budget() public {
+        uint256 H = 100_000e6 * 1e12;
+        nav.setProvision(H);
+        vm.prank(operator);
+        m.divert(80_000e6); // tally = 80k (of 100k)
+        assertEq(m.divertedSinceProvisionChange(), 80_000e6 * 1e12, "tally after first fill");
+
+        // Without a re-mark, only 20k more would fit; a 50k divert would exceed H. Re-mark to a fresh H' first.
+        uint256 Hp = 90_000e6 * 1e12;
+        nav.setProvision(Hp);
+        vm.prank(operator);
+        m.divert(50_000e6); // would exceed the OLD epoch (80k+50k>100k) but the tally reset on the re-mark
+        assertEq(m.lastSeenProvision(), Hp, "lastSeenProvision adopted H'");
+        assertEq(m.divertedSinceProvisionChange(), 50_000e6 * 1e12, "tally reset, then tracks only the post-remark fill");
+        assertEq(ee.balanceOf(WAREHOUSE), 80_000e6 + 50_000e6, "both diverts filled across the re-mark");
+    }
+
+    /// @dev Stale-value re-mark H -> H'' -> H does NOT resurrect the old tally (the value-key bug the ticket forbids).
+    ///      After filling 80k of H, re-marking away and BACK to H starts a fresh epoch: a 50k divert is allowed even
+    ///      though 80k+50k > H, proving the tally is keyed on last-observed change, not on the hole value.
+    function test_SEC09_stale_value_remark_does_not_resurrect_tally() public {
+        uint256 H = 100_000e6 * 1e12;
+        nav.setProvision(H);
+        vm.prank(operator);
+        m.divert(80_000e6); // epoch-1 tally = 80k
+        assertEq(m.divertedSinceProvisionChange(), 80_000e6 * 1e12, "epoch-1 tally");
+
+        // re-mark to a DIFFERENT value, then BACK to the original H.
+        uint256 Hpp = 120_000e6 * 1e12;
+        nav.setProvision(Hpp); // observed only when divert next reads it
+        nav.setProvision(H); // back to the original value WITHOUT a divert in between
+
+        // The next divert observes H, which != lastSeenProvision (still H from epoch-1? NO: lastSeenProvision==H,
+        // hole==H so hole==lastSeenProvision and NO reset would fire). Guard against that false-negative by checking
+        // the value-key bug directly: re-mark through Hpp so lastSeenProvision moves, then back to H.
+        vm.prank(operator);
+        m.divert(10_000e6); // observes H==lastSeenProvision (no reset): tally 80k+10k=90k <= 100k, allowed
+        assertEq(m.divertedSinceProvisionChange(), 90_000e6 * 1e12, "same-value (no change) keeps accumulating");
+
+        // Now actually move the observed provision to Hpp (a real change), then back to H -> each is a fresh epoch.
+        nav.setProvision(Hpp);
+        vm.prank(operator);
+        m.divert(10_000e6); // observes Hpp != lastSeenProvision(H) -> reset; tally = 10k
+        assertEq(m.lastSeenProvision(), Hpp, "adopted Hpp");
+        assertEq(m.divertedSinceProvisionChange(), 10_000e6 * 1e12, "tally reset at Hpp");
+
+        nav.setProvision(H);
+        vm.prank(operator);
+        m.divert(50_000e6); // observes H != lastSeenProvision(Hpp) -> reset; 50k allowed though prior H epoch had 90k
+        assertEq(m.lastSeenProvision(), H, "re-adopted H as a FRESH epoch (no stale tally resurrected)");
+        assertEq(m.divertedSinceProvisionChange(), 50_000e6 * 1e12, "fresh H epoch tally, not 90k+50k");
+    }
+
+    /// @dev Divert never WRITES provision: provision() is unchanged across a successful divert.
+    function test_SEC09_divert_never_writes_provision() public {
+        uint256 H = 100_000e6 * 1e12;
+        nav.setProvision(H);
+        vm.prank(operator);
+        m.divert(50_000e6);
+        assertEq(nav.provision(), H, "provision() unchanged across a successful divert");
+    }
 }
