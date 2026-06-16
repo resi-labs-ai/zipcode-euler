@@ -342,7 +342,7 @@ contract ZipDepositModuleTest is ZipModuleBase {
         vm.stopPrank();
     }
 
-    /// @notice REGRESSION (zap-residual.md): a stray zipUSD donation must NOT brick the zap. The cleanliness
+    /// @notice REGRESSION: a stray zipUSD donation must NOT brick the zap. The cleanliness
     ///         check is a DELTA (the Gate pulled exactly the minted amount), not an absolute zero balance —
     ///         else 1 wei of freely-transferable zipUSD sent to the module permanently DoS's the default UX.
     function test_zap_survives_zipusd_donation() public {

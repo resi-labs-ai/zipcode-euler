@@ -2,7 +2,7 @@
 
 > **STATUS (re-verified against live source 2026-06-13).** Every item this doc originally raised is now
 > closed — built, superseded by a better design, or deliberately triaged out. Nothing here is live open
-> work. The live open supply finding is elsewhere: **`build/zap-residual.md`**.
+> work, and the supply-review findings (the TWAP-ring NAV bracket, the 1-wei zap brick) are all resolved.
 > This file is kept as the provenance record for how the coverage outflow gates landed.
 
 ## What this doc originally found (and where it went)
@@ -49,6 +49,6 @@ would inherit the TWAP ring behavior.
 
 ## Net
 
-Coverage outflow gating is **done**. The remaining live supply finding is `build/zap-residual.md`
-(1-wei zap brick), re-verified against the current tree. (The TWAP-ring NAV-bracket finding is resolved —
-ring-spacing fix + fair-LP reserve read both shipped.)
+Coverage outflow gating is **done**, and the other supply-review findings are resolved too: the 1-wei zap
+brick (delta-check in `ZipDepositModule.zap`) and the TWAP-ring NAV bracket (ring-spacing fix + fair-LP
+reserve read) both shipped. No live supply findings remain.
