@@ -1,7 +1,7 @@
 # SEC-DOC — Doc / runbook sweep (14 DOC dispositions)
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` §B (DOC) + Design notes; the cited
-`build/claude-zipcode.md` §§ and contract files below · **Status:** PROPOSED
+`build/claude-zipcode.md` §§ and contract files below · **Status:** ✅ DONE 2026-06-16
 
 > Scope authored 2026-06-15. The FINAL SEC item, after SEC-01…SEC-15. **Documentation / NatDoc / runbook only —
 > NO behavioral code.** Several items explicitly REJECT a proposed code change (the rejection IS the finding).
@@ -51,3 +51,43 @@ a doc edit, a one-line code comment, or an explicit rejection of a proposed chan
 - Authored after SEC-01…SEC-15 (it documents the as-built state, including the just-landed fixes). On land:
   `PROGRESS.md` "Just done — SEC-DOC" + mark the SEC track complete → next phase (fresh anvil deploy → solidify
   `build/wires/` → CRE → FE), per the kill-list "Next phase".
+
+---
+
+## DONE-note (2026-06-16)
+
+**All 14 DOC dispositions landed as doc/NatDoc/comment edits — ZERO behavioral code.** Gate: `cd contracts && forge build`
+clean (lint notes only) + `forge test` **829 passed / 0 failed / 3 skipped** — IDENTICAL to the SEC-15 baseline (829/0/3),
+confirming no behavior changed. No new regression test (doc-only). The 4 rejected code changes are recorded as rejections
+(the rejection IS the finding).
+
+### Per-item checklist (each verified at edit time against the live contract/spec)
+
+| ID | Kind | Landed where | Rejection recorded? |
+|---|---|---|---|
+| **M3** | NatDoc + spec | `SzipBuyBurnModule.sol` APP_DATA NatDoc; `claude-zipcode.md` §6.4 step 3; `8-B14` wire `ICoverageGate` row | ✅ CoW fill-time hook **REJECTED** (`APP_DATA==0` forbids hooks); `NAV_MAX_AGE` shrink noted as deploy-tuning, not changed |
+| **M8** | NatDoc | `DefaultCoordinator.sol` header `(a)` clause (`:26-31`) reconciled (RECOVERY = up by receipts; RESOLVE = full to 0; WRITEOFF leaves residual) | ✅ `capitalSlashAmount <= recoveryProceeds` assert **REJECTED** — unit-incoherent, no such param |
+| **L4** | NatDoc + runbook | `ZipcodeOracleRegistry._processReport` NatDoc; runbook already in `claude-zipcode.md` §8.1 "Revaluation sharding" — augmented with the rejection | ✅ per-key try/catch **REJECTED** — weakens WOOF-02 fail-closed batch |
+| **L6r** | NatDoc | `DefaultCoordinator._resolve` NatDoc (over-bond reverts atomically + re-submittable) | ✅ over-bond assert **REJECTED** — no-op (tx already reverts) |
+| **L13** | NatDoc | `DurationFreezeModule.covered()` `@dev` — re-documented as a fail-closed DOUBLE-squeeze (numerator down + floor up), recovers on repay | n/a (rationale correction) |
+| **L15** | NatDoc | `ZipcodeOracleRegistry._getQuote` `@dev` — intentionally forward-only | ✅ inverse/reverse support **REJECTED** — dead code |
+| **L16** | NatDoc | `ZipcodeOracleRegistry.LIEN_DECIMALS` `@dev` — 18-dp scale guard is LOAD-BEARING; don't relax without per-key scale | n/a |
+| **L17** | comment | `ZipDepositModule.deposit`/`zap` — USDC→eePool settles to 0 (no reset needed); asymmetry vs zipUSD→gate justified | n/a (symmetric reset noted optional/behavioral, deferred) |
+| **I1** | spec | `claude-zipcode.md` §6.4 — explicit re-affirmation: no on-chain junior redeem-for-assets; exit is NAV-tracking CoW | n/a (re-affirm) |
+| **I2** | spec + comment | `claude-zipcode.md` §7; `SzipNavOracle.grossBasketValue` comment — shares NAV-priced, flat $1 only on zipUSD deposit-input leg; de-peg over-issue risk noted LOW | n/a (hardening noted not-owed) |
+| **I3** | NatDoc + spec | `ZipRedemptionQueue.redeemController` `@dev`; `claude-zipcode.md` §12; `9-ZipRedemptionQueue` wire — par-burn treasury-internal, `MultipleRequesters` sole defense, `redeemController` must never be untrusted | n/a |
+| **I4** | spec + wire | `claude-zipcode.md:146` + §8.8; `8-Bw-CreditWarehouse` wire — `is ReceiverTemplate is Ownable`, Forwarder + identity Timelock-mutable, only economic knobs immutable. (`8x-02` wire already correct.) | n/a |
+| **I5** | NatDoc + wire | `WarehouseAdminModule.setSafe`/`safe` docstrings; `8-Bw-CreditWarehouse` wire — `safe` (injected) vs Roles `avatar` parity; pair `setSafe`+`setAvatar` or SUPPLY/REDEEM brick (fail-closed) | n/a |
+| **prorata** | NatDoc + spec | `ZipRedemptionQueue` header; `claude-zipcode.md` §12; `9-ZipRedemptionQueue` wire — "no bad-loan signal" premise WRONG (`writeProvision` → junior NAV self-prices); senior par queue intentionally impairment-blind | ✅ queue change **REJECTED** (no pro-rata in senior queue) |
+
+### Doc-sync done
+- **kill-list §B:** banner + all 14 items tagged `[x] … DONE (SEC-DOC)`.
+- **audit-claude:** `SUMMARY.md` (M3/M8 rows ✅ + LOW-line L4/L6r/L13/L15/L16/L17 tagged + setOperator ✅(SEC-15) + INFORMATIONAL I1/I2/I3/I4); `findings.md` #5 (M3); `interconnection-findings.md` C3 (M8) + C-L4 (L17); `role-based-findings.md` R11 (I4); `reference-diff-findings.md` (I5).
+- **wires:** `8-Bw-CreditWarehouse` (I4+I5), `9-ZipRedemptionQueue` (I3+prorata), `8-B14-SzipBuyBurnModule` (M3). `8x-02-SzAlphaRateOracle` confirmed already-correct for I4.
+- **spec:** `claude-zipcode.md` §3:146, §6.4, §7, §8.1, §8.8, §12 edited.
+- **Report:** `build/reports/SEC-DOC-report.md`.
+
+### Interpretation notes folded back (for cold rebuild)
+- **L4 runbook** lives in `claude-zipcode.md` §8.1 (already present), NOT a new `build/cre-producer-runbook.md`; the registry NatDoc points there.
+- **I4 "§2/§6"** in the ticket/kill-list was an imprecise pointer — the actual false claim is at §3:146 (and recurs as "immutable Forwarder" shorthand elsewhere, governed by the §17 revision at `:1342`). Corrected at §3:146 + §8.8.
+- **I1** is a re-affirm: §6.4 already asserted it; added an explicit tagged sentence.

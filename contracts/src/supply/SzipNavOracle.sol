@@ -365,7 +365,13 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         NAV-invariant (closes the §8.2 mid-loop blind spot). Saturates at 0 (debt can never exceed the basket
     ///         in solvent operation; the floor guards the insolvent edge).
     function grossBasketValue() public view returns (uint256 value) {
+        // kill-list I2: the flat $1 mark is on the zipUSD BASKET LEG / deposit input only — the szipUSD SHARE itself
+        // is NAV-priced (`navEntry = max(spot,twap)`, `navExit = min(spot,twap)`), never flat $1. Latent risk: a
+        // zipUSD de-peg would value this leg above its realized backing and over-issue szipUSD (diluting stayers);
+        // LOW, mitigated by atomic capacity-gated minting. Optional hardening (price this leg off realized backing)
+        // is noted in §7, not owed.
         value += _bal(zipUSD); // 18-dp $1
+
         value += _bal(usdc) * 1e12; // 6-dp -> 18-dp $1
         value += _bal(xAlpha) * _xAlphaUSD() / 1e18;
         value += _bal(hydx) * legCache[LEG_HYDX_USD].price / 1e18;

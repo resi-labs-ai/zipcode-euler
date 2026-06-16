@@ -14,6 +14,13 @@ import {IZipUSD} from "../interfaces/euler/IZipUSD.sol";
 ///         NOT the junior Exit Gate (§6.4): different instrument (zipUSD = the senior $1 dollar, not the szipUSD
 ///         junior share), different exit, different pricing (par, NOT NAV). Never conflate.
 ///
+///         IMPAIRMENT-BLIND BY DESIGN (kill-list prorata — the "loan-marked-bad signal is absent" premise is WRONG):
+///         a bad-loan signal DOES exist — `DefaultCoordinator.writeProvision` marks the impairment into the JUNIOR
+///         `SzipNavOracle` NAV, so the junior `ExitGate` CoW exit self-prices on impairment continuously (§11/§12).
+///         This SENIOR par queue is INTENTIONALLY impairment-blind: it pays strict $1 par regardless, because it is
+///         single-requester treasury plumbing (see `redeemController` below), not an open creditor queue. No pro-rata
+///         / impaired-rate machinery belongs here.
+///
 ///         SINGLE-REQUESTER TOPOLOGY (2026-06-13): `requestRedeem` is gated to ONE caller — the rq Safe (the
 ///         `OffRampModule` `exec`s through it). With a single requester, par redemption is treasury-internal
 ///         plumbing: the rq Safe escrows its own idle basket zipUSD, the CRE delivers USDC (warehouse REDEEM → REPAY),
@@ -53,6 +60,12 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     /// @notice The SOLE authorized `requestRedeem` caller — the rq Safe (the `OffRampModule` `exec`s through it, so
     ///         the `msg.sender` the queue sees is the Safe, NOT the module). Timelock-settable, non-zero. The CLAIM
     ///         path (`withdraw`/`redeem`) stays open for the requester.
+    /// @dev kill-list I3 (TRUST INVARIANT): par-burn at strict 1:1 is sound ONLY because this is treasury-internal —
+    ///      a SINGLE requester escrows its OWN idle basket zipUSD and claims its own par USDC. The `MultipleRequesters`
+    ///      guard (enforced on escrow) is the SOLE defense keeping the topology single-requester; there is no
+    ///      impaired-rate / pro-rata haircut here by design (the Maple/Centrifuge open-queue comparison does NOT
+    ///      apply). Therefore `redeemController` MUST NEVER be set to an untrusted party — an untrusted requester
+    ///      could redeem at par ahead of an impairment that the senior queue is intentionally blind to (see prorata).
     address public redeemController;
 
     // --------------------------------------------------------------------- accounting

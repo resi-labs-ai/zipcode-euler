@@ -80,9 +80,13 @@ explains why the guard is mandatory — yet three sibling oracles omit it. Fix i
   delegatecall variant. **Fix:** shared `MastercopyInitLock is Module` base — `constructor()` runs an empty
   `initializer`-guarded `_lockMastercopy()` flipping the inherited `_initialized`; the 9 modules inherit it, so a
   bare mastercopy's `setUp` now reverts `AlreadyInitialized` (clones unaffected). Docstrings corrected.
-- **R11 — `SzAlphaRateOracle` "no owner / all knobs immutable" is inaccurate.** The *economic* knobs are
+- **R11 — `SzAlphaRateOracle` "no owner / all knobs immutable" is inaccurate. — ✅ DOC-RESOLVED 2026-06-16 (SEC-DOC / kill-list I4).** The *economic* knobs are
   immutable, but it inherits `ReceiverTemplate(Ownable)` with Timelock-mutable Forwarder + workflow
-  identity (incl. Forwarder→0 disabling validation), like every other receiver. Correct the §2/§6 wording.
+  identity (incl. Forwarder→0 disabling validation), like every other receiver. Corrected: `claude-zipcode.md:146`
+  (the "immutable / we drop the setter" framing) + §8.8 (the oracle spec) + the `8-Bw-CreditWarehouse` wire doc
+  ("immutable Forwarder gate" → Timelock-settable). The `8x-02-SzAlphaRateOracle` wire doc already stated it
+  correctly (confirmed, no edit). (The ticket's "§2/§6" pointer was imprecise — the actual false-claim site is
+  §3:146 + the oracle's own §8.8.)
 
 ## Cross-confirmations (independently re-derived → high confidence)
 - **#2 queue-cap origination brick** — re-derived by the DoS specialist *and verified directly against

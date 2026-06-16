@@ -181,46 +181,51 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
 
 ## B. DOC / runbook — no code change (or code change rejected)
 
-- **M3** (LOW) — *DECIDE → DOC.* The fill-after-coverage-drop can't breach the floor: buy-burn USDC is
+> **ALL 14 DOC dispositions DONE 2026-06-16 (SEC-DOC).** Landed as NatDoc / comment / spec edits with zero behavioral
+> code (4 explicit rejections recorded: M8, L4, L6r, L15). `forge build` clean + `forge test` **829 passed / 0 failed
+> / 3 skipped** (no regression — doc-only). See `build/reports/SEC-DOC-report.md` for the per-item checklist. Each
+> item below is tagged `[x] … DONE (SEC-DOC)`.
+
+- [x] **M3** (LOW) — *DECIDE → DOC.* **DONE (SEC-DOC).** The fill-after-coverage-drop can't breach the floor: buy-burn USDC is
   engine-Safe value excluded from `coverageValue()`. APP_DATA is pinned to `0` so CoW hooks are deliberately
   forbidden. **Action:** document that filling is intentionally not fill-time gated; optionally shrink deployed
   `NAV_MAX_AGE` (currently 1 day) to shrink the undercovered-fill window. Reject the CoW hook.
-- **M8** (LOW) — *FIX → DOC.* `_resolve` full-provision heal is the ratified §8.4 "clean resolution" design;
+- [x] **M8** (LOW) — *FIX → DOC.* **DONE (SEC-DOC) — assert REJECTED (unit-incoherent, no such param).** `_resolve` full-provision heal is the ratified §8.4 "clean resolution" design;
   totalProvision invariant holds. The proposed `capitalSlashAmount <= recoveryProceeds` assert is **unit-incoherent**
   (xALPHA bond units vs USD) and `_resolve` has no such param — **reject it.** **Action:** reconcile the
   `DefaultCoordinator.sol:27-28` header (provisions write up by realized receipts *or* fully on terminal resolve).
-- **L4** (info) — *FIX → DOC.* All-or-nothing batch is the intentional WOOF-02 fail-closed design; 1-year
+- [x] **L4** (info) — *FIX → DOC.* **DONE (SEC-DOC) — per-key try/catch REJECTED (weakens fail-closed batch).** All-or-nothing batch is the intentional WOOF-02 fail-closed design; 1-year
   validity window + producer sharding mitigate. Per-key try/catch would **weaken** it (swallows poison keys). 
   **Action:** producer runbook (MAX_LIENS_PER_REPORT sharding), no code.
-- **L6r** (info) — *FIX → DOC/cosmetic.* CEI verified correct; an over-bond `capitalSlashAmount` reverts the
+- [x] **L6r** (info) — *FIX → DOC/cosmetic.* **DONE (SEC-DOC) — assert REJECTED (no-op; tx already reverts atomically).** CEI verified correct; an over-bond `capitalSlashAmount` reverts the
   whole tx atomically (no strand) and is re-submittable. The proposed assert is a no-op. Optional clarity only.
-- **L13** (info) — *bucket holds, rationale was wrong.* Not "debt subtracted consistently" — a reservoir borrow
+- [x] **L13** (info) — *bucket holds, rationale was wrong.* **DONE (SEC-DOC).** Not "debt subtracted consistently" — a reservoir borrow
   is a **double-squeeze**: numerator down (`pathLockedLpEquity` debt) AND floor up (warehouse `maxWithdraw` drop).
   Fail-closed/self-DoS, recovers on repay. **Action:** re-document; optional liveness footgun note.
-- **L15** (info) — *FIX → DOC.* Reverse-pair quote already fails closed (`ZipcodeOracleRegistry.sol:153`); EVK
+- [x] **L15** (info) — *FIX → DOC.* **DONE (SEC-DOC) — inverse support REJECTED (dead code).** Reverse-pair quote already fails closed (`ZipcodeOracleRegistry.sol:153`); EVK
   never quotes reverse. "Add inverse support" = dead code. **Action:** one-line comment that the adapter is
   intentionally forward-only.
-- **L17** (info) — *FIX → DOC/optional.* USDC→eePool allowance always settles to 0 (exact-amount `forceApprove`,
+- [x] **L17** (info) — *FIX → DOC/optional.* **DONE (SEC-DOC) — comment only; symmetric reset deferred as optional/behavioral.** USDC→eePool allowance always settles to 0 (exact-amount `forceApprove`,
   EE pulls full amount, `eePool` immutable). The zipUSD→gate reset IS needed (gate is re-settable) so the asymmetry
   is justified. **Action:** optional comment, or add the reset for symmetry. Not a bug.
-- **I4** (info) · `SzAlphaRateOracle` "no owner / immutable" is false (inherits Ownable; Forwarder + workflow
+- [x] **I4** (info) · **DONE (SEC-DOC).** `SzAlphaRateOracle` "no owner / immutable" is false (inherits Ownable; Forwarder + workflow
   identity are Timelock-mutable; economic knobs *are* immutable). **Action:** correct `claude-zipcode.md:146` and §2/§6.
-- **I5** (info) · `WarehouseAdminModule.safe` (injected) vs Roles `avatar` (checked) are independent slots; a
+- [x] **I5** (info) · **DONE (SEC-DOC).** `WarehouseAdminModule.safe` (injected) vs Roles `avatar` (checked) are independent slots; a
   one-sided re-point silently bricks SUPPLY/REDEEM (incl. senior par-redemption → liveness). Fails closed.
   **Action:** runbook — paired `setSafe`/`setAvatar` with a parity check; correct docstrings `:24,:28`.
-- **L16** (info) · Global `scale` assumes 18-dp base; `_strictDecimals==18` makes non-18dp unreachable.
+- [x] **L16** (info) · **DONE (SEC-DOC).** Global `scale` assumes 18-dp base; `_strictDecimals==18` makes non-18dp unreachable.
   **Action:** comment that the guard is load-bearing and must not be relaxed without per-key scale.
-- **DEFER-prorata** — *DEFER → DOC.* The "loan-marked-bad signal absent" premise is wrong: `writeProvision`
+- [x] **DEFER-prorata** — *DEFER → DOC.* **DONE (SEC-DOC) — no queue change.** The "loan-marked-bad signal absent" premise is wrong: `writeProvision`
   exists and flows to the **junior** NAV (`ExitGate` ragequit self-prices on impairment continuously). The
   **senior** par queue is intentionally impairment-blind (single trusted requester). No queue change.
 
 ### Design notes (by design — re-affirm, don't fix)
-- **I1** · No on-chain junior redeem-for-assets; exit is the NAV-tracking CoW secondary. Ratified.
-- **I2** · *Caveat: my earlier wording was imprecise.* szipUSD **shares** are NAV-priced (`max(spot,twap)`);
+- [x] **I1** · **DONE (SEC-DOC) — re-affirmed in §6.4.** No on-chain junior redeem-for-assets; exit is the NAV-tracking CoW secondary. Ratified.
+- [x] **I2** · **DONE (SEC-DOC) — tightened in §7 + SzipNavOracle.** *Caveat: my earlier wording was imprecise.* szipUSD **shares** are NAV-priced (`max(spot,twap)`);
   the flat $1 mark is only on the zipUSD **deposit input** (`SzipNavOracle.sol:525`). Real latent risk: a zipUSD
   **de-peg** over-issues szipUSD and dilutes stayers (LOW; mitigated by atomic capacity-gated minting). Worth a
   tighter doc note; optional hardening = price the zipUSD leg off realized backing.
-- **I3** · Par-burn 1:1 is treasury-internal (single requester escrows its own zipUSD); the Maple/Centrifuge
+- [x] **I3** · **DONE (SEC-DOC) — documented in §12 + ZipRedemptionQueue.** Par-burn 1:1 is treasury-internal (single requester escrows its own zipUSD); the Maple/Centrifuge
   impaired-rate comparison applies to open multi-requester queues, not this. `MultipleRequesters` guard is the
   sole defense — document that `redeemController` must never be an untrusted party.
 

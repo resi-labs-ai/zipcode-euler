@@ -17,6 +17,11 @@ import {IERC20} from "forge-std/interfaces/IERC20.sol";
 ///         consensus + the Timelock-pinned Forwarder).
 contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @notice The pinned lien-token decimals (= `LienTokenFactory.LIEN_DECIMALS`). Every priced key is guarded to it.
+    /// @dev kill-list L16 (LOAD-BEARING — do not relax): the global `scale` is derived once with `baseDecimals = 18`
+    ///      (`calcScale(LIEN_DECIMALS, quoteDecimals, quoteDecimals)`), and `_writePrice` rejects any key whose
+    ///      `decimals() != 18` (`_strictDecimals`). Together these make a non-18-dp lien UNREACHABLE by design: there
+    ///      is one shared scale, not a per-key scale. Relaxing the 18-dp guard without first introducing per-key
+    ///      scaling would silently mis-scale every non-18-dp mark — never loosen it in isolation.
     uint8 public constant LIEN_DECIMALS = 18;
     /// @notice The oracle name (satisfies `IPriceOracle.name()`).
     string public constant name = "ZipcodeOracleRegistry";
@@ -112,6 +117,13 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     }
 
     /// @notice Revaluation (§4.4 reportType 3): the Forwarder pushes a batch of new marks. All-or-nothing.
+    /// @dev kill-list L4: the all-or-nothing batch is the INTENTIONAL WOOF-02 fail-closed design — a single bad mark
+    ///      (zero/overflow price, future/stale ts, off-decimal key) reverts the whole report so no partial, possibly
+    ///      inconsistent revaluation lands. A per-key try/catch would WEAKEN this (it would swallow a poison key and
+    ///      let the rest through) — deliberately NOT added. The producer mitigates the blast radius by SHARDING:
+    ///      it caps each report at `MAX_LIENS_PER_REPORT` keys and the long line-term validity window tolerates a
+    ///      failed shard's keys staying on their prior mark until the next push (see the CRE producer runbook in
+    ///      `build/claude-zipcode.md` §8.1, "Revaluation sharding (the WOOF-02 discharge)").
     /// @param report The shared §4.4 envelope `abi.encode(uint8 reportType, bytes payload)`.
     function _processReport(bytes calldata report) internal override {
         (uint8 reportType, bytes memory payload) = abi.decode(report, (uint8, bytes));
@@ -144,6 +156,10 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     }
 
     /// @notice The single stale-checked read. Only `(LIEN_i, quote)` is supported; `bid==ask==mid`.
+    /// @dev kill-list L15: the adapter is INTENTIONALLY forward-only. A reverse-pair quote (`base == quote`,
+    ///      `quoteAsset == LIEN_i`) already fails closed at the `quoteAsset != quote` guard below, and the EVK
+    ///      collateral path never quotes the reverse direction for a lien. Adding inverse support would be dead
+    ///      code (an un-exercised, un-needed surface) — deliberately NOT added.
     /// @param inAmount The amount of `base` to convert.
     /// @param base The lien token being priced.
     /// @param quoteAsset The unit of account; must equal `quote`.

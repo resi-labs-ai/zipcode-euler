@@ -13,7 +13,7 @@ documented blast radius) are excluded from findings and listed separately as pos
 | 2 | **HIGH** | high | venue | Unbounded supply-queue growth in `openLine` bricks all origination after ~29 lines |
 | 3 | MED | high | core | Backdated revaluation arbitrarily rewinds/extends a mark's staleness window — ✅ **RESOLVED (SEC-01, 2026-06-15)** |
 | 4 | MED | high | venue | No defund path — USDC stranded in closed line vaults drains base liquidity, DoS's `fund`/`draw` — ✅ **RESOLVED (SEC-07, 2026-06-15)** |
-| 5 | MED | high | szipUSD | Resting CoW buy-burn bid keeps filling after coverage drops below floor (gate is post-time only) |
+| 5 ✅ | MED | high | szipUSD | Resting CoW buy-burn bid keeps filling after coverage drops below floor (gate is post-time only) — **DOC-RESOLVED (SEC-DOC/M3): intentional; buy-burn USDC excluded from coverageValue; APP_DATA=0 forbids fill hooks; hook REJECTED** |
 | 6 | MED | high | bridge/NAV | `navExit`/`grossBasketValue` price the xALPHA leg off a **zero** rate when the rate oracle is never seeded — ✅ **RESOLVED (SEC-04, 2026-06-15)** |
 | 7 | MED | med | szipUSD | `coverageValue()` double-counts sidecar ICHI-LP, inflating coverage + corrupting the LP-dissolution gate |
 | 8 | MED | high | szipUSD | Coverage gate defaults OFF (`coverageGate==0`) leaves buy-burn outflow + LP dissolution unfenced |
@@ -114,7 +114,8 @@ coverage/freeze decisions.
   `_eeSupplyAssets(market) = previewRedeem(config(market).balance)` helper sizes BOTH `fund` legs and this defund's
   base leg (the defund line leg stays `assets:0`), so the whole adapter↔EE reallocate surface is donation-immune.
 
-### 5. Resting CoW buy-burn bid keeps filling after coverage drops below floor
+### 5. Resting CoW buy-burn bid keeps filling after coverage drops below floor — ✅ DOC-RESOLVED 2026-06-16 (SEC-DOC / kill-list M3)
+> Intentional, not a breach: the USDC the bid spends is FREE-side engine-Safe value that `coverageValue()` already EXCLUDES (only committed sidecar value + path-locked LP count toward the floor), so a fill after coverage drifts cannot breach the floor. A CoW pre-/post-interaction hook to re-check coverage at fill is REJECTED — `APP_DATA == 0` deliberately forbids hooks. The undercovered-fill window is bounded by NAV `maxAge`; shrinking the deployed `NAV_MAX_AGE` is a deploy-tuning knob (not a code change). Documented in `SzipBuyBurnModule` APP_DATA NatDoc + §6.4/§7 + the 8-B14 wire doc.
 - **contract/fn:** `SzipBuyBurnModule` / `postBid` — `src/supply/szipUSD/SzipBuyBurnModule.sol:289-337` (gate 297-298)
 - **class:** economic · **invariant_broken:** §4.9/§6 "Outflow blocked while `coverageGate.covered()==false`."
   Only bid *posting* is gated; bid *filling* is not.

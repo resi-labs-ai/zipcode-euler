@@ -73,6 +73,13 @@ contract SzipBuyBurnModule is MastercopyInitLock {
     bytes32 public constant BALANCE_ERC20 = 0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9;
     /// @notice The single pinned appData. A non-zero/unconstrained appData could attach hooks/partner-fees the
     ///         validation never saw — pin it to a constant so the signed order carries no unvalidated surface.
+    /// @dev kill-list M3: buy-burn FILL is INTENTIONALLY not fill-time coverage-gated. The `postBid` `covered()` gate
+    ///      below gates POSTING, not the solver fill — but a fill after coverage drifts below the floor cannot breach
+    ///      it, because the USDC the bid spends is engine-Safe value that `coverageValue()` already EXCLUDES (it is
+    ///      free-side, not committed sidecar value). Adding a CoW pre-/post-interaction HOOK to re-check coverage at
+    ///      fill is REJECTED — `APP_DATA == 0` deliberately forbids any hook (the rejection is the finding). (The
+    ///      undercovered-fill WINDOW is bounded by the NAV freshness `maxAge`; optionally shrinking the DEPLOYED
+    ///      `NAV_MAX_AGE` to tighten it is a deploy-tuning decision, not changed here — §6/§7.)
     bytes32 public constant APP_DATA = bytes32(0);
 
     // --------------------------------------------------------------------- module bounds

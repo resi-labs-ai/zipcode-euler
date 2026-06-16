@@ -10,19 +10,19 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-DOC — Doc / runbook sweep (14 DOC dispositions).** Ticket: `build/tickets/sec/SEC-DOC-doc-runbook-sweep.md`.
-- **Deliverable:** land all 14 DOC dispositions (M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 + prorata) as doc/NatDoc/runbook
-  edits in one sweep — **NO behavioral code** (4 items explicitly REJECT a proposed code change; the rejection IS the
-  finding). The FINAL SEC item — **all 15 FIX tickets (SEC-01…SEC-15) are now DONE.**
-- **Source:** `build/kill-list.md` §B (DOC). Driver: `build/kill-list-driver.md`.
-- **Done when:** per-item checklist landed; `forge build` + `forge test` stay green (no regression test — doc-only).
+**CRE-00 — CRE track head (re-orient + scaffold).** The **SEC remediation track is COMPLETE** (SEC-01…SEC-15 FIX +
+SEC-DOC, all DONE 2026-06-16). Per the kill-list "Next phase": **fresh anvil deploy → solidify `build/wires/` → CRE → FE.**
+- **Immediate next step (per kill-list):** a fresh anvil Base-fork deploy (`contracts/script/DeployLocal.s.sol`) to
+  confirm the full post-SEC stack stands up clean, then re-solidify any `build/wires/` truth-source the SEC sweep
+  touched, **then** pick up the CRE track at its head **CRE-00** (scope retained in the Backlog table below).
+- The reviewer releases the specific NEXT item; CRE-00 is the deferred head, but a deploy-sanity pass is the natural
+  first move now that all 30 kill-list items (16 FIX + 14 DOC) are dispositioned.
 
-> **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
-> Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
-> 11 → 12 → 13 → 14 → 15 → SEC-DOC. After each lands, set the next `SEC-NN` as NEXT. **SEC-DOC is the last item.**
+> **The SEC track is COMPLETE** — all 16 SEC tickets (SEC-01…SEC-15 FIX + SEC-DOC) DONE. The kill-list is fully
+> dispositioned: 16 FIX landed, 14 DOC swept, 3 DISMISS + 3 DEFER tracked. See the SEC track section below.
 >
-> **The Frontend ↔ anvil track is COMPLETE** (FE-00…FE-07, 2026-06-10/11). The **CRE track** (CRE-00…CRE-06) is
-> DEFERRED behind the SEC remediation push; its head is CRE-00 (scope retained in the Backlog table below).
+> **The Frontend ↔ anvil track is COMPLETE** (FE-00…FE-07, 2026-06-10/11). The **CRE track** (CRE-00…CRE-06) is the
+> next workstream; its head is CRE-00 (scope retained in the Backlog table below).
 
 ---
 
@@ -33,7 +33,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-13 DONE (2026-06-15), SEC-14 + SEC-15 DONE (2026-06-16); the 15 FIX tickets are complete and SEC-DOC (doc/runbook sweep) is now NEXT — the final SEC item.**
+**All 16 SEC tickets are DONE** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-13 DONE (2026-06-15), SEC-14 + SEC-15 + SEC-DOC DONE (2026-06-16). The SEC track is COMPLETE — the kill-list is fully dispositioned (16 FIX + 14 DOC + 3 DISMISS + 3 DEFER).**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -55,11 +55,46 @@ doc/comment-only (no regression test).
 | SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **DONE 2026-06-15** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
 | SEC-14 | L18 | Init-lock 9 mastercopies (shared `MastercopyInitLock` empty `initializer` ctor — NOT `_disableInitializers`) + fix docstrings | **DONE 2026-06-16** — `sec/SEC-14-mastercopy-init-lock.md` |
 | SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **DONE 2026-06-16** — `sec/SEC-15-setoperator-owner-recheck.md` |
-| SEC-DOC | M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 prorata | Doc/runbook sweep (no behavioral code; 4 explicit rejects) | **TICKETED** — `sec/SEC-DOC-doc-runbook-sweep.md` |
+| SEC-DOC | M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 prorata | Doc/runbook sweep (no behavioral code; 4 explicit rejects) | **DONE 2026-06-16** — `sec/SEC-DOC-doc-runbook-sweep.md` |
 
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-DOC (2026-06-16) — THE SEC TRACK IS COMPLETE
+**All 14 DOC dispositions landed as doc/NatDoc/comment edits — ZERO behavioral code.** This is the final SEC item; the
+kill-list is now fully dispositioned (16 FIX landed SEC-01…SEC-15, 14 DOC swept here, 3 DISMISS + 3 DEFER tracked). Four
+of the items explicitly REJECT a proposed code change — the rejection IS the finding: **M8** (`capitalSlashAmount <=
+recoveryProceeds` assert — unit-incoherent, no such param), **L4** (per-key try/catch — weakens the WOOF-02 fail-closed
+batch), **L6r** (over-bond assert — no-op; the tx already reverts atomically), **L15** (inverse-pair support — dead code).
+- **Contract NatDoc/comment edits (8 src files, no behavior):** `DefaultCoordinator` header `(a)` clause reconciled
+  (RECOVERY = up by realized receipts; RESOLVE = full heal to 0 on terminal clean resolution; WRITEOFF leaves residual) +
+  `_resolve` over-bond-reverts-atomically note (M8/L6r); `ZipcodeOracleRegistry` forward-only `_getQuote` (L15) +
+  load-bearing 18-dp `scale` guard (L16) + all-or-nothing batch rationale + rejection (L4); `ZipDepositModule`
+  USDC→eePool no-reset-needed comment (L17); `SzipNavOracle.grossBasketValue` flat-$1-is-the-zipUSD-leg-not-the-share
+  (I2); `DurationFreezeModule.covered()` fail-closed DOUBLE-squeeze (numerator down + floor up, recovers on repay) (L13);
+  `SzipBuyBurnModule` APP_DATA NatDoc — fill intentionally not coverage-gated, CoW hook rejected (M3);
+  `WarehouseAdminModule` `setSafe`/`safe` safe↔avatar PARITY (I5); `ZipRedemptionQueue` header impairment-blind +
+  `redeemController`-must-never-be-untrusted (I3/prorata).
+- **Spec edits (`claude-zipcode.md`):** §3:146 (I4 — `ReceiverTemplate is Ownable`, Forwarder + identity Timelock-mutable,
+  only economic knobs immutable; supersedes the "we drop the setter / immutable Forwarder" framing) + §8.8 (same, on the
+  SzAlphaRateOracle spec); §6.4 (M3 fill-not-gated + I1 re-affirm no on-chain junior redeem); §7 (I2 share-vs-deposit-leg
+  pricing + de-peg over-issue risk); §8.1 (L4 rejection augmenting the existing sharding runbook); §12 (I3+prorata
+  impairment routing + trusted-requester invariant).
+- **Gate green (NO behavior change):** `forge build` clean (lint notes only); `forge test` **829 passed / 0 failed / 3
+  skipped** — IDENTICAL to the SEC-15 baseline (829/0/3). No regression test (doc-only, per the ticket). The 3 skips are
+  the pre-existing `DeployZipcode.t.sol` scaffold.
+- **Doc-sync:** kill-list §B banner + all 14 items tagged `[x] … DONE (SEC-DOC)`; audit-claude `SUMMARY.md` (M3/M8 rows
+  ✅, LOW-line L4/L6r/L13/L15/L16/L17 tagged, setOperator ✅(SEC-15), INFORMATIONAL I1/I2/I3/I4) + `findings.md` #5 (M3) +
+  `interconnection-findings.md` C3 (M8) + C-L4 (L17) + `role-based-findings.md` R11 (I4) + `reference-diff-findings.md`
+  (I5); wires `8-Bw-CreditWarehouse` (I4+I5), `9-ZipRedemptionQueue` (I3+prorata), `8-B14-SzipBuyBurnModule` (M3) —
+  `8x-02-SzAlphaRateOracle` confirmed already-correct for I4 (no edit).
+- **Folded-back interpretation notes:** the L4 producer runbook lives in `claude-zipcode.md` §8.1 (not a new file; the
+  registry NatDoc points there). I4's "§2/§6" pointer was imprecise — the real false-claim site is §3:146 (+ the §17
+  revision at `:1342` already governs the recurring "immutable Forwarder" shorthand). **No back-pressure / no new
+  obligation; no spec mechanism change** (all interface/intent clarifications). **Next phase per kill-list:** fresh anvil
+  deploy → solidify `build/wires/` → CRE (head CRE-00) → FE. Ticket: `build/tickets/sec/SEC-DOC-doc-runbook-sweep.md`.
+  Report: `build/reports/SEC-DOC-report.md`.
 
 ### Just done — SEC-15 (2026-06-16)
 **The `operator != owner` re-check is now on all 9 szipUSD engine modules' `setOperator`** (audit R9; kill-list I6,

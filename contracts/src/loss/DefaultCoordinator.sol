@@ -24,8 +24,11 @@ import {ILienXAlphaEscrow} from "../interfaces/loss/ILienXAlphaEscrow.sol";
 ///      MAGNITUDE of `atRisk`/`recoveryProceeds`/`capitalSlashAmount`, the TIMING of each action, the
 ///      capital-vs-premium SPLIT, and the `originator` address (which becomes the RELEASE recipient). The
 ///      on-chain guarantees are narrow and exact: (a) a provision is written down only by
-///      `atRisk×(1−recoveryFloor)` at recognition and up only by realized receipts, floored at 0 — never an
-///      arbitrary NAV, never above the un-impaired basket; (b) `totalProvision == Σ lienLoss.provision ==
+///      `atRisk×(1−recoveryFloor)` at recognition and heals up only by realized receipts (`_recovery`, partial) OR
+///      fully to 0 on terminal clean resolution (`_resolve`, the ratified §8.4 — NOT a fresh receipt, the whole
+///      residual is cleared); floored at 0 — never an arbitrary NAV, never above the un-impaired basket. (A
+///      WRITEOFF leaves the residual provision IN PLACE — it is the realized loss — and never calls
+///      `writeProvision`.) (b) `totalProvision == Σ lienLoss.provision ==
 ///      oracle.provision()` at all times (sole writer); (c) every bond can flow only to `bondOriginator` /
 ///      immutable `capitalSink` / immutable `sidecar` — no attacker-chosen destination except the CRE-named
 ///      originator leg; (d) the status machine forbids re-recognition, post-resolution heal, and release of a
@@ -264,6 +267,11 @@ contract DefaultCoordinator is ReceiverTemplate {
     /// @dev `data = (bytes32 lienId, uint256 capitalSlashAmount)`. Heal the provision to 0, then route the bond
     ///      capital-first (`slashXAlphaToCapital` if `>0`) then cohort (`slashXAlphaToCohort` if any remains —
     ///      reading the escrow's remaining bond avoids a `NoBond` revert when a full-bond capital slash cleared it).
+    ///      kill-list L6r (rejected assert — the rejection is the finding): an over-bond `capitalSlashAmount` is NOT
+    ///      pre-asserted here. `slashXAlphaToCapital` reverts in the escrow on insufficient bond, which reverts the
+    ///      WHOLE tx atomically (CEI: the provision heal + status flip roll back, nothing is stranded), and the CRE
+    ///      can re-submit with a corrected amount. An explicit `capitalSlashAmount <= bondAmount` guard would be a
+    ///      no-op (same revert, one block earlier) — deliberately omitted.
     function _resolve(bytes memory data) internal {
         (bytes32 lienId, uint256 capitalSlashAmount) = abi.decode(data, (bytes32, uint256));
         if (lienLoss[lienId].status != LienStatus.Defaulted) revert BadStatus();
