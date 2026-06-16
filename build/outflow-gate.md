@@ -25,7 +25,8 @@ the hardwired wire originally sketched here — the cleaner form.
 
 `ReservoirLoopModule.borrow` is still ungated on coverage (only the `borrowCap` bound;
 `ReservoirLoopModule.sol:227-245`). This was raised here as the one remaining gap, then deliberately
-triaged out (`coverage-floor.md` → "Deferred/SKIPPED, user-triaged 2026-06-13"). The reasoning, which holds
+triaged out (the draw-time coverage gate was abandoned 2026-06-16 — see the `drawgate` DEFER in
+`build/kill-list.md`; pool USDC liquidity already bounds draws). The reasoning, which holds
 up against the post-lp-path-lock code:
 
 - **The borrow is the harvest loop's strike financing**, repaid within the same harvest tick. Gating it on
@@ -41,10 +42,10 @@ up against the post-lp-path-lock code:
   debt reduces `pathLockedLpEquity`), restored on repay. Trading a transient, operator-driven,
   over-collateralized dip against blocking the yield engine is a reasonable call.
 
-If leverage ever scales materially or the senior pool gains non-draw outflows, revisit via the
-`coverage-floor.md` Phase-2 capacity gate (`illiquidSeniorValue() + draw <= zipUSDValue()`) — **not** the
-cheap `covered()` gate. ⚠️ That capacity read is TWAP-bracketed and would inherit the `build/twap-ring.md`
-collapse; fix the ring before relying on it.
+If leverage ever scales materially or the senior pool gains non-draw outflows, revisit via an
+`illiquidSeniorValue() + draw <= zipUSDValue()` capacity gate (the abandoned `drawgate` concept in
+`build/kill-list.md`) — **not** the cheap `covered()` gate. ⚠️ That capacity read would be TWAP-bracketed and
+would inherit the `build/twap-ring.md` ring behavior.
 
 ## Net
 

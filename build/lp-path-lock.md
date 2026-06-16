@@ -34,7 +34,7 @@ failed`) — run on a fresh fork. Skipped: items 2 (draw gate), 3 (FCFS->pro-rat
 ---
 
 
-Companion to `build/coverage-floor.md`. The freeze floor (Phase 1) assumes the committed buffer is liquid
+Companion to the DurationFreezeModule coverage floor (`build/wires/DurationFreezeModule.md`). The freeze floor assumes the committed buffer is liquid
 tokens in the sidecar. In steady state it is NOT: most junior value is the zipUSD/xALPHA ICHI LP, **staked
 in the Hydrex gauge earning oHYDX**, on the engine Safe. You cannot freeze that by hoarding it idle in the
 sidecar — that kills the flywheel and is the unsolved `DurationFreezeModule` line-74 gotcha. This spec
@@ -154,7 +154,7 @@ Phase-1 item) so the *liquid* side cannot be drained below the floor either. Two
   (post/withdraw collateral); `SellModule.sellXAlpha` only ever sees legs *already* released past the
   `removeLiquidity` gate. Documented hard invariant: **no new module with an LP-egress or LP-dissolution
   path is enabled on the engine Safe without re-deriving the coverage proof** — same class as the
-  `{DurationFreeze}`-only sidecar rule (build/coverage-floor.md), watched the same way (§12).
+  `{DurationFreeze}`-only sidecar rule (build/wires/DurationFreezeModule.md), watched the same way (§12).
 - **Transient-only:** the LP exists in a Safe's *direct* balance only within an atomic loop tx. A *standing*
   `ichiVault.balanceOf(engineSafe)` outside a loop tx is the anomaly -> §12 metric-alarm.
 

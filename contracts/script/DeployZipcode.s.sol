@@ -385,14 +385,14 @@ contract DeployZipcode is SummonSubstrate {
 
         // -- DurationFreezeModule FIRST (enabled on BOTH the main Safe AND the sidecar) — it is the coverage gate the
         //    buy-burn + LP-strategy modules wire to at construction, so it must exist before them.
-        //    coverageBps = 1e4 (freeze 100% of the senior liability), dollarBuffer = 0. The floor is debt-pinned (NOT
-        //    a junior-basket fraction) so it cannot be drained by shrinking gross — build/coverage-floor.md Phase 1.
+        //    The floor is debt-pinned + STRUCTURAL (no governed knob, §17): `requiredCommittedValue =
+        //    min(illiquidSeniorValue, grossBasketValue)` — freeze 100% of the lent-out senior dollars, live-marked,
+        //    un-drainable by shrinking gross — build/wires/DurationFreezeModule.md.
         //    All deps exist by P6 (navOracle/warehouse/Safes/eePool); Timelock re-settable post-deploy.
         d.durationFreeze = _cloneModule(
             address(new DurationFreezeModule()),
             abi.encode(
-                tl, d.sub.mainSafe, d.sub.sidecar, op, address(d.navOracle), i.eePool, d.warehouse.safe,
-                uint256(1e4), uint256(0)
+                tl, d.sub.mainSafe, d.sub.sidecar, op, address(d.navOracle), i.eePool, d.warehouse.safe
             ),
             d.sub.mainSafe
         );

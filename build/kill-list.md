@@ -17,7 +17,7 @@
 - **Audit (origin of findings):** `build/audit-claude/` → `SUMMARY.md`, `findings.md`,
   `interconnection-findings.md`, `reference-diff-findings.md`, `role-based-findings.md`.
 - **Spec/design (what's by-design vs gap):** `build/claude-zipcode.md` (master spec; §7 NAV
-  asymmetry, §8.4 resolve, §13 trust boundary), `build/coverage-floor.md`, `build/lp-path-lock.md`,
+  asymmetry, §8.4 resolve, §13 trust boundary), `build/lp-path-lock.md`,
   `build/CoW-exit.md`, `build/outflow-gate.md`, `build/fair-lp.md`, `build/twap-ring.md`, `build/zap-residual.md`.
 - **Code under fix:** `contracts/src/**`, `contracts/script/**`. **Upstream truth:** `reference/**`
   (euler-earn, euler-vault-kit, euler-price-oracle, Baal, zodiac-core, zodiac-modifier-roles,
@@ -251,10 +251,12 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
 
 ## D. DEFER — genuinely absent, ratified (track only)
 
-- **drawgate** (coverage-floor Phase 2) — *confirmed absent and sound to defer.* Junior is structurally
-  over-collateralized; zipUSD creation is one-way and the meter only moves the safe way; venue LTV/cap + the two
-  `covered()` outflow gates suffice. No credible path where draws outrun coverage. Ticket (if revisited): add
-  `zipUSDValue()` TWAP-bracketed view + `illiquidSeniorValue()+draw <= zipUSDValue()` gate in `_draw`.
+- **drawgate** (an on-chain draw-time coverage gate) — *confirmed absent and ABANDONED 2026-06-16 (was
+  "coverage-floor Phase 2"; that doc + the CF-01 ticket are deleted).* Junior is structurally over-collateralized;
+  zipUSD creation is one-way and the meter only moves the safe way; venue LTV/cap + the two `covered()` outflow gates
+  suffice — AND a draw can only borrow USDC physically present in the EulerEarn pool (senior deposits), so pool
+  liquidity already hard-bounds total draws. No credible path where draws outrun coverage. If ever revisited: a
+  `zipUSDValue()` TWAP-bracketed view + `illiquidSeniorValue()+draw <= zipUSDValue()` gate in the draw path.
 - **CoverageGuard refactor** — *confirmed: no such contract, none needed.* Single coverage source
   (`DurationFreezeModule`) via the `ICoverageGate` seam, two consumers, deploy-asserted. Cosmetic at best.
 - **CoW exit-book page (FE) + CRE bid-automation loop** — *confirmed unbuilt; no contract change needed.* FE

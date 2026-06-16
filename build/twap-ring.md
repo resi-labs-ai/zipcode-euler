@@ -6,8 +6,8 @@
 > `CARDINALITY-1` frozen checkpoints therefore always span `>= W` regardless of poke frequency; poke-spam can
 > refresh the head but can no longer evict the window. Tests: `test_twap_window_survives_poke_spam` (200 spam
 > pokes consume ≤3 slots, twap stays near history, `navExit < spot`) + `test_poke_within_spacing_refreshes_head_no_advance`.
-> Full suite 749/0/3 green. With this, the `coverage-floor.md` Phase-2 capacity gate may safely lean on the
-> `min(spot,twap)` bracket. No supply findings from the review remain open.
+> Full suite 749/0/3 green. With this, any future capacity gate (the abandoned `drawgate` concept in
+> `build/kill-list.md`) could safely lean on the `min(spot,twap)` bracket. No supply findings from the review remain open.
 
 ## Problem (verified)
 
@@ -173,8 +173,8 @@ sustain:
 - **Value the LP from fair reserves, not the instantaneous split.** `getTotalAmounts()` returns the
   current (manipulable) composition. Reconstruct the *fair* reserves from the pool's invariant + the
   oracle leg prices (the "fair LP value" / `k`-and-price reconstruction) so a swap that skews `amt0/amt1`
-  does not move the mark. This is the leg coverage-floor.md Phase-2 build-note #2 already flags
-  ("read off a TWAP/conservative reserve, not spot") — and which the bracket was silently relied on to
+  does not move the mark. This is the "read off a TWAP/conservative reserve, not spot" property
+  — which the bracket was silently relied on to
   cover. With the ring collapsible, that reliance was unsound; the fair-reserve read makes it sound
   independent of the ring.
 
@@ -202,8 +202,8 @@ fair-LP read is a larger change to `grossBasketValue` and can follow.
 `= ceil(1.25*W/(CARDINALITY-1))`; `_accumulate` advances the integral every `dt>0` but consumes a ring slot
 only once `obsSpacing` has elapsed (else refreshes the head in place); `twapNavPerShare` unchanged. Tests
 `test_twap_window_survives_poke_spam` + `test_poke_within_spacing_refreshes_head_no_advance` added; existing
-TWAP/ring tests + full suite (749/0/3) green. This unblocks the `coverage-floor.md` Phase-2 capacity gate,
-which leans on the `min(spot,twap)` bracket.
+TWAP/ring tests + full suite (749/0/3) green. (This bracket was also the prerequisite for the since-abandoned
+draw-time capacity gate — the `drawgate` DEFER in `build/kill-list.md`.)
 
 The **defense-in-depth** item above (fair-LP reserve read so `spot` itself is not in-block manipulable) is
 now **BUILT 2026-06-14** — see `build/fair-lp.md`. `SzipNavOracle._lpValue` reconstructs the LP reserves at

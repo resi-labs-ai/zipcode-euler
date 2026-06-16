@@ -246,8 +246,8 @@ abstract contract FreezeBase is Test {
         address ee_,
         address wh_
     ) internal pure returns (bytes memory) {
-        // coverageBps = 1e4 (100% of the liability), dollarBuffer = 0 — the default Phase-1 floor.
-        return abi.encode(owner_, main_, side_, op_, oracle_, ee_, wh_, uint256(1e4), uint256(0));
+        // structural floor (no governed knob): requiredCommittedValue = min(illiquidSeniorValue, gross).
+        return abi.encode(owner_, main_, side_, op_, oracle_, ee_, wh_);
     }
 
     function _deploy() internal {
@@ -325,40 +325,6 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         assertEq(m.xAlpha(), address(xalpha));
         assertEq(m.hydx(), address(hydx));
         assertEq(m.oHydx(), address(ohydx));
-        // coverage params default to 100% / no buffer
-        assertEq(m.coverageBps(), 1e4);
-        assertEq(m.dollarBuffer(), 0);
-    }
-
-    function test_setUp_rejects_zero_coverageBps() public {
-        DurationFreezeModule x = _cloneDurationFreezeModule();
-        bytes memory bad = abi.encode(
-            owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-            uint256(0), uint256(0)
-        );
-        vm.expectRevert(DurationFreezeModule.BadParams.selector);
-        x.setUp(bad);
-    }
-
-    function test_setCoverageBps_and_setDollarBuffer_onlyOwner() public {
-        // owner can set; effect lands.
-        vm.prank(owner);
-        m.setCoverageBps(12000);
-        assertEq(m.coverageBps(), 12000);
-        vm.prank(owner);
-        m.setDollarBuffer(5e18);
-        assertEq(m.dollarBuffer(), 5e18);
-        // zero coverageBps rejected.
-        vm.prank(owner);
-        vm.expectRevert(DurationFreezeModule.BadParams.selector);
-        m.setCoverageBps(0);
-        // non-owner rejected (OZ Ownable).
-        vm.prank(rando);
-        vm.expectRevert();
-        m.setCoverageBps(1e4);
-        vm.prank(rando);
-        vm.expectRevert();
-        m.setDollarBuffer(0);
     }
 
     function test_setUp_initializer_once() public {
@@ -531,22 +497,6 @@ contract DurationFreezeModuleMathTest is FreezeBase {
         _setDebt(120e18); // debt above gross
         basket.setValues(0, 100e18);
         assertEq(m.requiredCommittedValue(), 100e18, "floor capped at gross (cannot freeze more than exists)");
-    }
-
-    function test_requiredCommittedValue_coverageBps_overcollateralizes() public {
-        _setDebt(70e18);
-        basket.setValues(0, 1000e18); // gross high so the cap does not bind
-        vm.prank(owner);
-        m.setCoverageBps(12000); // 120%
-        assertEq(m.requiredCommittedValue(), 84e18, "120% of 70");
-    }
-
-    function test_requiredCommittedValue_dollarBuffer_adds_floor() public {
-        _setDebt(70e18);
-        basket.setValues(0, 1000e18);
-        vm.prank(owner);
-        m.setDollarBuffer(10e18); // max(70, 70 + 10) = 80
-        assertEq(m.requiredCommittedValue(), 80e18, "debt + buffer");
     }
 
     /// @dev The KEY anti-drain property: the floor is invariant to shrinking the junior basket (so long as gross
@@ -1017,7 +967,7 @@ contract SzipNavOracleParityTest is Test {
         m.setUp(
             abi.encode(
                 makeAddr("owner"), mainSafe, sidecar, makeAddr("operator"),
-                address(oracle), address(ee), makeAddr("warehouse"), uint256(1e4), uint256(0)
+                address(oracle), address(ee), makeAddr("warehouse")
             )
         );
 
@@ -1045,7 +995,7 @@ contract SzipNavOracleParityTest is Test {
         m.setUp(
             abi.encode(
                 makeAddr("owner"), mainSafe, sidecar, makeAddr("operator"),
-                address(oracle), address(ee), makeAddr("warehouse"), uint256(1e4), uint256(0)
+                address(oracle), address(ee), makeAddr("warehouse")
             )
         );
 
@@ -1250,8 +1200,7 @@ contract DurationFreezeModuleInvariantTest is Test {
         m = _cloneDurationFreezeModule();
         m.setUp(
             abi.encode(
-                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
-                uint256(1e4), uint256(0)
+                owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse
             )
         );
 
@@ -1350,8 +1299,7 @@ contract DurationFreezeModuleForkTest is ForkConfig, SummonSubstrate {
         bytes memory init = abi.encodeWithSelector(
             DurationFreezeModule.setUp.selector,
             abi.encode(
-                owner, mainSafe, sidecar, operator, address(oracle), address(ee), warehouse,
-                uint256(1e4), uint256(0)
+                owner, mainSafe, sidecar, operator, address(oracle), address(ee), warehouse
             )
         );
         address clone = IModuleProxyFactory(BaseAddresses.ZODIAC_MODULE_PROXY_FACTORY)

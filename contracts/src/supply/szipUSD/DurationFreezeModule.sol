@@ -21,10 +21,10 @@ import {IEulerEarnUtil} from "../../interfaces/euler/IEulerEarnUtil.sol";
 ///      whitelisted asset to move, *how much*, the timing, and whether to `commit`. The on-chain guarantees are
 ///      narrow and exact: (a) value can only move between the two wired Safes — no recipient parameter, no third
 ///      destination, no custody; (b) `release` cannot drop the sidecar below `requiredCommittedValue()` — the
-///      senior LIABILITY (`coverageBps × illiquidSeniorValue`, capped at gross), read live and donation-immune from
+///      senior LIABILITY (`min(illiquidSeniorValue, grossBasketValue)`), read live and donation-immune from
 ///      EulerEarn and not outsider-manipulable (§4.3/§8.2) — so a compromised operator cannot open the run hatch
 ///      while debt is outstanding; the floor is pinned to ABSOLUTE debt, not a junior-basket fraction, so shrinking
-///      the basket cannot lower it (build/coverage-floor.md Phase 1); (c) `utilization()`/`requiredFraction()` are
+///      the basket cannot lower it (structural — no governed knob; build/wires/DurationFreezeModule.md); (c) `utilization()`/`requiredFraction()` are
 ///      retained only as the §12 liquidity-run metric — no longer the floor; (d) only oracle-valued assets are
 ///      movable (no unvalued-asset leak). A compromised operator can
 ///      **grief** (over-commit free equity, delaying exits; §12 metrics + governance watch it) but **cannot steal**
@@ -69,15 +69,6 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     address public hydx;
     address public oHydx;
 
-    // --------------------------------------------------------------------- coverage params (Timelock-settable, §17)
-    /// @notice Required coverage of the senior liability, in bps (`1e4 = 100%`). The freeze floor is pinned to
-    ///         `coverageBps × illiquidSeniorValue` (NOT a fraction of the junior basket) so it cannot be lowered by
-    ///         shrinking `grossBasketValue` — the re-leveling drain (build/coverage-floor.md Phase 1). Default `1e4`.
-    uint256 public coverageBps;
-    /// @notice An absolute 18-dp USD first-loss buffer added on top of the liability (`floor = max(pct, debt+buffer)`)
-    ///         so a tiny book still carries a minimum frozen amount. Default `0`.
-    uint256 public dollarBuffer;
-
     // --------------------------------------------------------------------- errors
     error NotOperator();
     error ZeroAddress();
@@ -96,8 +87,6 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     event Released(address indexed asset, uint256 amount, uint256 committedValueAfter, uint256 floor);
     /// @notice A Timelock-settable wiring field was re-pointed (build phase, §17).
     event WiringSet(bytes32 indexed slot, address value);
-    /// @notice A coverage param (`coverageBps`/`dollarBuffer`) was set (Timelock).
-    event CoverageParamSet(bytes32 indexed slot, uint256 value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
@@ -114,12 +103,8 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
             address operator_,
             address navOracle_,
             address eulerEarn_,
-            address warehouse_,
-            uint256 coverageBps_,
-            uint256 dollarBuffer_
-        ) = abi.decode(
-            initParams, (address, address, address, address, address, address, address, uint256, uint256)
-        );
+            address warehouse_
+        ) = abi.decode(initParams, (address, address, address, address, address, address, address));
 
         if (
             owner_ == address(0) || mainSafe_ == address(0) || sidecar_ == address(0) || operator_ == address(0)
@@ -128,8 +113,6 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         if (owner_ == operator_) revert OwnerIsOperator();
         // distinctness is load-bearing: equal Safes make a rotation a self-transfer that trivially passes the floor.
         if (mainSafe_ == sidecar_) revert BadParams();
-        // coverageBps == 0 would zero the percentage floor; reject (the dollarBuffer can be 0).
-        if (coverageBps_ == 0) revert BadParams();
 
         // The module is enabled ON the main Safe; the inherited single-avatar exec is inert (rotation uses ISafe(src)).
         avatar = mainSafe_;
@@ -151,9 +134,6 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         hydx = o.hydx();
         oHydx = o.oHydx();
         // the ICHI LP share is intentionally NOT whitelisted — it is fenced in place + counted via pathLockedLpEquity().
-
-        coverageBps = coverageBps_;
-        dollarBuffer = dollarBuffer_;
 
         _transferOwnership(owner_);
     }
@@ -235,20 +215,6 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         if (oHydx_ == address(0)) revert ZeroAddress();
         oHydx = oHydx_;
         emit WiringSet("oHydx", oHydx_);
-    }
-
-    /// @notice Set the coverage bps (`1e4 = 100%`). `onlyOwner` (Timelock). Zero is rejected (it would zero the
-    ///         percentage floor; the `dollarBuffer` is the way to add an absolute minimum).
-    function setCoverageBps(uint256 coverageBps_) external onlyOwner {
-        if (coverageBps_ == 0) revert BadParams();
-        coverageBps = coverageBps_;
-        emit CoverageParamSet("coverageBps", coverageBps_);
-    }
-
-    /// @notice Set the absolute 18-dp USD first-loss buffer added on top of the liability. `onlyOwner` (Timelock).
-    function setDollarBuffer(uint256 dollarBuffer_) external onlyOwner {
-        dollarBuffer = dollarBuffer_;
-        emit CoverageParamSet("dollarBuffer", dollarBuffer_);
     }
 
     // --------------------------------------------------------------------- gates
@@ -335,27 +301,24 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         return (sa - free) * 1e12; // USDC 6-dp -> 18-dp USD
     }
 
-    /// @notice The required committed VALUE the floor enforces — pinned to the senior LIABILITY, not a fraction of
-    ///         the junior basket: `floor = min( max(coverageBps × debt / 1e4, debt + dollarBuffer), grossBasketValue )`
-    ///         where `debt = illiquidSeniorValue()`. Capped at gross because you cannot freeze more value than the
-    ///         basket holds (the insolvent edge `floor > gross` → freeze everything). Because `debt` is read off the
-    ///         senior pool and does not move when `grossBasketValue` shrinks, the re-leveling drain
-    ///         (build/coverage-floor.md Phase 1) has no denominator left to game. `requiredFraction()`/`utilization()`
+    /// @notice The required committed VALUE the floor enforces — pinned 1:1 to the senior LIABILITY, not a fraction of
+    ///         the junior basket: `floor = min( illiquidSeniorValue(), grossBasketValue() )`. Capped at gross because
+    ///         you cannot freeze more value than the basket holds (the insolvent edge `floor > gross` → freeze
+    ///         everything). Because `debt` is read off the senior pool and does not move when `grossBasketValue`
+    ///         shrinks, the re-leveling drain has no denominator left to game. STRUCTURAL — no governed knob (§17);
+    ///         the floor is exactly the lent-out senior dollars, live-marked. `requiredFraction()`/`utilization()`
     ///         are RETAINED only as the §12 liquidity-run metric — they no longer gate `release`.
     function requiredCommittedValue() public view returns (uint256) {
         uint256 debt = illiquidSeniorValue();
-        uint256 pct = debt * coverageBps / 1e4;
-        uint256 abs = debt + dollarBuffer;
-        uint256 floor = pct > abs ? pct : abs;
         uint256 gross = grossBasketValue();
-        return floor < gross ? floor : gross;
+        return debt < gross ? debt : gross;
     }
 
     /// @notice True iff the coverage value (`committedValue + pathLockedLpEquity`) covers the liability floor. The
     ///         outflow predicate: `release` enforces it post-move, and the free-side outflow gates (buy-and-burn
-    ///         `postBid`, the LP-dissolution `removeLiquidity`, the draw gate) read it so a PRICE-DRIFT breach —
+    ///         `postBid`, the LP-dissolution `removeLiquidity`) read it so a PRICE-DRIFT breach —
     ///         coverage falling below the floor with no `release` — freezes outflow until a `commit`/re-stake tops it
-    ///         back up (build/lp-path-lock.md, build/coverage-floor.md).
+    ///         back up (build/lp-path-lock.md).
     /// @dev kill-list L13 (DOUBLE-SQUEEZE — bucket holds, the "debt nets out consistently" rationale was wrong): a
     ///      reservoir borrow against the fenced LP pushes BOTH sides of this inequality the wrong way at once —
     ///      (1) the NUMERATOR drops, because `pathLockedLpEquity()` subtracts the reservoir strike debt from the LP
@@ -404,8 +367,8 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @notice Rotate `amount` of a whitelisted `asset` from the sidecar back to the main Safe, SHRINKING the
     ///         freeze. Operator-gated, whitelist-gated, `nonReentrant`. THE autonomous floor (checked AFTER the
     ///         move; the revert atomically rolls the transfer back): `release` reverts unless the sidecar still
-    ///         holds at least `requiredCommittedValue()` — the senior LIABILITY (`coverageBps × illiquidSeniorValue`,
-    ///         capped at gross), NOT a fraction of the junior basket. The liability is read live → an over-release
+    ///         holds at least `requiredCommittedValue()` — the senior LIABILITY (`min(illiquidSeniorValue, gross)`),
+    ///         NOT a fraction of the junior basket. The liability is read live → an over-release
     ///         reverts regardless of operator intent. `grossBasketValue` is invariant under a rotation because the oracle
     ///         sums BOTH Safes for every valued asset (the five legs via `_bal`, and the LP across both Safes +
     ///         their gauge stakes), so moving any whitelisted asset — incl. the ICHI LP share — main↔sidecar leaves
