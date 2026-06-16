@@ -501,6 +501,13 @@ as required; no contract change.
 | SUPPLY/APPROVE/REDEEM/REPAY | `CreditWarehouse` CRE-receiver | `(uint8 opType, bytes payload)` → re-encoded Safe call (§8.5) | Warehouse ops (§8.5) | CRE-04 |
 | default/recovery (reportType 8) | `DefaultCoordinator` | `(uint8 action, bytes actionData)` — LOCK/RELEASE/DEFAULT/RECOVERY/RESOLVE/WRITEOFF (§8.4) | Default/recovery (§8.4) | CRE-01 (LOCK/RELEASE M1-live; default actions go live with the M2 demo) |
 | `8` RATE | `SzAlphaRateOracle` (Base) | `(uint256 rate, uint48 ts)` — the raw xALPHA `exchangeRate()` pulled from 964 | xALPHA rate pull (§8.8) | CRE-03 (8x-02) |
+| `1` POST_BID | `SzipBuyBurnModule` | `(uint256 sellAmount, uint256 buyAmount, uint32 validTo)` → `_postBid` | buy-burn bid-loop (§8.7) | CRE-05 (via CTR-01) |
+| `2` CANCEL_BID | `SzipBuyBurnModule` | empty payload → `_cancelBid` | buy-burn bid-loop (§8.7) | CRE-05 (via CTR-01) |
+
+**Per-receiver scoping note (CTR-01, 2026-06-16):** `SzipBuyBurnModule.POST_BID == 1` / `CANCEL_BID == 2` are
+the SAME numerals as the controller's `Origination`/`Draw`, but `reportType` is **per-`(receiver, type)`** — a
+report names exactly one `Receiver`, so a `1` to the controller and a `1` to the buy-burn module never collide.
+8-B14 is the deliberate **§8.7 exception** (below): the operator-path engine module made ALSO report-drivable.
 
 `equityMark` = the Proof-of-Value mark (home value − senior debt, §4.1); `proofRef` = a commitment to the Proof
 attestation bundle (lien-perfected + value + insurance); the lien/insurance **gates** are off-chain
@@ -686,6 +693,20 @@ DON-signed report** — the operator submits ordinary transactions (it may still
 address, not the Forwarder identity). **Trust model:** the operator is **TRUSTED** — `RecycleModule.creditFreeValue`
 is unbounded (`RecycleModule.sol`), so the single-immutable-operator permissioning (set at module `setUp`,
 asserted `operator != owner`) is the security boundary that makes the revolving reservoir borrow safe (§4.5.1).
+
+**EXCEPTION — CTR-01 (2026-06-16): the operator path has no `cre-sdk-go` write surface, so a module may ALSO
+carry a report socket.** This section assumed "the operator submits ordinary transactions … using
+`WriteReport`'s *sibling write surface* / a keeper identity." That sibling surface does **not exist**:
+`cre-sdk-go`'s evm client exposes reads + exactly one write, `WriteReport` (DON-signed report → immutable
+Keystone Forwarder → `IReceiver.onReport`) — there is **no raw-tx / keeper primitive**. So a wasip1 CRE
+workflow cannot drive an `onlyOperator` entrypoint. **Resolution:** the reusable `CloneReportReceiver` base
+(`contracts/src/supply/szipUSD/CloneReportReceiver.sol`) adds a clone-safe report socket so a module can be
+driven by the DON-signed report path **alongside** its operator key — both doors route through the same
+validated internals (two doors, one guard set). `SzipBuyBurnModule` (8-B14) is the first to adopt it (the bid
+is the protocol's own automation, not a borrow-side trust surface). The other operator/controller modules
+(8-B5…8-B10, `DurationFreezeModule`, `OffRampModule`, and the controller-keyed `ZipRedemptionQueue.settleEpoch`
+/ `ExitGate.burnFor`) have the **identical gap** and can adopt the same base, OR be driven by an off-chain
+keeper holding the operator/controller key — a per-module decision (logged in `build/tickets/PROGRESS.md`).
 
 Per epoch + on triggers the operator runs the loop (each leg an `onlyOperator` call, the operator supplying
 **only scalar amounts** — never addresses/calldata — so its blast radius is bounded, `LpStrategyModule.sol:19`):

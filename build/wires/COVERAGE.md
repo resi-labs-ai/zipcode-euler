@@ -5,11 +5,12 @@ Provable completeness check for the wiring map. Every Solidity file under `contr
 added `SzAlphaLockReleasePool.sol`; deploy-track sweep added `DeployLocal.s.sol`/`DeployMainnet.s.sol`/
 `test/DeployZipcode.t.sol`), updated 2026-06-14 (fair-LP oracle added `ConcentratedLiquidity.sol` +
 `IchiAlgebraFairReserves.sol` + `AlgebraIchiFairLpOracle.sol` + `IAlgebraOraclePlugin.sol` +
-`AlgebraIchiFairLpOracle.t.sol`): **36 product contracts + 8 scripts + 31 interface shims + 30 test/helper
+`AlgebraIchiFairLpOracle.t.sol`), updated 2026-06-16 (CTR-01 added `CloneReportReceiver.sol` — the reusable
+clone-safe CRE report socket): **37 product contracts + 8 scripts + 31 interface shims + 30 test/helper
 files**, plus a **demo/fork-only addendum** (section E): **2 showcase contracts + 1 demo interface + 1 demo
 deploy script**, kept SEPARATE from the audited core counts. Nobody forgotten.
 
-## A. Product contracts (`src/`, non-interface) — 36 files
+## A. Product contracts (`src/`, non-interface) — 37 files
 | File | Doc |
 |---|---|
 | `src/libraries/ConcentratedLiquidity.sol` | `FairLpOracle.md` |
@@ -40,6 +41,7 @@ deploy script**, kept SEPARATE from the audited core counts. Nobody forgotten.
 | `src/supply/szipUSD/ReservoirLoopModule.sol` | `8-B5-ReservoirLoop.md` |
 | `src/supply/szipUSD/SellModule.sol` | `8-B9-SellModule.md` |
 | `src/supply/szipUSD/SzipBuyBurnModule.sol` | `8-B14-SzipBuyBurnModule.md` |
+| `src/supply/szipUSD/CloneReportReceiver.sol` | `8-B14-SzipBuyBurnModule.md` (CTR-01 — reusable clone-safe CRE report socket) |
 | `src/supply/szipUSD/SzipUSD.sol` | `ExitGate-szipUSD.md` |
 | `src/loss/DefaultCoordinator.sol` | `DefaultCoordinator.md` |
 | `src/loss/LienXAlphaEscrow.sol` | `8-Bx-LienXAlphaEscrow.md` |

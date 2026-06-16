@@ -10,13 +10,28 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**CRE-00 — CRE track head (re-orient + scaffold).** The **SEC remediation track is COMPLETE** (SEC-01…SEC-15 FIX +
-SEC-DOC, all DONE 2026-06-16). Next phase: **fresh anvil deploy → solidify `build/wires/` → CRE → FE.**
-- **Immediate next step:** a fresh anvil Base-fork deploy (`contracts/script/DeployLocal.s.sol`) to confirm the full
-  post-SEC stack stands up clean, then re-solidify any `build/wires/` truth-source the SEC work touched, **then**
-  pick up the CRE track at its head **CRE-00** (scope retained in the Backlog table below).
-- The reviewer releases the specific NEXT item; CRE-00 is the deferred head, but a deploy-sanity pass is the natural
-  first move now that the internal-audit remediation is fully dispositioned.
+**CRE-05a — buy-burn bid-loop wasip1 workflow (NOW UNBLOCKED by CTR-01).** With `SzipBuyBurnModule` carrying a CRE
+report socket (CTR-01, done 2026-06-16), the bid-loop is a real `cre-sdk-go` `WriteReport` workflow: read
+free-reservoir / utilization / `navExit` / `quoteMaxPrice` / `currentBid` / `covered` via `CallContract` + watch
+`RedemptionSettled`/fills via `FilterLogs`, compute `clamp(freeReservoir − harvestReserve − safetyBuffer, 0,
+buybackCap)` @ `navExit×(1−d)`, and on meaningful drift `WriteReport(CANCEL_BID)` then `WriteReport(POST_BID,
+abi.encode(sellAmount,buyAmount,validTo))` to the module. **Prereq folded in:** this is the first buildable CRE
+workflow, so it also establishes the minimal `cre/buyburn-bid/` go module (the CRE-00 scaffold subset — go.mod +
+`reference/cre-sdk-go` wiring). Gate: `go build` wasip1 + a table-driven test asserting the POST_BID envelope
+`abi.encode(uint8 POST_BID, abi.encode(uint256,uint256,uint32))` round-trips the module's `_processReport` decode +
+a simulated trigger→read→report run. Design source: `build/CoW.md` / `build/CoW-exit.md`.
+- The reviewer releases the specific NEXT item. Alternatives the reviewer may pick instead: the broader **CRE-00**
+  scaffold first (if the whole CRE track is to be scaffolded before any single workflow), or applying the
+  `CloneReportReceiver` socket to the next operator/controller module (see the new systemic obligation below).
+
+> **CTR-01 — Clone-compatible CRE report socket on SzipBuyBurnModule — DONE 2026-06-16.** Resolved the
+> operator-path-has-no-CRE-write seam for 8-B14: added the reusable `CloneReportReceiver` base
+> (`contracts/src/supply/szipUSD/CloneReportReceiver.sol`) + expanded `SzipBuyBurnModule` to be ALSO
+> report-drivable (two doors — operator key + DON report — one guard set, fail-closed on an unset forwarder).
+> Gate green: `forge test --match-path test/SzipBuyBurnModule.t.sol` = 50 passed / 0 failed (44 pre-existing +
+> 6 new report-path cases). Ticket: `build/tickets/contracts/CTR-01-clone-report-receiver-buyburn.md`. Truth:
+> `build/wires/8-B14-SzipBuyBurnModule.md` + `COVERAGE.md`; spec exception recorded in `claude-zipcode.md`
+> §8.7 + §8.0 table.
 
 > **The SEC track is COMPLETE** — all 16 internal-audit remediation items (15 FIX + the DOC sweep) landed; the
 > deliberate non-fixes are recorded under Open obligations below. See the SEC track section below.
@@ -89,6 +104,28 @@ track on it.
 ---
 
 ## Open obligations / seams
+
+- **SYSTEMIC SEAM (raised 2026-06-16, CTR-01) — the operator/controller modules have NO `cre-sdk-go` write path;
+  pick a driver per module.** `cre-sdk-go`'s evm client has reads + exactly ONE write — `WriteReport` (DON-signed
+  → Keystone Forwarder → `IReceiver.onReport`); there is **no raw-tx / keeper primitive**. So a wasip1 CRE workflow
+  can only drive contracts that are **report receivers**. Today that is: `WarehouseAdminModule`, `SzipNavOracle`,
+  `SzipReservoirLpOracle`, `DefaultCoordinator`, `ZipcodeController`, `ZipcodeOracleRegistry`, `SzAlphaRateOracle`
+  — and now **`SzipBuyBurnModule`** (CTR-01). The following are gated `msg.sender == operator`/`controller` and
+  thus **cannot be driven by CRE as built**: `ReservoirLoopModule` (8-B5), `LpStrategyModule` (8-B6),
+  `HarvestVoteModule` (8-B7), `ExerciseModule` (8-B8), `SellModule` (8-B9), `RecycleModule` (8-B10),
+  `DurationFreezeModule`, `OffRampModule`, `ZipRedemptionQueue` (`settleEpoch`/`claim`), `ExitGate.burnFor`. **This
+  blocks CRE-02 (`settleEpoch`/`requestRedeem`/`claim`) and the rest of CRE-05 (the engine loop).** Per-module
+  decision owed: **(a)** adopt the reusable `CloneReportReceiver` base (CTR-01) to add a report socket (clone-safe,
+  fail-closed; what 8-B14 did), OR **(b)** drive it from an **off-chain keeper** holding the operator/controller
+  hot key (standard go-ethereum tx submission, outside the CRE sandbox). The §8.7 spec exception + the rationale
+  are recorded in `claude-zipcode.md` §8.7. Not a code fix owed yet — a track-shaping decision before CRE-02/05.
+
+- **DEPLOY OBLIGATION (raised 2026-06-16, CTR-01) — `DeployZipcode` must wire the buy-burn report socket
+  post-clone.** After cloning `SzipBuyBurnModule`, the deploy must call `setForwarder(keystoneForwarder)` +
+  `setExpectedWorkflowId(WORKFLOW_ID)` (and optionally `setExpectedAuthor`) on it, else the report socket stays
+  inert (fail-closed — `onReport` reverts `InvalidForwarder`). The operator path works without this; only the CRE
+  report door needs it. Mirror the `setExpectedWorkflowId(...) != 0` assert pattern §9 already mandates for the
+  other `ReceiverTemplate` subclasses before the Timelock hand-off. Not a contract change; a deploy-runbook step.
 
 - **RUNBOOK (raised 2026-06-15, SEC-03) — durable admin MUST `acceptAdminRole` post-deploy to finalize the CCT
   registry-admin handoff (both chains).** `DeploySzAlphaBridge` hands the `TokenAdminRegistry` administrator to the

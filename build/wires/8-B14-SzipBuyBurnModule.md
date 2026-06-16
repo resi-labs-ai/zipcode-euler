@@ -26,7 +26,8 @@ the **first engine Zodiac Module** — it set the `is Module` / `setUp`-under-`i
 ## Contracts involved
 | Contract | What it does |
 |---|---|
-| `SzipBuyBurnModule` (`is Module`, zodiac-core) | The whole bid engine. `setUp`-under-`initializer` set-once wiring (10 args, +`coverageGate`; NO immutable — clone); `onlyOperator` `postBid` (validate the 3-field order → cap → **coverage gate `covered()`** → price-bound vs `navExit` → NAV-freshness fence → build canonical GPv2 uid → `exec` USDC `approve(vaultRelayer)` + `exec` `setPreSignature(uid,true)`) + `cancelBid` (operator-or-owner; presig→false + allowance→0; idempotent); `_orderUid` (in-contract canonical GPv2 hashing); `onlyOwner` (Timelock) governed-param setters (`setDiscountBps`/`setBuybackCap`) + 8 Timelock-settable wiring setters (incl. `setCoverageGate`); `currentBid`/`quoteMaxPrice` views. |
+| `SzipBuyBurnModule` (`is MastercopyInitLock, CloneReportReceiver`) | The whole bid engine. `setUp`-under-`initializer` set-once wiring (10 args, +`coverageGate`; NO immutable — clone); the bid bodies live in **internal `_postBid(GPv2OrderInput memory)` / `_cancelBid()`** (single-resting-bid + every validation), reached by TWO doors: (1) `onlyOperator` `postBid` / operator-or-owner `cancelBid` (the operator hot key), and (2) the **CRE report socket** `_processReport` (CTR-01, below). `_postBid` = validate the 3-field order → single-resting-bid → cap → **coverage gate `covered()`** → price-bound vs `navExit` → NAV-freshness fence → build canonical GPv2 uid → `exec` USDC `approve(vaultRelayer)` + `exec` `setPreSignature(uid,true)`; `_cancelBid` = presig→false + allowance→0 (idempotent). `_orderUid` (`GPv2OrderInput memory`, in-contract canonical GPv2 hashing); `onlyOwner` (Timelock) governed-param setters (`setDiscountBps`/`setBuybackCap`) + 8 Timelock-settable wiring setters (incl. `setCoverageGate`) + the 3 inherited receiver-wiring setters (`setForwarder`/`setExpectedWorkflowId`/`setExpectedAuthor`); `currentBid`/`quoteMaxPrice` views. |
+| `CloneReportReceiver` (`abstract is Ownable, IReceiver`; `contracts/src/supply/szipUSD/CloneReportReceiver.sol`) | **CTR-01** — the reusable clone-compatible CRE report socket mixed into the module. `is Ownable` reuses zodiac-core's `factory/Ownable.sol` (the SAME base `Module` derives from ⇒ C3 merges to ONE `owner`/`onlyOwner`, no clash). `onReport(metadata, report)` **fails CLOSED** (`forwarder == 0 \|\| msg.sender != forwarder ⇒ InvalidForwarder` — the clone inversion vs `ReceiverTemplate`'s "zero ⇒ open") → optional workflow-id/author check → `_processReport`. No constructor (clone-safe); `forwarder`/`expectedWorkflowId`/`expectedAuthor` are Timelock-settable, default zero (inert socket). `_decodeMetadata` replicated VERBATIM from `ReceiverTemplate` (offsets 32/64/74). Reusable by the other operator/controller modules unchanged. |
 | `IGPv2Settlement` (`contracts/src/interfaces/cow/IGPv2Settlement.sol`) | The minimal CoW `GPv2Settlement` surface (Base 8453 `0x9008…ab41`, same address all chains): `domainSeparator()` + `vaultRelayer()` (both read LIVE in `setUp`), `setPreSignature(bytes,bool)` (the PRESIGN target — the `owner` packed into `orderUid` MUST == `msg.sender` == the engine Safe), `preSignature(bytes)` (read-back: 0 = unsigned). |
 | `INavOracle` (declared inline in the .sol) | The minimal `SzipNavOracle` surface the module reads: `navExit()` (= `min(spot, twap)`, NEVER reverts on staleness — the §3 buyer-conservative exit mark), `fresh()` (both pushed legs within `maxAge` — gates `postBid`), `maxAge()` (the NAV-freshness fence bound), `oldestRequiredLegTs()` (SEC-13 — the oldest required-leg push timestamp; the fence anchors `validTo ≤ this + maxAge`). |
 | `ICoverageGate` (declared inline in the .sol) | The coverage seam `postBid` reads (the `DurationFreezeModule`): `covered() → bool`. Zero ⇒ gate OFF (M1 / kill-switch). **Note:** `covered()` gates POST time only — the solver FILL is intentionally NOT fill-time coverage-gated, because the USDC spent is free-side engine-Safe value `coverageValue()` already EXCLUDES, so a post-coverage-drift fill cannot breach the floor. A CoW coverage-recheck HOOK is rejected (`APP_DATA == 0` forbids hooks). |
@@ -94,6 +95,27 @@ validTo, navExit18, dBps)`. Everything is `Operation.Call` (NO delegatecall) —
 live bid. Else `exec setPreSignature(uid, false)` + `exec approve(vaultRelayer, 0)` (retract the presignature +
 zero the allowance), `delete currentUid`, `currentSellAmount = 0`, emit `BidCancelled`. The presig→false + the
 allowance→0 together close the partial-fill double-fill (stale presignature + refreshed approval) vector.
+
+### Report socket — the CRE second door (CTR-01, 2026-06-16)
+`postBid`/`cancelBid` are `onlyOperator` (a hot-key EOA), but `cre-sdk-go`'s only on-chain WRITE is
+`WriteReport` (DON-signed report → immutable Keystone Forwarder → `IReceiver.onReport`); it has **no raw-tx /
+keeper primitive** (verified across the whole SDK). So a wasip1 CRE workflow could not drive the operator
+entrypoints. CTR-01 adds a **second door** via the `CloneReportReceiver` mixin so the protocol's own CRE
+bid-loop can drive the bid through the Forwarder, **alongside** (not replacing) the operator key — both doors
+route through the same `_postBid`/`_cancelBid` internals, so neither can skip a guard.
+- **Two receiver-scoped reportTypes** (§8.0; per-receiver, so they do NOT collide with the controller's `1`/`2`
+  or the oracles' `7`): `POST_BID = 1` (payload `abi.encode(uint256 sellAmount, uint256 buyAmount, uint32
+  validTo)` → `_postBid`), `CANCEL_BID = 2` (empty payload → `_cancelBid`). Any other type ⇒ `UnsupportedReportType`.
+- `_processReport` decodes the §8.0 envelope `abi.encode(uint8 reportType, bytes payload)` then the inner payload
+  — the exact two-level decode `SzipNavOracle._processReport` uses; the Go producer's `abi.Pack(uint256,uint256,
+  uint32)` round-trips bit-perfectly (incl. the `uint32`).
+- **Fail-closed:** a freshly-cloned module has `forwarder == 0`, so `onReport` reverts `InvalidForwarder` until
+  the Timelock wires it — the socket is INERT by default (the opposite of `ReceiverTemplate`'s "zero ⇒ open").
+- **This is the deliberate §8.7 exception:** the engine operator path is otherwise NOT report-gated; 8-B14 is the
+  first module made ALSO report-drivable. The same `CloneReportReceiver` base is reusable by 8-B5…8-B10 /
+  `DurationFreezeModule` / `OffRampModule` (they have the identical "no CRE write" gap — see PROGRESS).
+- **Deploy obligation:** `DeployZipcode` must, post-clone, `setForwarder(keystoneForwarder)` +
+  `setExpectedWorkflowId(WORKFLOW_ID)` on this module (the socket is inert/safe until then).
 
 ### `_orderUid(order)` (`public view`) — the canonical GPv2 hashing the module owns
 Builds the full order from the 3 validated fields + the module-fixed constants and returns the 56-byte uid:

@@ -2,6 +2,7 @@
 pragma solidity 0.8.24;
 
 import {MastercopyInitLock} from "./MastercopyInitLock.sol";
+import {CloneReportReceiver} from "./CloneReportReceiver.sol";
 import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
 import {IGPv2Settlement} from "../../interfaces/cow/IGPv2Settlement.sol";
 
@@ -63,7 +64,7 @@ interface ICoverageGate {
 ///      until `szipUSD.totalSupply() == 0`. `dBps` is the only value lever (haircut → split between stayers and
 ///      mercenary stinkbidders); `buybackCap == 0` is the kill switch. The wind-down is therefore CRE policy over
 ///      this unchanged surface — the work is the feeder modules + the orchestration, never a new exit mechanism.
-contract SzipBuyBurnModule is MastercopyInitLock {
+contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     // --------------------------------------------------------------------- GPv2 canonical constants (verified `cast`)
     /// @notice The canonical GPv2 order EIP-712 type hash (verified `cast keccak` of the order string).
     bytes32 public constant TYPE_HASH = 0x1a59c8ffcce6fc2e6738119e0d2e050163ef0912ac7168f28acd39badd252b51;
@@ -158,7 +159,8 @@ contract SzipBuyBurnModule is MastercopyInitLock {
     event BidCancelled(bytes uid);
     event DiscountSet(uint16 dBps);
     event BuybackCapSet(uint256 buybackCap);
-    event WiringSet(bytes32 indexed slot, address value);
+    // `event WiringSet(bytes32 indexed slot, address value)` is inherited from {CloneReportReceiver} (shared
+    // convention reused for the receiver-wiring slots) — declaring it here too would be a duplicate definition.
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the
@@ -293,9 +295,41 @@ contract SzipBuyBurnModule is MastercopyInitLock {
         emit WiringSet("coverageGate", coverageGate_);
     }
 
+    // --------------------------------------------------------------------- report socket (§8.0 / 8-B14 exception)
+    /// @notice The receiver-scoped reportType for a CRE-driven `postBid` (§8.0: reportType space is per-receiver, so
+    ///         this `1` is scoped to THIS module's address and does NOT collide with the controller's `1`/`2` or the
+    ///         oracles' `7` — a different receiver decodes differently). Payload =
+    ///         `abi.encode(uint256 sellAmount, uint256 buyAmount, uint32 validTo)`.
+    uint8 public constant POST_BID = 1;
+    /// @notice The receiver-scoped reportType for a CRE-driven `cancelBid` (§8.0, per-receiver). Payload = empty.
+    uint8 public constant CANCEL_BID = 2;
+
+    /// @dev The CRE report path (gated by the forwarder check in {CloneReportReceiver.onReport}): decode the §8.0
+    ///      envelope `abi.encode(uint8 reportType, bytes payload)` and route to the SAME `_postBid`/`_cancelBid`
+    ///      internals the operator path uses (two doors, one guard set). Unknown types revert.
+    function _processReport(bytes calldata report) internal override {
+        (uint8 t, bytes memory payload) = abi.decode(report, (uint8, bytes));
+        if (t == POST_BID) {
+            (uint256 sellAmount, uint256 buyAmount, uint32 validTo) = abi.decode(payload, (uint256, uint256, uint32));
+            _postBid(GPv2OrderInput(sellAmount, buyAmount, validTo));
+        } else if (t == CANCEL_BID) {
+            _cancelBid();
+        } else {
+            revert UnsupportedReportType(t);
+        }
+    }
+
     // --------------------------------------------------------------------- the bid (§7.2)
     /// @notice Post the single resting CoW `BUY szipUSD` bid, priced at or below `navExit × (1 − d)`. Operator-only.
+    ///         Thin wrapper over `_postBid` (operator path); the CRE report path reaches the same internal.
     function postBid(GPv2OrderInput calldata order) external onlyOperator {
+        _postBid(order);
+    }
+
+    /// @dev The full §7.2 bid body — every validation (single-resting-bid, zero-amount, buy-amount cap, buyback cap,
+    ///      coverage gate, validTo bounds, NAV-freshness leg-anchored fence, freshness, discount, exact price bound)
+    ///      lives here so BOTH doors (operator `postBid` + CRE `POST_BID`) enforce the identical guards.
+    function _postBid(GPv2OrderInput memory order) internal {
         if (currentUid.length != 0) revert BidAlreadyLive();
         if (order.sellAmount == 0 || order.buyAmount == 0) revert ZeroAmount();
         if (order.buyAmount > MAX_BUY_AMOUNT) revert BuyAmountTooLarge();
@@ -354,6 +388,12 @@ contract SzipBuyBurnModule is MastercopyInitLock {
     ///         OR owner (owner = emergency). Idempotent (no-op, no revert) when no live bid.
     function cancelBid() external {
         if (msg.sender != operator && msg.sender != owner) revert NotOperator();
+        _cancelBid();
+    }
+
+    /// @dev The full cancel body (idempotent no-op when no live bid). Both doors (operator/owner `cancelBid` + CRE
+    ///      `CANCEL_BID`) reach this internal; the report path is already forwarder-gated in `onReport`.
+    function _cancelBid() internal {
         bytes memory uid = currentUid;
         if (uid.length == 0) return; // idempotent no-op
 
@@ -378,7 +418,7 @@ contract SzipBuyBurnModule is MastercopyInitLock {
     ///         uint256(validTo), appData, feeAmount, kind, partiallyFillable, sellTokenBalance, buyTokenBalance))`;
     ///         `digest = keccak256(0x1901 ++ domainSeparator ++ structHash)`;
     ///         `uid = digest(32) ++ owner(20 = engineSafe) ++ validTo(uint32, 4)` → 56 bytes.
-    function _orderUid(GPv2OrderInput calldata order) public view returns (bytes memory) {
+    function _orderUid(GPv2OrderInput memory order) public view returns (bytes memory) {
         bytes32 structHash = keccak256(
             abi.encode(
                 TYPE_HASH,

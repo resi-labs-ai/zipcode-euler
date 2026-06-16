@@ -3,6 +3,9 @@ pragma solidity 0.8.24;
 
 import {ForkConfig} from "./ForkConfig.sol";
 import {SzipBuyBurnModule} from "../src/supply/szipUSD/SzipBuyBurnModule.sol";
+import {CloneReportReceiver} from "../src/supply/szipUSD/CloneReportReceiver.sol";
+import {IReceiver} from "x402-cre-price-alerts/interfaces/IReceiver.sol";
+import {IERC165} from "x402-cre-price-alerts/interfaces/IERC165.sol";
 import {IGPv2Settlement} from "../src/interfaces/cow/IGPv2Settlement.sol";
 import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
@@ -860,6 +863,146 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.prank(operator);
         vm.expectRevert(SzipBuyBurnModule.BidAboveDiscount.selector);
         module.postBid(_order(ceil6 + 1, 1e18, _validTo()));
+    }
+
+    // =================================================================== CTR-01: CRE report socket (CloneReportReceiver)
+    // The module is ALSO drivable by a DON-signed report delivered through the Keystone Forwarder (8-B14 exception):
+    // `onReport(metadata, report)` is forwarder-gated (fail-closed on an unset/zero forwarder), then routes the §8.0
+    // envelope `abi.encode(uint8 reportType, bytes payload)` to the SAME `_postBid`/`_cancelBid` internals the operator
+    // path uses. The mock Forwarder is just a prank address (no mock contract needed — pin 10).
+
+    address internal forwarder = makeAddr("keystoneForwarder");
+
+    /// @dev Build the canonical metadata: abi.encodePacked(workflowId bytes32, workflowName bytes10, owner address).
+    function _meta(bytes32 workflowId, bytes10 workflowName, address workflowOwner) internal pure returns (bytes memory) {
+        return abi.encodePacked(workflowId, workflowName, workflowOwner);
+    }
+
+    /// @dev Build a POST_BID report: envelope(POST_BID, abi.encode(sellAmount, buyAmount, validTo)).
+    function _postBidReport(uint256 sell, uint256 buy, uint32 validTo) internal view returns (bytes memory) {
+        return abi.encode(module.POST_BID(), abi.encode(sell, buy, validTo));
+    }
+
+    /// @dev Build a CANCEL_BID report: envelope(CANCEL_BID, "") (empty payload).
+    function _cancelBidReport() internal view returns (bytes memory) {
+        return abi.encode(module.CANCEL_BID(), bytes(""));
+    }
+
+    /// @dev A module wired with `forwarder` (and no workflow-identity check), ready for the report path.
+    function _deployWired() internal returns (SzipBuyBurnModule m) {
+        m = _deploy(address(safe), szip, CAP);
+        vm.prank(owner);
+        m.setForwarder(forwarder);
+    }
+
+    // (a) report-driven POST_BID via the mock Forwarder produces the EXACT same uid/sellAmount/BidPosted as the
+    //     equivalent operator postBid (same inputs) — req 1, two doors one guard set.
+    function test_CTR01_report_postBid_equals_operator_postBid() public {
+        uint32 vt = uint32(block.timestamp + 1 hours);
+        SzipBuyBurnModule.GPv2OrderInput memory o = _order(5e5, 1e18, vt);
+
+        // door 1: operator postBid on its own clone
+        SzipBuyBurnModule mOp = _deploy(address(safe), szip, CAP);
+        vm.prank(operator);
+        mOp.postBid(o);
+        (bytes memory uidOp, uint256 sellOp) = mOp.currentBid();
+
+        // door 2: report-driven POST_BID on an identically-setUp clone, via the forwarder
+        SzipBuyBurnModule mRep = _deployWired();
+        bytes memory meta = _meta(bytes32(0), bytes10(0), address(0));
+        bytes memory report = _postBidReport(5e5, 1e18, vt);
+        vm.expectEmit(false, false, false, true, address(mRep));
+        emit SzipBuyBurnModule.BidPosted(uidOp, 5e5, 1e18, vt, 1e18, D_BPS);
+        vm.prank(forwarder);
+        mRep.onReport(meta, report);
+        (bytes memory uidRep, uint256 sellRep) = mRep.currentBid();
+
+        assertEq(uidRep, uidOp, "report uid == operator uid");
+        assertEq(sellRep, sellOp, "report sellAmount == operator sellAmount");
+        assertEq(uidRep.length, 56);
+    }
+
+    // (b) un-wired (zero-forwarder) clone: onReport reverts fail-closed (req 2 — the clone inversion).
+    function test_CTR01_unwired_clone_onReport_reverts() public {
+        SzipBuyBurnModule m = _deploy(address(safe), szip, CAP); // forwarder defaults to zero
+        assertEq(m.forwarder(), address(0));
+        bytes memory report = _postBidReport(5e5, 1e18, uint32(block.timestamp + 1 hours));
+        vm.expectRevert(
+            abi.encodeWithSelector(CloneReportReceiver.InvalidForwarder.selector, address(this), address(0))
+        );
+        m.onReport(_meta(bytes32(0), bytes10(0), address(0)), report);
+    }
+
+    // (c) wrong caller (not the wired forwarder) reverts.
+    function test_CTR01_wrong_forwarder_caller_reverts() public {
+        SzipBuyBurnModule m = _deployWired();
+        bytes memory report = _postBidReport(5e5, 1e18, uint32(block.timestamp + 1 hours));
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSelector(CloneReportReceiver.InvalidForwarder.selector, rando, forwarder));
+        m.onReport(_meta(bytes32(0), bytes10(0), address(0)), report);
+    }
+
+    // (d) workflow-id mismatch reverts; the matching id passes (req 3).
+    function test_CTR01_workflow_id_mismatch_reverts_match_passes() public {
+        bytes32 wfId = keccak256("buy-burn-bid-loop");
+        SzipBuyBurnModule m = _deployWired();
+        vm.prank(owner);
+        m.setExpectedWorkflowId(wfId);
+        assertEq(m.expectedWorkflowId(), wfId);
+
+        uint32 vt = uint32(block.timestamp + 1 hours);
+        bytes memory report = _postBidReport(5e5, 1e18, vt);
+
+        // wrong id -> revert
+        bytes32 wrongId = keccak256("some-other-workflow");
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(CloneReportReceiver.InvalidWorkflowId.selector, wrongId, wfId));
+        m.onReport(_meta(wrongId, bytes10(0), address(0)), report);
+
+        // matching id -> posts
+        vm.prank(forwarder);
+        m.onReport(_meta(wfId, bytes10(0), address(0)), report);
+        assertTrue(m.currentUid().length != 0, "matching workflow id posts the bid");
+    }
+
+    // (e) report-driven CANCEL_BID retracts the live bid.
+    function test_CTR01_report_cancelBid_retracts_live_bid() public {
+        SzipBuyBurnModule m = _deployWired();
+        uint32 vt = uint32(block.timestamp + 1 hours);
+        bytes memory meta = _meta(bytes32(0), bytes10(0), address(0));
+        bytes memory postReport = _postBidReport(5e5, 1e18, vt);
+        bytes memory cancelReport = _cancelBidReport();
+        // post via the report path first
+        vm.prank(forwarder);
+        m.onReport(meta, postReport);
+        (bytes memory uid,) = m.currentBid();
+        assertEq(uid.length, 56, "bid live before cancel");
+
+        // cancel via the report path
+        vm.prank(forwarder);
+        m.onReport(meta, cancelReport);
+        (bytes memory u2, uint256 s2) = m.currentBid();
+        assertEq(u2.length, 0, "uid cleared");
+        assertEq(s2, 0, "sellAmount cleared");
+    }
+
+    // (f) an unsupported reportType reverts UnsupportedReportType.
+    function test_CTR01_unsupported_report_type_reverts() public {
+        SzipBuyBurnModule m = _deployWired();
+        uint8 bogus = 9;
+        bytes memory report = abi.encode(bogus, bytes(""));
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(CloneReportReceiver.UnsupportedReportType.selector, bogus));
+        m.onReport(_meta(bytes32(0), bytes10(0), address(0)), report);
+    }
+
+    // (g) — covered by every pre-existing operator-path test above remaining green (req 4).
+
+    /// @dev supportsInterface reports IReceiver + IERC165 (the report-receiver surface).
+    function test_CTR01_supportsInterface() public view {
+        assertTrue(module.supportsInterface(type(IReceiver).interfaceId), "IReceiver");
+        assertTrue(module.supportsInterface(type(IERC165).interfaceId), "IERC165");
+        assertFalse(module.supportsInterface(0xffffffff), "not 0xffffffff");
     }
 
     // ----------------------------------------------------------------- real-oracle builders
