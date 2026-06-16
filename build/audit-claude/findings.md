@@ -109,8 +109,10 @@ coverage/freeze decisions.
   line position) + `{baseUsdcMarket, assets: base+line}` (base absorbs it) — sequenced BEFORE the SEC-06
   queue-prune, guarded `lineBalance != 0` (never-funded lines skip). `EulerVenueAdapter.sol:367-378`. Regression
   (`test_SEC07_*` in `EulerVenueAdapter.t.sol`) made `MockEulerEarn.reallocate` faithful (actually moves USDC) so
-  the strand + the `:290` underflow are reproduced fail-before/pass-after. The L9/SEC-11 donation-immune sizing
-  (B7 below, `previewRedeem(config[id].balance)`) remains open and will flow into this defund's base-leg read.
+  the strand + the `:290` underflow are reproduced fail-before/pass-after. **The L9/SEC-11 donation-immune sizing
+  (B7, `previewRedeem(config[id].balance)`) is now RESOLVED 2026-06-15 (SEC-11):** a shared
+  `_eeSupplyAssets(market) = previewRedeem(config(market).balance)` helper sizes BOTH `fund` legs and this defund's
+  base leg (the defund line leg stays `assets:0`), so the whole adapter↔EE reallocate surface is donation-immune.
 
 ### 5. Resting CoW buy-burn bid keeps filling after coverage drops below floor
 - **contract/fn:** `SzipBuyBurnModule` / `postBid` — `src/supply/szipUSD/SzipBuyBurnModule.sol:289-337` (gate 297-298)

@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-11 — `fund` sizing via `previewRedeem(config.balance)` (L9).** Ticket: `build/tickets/sec/SEC-11-fund-previewredeem-sizing.md`.
-- **Deliverable:** size `fund`'s base-market read off `previewRedeem(config[id].balance)` (the EE-internal share accounting) rather than `convertToAssets(balanceOf(EE))`, so a direct USDC donation into the base market can't grief/DoS funding. Introduce a shared `_eeSupplyAssets` helper (the SEC-07 defund base-leg read should adopt it too).
-- **Source:** `build/kill-list.md` L9. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC11_*` regression; test output quoted in the ticket.
+**SEC-12 — `ZipRedemptionQueue.redeem()` emits canonical shares (L11, event-only).** Ticket: `build/tickets/sec/SEC-12-redeem-canonical-shares-event.md`.
+- **Deliverable:** emit the actually-redeemed zipUSD-equivalent (`assets * scaleUp`) in `redeem`'s `Withdraw` event instead of the raw caller-supplied `shares` — which overstates the redeemed amount on sub-unit-excess input (USDC out already correct; feed/accounting-drift fix, no state/transfer change). Mirror the sibling `withdraw`'s canonical emit. Audit ref-B9.
+- **Source:** `build/kill-list.md` L11. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC12_*` regression; test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-10 are DONE (2026-06-15); SEC-11 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-11 are DONE (2026-06-15); SEC-12 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -48,8 +48,8 @@ doc/comment-only (no regression test).
 | SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **DONE 2026-06-15** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
 | SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **DONE 2026-06-15** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
 | SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **DONE 2026-06-15** — `sec/SEC-10-setlptwapwindow-validation.md` |
-| SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **NEXT** — `sec/SEC-11-fund-previewredeem-sizing.md` |
-| SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **TICKETED** — `sec/SEC-12-redeem-canonical-shares-event.md` |
+| SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **DONE 2026-06-15** — `sec/SEC-11-fund-previewredeem-sizing.md` |
+| SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **NEXT** — `sec/SEC-12-redeem-canonical-shares-event.md` |
 | SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **TICKETED** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
 | SEC-14 | L18 | Init-lock 9 mastercopies (empty `initializer` ctor lock — NOT `_disableInitializers`) + fix docstrings | **TICKETED** — `sec/SEC-14-mastercopy-init-lock.md` |
 | SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **TICKETED** — `sec/SEC-15-setoperator-owner-recheck.md` |
@@ -58,6 +58,44 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-11 (2026-06-15)
+**`fund` (and `closeLine`'s defund) now size their `reallocate` targets off the EE's TRACKED supplied position,
+not the donation-skewable live balance** (kill-list L9; audit ref-B7 / finding #4 follow-on). `fund` told the EE
+pool to move USDC between markets via ABSOLUTE-target `reallocate`, computing those targets from
+`convertToAssets(balanceOf(eulerEarn))` — the *live* EVK-share balance. But `reallocate` measures each market's
+current assets as `previewRedeem(config[id].balance)` — the EE's *tracked* balance, which deliberately ignores
+direct share transfers (`IEulerEarn.sol:69,73`). Anyone could donate even one EVK share into the pool to make
+`balanceOf` exceed `config.balance`; the targets then disagreed with EE's own accounting, the withdraw/supply
+deltas no longer netted, and funding bricked (grief — supply-leg cash shortfall, or `InconsistentReallocation`
+proper if idle cash covers the deposit).
+- **Fix (1 file, `EulerVenueAdapter.sol`):** added shared internal view
+  `_eeSupplyAssets(market) = IEVault(market).previewRedeem(eulerEarn.config(IOZERC4626(market)).balance)`. `fund`
+  sizes both legs off it; **the SEC-07 `closeLine` defund adopts the same helper** (line leg stays `assets:0` — a
+  full redeem already sweeps any donation per `EulerEarn.sol:397-402`; only the base target adds the line's tracked
+  assets), discharging the SEC-07/SEC-11 coordination. Two-item absolute-target structure, `amount`/EVC/draw paths,
+  and the no-sweep/no-block stance all unchanged (Do-NOTs honored). Binding verified by critics: the imported
+  `IEulerEarn` exposes the **struct** `config(...).balance` (directly accessible, no import/destructure);
+  `IOZERC4626` is type-identical to euler-earn's `IERC4626`; `previewRedeem` resolves.
+- **Test fixture (folded from the junior-dev critic's most-blocking item — net-new mock infra):** `MockEulerEarn`
+  in `EulerVenueAdapter.t.sol` tracked no `config.balance` and had no `config()`, so post-fix it would have reverted
+  in every fund/close test AND couldn't reproduce the grief. Reworked it faithful to `EulerEarn.reallocate`
+  (`:383-442`): `cfgBalance`/`cfgEnabled` maps + a 4-tuple `config()` getter (ABI-identical to the struct getter);
+  single-pass `reallocate` mirroring the reference (`supplyAssets = previewRedeem(cfgBalance)`, redeem-all on
+  `target==0`, terminal `InconsistentReallocation`); `acceptCap` sets enabled; a `seedConfig` helper +
+  `_fundBaseMarket`/`_supplyToLine` now record actual minted shares as tracked config. `ZipcodeController.t.sol`'s
+  integration mock gained a `config()` returning live `balanceOf` (no donation path → tracked == live).
+- **Gate green:** `forge build` clean; `forge test` **803 passed / 0 failed / 3 skipped** (+3 over SEC-10's 800;
+  the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold). 3 new `test_SEC11_*` (Fund_DonationImmune —
+  donate a base share, `fund` still succeeds + tracked balances move by `amount` + line drawable;
+  PreFixSizing_Reverts_OnDonation — reconstructs the old `convertToAssets(balanceOf)` formula and shows it reverts;
+  Fund_NoDonation_StillMoves — happy path unchanged). **Fail-before/pass-after confirmed** — restoring the old
+  sizing makes `Fund_DonationImmune` FAIL (`ERC20: transfer amount exceeds balance`) while `NoDonation` stays green;
+  restored → all pass.
+- **No spec change** (interface-level sizing-precision fix; §4.7 intent unchanged — `fund`/defund is the adapter's
+  allocator role over `reallocate`; this fences a donation-grief gap). **No back-pressure / no new obligation**
+  (uses EE's existing `config`/`previewRedeem` surfaces). Ticket: `build/tickets/sec/SEC-11-fund-previewredeem-sizing.md`.
+  Report: `build/reports/SEC-11-report.md`.
 
 ### Just done — SEC-10 (2026-06-15)
 **`setLpTwapWindow(>0)` now validates the Algebra TWAP plugin at set-time** (kill-list L2; audit R-DoS "lpTwapWindow
@@ -192,9 +230,10 @@ bricked**. Group-3 sibling of SEC-06 (H2) — same fn, distinct fix (USDC-reclai
   `arithmetic underflow or overflow (0x11)`; restored → all pass.
 - **No spec change** (interface-level fix; §4.7 intent unchanged — defund is the adapter's allocator role, the symmetric
   un-do of `fund`'s supply). **No back-pressure / no new obligation** (uses EE's existing `reallocate`). **L9/SEC-11
-  interaction:** SEC-11 has NOT landed, so the primary `convertToAssets(balanceOf(EE))` sizing was used; when SEC-11 lands,
-  the defund's base-leg read should adopt `previewRedeem(config[id].balance)` for donation-immunity (logged in audit
-  B7 / finding #4). Ticket (full output): `build/tickets/sec/SEC-07-closeline-defund-to-base.md`. Report:
+  interaction — DISCHARGED 2026-06-15 (SEC-11):** SEC-07 originally used `convertToAssets(balanceOf(EE))` sizing; SEC-11
+  has now landed and repointed BOTH the defund base leg and its `lineBalance != 0` guard at the shared
+  `_eeSupplyAssets` helper (`previewRedeem(config.balance)`), so the defund is donation-immune (the line leg's
+  `assets:0` full redeem already swept any donation). Ticket (full output): `build/tickets/sec/SEC-07-closeline-defund-to-base.md`. Report:
   `build/reports/SEC-07-report.md`.
 
 ### Just done — SEC-06 (2026-06-15)

@@ -83,9 +83,12 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   on a later `fund` (`:285-292`). **Fix:** add a line→base defund `reallocate` in `closeLine` (`assets:0` on
   the line leg redeems all shares; base leg absorbs it; market must still be EE-enabled). *Distinct from H2 —
   queue-prune vs USDC-reclaim; both in `closeLine`, neither subsumes the other.* **DONE 2026-06-15 (SEC-07).**
-- [ ] **L9** (LOW grief) · `fund` sizes off `convertToAssets(balanceOf(EE))`; a 1-share donation reverts
-  `reallocate` (`:285-287`). **Fix:** use `config[id].balance` run through **`previewRedeem`** (not
-  `convertToAssets`) to byte-match EE's internal rounding.
+- [x] **L9** (LOW grief) · `fund` sizes off `convertToAssets(balanceOf(EE))`; a 1-share donation reverts
+  `reallocate` (`:295-297`). **Fix:** use `config[id].balance` run through **`previewRedeem`** (not
+  `convertToAssets`) to byte-match EE's internal rounding. **DONE 2026-06-15 (SEC-11).** Shared
+  `_eeSupplyAssets(market) = previewRedeem(config(market).balance)` helper sizes both `fund` legs + the SEC-07
+  defund base leg (line leg stays `assets:0`); donation-immune by construction. Test `MockEulerEarn` made faithful
+  to EE's `config.balance`/`previewRedeem`/`InconsistentReallocation` accounting to reproduce the grief fail-before/pass-after.
 - [x] **M6** (MED liveness) — *FIX, but the proposed fix was incomplete (REVISE).* A deploy-time
   `timelock()==0` assert is a one-time snapshot: the external EE owner can raise the timelock later, and the
   **dominant** brick is perspective-verification of the custom line vault (custom IRM + gating hook + retained
