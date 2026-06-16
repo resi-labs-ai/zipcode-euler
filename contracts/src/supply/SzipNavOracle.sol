@@ -91,7 +91,7 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         (`cumNav`) still advances on every `poke()` with `dt>0`; this only throttles how often a NEW ring
     ///         slot is consumed, so the `CARDINALITY-1` frozen checkpoints always span `>= W` (with headroom)
     ///         regardless of poke frequency. THIS is what makes the ring immune to poke-spam — the TWAP window
-    ///         can no longer be collapsed by filling slots faster than once per `obsSpacing`. See build/twap-ring.md.
+    ///         can no longer be collapsed by filling slots faster than once per `obsSpacing`.
     uint32 public immutable obsSpacing;
 
     // --------------------------------------------------------------------- wiring (Timelock-re-pointable, §17)
@@ -104,7 +104,7 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice The Algebra TWAP window (seconds) for manipulation-resistant LP reserve reconstruction. Zero ⇒ the
     ///         LP leg reads spot `getTotalAmounts()` (M1 / non-Algebra pools — unchanged). Non-zero ⇒ `_lpValue`
     ///         reconstructs the reserves at the pool's TWAP tick (`IchiAlgebraFairReserves`), so an in-block swap
-    ///         cannot move the LP mark — the build/twap-ring.md fair-LP defense-in-depth. Timelock-settable (§17);
+    ///         cannot move the LP mark (the fair-LP defense-in-depth). Timelock-settable (§17);
     ///         only set once the LP is a live Algebra pool that exposes a TWAP plugin.
     uint32 public lpTwapWindow;
     /// @notice The reservoir LP escrow collateral vault (8-B5). Zero ⇒ the escrow-collateralized LP leg contributes
@@ -248,7 +248,7 @@ contract SzipNavOracle is ReceiverTemplate {
         emit ReservoirLegSet(escrowVault_, borrowVault_);
     }
 
-    /// @notice Wire/re-point the LP TWAP window (the fair-LP reconstruction window, build/twap-ring.md). Zero ⇒ the
+    /// @notice Wire/re-point the LP TWAP window (the fair-LP reconstruction window). Zero ⇒ the
     ///         LP leg reads spot `getTotalAmounts()` (the M1 / non-Algebra default) — unconditionally valid. Set
     ///         non-zero (e.g. 3600) only once the LP is a live Algebra pool exposing a TWAP plugin, else every NAV
     ///         read (`navEntry`/`navExit`/`grossBasketValue` via `_lpValue`→`fairReserves`) would brick.
@@ -343,7 +343,7 @@ contract SzipNavOracle is ReceiverTemplate {
     ///      exact; a NEW ring slot is consumed only once `obsSpacing` has elapsed since the newest committed
     ///      checkpoint, otherwise the head slot is refreshed in place. This decoupling bounds ring consumption to
     ///      one slot per `obsSpacing` so the frozen checkpoints always span `>= W` — poke-spam can refresh the
-    ///      head but can no longer evict the window (build/twap-ring.md).
+    ///      head but can no longer evict the window.
     function _accumulate() internal returns (bool) {
         uint32 nowTs = uint32(block.timestamp);
         uint32 dt = nowTs - lastUpdate;
@@ -446,7 +446,7 @@ contract SzipNavOracle is ReceiverTemplate {
         uint256 supplyLp = IICHIVault(ichiVault).totalSupply();
         if (supplyLp == 0) return 0;
         // Reserve source: spot `getTotalAmounts()` (default) OR the manipulation-resistant TWAP reconstruction
-        // when `lpTwapWindow` is wired (build/twap-ring.md fair-LP). Pro-rata + leg pricing are identical either way.
+        // when `lpTwapWindow` is wired (fair-LP reconstruction). Pro-rata + leg pricing are identical either way.
         uint256 total0;
         uint256 total1;
         if (lpTwapWindow != 0) {

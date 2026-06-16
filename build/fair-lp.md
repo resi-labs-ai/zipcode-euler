@@ -3,14 +3,15 @@
 ## STATUS — BUILT 2026-06-14 (fork-proven against the live HYDX/USDC vault)
 
 A trustless, fully on-chain fair-value oracle for an ICHI-vault LP share on an Algebra pool. Realizes the
-`twap-ring.md` defense-in-depth (price `spot` itself so a sustained move can't drag NAV) and is the
-trustless alternative to `SzipReservoirLpOracle`'s CRE-pushed mark.
+TWAP-ring / ring-spacing defense-in-depth (price `spot` itself so a sustained move can't drag NAV; the fix
+lives in `SzipNavOracle` + `build/wires/8-B4-SzipNavOracle.md`) and is the trustless alternative to
+`SzipReservoirLpOracle`'s CRE-pushed mark.
 
 ## Problem
 
 `getTotalAmounts()` returns each ICHI position's token split computed at the pool's **current tick**, plus
 idle balances. The current tick is in-block manipulable (a swap moves it), so valuing the split at fixed
-prices moves with the manipulation. `SzipNavOracle._lpValue` read exactly this; `twap-ring.md`'s ring fix
+prices moves with the manipulation. `SzipNavOracle._lpValue` read exactly this; the ring-spacing fix
 only restored the single-block bracket — a sustained move still dragged the mark.
 
 ## Method (manipulation-resistant)

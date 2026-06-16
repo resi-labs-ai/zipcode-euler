@@ -13,7 +13,7 @@ import {TickMath, LiquidityAmounts} from "../../libraries/ConcentratedLiquidity.
 ///
 /// @dev WHY: `getTotalAmounts()` returns each ICHI position's token split computed at the pool's CURRENT tick, plus
 ///      idle balances. A swap moves the current tick, so the split is in-block manipulable — valuing it at fixed
-///      prices moves with the manipulation (build/twap-ring.md). This library instead reconstructs each position's
+///      prices moves with the manipulation. This library instead reconstructs each position's
 ///      reserves at the pool's TWAP tick using the position's liquidity `L` and its tick bounds — BOTH immune to
 ///      in-block swaps (`L` changes only on the vault's mint/burn; the TWAP tick is a time-average). Idle vault
 ///      balances are added as-is (they are token amounts, not price-sensitive in composition).

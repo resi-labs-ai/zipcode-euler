@@ -60,7 +60,7 @@ is NOT renounce-frozen here, §17).
    `_tokenValue`/`_legPriceOfToken` (only `zipUSD`/`xAlpha` — else `UnknownLpToken`, fail-closed). **IL marked
    through**; guarded by `supplyLp != 0`. **Reserve source:** spot `getTotalAmounts()` by default; when the
    Timelock-settable `lpTwapWindow != 0`, reserves are reconstructed at the Algebra pool's TWAP tick
-   (`IchiAlgebraFairReserves`) so an in-block swap cannot move the LP mark — the build/twap-ring.md +
+   (`IchiAlgebraFairReserves`) so an in-block swap cannot move the LP mark — the TWAP-ring +
    build/fair-lp.md fair-LP defense-in-depth. Set `lpTwapWindow` (via `setLpTwapWindow`) only once the LP is a
    live Algebra pool exposing an initialized TWAP plugin — **SEC-10** now enforces this at set-time
    (`setLpTwapWindow(>0)` reverts `LpTwapPluginNotReady` if the pool has no/uninitialized plugin), so a misconfig
@@ -87,7 +87,7 @@ The integral (`cumNav`/`lastUpdate`) advances on EVERY `dt>0`, but a NEW ring sl
 immutable `obsSpacing` (`= ceil(1.25·W/(CARDINALITY−1))`, derived in the ctor) has elapsed since the newest
 checkpoint — otherwise the head slot refreshes in place. This bounds ring consumption so the `CARDINALITY−1`
 frozen checkpoints always span `≥ W` regardless of poke frequency, making the window immune to permissionless
-`poke()`-spam (the eviction/collapse vector). `build/twap-ring.md`.
+`poke()`-spam (the eviction/collapse vector).
 
 **`valueOf(asset, amount)`** — public projection of `_tokenValue`/`_legPriceOfToken` (the issuance valuation
 seam the Gate reads; supports `{zipUSD, xAlpha}`, else `UnknownLpToken`). The oracle owns valuation — no caller

@@ -6,7 +6,7 @@
 ## Role
 
 A trustless, fully on-chain fair-value oracle for an ICHI-vault LP share on an Algebra pool. Realizes the
-`build/twap-ring.md` defense-in-depth (price `spot` itself manipulation-resistantly) and is the trustless
+TWAP-ring / ring-spacing defense-in-depth (price `spot` itself manipulation-resistantly) and is the trustless
 alternative to `SzipReservoirLpOracle`'s CRE-pushed mark. Serves **two** consumers:
 
 - **EVK reservoir collateral** — a `BaseAdapter`/`IPriceOracle` drop-in the `EulerRouter` resolves the LP

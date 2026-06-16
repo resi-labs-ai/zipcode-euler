@@ -512,7 +512,7 @@ contract DeployZipcode is SummonSubstrate {
         // reservoir escrow + borrow vaults (P5) -> NAV closes the mid-loop blind spot (counts escrow-collateralized
         // LP + subtracts strike debt; build/lp-path-lock.md). Both exist by P5 (step 24).
         d.navOracle.setReservoirLeg(d.escrowVault, d.borrowVault);
-        // Fair-LP NAV LP leg (build/twap-ring.md + build/fair-lp.md): when set, the NAV LP leg reconstructs reserves
+        // Fair-LP NAV LP leg (build/fair-lp.md): when set, the NAV LP leg reconstructs reserves
         // at the Algebra TWAP tick instead of spot getTotalAmounts. Same window the reservoir collateral oracle uses.
         if (i.lpTwapWindow != 0) d.navOracle.setLpTwapWindow(i.lpTwapWindow);
         d.navOracle.setXAlphaRateOracle(address(d.rateOracle));

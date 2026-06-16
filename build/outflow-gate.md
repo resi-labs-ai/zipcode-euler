@@ -2,7 +2,7 @@
 
 > **STATUS (re-verified against live source 2026-06-13).** Every item this doc originally raised is now
 > closed — built, superseded by a better design, or deliberately triaged out. Nothing here is live open
-> work. The live open supply findings are elsewhere: **`build/twap-ring.md`** and **`build/zap-residual.md`**.
+> work. The live open supply finding is elsewhere: **`build/zap-residual.md`**.
 > This file is kept as the provenance record for how the coverage outflow gates landed.
 
 ## What this doc originally found (and where it went)
@@ -45,10 +45,10 @@ up against the post-lp-path-lock code:
 If leverage ever scales materially or the senior pool gains non-draw outflows, revisit via an
 `illiquidSeniorValue() + draw <= zipUSDValue()` capacity gate (the abandoned `drawgate` concept in
 `build/tickets/PROGRESS.md` Open obligations) — **not** the cheap `covered()` gate. ⚠️ That capacity read would be TWAP-bracketed and
-would inherit the `build/twap-ring.md` ring behavior.
+would inherit the TWAP ring behavior.
 
 ## Net
 
-Coverage outflow gating is **done**. The remaining live supply findings are `build/twap-ring.md`
-(NAV bracket collapsible via poke-spam) and `build/zap-residual.md` (1-wei zap brick) — both re-verified
-unfixed against the current tree.
+Coverage outflow gating is **done**. The remaining live supply finding is `build/zap-residual.md`
+(1-wei zap brick), re-verified against the current tree. (The TWAP-ring NAV-bracket finding is resolved —
+ring-spacing fix + fair-LP reserve read both shipped.)

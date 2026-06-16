@@ -3,8 +3,9 @@
 > **FIXED 2026-06-13.** `ZipDepositModule.zap` now snapshots `zipBefore` and requires the post-pull balance
 > to equal it (delta check, not absolute) — a stray donation can no longer brick the zap. Tests added:
 > `test_zap_survives_zipusd_donation` + `testFuzz_zap_tolerates_donation`; the existing under-pull regression
-> still bites. `forge test --match-contract ZipDepositModule` → 31/31 green. The remaining open supply
-> finding is `build/twap-ring.md`.
+> still bites. `forge test --match-contract ZipDepositModule` → 31/31 green. This (the zap brick) was the
+> last remaining open supply finding; the TWAP-ring NAV-bracket finding is now resolved (ring-spacing fix +
+> fair-LP reserve read both shipped).
 
 ## Problem (verified)
 
@@ -136,4 +137,5 @@ zero new surface and is strictly preferable.
 **FIXED 2026-06-13** (`ZipDepositModule.zap`, the delta-check above). Verified:
 `forge test --match-contract ZipDepositModule` → 31/31 green, including `test_zap_survives_zipusd_donation`
 and `testFuzz_zap_tolerates_donation`; the under-pull / no-share / atomicity regressions still pass.
-The only remaining open supply finding from the review is `build/twap-ring.md`.
+With the TWAP-ring finding now resolved (ring-spacing fix + fair-LP reserve read shipped), this doc's zap
+brick was the last open supply finding from the review — and it is now fixed too.
