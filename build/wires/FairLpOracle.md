@@ -1,7 +1,8 @@
 # FairLpOracle — trustless on-chain ICHI-on-Algebra LP valuation (wiring map)
 
-> Full design + on-chain validation: **`build/fair-lp.md`** (the spec). This is the wires/ wiring map.
-> Source of truth = the kept code; docs are intent.
+> Source of truth = the kept code (`src/supply/AlgebraIchiFairLpOracle.sol`, `src/supply/lib/IchiAlgebraFairReserves.sol`,
+> `src/libraries/ConcentratedLiquidity.sol`); the manipulation-invariance proof is the fork test
+> `test/AlgebraIchiFairLpOracle.t.sol`. This is the wires/ wiring map; docs are intent.
 
 ## Role
 

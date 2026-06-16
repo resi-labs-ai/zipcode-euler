@@ -107,7 +107,7 @@ contract DeployZipcode is SummonSubstrate {
         uint256 validityWindow; // registry + lpOracle read-staleness window
         uint32 lpTwapWindow; // 0 = CRE-push lpOracle + spot NAV LP leg (M1 default); >0 = trustless fair-LP
             // (AlgebraIchiFairLpOracle) for the reservoir collateral AND the NAV LP leg. Opt-in once the
-            // zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin. build/fair-lp.md.
+            // zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin.
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV pushed-leg staleness
         uint256 maxDeviationBps; // NAV per-push deviation circuit-break
@@ -342,7 +342,7 @@ contract DeployZipcode is SummonSubstrate {
     ///      the market build: EVK `setLTV` (step 24) calls `getQuote` on the `SzipReservoirLpOracle`, which reverts
     ///      `PriceOracle_NotSupported` until a fresh mark exists. In production the CRE `LP_MARK` push seeds it here.
     function _phaseP5() internal virtual {
-        // 23. LP oracle. Trustless fair-LP (Algebra TWAP, build/fair-lp.md) when `lpTwapWindow` is set — it reads
+        // 23. LP oracle. Trustless fair-LP (Algebra TWAP) when `lpTwapWindow` is set — it reads
         //     the price live on-chain, so it needs NO CRE seed before the step-24 `setLTV` getQuote (it resolves
         //     immediately on a live Algebra pool). Else the CRE-pushed mark (`SzipReservoirLpOracle`), which this
         //     phase is `virtual` to let a local/fork harness seed before `setLTV`.
@@ -512,7 +512,7 @@ contract DeployZipcode is SummonSubstrate {
         // reservoir escrow + borrow vaults (P5) -> NAV closes the mid-loop blind spot (counts escrow-collateralized
         // LP + subtracts strike debt). Both exist by P5 (step 24).
         d.navOracle.setReservoirLeg(d.escrowVault, d.borrowVault);
-        // Fair-LP NAV LP leg (build/fair-lp.md): when set, the NAV LP leg reconstructs reserves
+        // Fair-LP NAV LP leg: when set, the NAV LP leg reconstructs reserves
         // at the Algebra TWAP tick instead of spot getTotalAmounts. Same window the reservoir collateral oracle uses.
         if (i.lpTwapWindow != 0) d.navOracle.setLpTwapWindow(i.lpTwapWindow);
         d.navOracle.setXAlphaRateOracle(address(d.rateOracle));

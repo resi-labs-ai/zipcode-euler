@@ -60,8 +60,8 @@ is NOT renounce-frozen here, §17).
    `_tokenValue`/`_legPriceOfToken` (only `zipUSD`/`xAlpha` — else `UnknownLpToken`, fail-closed). **IL marked
    through**; guarded by `supplyLp != 0`. **Reserve source:** spot `getTotalAmounts()` by default; when the
    Timelock-settable `lpTwapWindow != 0`, reserves are reconstructed at the Algebra pool's TWAP tick
-   (`IchiAlgebraFairReserves`) so an in-block swap cannot move the LP mark — the TWAP-ring +
-   build/fair-lp.md fair-LP defense-in-depth. Set `lpTwapWindow` (via `setLpTwapWindow`) only once the LP is a
+   (`IchiAlgebraFairReserves`) so an in-block swap cannot move the LP mark — the TWAP-ring + fair-LP
+   defense-in-depth (see `wires/FairLpOracle.md`). Set `lpTwapWindow` (via `setLpTwapWindow`) only once the LP is a
    live Algebra pool exposing an initialized TWAP plugin — **SEC-10** now enforces this at set-time
    (`setLpTwapWindow(>0)` reverts `LpTwapPluginNotReady` if the pool has no/uninitialized plugin), so a misconfig
    can no longer silently brick every NAV read via `_lpValue`→`fairReserves`→`NoPlugin`.
@@ -106,7 +106,7 @@ lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wir
 - `setEngineSafe(engineSafe_)` → `engineSafe` (the 8-B14 buy-and-burn Safe, denominator-excluded).
 - `setDefaultCoordinator(dc_)` → `defaultCoordinator` (the sole `writeProvision` caller).
 - `setLpTwapWindow(window_)` → `lpTwapWindow` (`0` = the valid "use spot `getTotalAmounts()`" default, always
-  accepted; non-zero = fair-LP TWAP reconstruction, build/fair-lp.md). **SEC-10:** a NON-ZERO window is validated
+  accepted; non-zero = fair-LP TWAP reconstruction). **SEC-10:** a NON-ZERO window is validated
   at set-time — reverts `error LpTwapPluginNotReady()` unless `ichiVault` is wired AND
   `IAlgebraPool(IICHIVault(ichiVault).pool()).plugin() != 0` AND that plugin's `isInitialized()` is true. This
   closes the gross "no plugin / uninitialized plugin" brick (a non-zero window against a plugin-less pool would
