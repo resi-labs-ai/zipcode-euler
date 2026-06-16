@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
+import {MastercopyInitLock} from "./MastercopyInitLock.sol";
 import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
 import {IGPv2Settlement} from "../../interfaces/cow/IGPv2Settlement.sol";
 
@@ -39,7 +39,7 @@ interface ICoverageGate {
 /// @dev CRITICAL clone fact (§18.6): a `ModuleProxyFactory` clone shares the mastercopy's runtime bytecode, so
 ///      `immutable` values are baked into the mastercopy at ITS construction and are identical for every clone — they
 ///      CANNOT carry per-clone `setUp` config. EVERY per-clone wired address/param is therefore plain set-once
-///      storage written in `setUp` under `initializer`, NOT `immutable`. The mastercopy is init-locked at deploy.
+///      storage written in `setUp` under `initializer`, NOT `immutable`. The mastercopy is init-locked in its constructor (see {MastercopyInitLock}).
 ///
 /// @dev SCALING TO A GLOBAL WIND-DOWN (the system-wide RQ exit — CRE-orchestrated, no new exit primitive).
 ///      This module is the protocol's ONLY exit valve and the hinge of any full unwind. There is no global
@@ -63,7 +63,7 @@ interface ICoverageGate {
 ///      until `szipUSD.totalSupply() == 0`. `dBps` is the only value lever (haircut → split between stayers and
 ///      mercenary stinkbidders); `buybackCap == 0` is the kill switch. The wind-down is therefore CRE policy over
 ///      this unchanged surface — the work is the feeder modules + the orchestration, never a new exit mechanism.
-contract SzipBuyBurnModule is Module {
+contract SzipBuyBurnModule is MastercopyInitLock {
     // --------------------------------------------------------------------- GPv2 canonical constants (verified `cast`)
     /// @notice The canonical GPv2 order EIP-712 type hash (verified `cast keccak` of the order string).
     bytes32 public constant TYPE_HASH = 0x1a59c8ffcce6fc2e6738119e0d2e050163ef0912ac7168f28acd39badd252b51;
@@ -154,7 +154,7 @@ contract SzipBuyBurnModule is Module {
     event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
-    /// @notice Initialize a clone (or the mastercopy at deploy, which is then init-locked). One-shot via the
+    /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the
     ///         zodiac-core `initializer`. Decodes `(owner, engineSafe, operator, navOracle, szipUSD, usdc,
     ///         settlement, dBps, buybackCap, coverageGate)`; reads the VaultRelayer + domain separator LIVE off the
     ///         settlement. `coverageGate` MAY be address(0) (gate OFF) — no zero-check, mirrors setCoverageGate.

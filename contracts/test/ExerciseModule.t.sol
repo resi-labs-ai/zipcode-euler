@@ -11,6 +11,13 @@ import {ISafe} from "../src/interfaces/safe/ISafe.sol";
 import {ExerciseModule} from "../src/supply/szipUSD/ExerciseModule.sol";
 import {IOptionToken} from "../src/interfaces/hydrex/IOptionToken.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneExerciseModule() returns (ExerciseModule) {
+    return ExerciseModule(Clones.clone(address(new ExerciseModule())));
+}
 
 // =========================================================================== mocks
 
@@ -188,8 +195,15 @@ contract ExerciseModuleUnitTest is Test {
         usdc = new MockUSDC();
         oToken = new MockOHYDX(address(usdc));
         safe = new RecordingSafe();
-        m = new ExerciseModule();
+        m = _cloneExerciseModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(oToken)));
+    }
+
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        ExerciseModule mc = new ExerciseModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(abi.encode(owner, address(safe), operator, address(oToken)));
     }
 
     // ----------------------------------------------------------------- setUp / authority / locks
@@ -210,7 +224,7 @@ contract ExerciseModuleUnitTest is Test {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        ExerciseModule x = new ExerciseModule();
+        ExerciseModule x = _cloneExerciseModule();
         vm.expectRevert(ExerciseModule.OwnerIsOperator.selector);
         x.setUp(abi.encode(owner, address(safe), owner, address(oToken)));
     }
@@ -223,21 +237,21 @@ contract ExerciseModuleUnitTest is Test {
     }
 
     function _expectZero(bytes memory params) internal {
-        ExerciseModule x = new ExerciseModule();
+        ExerciseModule x = _cloneExerciseModule();
         vm.expectRevert(ExerciseModule.ZeroAddress.selector);
         x.setUp(params);
     }
 
     /// @dev The zero-oHYDX case asserts the order-guard fires (ZeroAddress) BEFORE a staticcall-to-zero paymentToken().
     function test_setUp_zero_oHYDX_is_ZeroAddress_not_staticcall() public {
-        ExerciseModule x = new ExerciseModule();
+        ExerciseModule x = _cloneExerciseModule();
         vm.expectRevert(ExerciseModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(0)));
     }
 
     function test_setUp_rejects_zero_paymentToken_live() public {
         MockOHYDX bad = new MockOHYDX(address(0)); // paymentToken() == 0
-        ExerciseModule x = new ExerciseModule();
+        ExerciseModule x = _cloneExerciseModule();
         vm.expectRevert(ExerciseModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(bad)));
     }
@@ -252,7 +266,7 @@ contract ExerciseModuleUnitTest is Test {
     }
 
     function test_mastercopy_inert() public {
-        ExerciseModule mc = new ExerciseModule();
+        ExerciseModule mc = _cloneExerciseModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.engineSafe(), address(0));
         assertEq(mc.oHYDX(), address(0));
@@ -365,7 +379,7 @@ contract ExerciseModuleUnitTest is Test {
         lsafe.setLive(true);
         RevertEmptyToken bad = new RevertEmptyToken();
         MockOHYDX lo = new MockOHYDX(address(bad));
-        ExerciseModule x = new ExerciseModule();
+        ExerciseModule x = _cloneExerciseModule();
         x.setUp(abi.encode(owner, address(lsafe), operator, address(lo)));
         vm.prank(operator);
         vm.expectRevert(ExerciseModule.ExecFailed.selector);
@@ -434,7 +448,7 @@ contract ExerciseModuleUnitTest is Test {
         lo = new MockOHYDX(address(lusdc));
         lsafe = new RecordingSafe();
         lsafe.setLive(true);
-        x = new ExerciseModule();
+        x = _cloneExerciseModule();
         x.setUp(abi.encode(owner, address(lsafe), operator, address(lo)));
     }
 
@@ -496,7 +510,7 @@ contract ExerciseModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     function _deploy() internal returns (ExerciseModule m, address engineSafe) {
-        m = new ExerciseModule();
+        m = _cloneExerciseModule();
         engineSafe = _summonAndEnable(m);
         m.setUp(abi.encode(owner, engineSafe, operator, BaseAddresses.OHYDX));
     }

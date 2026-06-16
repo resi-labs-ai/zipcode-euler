@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
+import {MastercopyInitLock} from "./MastercopyInitLock.sol";
 import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
 
 import {IEVault, IBorrowing} from "evk/EVault/IEVault.sol";
@@ -29,8 +29,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// @dev CLONE FACT (§18.6, proven on 8-B14): a `ModuleProxyFactory` clone shares the mastercopy's runtime bytecode,
 ///      so `immutable` is identical for every clone — it CANNOT carry per-clone `setUp` config. EVERY per-clone wired
 ///      address/param is plain set-once storage written in `setUp` under `initializer`, NOT `immutable`. The
-///      mastercopy is init-locked at deploy.
-contract ReservoirLoopModule is Module {
+///      mastercopy is init-locked in its constructor (see {MastercopyInitLock}).
+contract ReservoirLoopModule is MastercopyInitLock {
     /// @notice The EVK `OP_BORROW` op bit (`1 << 6`) — reference only (the guard is installed by the deployer).
     uint32 internal constant OP_BORROW = 1 << 6;
 
@@ -78,7 +78,7 @@ contract ReservoirLoopModule is Module {
     event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
-    /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
+    /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
     ///         `initializer`. Decodes `(owner, engineSafe, operator, evc, borrowVault, escrowVault, lpToken, usdc,
     ///         borrowCap)`. All addresses nonzero; `owner != operator`; `avatar = target = engineSafe`.
     function setUp(bytes memory initParams) public override initializer {

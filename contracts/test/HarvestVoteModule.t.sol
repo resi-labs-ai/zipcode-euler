@@ -15,6 +15,13 @@ import {IVotingEscrow} from "../src/interfaces/hydrex/IVotingEscrow.sol";
 import {IOptionToken} from "../src/interfaces/hydrex/IOptionToken.sol";
 import {IRewardsDistributor} from "../src/interfaces/hydrex/IRewardsDistributor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneHarvestVoteModule() returns (HarvestVoteModule) {
+    return HarvestVoteModule(Clones.clone(address(new HarvestVoteModule())));
+}
 
 /// @notice Test-local extension: the live Voter's account-keyed `lastVoted(address)` (0x9a61df89, verified live). Not
 ///         added to the production `IVoter` (the module never reads it — it is purely a fork-test positive assertion).
@@ -232,8 +239,15 @@ contract HarvestVoteModuleUnitTest is Test {
         voter = new MockVoter(address(escrow));
         rd = new MockRewardsDistributor();
         safe = new RecordingSafe();
-        m = new HarvestVoteModule();
+        m = _cloneHarvestVoteModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(gauge), address(voter), address(rd)));
+    }
+
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        HarvestVoteModule mc = new HarvestVoteModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(abi.encode(owner, address(safe), operator, address(gauge), address(voter), address(rd)));
     }
 
     // ----------------------------------------------------------------- setUp / authority / locks
@@ -257,7 +271,7 @@ contract HarvestVoteModuleUnitTest is Test {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        HarvestVoteModule x = new HarvestVoteModule();
+        HarvestVoteModule x = _cloneHarvestVoteModule();
         vm.expectRevert(HarvestVoteModule.OwnerIsOperator.selector);
         x.setUp(abi.encode(owner, address(safe), owner, address(gauge), address(voter), address(rd)));
     }
@@ -278,21 +292,21 @@ contract HarvestVoteModuleUnitTest is Test {
     }
 
     function _expectZero(bytes memory params) internal {
-        HarvestVoteModule x = new HarvestVoteModule();
+        HarvestVoteModule x = _cloneHarvestVoteModule();
         vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
         x.setUp(params);
     }
 
     function test_setUp_rejects_zero_rewardToken_live() public {
         MockGauge badGauge = new MockGauge(address(0)); // rewardToken() == 0
-        HarvestVoteModule x = new HarvestVoteModule();
+        HarvestVoteModule x = _cloneHarvestVoteModule();
         vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(badGauge), address(voter), address(rd)));
     }
 
     function test_setUp_rejects_zero_ve_live() public {
         MockVoter badVoter = new MockVoter(address(0)); // ve() == 0
-        HarvestVoteModule x = new HarvestVoteModule();
+        HarvestVoteModule x = _cloneHarvestVoteModule();
         vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(gauge), address(badVoter), address(rd)));
     }
@@ -307,7 +321,7 @@ contract HarvestVoteModuleUnitTest is Test {
     }
 
     function test_mastercopy_inert() public {
-        HarvestVoteModule mc = new HarvestVoteModule();
+        HarvestVoteModule mc = _cloneHarvestVoteModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.engineSafe(), address(0));
         assertEq(mc.gauge(), address(0));
@@ -484,7 +498,7 @@ contract HarvestVoteModuleUnitTest is Test {
         // Instead: point the VOTER at the revert target and exercise resetVote (no decode), proving the bubble path.
         g; // silence
         address badVoter = address(new WrappingVoter(address(escrow), address(rt)));
-        HarvestVoteModule x = new HarvestVoteModule();
+        HarvestVoteModule x = _cloneHarvestVoteModule();
         x.setUp(abi.encode(owner, address(lsafe), operator, address(gauge), badVoter, address(rd)));
         // voter is set to badVoter whose ve() returned a real escrow at setUp; now make reset() route to rt.
         // badVoter.reset() itself reverts with the custom error (it IS the revert target wrapper).
@@ -499,7 +513,7 @@ contract HarvestVoteModuleUnitTest is Test {
         RecordingSafe lsafe = new RecordingSafe();
         lsafe.setLive(true);
         address badVoter = address(new WrappingVoter(address(escrow), address(rt)));
-        HarvestVoteModule x = new HarvestVoteModule();
+        HarvestVoteModule x = _cloneHarvestVoteModule();
         x.setUp(abi.encode(owner, address(lsafe), operator, address(gauge), badVoter, address(rd)));
         vm.prank(operator);
         vm.expectRevert(HarvestVoteModule.ExecFailed.selector);
@@ -607,7 +621,7 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     function _deploy() internal returns (HarvestVoteModule m, address engineSafe) {
-        m = new HarvestVoteModule();
+        m = _cloneHarvestVoteModule();
         engineSafe = _summonAndEnable(m);
         m.setUp(
             abi.encode(

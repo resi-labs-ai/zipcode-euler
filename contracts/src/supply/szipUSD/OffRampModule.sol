@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
+import {MastercopyInitLock} from "./MastercopyInitLock.sol";
 import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -25,7 +25,7 @@ interface IZipRedemptionQueue {
 ///         `claude-zipcode.md` §6.1/§6.3/§8.2 (senior redemption + epoch settlement), §4.5.1/§10.1 (engine module
 ///         pattern), §17 (build-phase Timelock-settable wiring). Sibling of `RecycleModule`/`SzipBuyBurnModule`.
 ///
-/// @dev SIBLING of `RecycleModule` (8-B10): same `is Module` + `setUp(bytes)`-under-`initializer` + `onlyOperator`
+/// @dev SIBLING of `RecycleModule` (8-B10): same `is MastercopyInitLock` (Module) + `setUp(bytes)`-under-`initializer` + `onlyOperator`
 ///      + a private **bubbling `_exec`** (`execTransactionFromModuleReturnData` then revert-on-`false`, bubbling the
 ///      inner revert data — a plain `exec` would let the Safe SWALLOW a queue revert and silently no-op, leaving a
 ///      dangling approval). All per-clone wired addresses are plain set-once storage written in `setUp`, NOT
@@ -38,7 +38,7 @@ interface IZipRedemptionQueue {
 ///      queue via its `redeemController` (C4) — because the module `exec`s THROUGH the Safe, the queue sees the Safe
 ///      as `msg.sender`, so `requester == owner == rqSafe` satisfies the queue's `owner == msg.sender` check AND the
 ///      USDC claim accrues to the rq Safe.
-contract OffRampModule is Module {
+contract OffRampModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
     /// @notice The rq Safe (`avatar == target == rqSafe` = `Baal.avatar()`); the zipUSD source + the USDC sink + the
     ///         queue's authorized `redeemController` (C4) + the per-request `requester`/`owner`.
@@ -66,7 +66,7 @@ contract OffRampModule is Module {
     event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
-    /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). Decodes 5 addresses
+    /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). Decodes 5 addresses
     ///         `(owner, rqSafe, operator, zipUSD, queue)`. ORDER is load-bearing: validate ALL decoded addresses
     ///         nonzero FIRST + `owner != operator`, set `avatar = target = rqSafe`, store the wiring, THEN
     ///         `_transferOwnership(owner)`. No live-read / staticcall in `setUp`.

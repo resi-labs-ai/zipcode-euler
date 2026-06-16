@@ -6,6 +6,13 @@ import {SzipBuyBurnModule} from "../src/supply/szipUSD/SzipBuyBurnModule.sol";
 import {IGPv2Settlement} from "../src/interfaces/cow/IGPv2Settlement.sol";
 import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneSzipBuyBurnModule() returns (SzipBuyBurnModule) {
+    return SzipBuyBurnModule(Clones.clone(address(new SzipBuyBurnModule())));
+}
 
 // =========================================================================== mocks
 
@@ -171,9 +178,20 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         module = _deploy(address(safe), szip, CAP);
     }
 
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        SzipBuyBurnModule mc = new SzipBuyBurnModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(
+            abi.encode(
+                owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)
+            )
+        );
+    }
+
     // ----------------------------------------------------------------- helpers
     function _deploy(address engineSafe_, address szipUSD_, uint256 cap_) internal returns (SzipBuyBurnModule m) {
-        m = new SzipBuyBurnModule();
+        m = _cloneSzipBuyBurnModule();
         m.setUp(
             abi.encode(
                 owner, engineSafe_, operator, address(oracle), szipUSD_, USDC, COW_SETTLEMENT, D_BPS, cap_, address(0)
@@ -217,22 +235,22 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        SzipBuyBurnModule m = new SzipBuyBurnModule();
+        SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.OwnerIsOperator.selector);
         m.setUp(abi.encode(owner, address(safe), owner, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
     }
 
     function test_setUp_rejects_zero_address() public {
-        SzipBuyBurnModule m = new SzipBuyBurnModule();
+        SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
         m.setUp(abi.encode(owner, address(0), operator, address(oracle), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
     }
 
     function test_setUp_rejects_bad_discount() public {
-        SzipBuyBurnModule m = new SzipBuyBurnModule();
+        SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.BadDiscount.selector);
         m.setUp(abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, uint16(0), CAP, address(0)));
-        SzipBuyBurnModule m2 = new SzipBuyBurnModule();
+        SzipBuyBurnModule m2 = _cloneSzipBuyBurnModule();
         vm.expectRevert(SzipBuyBurnModule.BadDiscount.selector);
         m2.setUp(
             abi.encode(owner, address(safe), operator, address(oracle), szip, USDC, COW_SETTLEMENT, uint16(10_000), CAP, address(0))
@@ -254,7 +272,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
 
     function test_mastercopy_inert() public {
         // A bare-deployed mastercopy (never setUp) has zero operator/engineSafe — postBid reverts NotOperator for all.
-        SzipBuyBurnModule mc = new SzipBuyBurnModule();
+        SzipBuyBurnModule mc = _cloneSzipBuyBurnModule();
         vm.prank(operator);
         vm.expectRevert(SzipBuyBurnModule.NotOperator.selector);
         mc.postBid(_order(1e6, 1e18, _validTo()));
@@ -485,7 +503,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         assertLt(spot, twap, "need spot < twap");
         assertEq(real.navExit(), spot);
 
-        SzipBuyBurnModule m = new SzipBuyBurnModule();
+        SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
 
         // Choose a sellAmount that passes against TWAP but fails against SPOT (navExit).
@@ -507,7 +525,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     function test_freshness_gate_stale_reverts() public {
         SzipNavOracle real = _realOracleFresh();
         assertTrue(real.fresh());
-        SzipBuyBurnModule m = new SzipBuyBurnModule();
+        SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
 
         // Age both pushed legs past maxAge -> fresh() false. SEC-13 (L12): the leg-anchored `validTo` fence now
@@ -527,7 +545,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         SzipNavOracle real = _realOracleBare();
         assertFalse(real.fresh());
         assertEq(real.oldestRequiredLegTs(), 0, "unset legs -> anchor 0");
-        SzipBuyBurnModule m = new SzipBuyBurnModule();
+        SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(real), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
         // SEC-13 (L12): with the anchor at 0, `0 + maxAge < now < validTo`, so the leg-anchored fence reverts
         // `ValidToBeyondNavFreshness` before the `fresh()`/`StaleNav` gate — the never-pushed oracle is rejected
@@ -562,7 +580,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     }
 
     function _moduleFor(SzipNavOracle o) internal returns (SzipBuyBurnModule m) {
-        m = new SzipBuyBurnModule();
+        m = _cloneSzipBuyBurnModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(o), szip, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0)));
     }
 
@@ -726,7 +744,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
 
     function test_orderUid_known_answer_vector() public {
         // A module whose usdc/szipUSD/engineSafe match the OUT-OF-BAND cast vector inputs.
-        SzipBuyBurnModule m = new SzipBuyBurnModule();
+        SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         m.setUp(
             abi.encode(owner, VEC_ENGINE, operator, address(oracle), VEC_SZIPUSD, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0))
         );

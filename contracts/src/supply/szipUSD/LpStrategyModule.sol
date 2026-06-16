@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
+import {MastercopyInitLock} from "./MastercopyInitLock.sol";
 import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
 
 import {IICHIVault} from "../../interfaces/ichi/IICHIVault.sol";
@@ -33,8 +33,8 @@ interface ICoverageGate {
 /// @dev CLONE FACT (§18.6, proven on 8-B14/8-B5): a `ModuleProxyFactory` clone shares the mastercopy's runtime
 ///      bytecode, so `immutable` is identical for every clone — it CANNOT carry per-clone `setUp` config. EVERY
 ///      per-clone wired address is plain set-once storage written in `setUp` under `initializer`, NOT `immutable`.
-///      The mastercopy is init-locked at deploy.
-contract LpStrategyModule is Module {
+///      The mastercopy is init-locked in its constructor (see {MastercopyInitLock}).
+contract LpStrategyModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
     /// @notice The engine Safe (`avatar == target == engineSafe`); the deposit `to` + every balance read.
     address public engineSafe;
@@ -78,7 +78,7 @@ contract LpStrategyModule is Module {
     event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
-    /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
+    /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
     ///         `initializer`. Decodes `(owner, engineSafe, operator, ichiVault, gauge)`; reads `token0`/`token1` LIVE
     ///         off the vault. ORDER is load-bearing: validate the five addresses nonzero FIRST (so an `ichiVault == 0`
     ///         reverts `ZeroAddress`, not the live `token0()` staticcall), then read + assert the tokens nonzero.

@@ -19,6 +19,13 @@ import {IEVC} from "evc/interfaces/IEthereumVaultConnector.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Errors as PriceErrors} from "euler-price-oracle/lib/Errors.sol";
 import {Errors as EvkErrors} from "evk/EVault/shared/Errors.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneReservoirLoopModule() returns (ReservoirLoopModule) {
+    return ReservoirLoopModule(Clones.clone(address(new ReservoirLoopModule())));
+}
 
 // =========================================================================== mocks
 
@@ -195,7 +202,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         address escrowVault_,
         uint256 cap_
     ) internal returns (ReservoirLoopModule m) {
-        m = new ReservoirLoopModule();
+        m = _cloneReservoirLoopModule();
         m.setUp(
             abi.encode(
                 owner, engineSafe_, operator, address(evc), borrowVault_, escrowVault_, address(lp), USDC, cap_
@@ -276,6 +283,15 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(m.borrowCap(), BORROW_CAP);
     }
 
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        ReservoirLoopModule mc = new ReservoirLoopModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(
+            abi.encode(owner, address(0xBEEF), operator, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP)
+        );
+    }
+
     function test_setUp_initializer_once() public {
         ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         vm.expectRevert();
@@ -285,19 +301,19 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        ReservoirLoopModule m = new ReservoirLoopModule();
+        ReservoirLoopModule m = _cloneReservoirLoopModule();
         vm.expectRevert(ReservoirLoopModule.OwnerIsOperator.selector);
         m.setUp(abi.encode(owner, address(0xBEEF), owner, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
     }
 
     function test_setUp_rejects_zero_address_evc() public {
-        ReservoirLoopModule m = new ReservoirLoopModule();
+        ReservoirLoopModule m = _cloneReservoirLoopModule();
         vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
         m.setUp(abi.encode(owner, address(0xBEEF), operator, address(0), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
     }
 
     function test_setUp_rejects_zero_address_engineSafe() public {
-        ReservoirLoopModule m = new ReservoirLoopModule();
+        ReservoirLoopModule m = _cloneReservoirLoopModule();
         vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
         m.setUp(abi.encode(owner, address(0), operator, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
     }
@@ -313,7 +329,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_mastercopy_inert() public {
-        ReservoirLoopModule mc = new ReservoirLoopModule();
+        ReservoirLoopModule mc = _cloneReservoirLoopModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.engineSafe(), address(0));
         vm.prank(operator);
@@ -652,7 +668,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     // =================================================================== the full loop (fork, headline)
 
     function test_full_loop_revolves_twice() public {
-        ReservoirLoopModule m = new ReservoirLoopModule();
+        ReservoirLoopModule m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
         address engineSafe = _summonAndEnable(m);
 
@@ -763,7 +779,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
     function test_stale_and_never_pushed_mark_fail_borrow_closed() public {
         // Stand up with a live mark (the deployer's setLTV needs one); then test the two fail-closed borrow paths.
-        ReservoirLoopModule m = new ReservoirLoopModule();
+        ReservoirLoopModule m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
         address engineSafe = _summonAndEnable(m);
         _pushMark(o, 1e6);
@@ -831,7 +847,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
     function test_third_party_borrow_blocked_by_guard() public {
         // The engine Safe's loop passes the guard; a third party that posts the escrow on its OWN account is blocked.
-        ReservoirLoopModule m = new ReservoirLoopModule();
+        ReservoirLoopModule m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
         address engineSafe = _summonAndEnable(m);
         _pushMark(o, 1e6);
@@ -866,7 +882,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         internal
         returns (ReservoirLoopModule m, address engineSafe, address ev, address bv)
     {
-        m = new ReservoirLoopModule();
+        m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
         engineSafe = _summonAndEnable(m);
         // The mark must exist before the deployer's `setLTV` (which reads `getQuote` to validate the collateral

@@ -11,6 +11,13 @@ import {IModuleProxyFactory} from "../src/interfaces/zodiac/IModuleProxyFactory.
 import {DurationFreezeModule} from "../src/supply/szipUSD/DurationFreezeModule.sol";
 import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneDurationFreezeModule() returns (DurationFreezeModule) {
+    return DurationFreezeModule(Clones.clone(address(new DurationFreezeModule())));
+}
 
 // =========================================================================================== mocks
 
@@ -249,7 +256,7 @@ abstract contract FreezeBase is Test {
         ee = new MockEulerEarn();
         mainSafe = new RecordingSafe();
         sidecar = new RecordingSafe();
-        m = new DurationFreezeModule();
+        m = _cloneDurationFreezeModule();
         m.setUp(
             _initParams(
                 owner,
@@ -285,6 +292,23 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         _deploy();
     }
 
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        DurationFreezeModule mc = new DurationFreezeModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(
+            _initParams(
+                owner,
+                address(mainSafe),
+                address(sidecar),
+                operator,
+                address(basket),
+                address(ee),
+                warehouse
+            )
+        );
+    }
+
     function test_setUp_wires_storage_and_whitelist() public view {
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
@@ -307,7 +331,7 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
     }
 
     function test_setUp_rejects_zero_coverageBps() public {
-        DurationFreezeModule x = new DurationFreezeModule();
+        DurationFreezeModule x = _cloneDurationFreezeModule();
         bytes memory bad = abi.encode(
             owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,
             uint256(0), uint256(0)
@@ -347,7 +371,7 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
     }
 
     function test_mastercopy_init_locked() public {
-        DurationFreezeModule mc = new DurationFreezeModule();
+        DurationFreezeModule mc = _cloneDurationFreezeModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.mainSafe(), address(0));
         assertEq(mc.zipUSD(), address(0));
@@ -370,7 +394,7 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         address ee_,
         address wh_
     ) internal {
-        DurationFreezeModule x = new DurationFreezeModule();
+        DurationFreezeModule x = _cloneDurationFreezeModule();
         vm.expectRevert(err);
         x.setUp(_initParams(owner_, main_, side_, op_, oracle_, ee_, wh_));
     }
@@ -634,7 +658,7 @@ contract DurationFreezeModuleRotationTest is FreezeBase {
         // make it a valued leg by deploying a module whose oracle reports fot as a leg.
         MockNavBasket b2 =
             new MockNavBasket(address(fot), address(usdc), address(xalpha), address(hydx), address(ohydx));
-        DurationFreezeModule x = new DurationFreezeModule();
+        DurationFreezeModule x = _cloneDurationFreezeModule();
         x.setUp(
             _initParams(
                 owner, address(mainSafe), address(sidecar), operator, address(b2), address(ee), warehouse
@@ -971,7 +995,7 @@ contract SzipNavOracleParityTest is Test {
 
         MockEulerEarn ee = new MockEulerEarn();
         ee.setBacking(1, 100e6, 0); // illiquidSeniorValue == 100e18 (sa 100 USDC, free 0)
-        DurationFreezeModule m = new DurationFreezeModule();
+        DurationFreezeModule m = _cloneDurationFreezeModule();
         m.setUp(
             abi.encode(
                 makeAddr("owner"), mainSafe, sidecar, makeAddr("operator"),
@@ -999,7 +1023,7 @@ contract SzipNavOracleParityTest is Test {
     function test_SEC04_unseeded_rate_reverts_coverageValue() public {
         MockEulerEarn ee = new MockEulerEarn();
         ee.setBacking(1, 100e6, 0);
-        DurationFreezeModule m = new DurationFreezeModule();
+        DurationFreezeModule m = _cloneDurationFreezeModule();
         m.setUp(
             abi.encode(
                 makeAddr("owner"), mainSafe, sidecar, makeAddr("operator"),
@@ -1205,7 +1229,7 @@ contract DurationFreezeModuleInvariantTest is Test {
         mainSafe = new RecordingSafe();
         sidecar = new RecordingSafe();
 
-        m = new DurationFreezeModule();
+        m = _cloneDurationFreezeModule();
         m.setUp(
             abi.encode(
                 owner, address(mainSafe), address(sidecar), operator, address(basket), address(ee), warehouse,

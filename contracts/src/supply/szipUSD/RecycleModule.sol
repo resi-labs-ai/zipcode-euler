@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
+import {MastercopyInitLock} from "./MastercopyInitLock.sol";
 import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -66,11 +66,11 @@ interface IEulerEarn {
 /// @dev CLONE FACT (§18.6, proven on 8-B5..B9/B14): a `ModuleProxyFactory` clone shares the mastercopy's runtime
 ///      bytecode, so `immutable` is identical for every clone — it CANNOT carry per-clone `setUp` config. EVERY
 ///      per-clone wired address is plain set-once storage written in `setUp` under `initializer`, NOT `immutable`. The
-///      mastercopy is init-locked at deploy. (No OZ `ReentrancyGuard` on the module: a clone never runs the guard's
+///      mastercopy is init-locked in its constructor (see {MastercopyInitLock}). (No OZ `ReentrancyGuard` on the module: a clone never runs the guard's
 ///      constructor, and the siblings avoid it — the reentrancy safety here is effects-before-interaction, i.e. the
 ///      `_spendFreeValue` decrement lands BEFORE the value-moving `_exec`s, plus the set-once trusted wired targets +
 ///      `ZipDepositModule`'s own `nonReentrant`.)
-contract RecycleModule is Module {
+contract RecycleModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
     /// @notice The engine Safe (`avatar == target == engineSafe`); the free-value source + the deposit/mint recipient.
     address public engineSafe;
@@ -130,7 +130,7 @@ contract RecycleModule is Module {
     event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
-    /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). Decodes 8 addresses
+    /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). Decodes 8 addresses
     ///         `(owner, engineSafe, operator, zipDepositModule, usdc, navOracle, eePool, warehouse)`. ORDER is
     ///         load-bearing: validate ALL 8 decoded addresses nonzero FIRST + `owner != operator` (so a zero address
     ///         reverts `ZeroAddress` deterministically before any use), set `avatar = target = engineSafe`, store the

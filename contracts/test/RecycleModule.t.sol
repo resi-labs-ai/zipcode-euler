@@ -14,6 +14,13 @@ import {ESynth} from "evk/Synths/ESynth.sol";
 import {RecycleModule, IZipDepositModule, IEulerEarn} from "../src/supply/szipUSD/RecycleModule.sol";
 import {ZipDepositModule} from "../src/supply/ZipDepositModule.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneRecycleModule() returns (RecycleModule) {
+    return RecycleModule(Clones.clone(address(new RecycleModule())));
+}
 
 // =========================================================================== mocks
 
@@ -258,13 +265,20 @@ contract RecycleModuleUnitTest is Test {
     function setUp() public {
         usdc = new MockERC20(6);
         safe = new RecordingSafe();
-        m = new RecycleModule();
+        m = _cloneRecycleModule();
         m.setUp(_params(owner, address(safe), operator, zdm, address(usdc)));
     }
 
     /// @dev 5-arg facade over the 8-arg setUp: appends the three Stream-2 dummies (recycle-only tests don't use them).
     function _params(address o, address s, address op, address z, address u) internal pure returns (bytes memory) {
         return abi.encode(o, s, op, z, u, NAVO, EEP, WH);
+    }
+
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        RecycleModule mc = new RecycleModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(_params(owner, address(safe), operator, zdm, address(usdc)));
     }
 
     function _assertCall(uint256 i, address to, bytes memory data) internal view {
@@ -297,7 +311,7 @@ contract RecycleModuleUnitTest is Test {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        RecycleModule x = new RecycleModule();
+        RecycleModule x = _cloneRecycleModule();
         vm.expectRevert(RecycleModule.OwnerIsOperator.selector);
         x.setUp(_params(owner, address(safe), owner, zdm, address(usdc)));
     }
@@ -316,13 +330,13 @@ contract RecycleModuleUnitTest is Test {
     }
 
     function _expectZero(bytes memory params) internal {
-        RecycleModule x = new RecycleModule();
+        RecycleModule x = _cloneRecycleModule();
         vm.expectRevert(RecycleModule.ZeroAddress.selector);
         x.setUp(params);
     }
 
     function test_setUp_abi_length_mismatch_reverts() public {
-        RecycleModule x = new RecycleModule();
+        RecycleModule x = _cloneRecycleModule();
         // only 7 addresses encoded (warehouse missing) -> abi.decode reverts (the decode needs 8)
         vm.expectRevert();
         x.setUp(abi.encode(owner, address(safe), operator, zdm, address(usdc), NAVO, EEP));
@@ -338,7 +352,7 @@ contract RecycleModuleUnitTest is Test {
     }
 
     function test_mastercopy_inert() public {
-        RecycleModule mc = new RecycleModule();
+        RecycleModule mc = _cloneRecycleModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.engineSafe(), address(0));
         assertEq(mc.zipDepositModule(), address(0));
@@ -503,7 +517,7 @@ contract RecycleModuleUnitTest is Test {
         // a live Safe whose target returns (false, "") -> ExecFailed. Wire `usdc` to a contract that reverts empty,
         // so recycle's first approve -> Safe catches (false, "") -> _exec reverts ExecFailed (not a bubble).
         RevertEmpty re = new RevertEmpty();
-        RecycleModule x = new RecycleModule();
+        RecycleModule x = _cloneRecycleModule();
         RecordingSafe s2 = new RecordingSafe();
         x.setUp(_params(owner, address(s2), operator, address(re), address(re)));
         s2.setLive(true);
@@ -541,7 +555,7 @@ contract RecycleModuleIntegratedTest is Test {
 
         safe = new RecordingSafe();
         safe.setLive(true); // drive the REAL ZipDepositModule
-        m = new RecycleModule();
+        m = _cloneRecycleModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(zdmReal), address(usdc), NAVO, address(ee), WAREHOUSE));
     }
 
@@ -565,7 +579,7 @@ contract RecycleModuleIntegratedTest is Test {
 
     function test_integrated_decrement_before_exec() public {
         ReadbackZipDepositModule rb = new ReadbackZipDepositModule();
-        RecycleModule x = new RecycleModule();
+        RecycleModule x = _cloneRecycleModule();
         RecordingSafe s = new RecordingSafe();
         s.setLive(true);
         x.setUp(abi.encode(owner, address(s), operator, address(rb), address(usdc), NAVO, address(ee), WAREHOUSE));
@@ -621,7 +635,7 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     function _deploy() internal returns (RecycleModule m, address engineSafe) {
-        m = new RecycleModule();
+        m = _cloneRecycleModule();
         engineSafe = _summonAndEnable(m);
         m.setUp(abi.encode(owner, engineSafe, operator, address(zdmReal), address(usdc), address(nav), address(ee), WAREHOUSE));
     }
@@ -695,7 +709,7 @@ contract RecycleModuleDivertTest is Test {
     function _rigWith(address pool) internal returns (RecycleModule mod, RecordingSafe s) {
         s = new RecordingSafe();
         s.setLive(true);
-        mod = new RecycleModule();
+        mod = _cloneRecycleModule();
         mod.setUp(abi.encode(owner, address(s), operator, ZDM, address(usdc), address(nav), pool, WAREHOUSE));
         usdc.mint(address(s), SEED);
         vm.prank(operator);
@@ -854,7 +868,7 @@ contract RecycleModuleDivertTest is Test {
         RevertEmpty re = new RevertEmpty();
         RecordingSafe s = new RecordingSafe();
         s.setLive(true);
-        RecycleModule x = new RecycleModule();
+        RecycleModule x = _cloneRecycleModule();
         // usdc slot points at the empty-reverting target; eePool/nav real so the bound passes to reach the approve exec.
         x.setUp(abi.encode(owner, address(s), operator, ZDM, address(re), address(nav), address(ee), WAREHOUSE));
         vm.prank(operator);

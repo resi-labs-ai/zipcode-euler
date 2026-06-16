@@ -12,6 +12,13 @@ import {SellModule} from "../src/supply/szipUSD/SellModule.sol";
 import {ISwapRouter} from "../src/interfaces/algebra/ISwapRouter.sol";
 import {IAlgebraPool} from "../src/interfaces/algebra/IAlgebraPool.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneSellModule() returns (SellModule) {
+    return SellModule(Clones.clone(address(new SellModule())));
+}
 
 // =========================================================================== mocks
 
@@ -177,8 +184,15 @@ contract SellModuleUnitTest is Test {
         zipUSD = new MockERC20();
         xAlpha = new MockERC20();
         safe = new RecordingSafe();
-        m = new SellModule();
+        m = _cloneSellModule();
         m.setUp(_params(owner, address(safe), operator));
+    }
+
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        SellModule mc = new SellModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(_params(owner, address(safe), operator));
     }
 
     function _params(address owner_, address safe_, address operator_) internal view returns (bytes memory) {
@@ -228,7 +242,7 @@ contract SellModuleUnitTest is Test {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        SellModule x = new SellModule();
+        SellModule x = _cloneSellModule();
         vm.expectRevert(SellModule.OwnerIsOperator.selector);
         x.setUp(_params(owner, address(safe), owner));
     }
@@ -247,21 +261,21 @@ contract SellModuleUnitTest is Test {
     }
 
     function _expectZero(bytes memory params) internal {
-        SellModule x = new SellModule();
+        SellModule x = _cloneSellModule();
         vm.expectRevert(SellModule.ZeroAddress.selector);
         x.setUp(params);
     }
 
     /// @dev (qa iv) the swapRouter==0 case asserts the order-guard fires (ZeroAddress) specifically.
     function test_setUp_zero_swapRouter_is_ZeroAddress() public {
-        SellModule x = new SellModule();
+        SellModule x = _cloneSellModule();
         vm.expectRevert(SellModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(0), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL));
     }
 
     /// @dev (cap) setUp rejects a zero `maxSellHydx` (a zero cap would brick `sellHydx`).
     function test_setUp_rejects_zero_maxSellHydx() public {
-        SellModule x = new SellModule();
+        SellModule x = _cloneSellModule();
         vm.expectRevert(SellModule.ZeroAmount.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), uint256(0)));
     }
@@ -276,7 +290,7 @@ contract SellModuleUnitTest is Test {
     }
 
     function test_mastercopy_inert() public {
-        SellModule mc = new SellModule();
+        SellModule mc = _cloneSellModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.engineSafe(), address(0));
         assertEq(mc.swapRouter(), address(0));
@@ -545,7 +559,7 @@ contract SellModuleUnitTest is Test {
         lsafe.setLive(true);
         RevertEmptyToken badIn = new RevertEmptyToken();
         MockSwapRouter lrouter = new MockSwapRouter();
-        SellModule x = new SellModule();
+        SellModule x = _cloneSellModule();
         x.setUp(abi.encode(
             owner, address(lsafe), operator, address(lrouter), address(badIn), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL
         ));
@@ -593,7 +607,7 @@ contract SellModuleUnitTest is Test {
         lrouter = new MockSwapRouter();
         lsafe = new RecordingSafe();
         lsafe.setLive(true);
-        x = new SellModule();
+        x = _cloneSellModule();
         x.setUp(abi.encode(
             owner, address(lsafe), operator, address(lrouter), address(ltoken), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL
         ));
@@ -659,7 +673,7 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     function _deploy() internal returns (SellModule m, address engineSafe) {
-        m = new SellModule();
+        m = _cloneSellModule();
         engineSafe = _summonAndEnable(m);
         m.setUp(abi.encode(
             owner,

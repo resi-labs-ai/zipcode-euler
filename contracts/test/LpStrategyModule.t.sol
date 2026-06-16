@@ -12,6 +12,13 @@ import {IICHIVault} from "../src/interfaces/ichi/IICHIVault.sol";
 import {IGauge} from "../src/interfaces/hydrex/IGauge.sol";
 import {IVoter} from "../src/interfaces/hydrex/IVoter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneLpStrategyModule() returns (LpStrategyModule) {
+    return LpStrategyModule(Clones.clone(address(new LpStrategyModule())));
+}
 
 // =========================================================================== mocks
 
@@ -267,8 +274,15 @@ contract LpStrategyModuleUnitTest is Test {
         vault = new MockICHIVault(address(token0), address(token1));
         gauge = new MockGauge(address(vault), address(0xDEAD));
         safe = new RecordingSafe();
-        m = new LpStrategyModule();
+        m = _cloneLpStrategyModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge), address(0)));
+    }
+
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        LpStrategyModule mc = new LpStrategyModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge), address(0)));
     }
 
     // ----------------------------------------------------------------- setUp / authority / locks
@@ -291,26 +305,26 @@ contract LpStrategyModuleUnitTest is Test {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        LpStrategyModule x = new LpStrategyModule();
+        LpStrategyModule x = _cloneLpStrategyModule();
         vm.expectRevert(LpStrategyModule.OwnerIsOperator.selector);
         x.setUp(abi.encode(owner, address(safe), owner, address(vault), address(gauge), address(0)));
     }
 
     function test_setUp_rejects_zero_gauge() public {
-        LpStrategyModule x = new LpStrategyModule();
+        LpStrategyModule x = _cloneLpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(vault), address(0), address(0)));
     }
 
     function test_setUp_rejects_zero_ichiVault_at_guard_not_staticcall() public {
         // ichiVault == 0 must revert ZeroAddress (the guard runs BEFORE the live token0() read).
-        LpStrategyModule x = new LpStrategyModule();
+        LpStrategyModule x = _cloneLpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(0), address(gauge), address(0)));
     }
 
     function test_setUp_rejects_zero_engineSafe() public {
-        LpStrategyModule x = new LpStrategyModule();
+        LpStrategyModule x = _cloneLpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(0), operator, address(vault), address(gauge), address(0)));
     }
@@ -318,7 +332,7 @@ contract LpStrategyModuleUnitTest is Test {
     function test_setUp_rejects_zero_token_leg() public {
         // a vault returning token0() == 0 must revert ZeroAddress on the live read.
         MockICHIVault badVault = new MockICHIVault(address(0), address(token1));
-        LpStrategyModule x = new LpStrategyModule();
+        LpStrategyModule x = _cloneLpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(safe), operator, address(badVault), address(gauge), address(0)));
     }
@@ -333,7 +347,7 @@ contract LpStrategyModuleUnitTest is Test {
     }
 
     function test_mastercopy_inert() public {
-        LpStrategyModule mc = new LpStrategyModule();
+        LpStrategyModule mc = _cloneLpStrategyModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.engineSafe(), address(0));
         assertEq(mc.ichiVault(), address(0));
@@ -725,7 +739,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- real ICHI vault single-sided deposit
 
     function test_fork_real_vault_single_sided_deposit() public {
-        LpStrategyModule m = new LpStrategyModule();
+        LpStrategyModule m = _cloneLpStrategyModule();
         address engineSafe = _summonAndEnable(m);
         m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
@@ -745,7 +759,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     function test_fork_slippage_floor_snapshot_guarded() public {
-        LpStrategyModule m = new LpStrategyModule();
+        LpStrategyModule m = _cloneLpStrategyModule();
         address engineSafe = _summonAndEnable(m);
         m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
@@ -772,7 +786,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         // (bubbled vault revert, not a generic ExecFailed).
         assertFalse(IICHIVault(LIVE_ICHI_VAULT).allowToken1(), "live vault is token0-only");
 
-        LpStrategyModule m = new LpStrategyModule();
+        LpStrategyModule m = _cloneLpStrategyModule();
         address engineSafe = _summonAndEnable(m);
         m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
@@ -804,7 +818,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         MockICHIVault vault = new MockICHIVault(address(z), address(x));
         MockGauge gauge = new MockGauge(address(vault), address(0xBEEF));
 
-        LpStrategyModule m = new LpStrategyModule();
+        LpStrategyModule m = _cloneLpStrategyModule();
         address engineSafe = _summonAndEnable(m);
         m.setUp(abi.encode(owner, engineSafe, operator, address(vault), address(gauge), address(0)));
 

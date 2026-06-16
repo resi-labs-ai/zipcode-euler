@@ -17,6 +17,13 @@ import {ESynth} from "evk/Synths/ESynth.sol";
 import {OffRampModule, IZipRedemptionQueue} from "../src/supply/szipUSD/OffRampModule.sol";
 import {ZipRedemptionQueue} from "../src/supply/ZipRedemptionQueue.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+/// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
+///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
+function _cloneOffRampModule() returns (OffRampModule) {
+    return OffRampModule(Clones.clone(address(new OffRampModule())));
+}
 
 // =========================================================================== mocks
 
@@ -138,8 +145,15 @@ contract OffRampModuleUnitTest is Test {
     function setUp() public {
         safe = new RecordingSafe();
         queue = new MockQueue(SCALE);
-        m = new OffRampModule();
+        m = _cloneOffRampModule();
         m.setUp(_params(owner, address(safe), operator, zipUSD, address(queue)));
+    }
+
+    /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
+    function test_SEC14_mastercopy_setUp_reverts() public {
+        OffRampModule mc = new OffRampModule();
+        vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
+        mc.setUp(_params(owner, address(safe), operator, zipUSD, address(queue)));
     }
 
     function _params(address o, address s, address op, address z, address q) internal pure returns (bytes memory) {
@@ -172,7 +186,7 @@ contract OffRampModuleUnitTest is Test {
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        OffRampModule x = new OffRampModule();
+        OffRampModule x = _cloneOffRampModule();
         vm.expectRevert(OffRampModule.OwnerIsOperator.selector);
         x.setUp(_params(owner, address(safe), owner, zipUSD, address(queue)));
     }
@@ -186,13 +200,13 @@ contract OffRampModuleUnitTest is Test {
     }
 
     function _expectZero(bytes memory params) internal {
-        OffRampModule x = new OffRampModule();
+        OffRampModule x = _cloneOffRampModule();
         vm.expectRevert(OffRampModule.ZeroAddress.selector);
         x.setUp(params);
     }
 
     function test_setUp_abi_length_mismatch_reverts() public {
-        OffRampModule x = new OffRampModule();
+        OffRampModule x = _cloneOffRampModule();
         vm.expectRevert();
         x.setUp(abi.encode(owner, address(safe), operator, zipUSD)); // only 4 -> decode reverts
     }
@@ -207,7 +221,7 @@ contract OffRampModuleUnitTest is Test {
     }
 
     function test_mastercopy_inert() public {
-        OffRampModule mc = new OffRampModule();
+        OffRampModule mc = _cloneOffRampModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.rqSafe(), address(0));
         assertEq(mc.zipUSD(), address(0));
@@ -328,7 +342,7 @@ contract OffRampModuleUnitTest is Test {
         RevertEmpty re = new RevertEmpty();
         // RevertEmpty has no scaleUp(); call the no-whole-unit-check path by wiring a real MockQueue for scaleUp but
         // RevertEmpty for the zipUSD approve target. queue.scaleUp == SCALE so amt passes the whole-unit check.
-        OffRampModule x = new OffRampModule();
+        OffRampModule x = _cloneOffRampModule();
         RecordingSafe s2 = new RecordingSafe();
         x.setUp(_params(owner, address(s2), operator, address(re), address(queue)));
         s2.setLive(true);
@@ -398,7 +412,7 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
         rqSafe = s.mainSafe;
 
         // deploy + enable the OffRampModule on the rq Safe
-        offRamp = new OffRampModule();
+        offRamp = _cloneOffRampModule();
         _enableModule(rqSafe, address(offRamp));
         offRamp.setUp(abi.encode(owner, rqSafe, operator, address(zip), address(queue)));
 

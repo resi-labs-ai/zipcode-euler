@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
+import {MastercopyInitLock} from "./MastercopyInitLock.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -41,8 +41,8 @@ import {IEulerEarnUtil} from "../../interfaces/euler/IEulerEarnUtil.sol";
 /// @dev CLONE FACT (§18.6, proven on 8-B14/8-B5/8-B6): a `ModuleProxyFactory` clone shares the mastercopy's
 ///      runtime bytecode, so `immutable` CANNOT carry per-clone `setUp` config. EVERY per-clone wired
 ///      address/param is plain set-once storage written in `setUp` under `initializer`, NOT `immutable`. The
-///      mastercopy is init-locked at deploy. OZ `ReentrancyGuard` (non-upgradeable) is storage-safe under clones.
-contract DurationFreezeModule is Module, ReentrancyGuard {
+///      mastercopy is init-locked in its constructor (see {MastercopyInitLock}). OZ `ReentrancyGuard` (non-upgradeable) is storage-safe under clones.
+contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
     /// @notice The free-equity (ragequit-target) Safe — `avatar == target == mainSafe`; the `commit` source / `release` dest.
     address public mainSafe;
@@ -100,7 +100,7 @@ contract DurationFreezeModule is Module, ReentrancyGuard {
     event CoverageParamSet(bytes32 indexed slot, uint256 value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
-    /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
+    /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
     ///         `initializer`. Decodes the wired addresses, reads the movable assets (5 plain legs + the ICHI LP
     ///         share, the latter possibly address(0) pre-LP) LIVE off the oracle (so the
     ///         whitelist == exactly what the oracle prices — no drift), sets `avatar == target == mainSafe` (the
