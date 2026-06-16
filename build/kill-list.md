@@ -240,6 +240,12 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
 - **L5** (not real) · `maxAge==0` is unreachable — immutable, ctor rejects 0, no setter (`SzipNavOracle.sol:82,194,204`).
 - **L10** (not real) · Single-requester topology enforced by the `MultipleRequesters` guard
   (`ZipRedemptionQueue.sol:168-172`); the dropped ERC7540 guard isn't even universally present upstream.
+- **M5** (MED → not-real in the deployed stack) · "Coverage gate defaults OFF when `coverageGate==0`." The
+  **deploy already asserts it wired** — `SeamCoverageGate` checks `coverageGate() == durationFreeze` on both consumers
+  (`DeployZipcode.s.sol:411,439`), so the OFF state is **unreachable in production** (it is only the M1 pre-wiring /
+  unit-test default). `coverageGate==0` is the documented Timelock **kill-switch** (`:485-486`). **No FIX ticket** — the
+  protection exists. The only thing ever "owed" was an OPTIONAL `setCoverageGate(0)` warning **event** (a behavioral
+  nicety, not a bug fix); deferred, not in the DOC sweep. *(Verified during the SEC-DOC double-check, 2026-06-16.)*
 
 ---
 
@@ -254,6 +260,14 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
 - **CoW exit-book page (FE) + CRE bid-automation loop** — *confirmed unbuilt; no contract change needed.* FE
   withdraw spine (`useCowExit.ts`, `ZcWithdrawModal.vue`) shipped; depth-chart page + the `clamp(free−harvest,0,cap)`
   CRE loop are net-new off-chain/UI (tracked as CRE-05). Contract surface (`postBid`/`cancelBid`) is complete.
+- **M9** (MED liveness → trusted-admin footgun, DOC/runbook) · "`ExitGate` manager(2) grant bricks on a re-pointed
+  Baal with `managerLock==true`." REACHABLE (`ExitGate.setBaal`, `:114`, `onlyOwner`), but only via a **Timelock**
+  re-point to a hostile/locked Baal — build-phase wiring is deliberately settable (§17) and the Timelock owner is
+  trusted (§13), so this is the same class as the I5 `setSafe`/`setAvatar` parity footgun, NOT an attacker path. **No
+  code fix** (re-pointing the Baal substrate is not a normal flow; immutability is the pre-prod lock-down). **Runbook:**
+  before any `setBaal`, assert the target Baal's `managerLock()==false` (else manager(2) can't be re-granted →
+  deposits/`burnFor` brick, fail-closed). *(Verified + recorded during the SEC-DOC double-check, 2026-06-16 — was absent
+  from pass-2.)*
 
 ---
 
@@ -263,9 +277,15 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
 |---|---|---|
 | FIX | 16 | H1 H2 H4 H5 M1 M2 M4 M6 M7 L2 L3 L8 L9 L11 L12 L18 I6 |
 | DOC | 14 | M3 M8 L4 L6r L13 L15 L17 L16 I1 I2 I3 I4 I5 prorata |
-| DISMISS | 3 | H3 L5 L10 |
-| DEFER | 3 | drawgate · covguard · exitbook |
+| DISMISS | 4 | H3 L5 L10 · **M5** (deploy assert already prevents OFF; optional warning-event deferred) |
+| DEFER | 4 | drawgate · covguard · exitbook · **M9** (trusted-admin re-point footgun; `setBaal` managerLock runbook) |
 | dissolved | 1 | L1 (folds into M2/Group 2) |
+
+> **SEC-DOC double-check reconciliation (2026-06-16):** M5 and M9 were the only two audit findings absent from
+> pass-2's tally. Both verified above and now recorded — M5 is already mitigated (deploy assert), M9 is a
+> Timelock-trusted footgun (runbook note). With these, **every audit-claude finding is accounted for** in this
+> kill-list, so `build/audit-claude/` (the raw first-pass scratch, fully superseded) is safe to delete — its content
+> also remains in git history. The SEC track (16 FIX + 14 DOC) is COMPLETE.
 
 > HIGHs: **H1, H2, H4 are real FIX** (H4 escalated). **H5** is a real fail-close FIX. **H3** dismissed.
 > No HIGH left unresolved or in limbo. The earlier "3 open design decisions" collapsed: H5 → fail-close,
