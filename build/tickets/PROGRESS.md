@@ -10,19 +10,32 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**CRE-05a — buy-burn bid-loop wasip1 workflow (NOW UNBLOCKED by CTR-01).** With `SzipBuyBurnModule` carrying a CRE
-report socket (CTR-01, done 2026-06-16), the bid-loop is a real `cre-sdk-go` `WriteReport` workflow: read
-free-reservoir / utilization / `navExit` / `quoteMaxPrice` / `currentBid` / `covered` via `CallContract` + watch
-`RedemptionSettled`/fills via `FilterLogs`, compute `clamp(freeReservoir − harvestReserve − safetyBuffer, 0,
-buybackCap)` @ `navExit×(1−d)`, and on meaningful drift `WriteReport(CANCEL_BID)` then `WriteReport(POST_BID,
-abi.encode(sellAmount,buyAmount,validTo))` to the module. **Prereq folded in:** this is the first buildable CRE
-workflow, so it also establishes the minimal `cre/buyburn-bid/` go module (the CRE-00 scaffold subset — go.mod +
-`reference/cre-sdk-go` wiring). Gate: `go build` wasip1 + a table-driven test asserting the POST_BID envelope
-`abi.encode(uint8 POST_BID, abi.encode(uint256,uint256,uint32))` round-trips the module's `_processReport` decode +
-a simulated trigger→read→report run. Design source: `build/CoW.md` / `build/CoW-exit.md`.
-- The reviewer releases the specific NEXT item. Alternatives the reviewer may pick instead: the broader **CRE-00**
-  scaffold first (if the whole CRE track is to be scaffolded before any single workflow), or applying the
-  `CloneReportReceiver` socket to the next operator/controller module (see the new systemic obligation below).
+**FE — NAV exit-book page (driver `build/CoW.md` item #3).** The two-sided depth chart (x = % of NAV, y =
+cumulative USDC) + liquidity gauge (free reservoir / harvest reserve / utilization) + one-click CoW exit, built
+in the `frontend/zipcode-finance-euler` LAYER on the shipped withdraw spine (FE-04). MVP = read-only depth chart
+first (NAV line via `navExit` + the protocol bid block via `SzipBuyBurnModule.currentBid()` — now maintained by
+the CRE-05a loop — + the external CoW book via the CoW Orderbook API), then the exit action (CoW SDK, wallet-signed
+SELL). Reuse the `useZipTx` 1.3× gas helper + the anvil address/ABI books. Gate: `nuxt build` green in the layer
+(NOT `npm run dev`), anvil up. Binds to: `SzipBuyBurnModule` `0x1288…`, `SzipNavOracle` `0x0C3E…`, reservoir
+`IEVault`/EE pool for the gauge.
+- The reviewer releases the specific NEXT item. Alternatives: socket-or-keeper the next operator/controller module
+  (the systemic seam below — unblocks CRE-02 + the rest of CRE-05), or the broader **CRE-00** scaffold.
+
+> **CRE-05a — buy-burn bid-loop wasip1 workflow — DONE 2026-06-16.** The exit half of CRE-05 (§8.7), unblocked by
+> CTR-01. Built `cre/buyburn-bid/` (the first buildable CRE workflow — also the minimal CRE scaffold): a
+> `cre-sdk-go` workflow that maintains the single resting buy-burn bid via the report path. Reads
+> `currentBid`/`quoteMaxPrice`/`buybackCap`/`fresh`/`maxAge`/`oldestRequiredLegTs`/`covered` + the donation-immune
+> §8.2 free-reservoir read (`EulerEarn.maxWithdraw(warehouse)`); sizes `clamp(freeReservoir − harvestReserve −
+> safetyBuffer, 0, buybackCap)` @ `quoteMaxPrice` (= `navExit×(1−d)`); reconciles one bid (post / cancel+repost on
+> size-drift ≥ driftBps / cancel) via `WriteReport(POST_BID|CANCEL_BID)` to the socketed module; cron + a
+> `RedemptionSettled` LogTrigger. Gate green: `GOOS=wasip1 GOARCH=wasm go build` exit 0 + `go test` 14 pass
+> (encode round-trip byte-matching `_processReport`, 7 simulated-run scenarios, sizing units). Ticket:
+> `build/tickets/cre/CRE-05a-buyburn-bid-loop.md`.
+>
+> **CRE-06 (exit-vs-harvest split) — DISCHARGED-as-config by CRE-05a.** The triage decision (CoW.md §2 item 2
+> permits folding it into #1's sizing): the split is the `harvestReserve` + `safetyBuffer` Config params in the
+> bid sizing (M1 = constants; a dynamic, utilization-aware policy is a later parameter swap, not a redesign). No
+> standalone CRE-06 workflow.
 
 > **CTR-01 — Clone-compatible CRE report socket on SzipBuyBurnModule — DONE 2026-06-16.** Resolved the
 > operator-path-has-no-CRE-write seam for 8-B14: added the reusable `CloneReportReceiver` base
@@ -71,7 +84,8 @@ Numbering follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the sp
 | CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` — and the xALPHA-APR feed (the 8x-02 receiver is built; the Go producer remains) | §8.6 / §8.8 |
 | CRE-04 | Senior-warehouse **SUPPLY / APPROVE / REPAY** ops via the Roles adapter | §8.5 |
 | CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy). *(2026-06-12 design inputs: (a) the DurationFreeze main↔sidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth; see `build/CoW-exit.md`.)* **CLARIFICATION (2026-06-16): the freeze's physical lever (`commit`/`release`) is DORMANT by design.** `commit` is `onlyOperator` + discretionary (no auto-machinery), and the sidecar is empty in normal operation because the dominant asset (the staked ICHI LP) can't be moved into it — it is counted toward the floor IN PLACE via the oracle's `pathLockedLpEquity()` (`coverageValue = committedValue + pathLockedLpEquity`). So CRE-05 should drive `commit` ONLY on a coverage shortfall (a price-drift breach where in-place LP + sidecar < `requiredCommittedValue`), to top up with the movable plain legs (USDC/zipUSD preferred — stable backing). The live machinery is the **accounting + outflow gates** (`covered()` on `postBid`/`removeLiquidity`/`release`), not the physical rotation. | §8.7 |
-| CRE-06 | **CROSS-CUTTING — exit-vs-harvest capital allocation (NOT owned by a single ticket above).** One reservoir funds two competing claims: the CoW exit bid (CRE-02 REDEEM→REPAY→CoW) and the 8-B5 strike borrow (CRE-05 harvest working capital). A harvest borrow raises `U`, which shrinks redeemable liquidity AND raises the freeze floor — in real time. The CRE must arbitrate this split; it is currently unencoded discretion. Scope this policy explicitly when CRE-02/04/05 are written. See `build/CoW-exit.md` (structural coupling). | §8.5 / §8.7 |
+| CRE-06 | **DISCHARGED-as-config by CRE-05a (2026-06-16).** The exit-vs-harvest split is now the `harvestReserve` + `safetyBuffer` Config params in the buy-burn bid sizing (`clamp(freeReservoir − harvestReserve − safetyBuffer, 0, buybackCap)`) — M1 constants; a dynamic utilization-aware policy is a later parameter swap, not a redesign. No standalone workflow. (Original cross-cutting framing retained in `build/CoW-exit.md`.) | §8.5 / §8.7 |
+| CRE-05a | **DONE 2026-06-16 — buy-burn bid-loop** (the exit half of CRE-05; `cre/buyburn-bid/`). The single-resting-bid automation via the CTR-01 report path. Gate green (wasip1 build + 14 tests). The REST of CRE-05 (the harvest engine legs 8-B5…8-B10 + main↔sidecar rotation) remains — blocked on the systemic operator-path seam below (socket-or-keeper per module). | §8.7 |
 
 ### Frontend ↔ anvil (Vue/viem, in the `zipcode-finance-euler` LAYER over a read-only `euler-lite` base)
 **Goal: make the team's skinned borrower/lender app interactive against the live local protocol — "fuck around
@@ -119,6 +133,15 @@ track on it.
   fail-closed; what 8-B14 did), OR **(b)** drive it from an **off-chain keeper** holding the operator/controller
   hot key (standard go-ethereum tx submission, outside the CRE sandbox). The §8.7 spec exception + the rationale
   are recorded in `claude-zipcode.md` §8.7. Not a code fix owed yet — a track-shaping decision before CRE-02/05.
+
+- **DEP SEAM (raised 2026-06-16, CRE-05a) — the CRE workflows bind to the IN-TREE `reference/cre-sdk-go`
+  snapshot, not a published release.** `cre/buyburn-bid/go.mod` uses `replace` → `reference/cre-sdk-go` because
+  the published releases (`cre-sdk-go@v0.10.0` / capability `@…beta.0`) LACK APIs the build relies on:
+  `evm.WriteCreReportRequest` (the public write type — published has only the inner `WriteReportRequest`),
+  `testutils.SetTimeProvider`, and some `evm` chain-selector consts. Until the published SDK catches up (or the
+  snapshot is vendored/pinned for the real CRE deploy), every `cre/*` workflow should `replace` to the in-tree
+  snapshot. Also: go-ethereum v1.17.2's `abi.Pack` wants a NATIVE `uint32` (not `*big.Int`) for a `uint32` arg —
+  produced bytes identical; noted in `cre/buyburn-bid/workflow.go`. Not a code fix owed; a build/deploy note.
 
 - **DEPLOY OBLIGATION (raised 2026-06-16, CTR-01) — `DeployZipcode` must wire the buy-burn report socket
   post-clone.** After cloning `SzipBuyBurnModule`, the deploy must call `setForwarder(keystoneForwarder)` +
