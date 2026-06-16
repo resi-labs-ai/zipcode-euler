@@ -11,35 +11,32 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 ## NEXT
 
 **CRE-00 — CRE track head (re-orient + scaffold).** The **SEC remediation track is COMPLETE** (SEC-01…SEC-15 FIX +
-SEC-DOC, all DONE 2026-06-16). Per the kill-list "Next phase": **fresh anvil deploy → solidify `build/wires/` → CRE → FE.**
-- **Immediate next step (per kill-list):** a fresh anvil Base-fork deploy (`contracts/script/DeployLocal.s.sol`) to
-  confirm the full post-SEC stack stands up clean, then re-solidify any `build/wires/` truth-source the SEC sweep
-  touched, **then** pick up the CRE track at its head **CRE-00** (scope retained in the Backlog table below).
+SEC-DOC, all DONE 2026-06-16). Next phase: **fresh anvil deploy → solidify `build/wires/` → CRE → FE.**
+- **Immediate next step:** a fresh anvil Base-fork deploy (`contracts/script/DeployLocal.s.sol`) to confirm the full
+  post-SEC stack stands up clean, then re-solidify any `build/wires/` truth-source the SEC work touched, **then**
+  pick up the CRE track at its head **CRE-00** (scope retained in the Backlog table below).
 - The reviewer releases the specific NEXT item; CRE-00 is the deferred head, but a deploy-sanity pass is the natural
-  first move now that all 30 kill-list items (16 FIX + 14 DOC) are dispositioned.
+  first move now that the internal-audit remediation is fully dispositioned.
 
-> **The SEC track is COMPLETE** — all 16 SEC tickets (SEC-01…SEC-15 FIX + SEC-DOC) DONE. The kill-list is fully
-> dispositioned: 16 FIX landed, 14 DOC swept, 3 DISMISS + 3 DEFER tracked. See the SEC track section below.
+> **The SEC track is COMPLETE** — all 16 internal-audit remediation items (15 FIX + the DOC sweep) landed; the
+> deliberate non-fixes are recorded under Open obligations below. See the SEC track section below.
 >
 > **The Frontend ↔ anvil track is COMPLETE** (FE-00…FE-07, 2026-06-10/11). The **CRE track** (CRE-00…CRE-06) is the
 > next workstream; its head is CRE-00 (scope retained in the Backlog table below).
 
 ---
 
-## SEC track — kill-list remediation (auditor-prep) — COMPLETE
+## SEC track — internal-audit remediation (auditor-prep) — COMPLETE
 
-**All 16 SEC tickets DONE** (SEC-01…SEC-15 FIX + SEC-DOC doc-sweep; SEC-01…13 on 2026-06-15, SEC-14/15/DOC on
-2026-06-16). The kill-list is fully dispositioned — **16 FIX + 14 DOC + 4 DISMISS + 4 DEFER** — and
-`build/kill-list.md` is the per-item decision record (file:line + the fix, or why a proposed fix was rejected).
-Every fix is in the committed, fork-tested code (`forge test` **829 passed / 0 failed / 3 skipped**) and
-truth-sourced in `build/wires/` (index `build/wires/COVERAGE.md`).
-
-All 16 SEC ticket files + their `build/reports/SEC-*` window reports were pruned 2026-06-16 — they were build-time
-scratch, fully superseded by **kill-list + wires + code** (the durable record; recoverable in git history). No SEC
-tickets or reports remain on disk. The conceptual findings that weren't obvious from code live in the wires —
-e.g. SEC-08's "perspective is provenance-only" finding is in `wires/WOOF-04.md`.
-
-DISMISS (H3/L5/L10/M5) + DEFER (drawgate/covguard/exitbook/M9) are recorded in `build/kill-list.md`.
+**All SEC remediation DONE** (15 FIX + the DOC sweep; 2026-06-15/16). Every fix is in the committed, fork-tested
+code (`forge test` green) and truth-sourced in `build/wires/` (index `build/wires/COVERAGE.md`) — **that, plus the
+git commit history, is now the durable record.** The internal-audit scratch (the `audit-claude/` findings, the
+consolidated `kill-list.md`, the per-item SEC tickets + reports) has been pruned — it was Claude-run self-audit
+bookkeeping, not an external-auditor deliverable, and its actionable conclusions all landed in code + wires. The
+conceptual findings that weren't obvious from code live in the wires (e.g. the "perspective is provenance-only"
+finding in `wires/WOOF-04.md`). The deliberate **non-fixes** that remain forward-relevant are recorded under Open
+obligations (the `setBaal` managerLock caveat; the abandoned draw-time coverage gate); the pure "verified-not-real"
+dismissals (the old H3/L5/L10/M5) needed no code and are recoverable from git if a professional auditor re-raises them.
 
 ---
 
@@ -114,13 +111,14 @@ track on it.
   queue are each hard-capped at `MAX_QUEUE_LENGTH = 30` (`reference/euler-earn/src/libraries/ConstantsLib.sol:17`;
   withdraw-queue cap enforced at `EulerEarn.sol:785`). `openLine` enables one EVK borrow vault per line (one queue
   slot), so a single EE pool structurally supports **≤ ~29 concurrent open lines**. **SEC-06 does NOT raise this** —
-  it only reclaims slots from *closed* lines (correct + necessary for churn, but the kill-list framed H2 as
+  it only reclaims slots from *closed* lines (correct + necessary for churn, but the original finding framed this as
   low-concurrency/lines-close-faster-than-open). If the product needs hundreds of **concurrent** lines (e.g. ~300),
   decide before scaling: **(a)** shard lines across multiple EE pools (~10+); **(b)** change topology to a shared
   borrow vault with internal per-line sub-accounting (one slot, many lines); **(c)** confirm whether the supply-queue
   *append* in `openLine` is even needed (`reallocate` only requires `config[id].cap != 0`, not supply-queue
   membership) — but (c) alone does NOT help because the **withdraw-queue** cap still bounds concurrent enabled
-  markets. Not a kill-list FIX; a topology decision owed before high-line-count scaling. See SEC-06 ticket.
+  markets. Not a code fix; a topology decision owed before high-line-count scaling (the `closeLine` queue-prune that
+  reclaims closed-line slots is in `EulerVenueAdapter` + `wires/`).
 
 - **TODO (raised 2026-06-12) — `DurationFreezeModule` is INCOMPLETE; rethink its premise + accounting at rebuild.**
   Two independent problems, the first deeper than the second:
@@ -227,6 +225,17 @@ track on it.
 - **CRE report ABI seam.** Every CRE report payload must `abi.decode` to the §4.4 layout the filed
   `ZipcodeController` / `ZipcodeOracleRegistry` expect (reportTypes 1/2/4/5/6 → controller, 3 → registry).
 - **Subgraph blocked** until item-10 freezes the §9 event signatures.
+- **RUNBOOK — `ExitGate.setBaal` managerLock parity (a trusted-admin footgun).** `ExitGate.setBaal` (`:114`,
+  `onlyOwner`/Timelock) can re-point to a different Baal; if that Baal has `managerLock == true`, the Gate's
+  `manager(2)` grant can no longer be re-set → deposits/`burnFor` brick (fail-closed). Only reachable via a Timelock
+  re-point to a hostile/locked Baal (build-phase wiring is deliberately settable, §17; the Timelock owner is trusted,
+  §13) — same class as the `WarehouseAdminModule` `setSafe`/`setAvatar` parity footgun. No code fix owed; **before any
+  `setBaal`, assert the target Baal's `managerLock() == false`.**
+- **DEFER — on-chain draw-time coverage gate (ABANDONED 2026-06-16).** A portfolio-level "total debt ≤ junior-backed
+  capacity" gate at borrow time was considered and **dropped**: a draw can only borrow USDC physically present in the
+  EulerEarn pool (senior deposits), so pool liquidity already hard-bounds total draws; plus per-line LTV/cap + the two
+  `covered()` outflow gates. No credible path where draws outrun coverage. Don't re-propose. If ever revisited: a
+  `zipUSDValue()` TWAP-bracketed view + an `illiquidSeniorValue() + draw <= zipUSDValue()` check in the draw path.
 
 ---
 

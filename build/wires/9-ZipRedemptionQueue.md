@@ -142,10 +142,10 @@ From `PROGRESS.md` (rows 364–369, 371):
   or `KR-8` is **stale**.
 - **Single-requester invariant is enforced on-chain.** A second distinct requester escrowing while pending is open
   reverts `MultipleRequesters`. After a full drain (`pendingRequester` cleared) a new requester may open.
-- **Trust invariant — `redeemController` must never be untrusted (kill-list I3).** Par-burn at strict 1:1 is sound
+- **Trust invariant — `redeemController` must never be untrusted.** Par-burn at strict 1:1 is sound
   ONLY because this is single-requester treasury-internal plumbing; the `MultipleRequesters` guard is the SOLE
   defense keeping it so. An untrusted `redeemController` could redeem at par ahead of an impairment.
-- **Impairment-blind by design (kill-list prorata).** The "no loan-marked-bad signal" premise is WRONG —
+- **Impairment-blind by design.** The "no loan-marked-bad signal" premise is WRONG —
   `DefaultCoordinator.writeProvision` marks impairment into the JUNIOR `SzipNavOracle` NAV (the junior CoW exit
   self-prices). This SENIOR par queue is INTENTIONALLY impairment-blind (pays $1 par regardless); no pro-rata /
   impaired-rate machinery belongs here.

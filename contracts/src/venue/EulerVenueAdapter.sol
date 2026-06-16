@@ -201,7 +201,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         // and any partial.
         if (collateralAmount != 1e18) revert InvalidCollateralAmount();
 
-        // SEC-08 (kill-list M6): runtime timelock precheck. `submitCap` sets `pendingCap.validAt = now + timelock`
+        // runtime timelock precheck. `submitCap` sets `pendingCap.validAt = now + timelock`
         // and the SAME-TX `acceptCap` carries `afterTimelock(validAt)` (EulerEarn.sol:507) — so a non-zero EE
         // timelock makes step-4 onboarding revert AFTER the LineAccount + both EVK proxies + router are already
         // built (orphaned state). The EE owner is EXTERNAL and can RAISE the timelock post-deploy, so a deploy-time

@@ -117,7 +117,7 @@ contract ZipDepositModule is ReentrancyGuard {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcIn);
         zipMinted = usdcIn * scaleUp;
         IESynth(zipUSD).mint(msg.sender, zipMinted); // capacity-gated; mint(·,0) is a no-op (the ZeroAmount guard covers it)
-        // kill-list L17: no symmetric `forceApprove(eePool, 0)` reset is needed — this is an EXACT-amount approval
+        // no symmetric `forceApprove(eePool, 0)` reset is needed — this is an EXACT-amount approval
         // that `eePool.deposit` immediately pulls in full, so the residual allowance always settles to 0, and
         // `eePool` is set-once/re-pointed only by the Timelock (not an arbitrary spender). See `zap` for the
         // contrast with the zipUSD->gate approval, which DOES reset because the gate is freely re-settable wiring.
@@ -143,11 +143,11 @@ contract ZipDepositModule is ReentrancyGuard {
         uint256 zipAmount = usdcIn * scaleUp;
         IESynth(zipUSD).mint(address(this), zipAmount); // transient — handed to the Gate below
 
-        // kill-list L17: no symmetric `forceApprove(eePool, 0)` reset is needed (and the asymmetry vs the
+        // no symmetric `forceApprove(eePool, 0)` reset is needed (and the asymmetry vs the
         // zipUSD->gate reset below is justified): this is an EXACT-amount approval that `eePool.deposit` immediately
         // pulls in full, so the residual allowance always settles to 0, and `eePool` is set-once/re-pointed only by
         // the Timelock (not an arbitrary spender). The zipUSD->gate path below DOES reset because the gate is freely
-        // re-settable wiring. (An optional symmetric reset here would be behavioral — out of SEC-DOC scope.)
+        // re-settable wiring. (An optional symmetric reset here would be behavioral.)
         IERC20(usdc).forceApprove(eePool, usdcIn);
         IEulerEarn(eePool).deposit(usdcIn, warehouse); // USDC -> venue pool, warehouse custodies the shares
 

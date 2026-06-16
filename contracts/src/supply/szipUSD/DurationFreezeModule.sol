@@ -319,7 +319,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///         `postBid`, the LP-dissolution `removeLiquidity`) read it so a PRICE-DRIFT breach —
     ///         coverage falling below the floor with no `release` — freezes outflow until a `commit`/re-stake tops it
     ///         back up (build/lp-path-lock.md).
-    /// @dev kill-list L13 (DOUBLE-SQUEEZE — bucket holds, the "debt nets out consistently" rationale was wrong): a
+    /// @dev DOUBLE-SQUEEZE — bucket holds, the "debt nets out consistently" rationale was wrong: a
     ///      reservoir borrow against the fenced LP pushes BOTH sides of this inequality the wrong way at once —
     ///      (1) the NUMERATOR drops, because `pathLockedLpEquity()` subtracts the reservoir strike debt from the LP
     ///      mark; and (2) the FLOOR rises, because the borrow draws senior cash so `maxWithdraw(warehouse)` falls,

@@ -134,10 +134,10 @@ committed. No findings is a flag to be skeptical, not a win.
 ### Step 5 — Conclude (leave a resumable on-disk state, then STOP)
 - **Doc-sync (the load-bearing step): update the `wires/` truth-source for every CHANGED contract** — look up the
   owning wire doc via `wires/COVERAGE.md` and fix any enumerated guard/behavior list so it matches the built
-  contract (the most-missed step). Plus `PROGRESS.md`, the `kill-list.md` checkbox, and any `claude-zipcode.md` spec
-  fix. A change to built-contract behavior has backward-facing truth-sources to keep in sync, not just the forward
-  ones below. (Per-item tickets/reports + `audit-claude/` are pruned once work lands — the durable record is
-  `wires/` + `kill-list.md` + the commit; don't re-create them.)
+  contract (the most-missed step). Plus `PROGRESS.md` and any `claude-zipcode.md` spec fix. A change to
+  built-contract behavior has backward-facing truth-sources to keep in sync, not just the forward ones below.
+  (Per-item tickets/reports + the old internal-audit docs are pruned once work lands — the durable record is
+  `wires/` + `PROGRESS.md` + the commit; don't re-create them.)
 - Ticket filed under `build/tickets/<track>/`.
 - `build/tickets/PROGRESS.md` updated — mark the item done, set the next `NEXT`, log any spec fix.
 - Any `build/claude-zipcode.md` spec fix saved.

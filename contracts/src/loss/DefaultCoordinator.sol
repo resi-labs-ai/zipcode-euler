@@ -267,7 +267,7 @@ contract DefaultCoordinator is ReceiverTemplate {
     /// @dev `data = (bytes32 lienId, uint256 capitalSlashAmount)`. Heal the provision to 0, then route the bond
     ///      capital-first (`slashXAlphaToCapital` if `>0`) then cohort (`slashXAlphaToCohort` if any remains —
     ///      reading the escrow's remaining bond avoids a `NoBond` revert when a full-bond capital slash cleared it).
-    ///      kill-list L6r (rejected assert — the rejection is the finding): an over-bond `capitalSlashAmount` is NOT
+    ///      rejected assert — the rejection is the finding: an over-bond `capitalSlashAmount` is NOT
     ///      pre-asserted here. `slashXAlphaToCapital` reverts in the escrow on insufficient bond, which reverts the
     ///      WHOLE tx atomically (CEI: the provision heal + status flip roll back, nothing is stranded), and the CRE
     ///      can re-submit with a corrected amount. An explicit `capitalSlashAmount <= bondAmount` guard would be a

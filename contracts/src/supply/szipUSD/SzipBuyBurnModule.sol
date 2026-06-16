@@ -73,7 +73,7 @@ contract SzipBuyBurnModule is MastercopyInitLock {
     bytes32 public constant BALANCE_ERC20 = 0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9;
     /// @notice The single pinned appData. A non-zero/unconstrained appData could attach hooks/partner-fees the
     ///         validation never saw — pin it to a constant so the signed order carries no unvalidated surface.
-    /// @dev kill-list M3: buy-burn FILL is INTENTIONALLY not fill-time coverage-gated. The `postBid` `covered()` gate
+    /// @dev buy-burn FILL is INTENTIONALLY not fill-time coverage-gated. The `postBid` `covered()` gate
     ///      below gates POSTING, not the solver fill — but a fill after coverage drifts below the floor cannot breach
     ///      it, because the USDC the bid spends is engine-Safe value that `coverageValue()` already EXCLUDES (it is
     ///      free-side, not committed sidecar value). Adding a CoW pre-/post-interaction HOOK to re-check coverage at
@@ -310,7 +310,7 @@ contract SzipBuyBurnModule is MastercopyInitLock {
         // to fill against a NAV mark that has since gone stale. `navExit` is priced now off `fresh()` legs, but the
         // order rests until `validTo`. The legs feeding `navExit` may already be up to `maxAge` old at post-time
         // (`fresh()` only requires age ≤ `maxAge`), so anchoring the ceiling to POST-time (`now + maxAge`) allowed a
-        // worst-case fill-time mark age of `2·maxAge` (SEC-13 / kill-list L12). Anchor instead to the OLDEST required
+        // worst-case fill-time mark age of `2·maxAge`. Anchor instead to the OLDEST required
         // leg's timestamp, so the mark a fill lands against is at most `maxAge` old. Pure addition (`anchor + maxAge`,
         // never subtraction): the oldest-leg-age==maxAge / unset-leg / maxAge==0 edges fail closed via this fence plus
         // the `:299` `validTo > now` check — no underflow. Binds before `BadValidTo` whenever `anchor + maxAge < now + MAX_BID_TTL`.

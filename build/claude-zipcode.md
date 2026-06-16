@@ -143,7 +143,7 @@ governed knob (§6.4). *(Supersedes the 2026-06-06 soulbound-claim / withhold-no
 | Decimal math | `ScaleUtils :: calcScale (:53) / getDirectionOrRevert (:38) / calcOutAmount (:63)` | `reference/euler-price-oracle/src/lib/ScaleUtils.sol` |
 | **Signed-report oracle pattern** | `RedstoneCoreOracle` — state-changing `updatePrice() (:78)` caches `{price, timestamp}`; view `_getQuote` reads cache + enforces `maxStaleness`. We adopt the cache→stale-checked-view *pattern* but set a home-appropriate validity window, **not** its 5-min `MAX_STALENESS_UPPER_BOUND (:24)` (§4.1/§7) | `reference/euler-price-oracle/src/adapter/redstone/RedstoneCoreOracle.sol` |
 | Connector | `EVC :: setAccountOperator (:364) / setOperator (:343) / call (:553) / batch(BatchItem{target,onBehalfOfAccount,value,data}) (:600) / getCurrentOnBehalfOfAccount (:206)`; single-controller + `checkAccountStatus` | `reference/ethereum-vault-connector/src/EthereumVaultConnector.sol` |
-| CRE inbound | `ReceiverTemplate :: onReport(metadata, report) (:78) → _processReport (:119)`; `_decodeMetadata → (workflowId, workflowName, workflowOwner)`; gated on the CRE Forwarder (`s_forwarderAddress`, set at construction `:48`). **As-built correction (kill-list I4 — supersedes the earlier "immutable / we drop the setter" framing):** `ReceiverTemplate is Ownable`, and the setter is **RETAINED** — `setForwarderAddress`/`setExpectedAuthor`/`setExpectedWorkflowId` are all `onlyOwner`, so the Forwarder + the workflow identity are **Timelock-mutable** in the build phase per §17 (re-pointable in an emergency; immutability is the deferred pre-prod lock-down). A zero Forwarder still makes `onReport` permissionless `:82-85`. (So `SzAlphaRateOracle` and every other `ReceiverTemplate` HAS an owner; only the economic knobs are immutable.) | `reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol` |
+| CRE inbound | `ReceiverTemplate :: onReport(metadata, report) (:78) → _processReport (:119)`; `_decodeMetadata → (workflowId, workflowName, workflowOwner)`; gated on the CRE Forwarder (`s_forwarderAddress`, set at construction `:48`). **As-built correction (supersedes the earlier "immutable / we drop the setter" framing):** `ReceiverTemplate is Ownable`, and the setter is **RETAINED** — `setForwarderAddress`/`setExpectedAuthor`/`setExpectedWorkflowId` are all `onlyOwner`, so the Forwarder + the workflow identity are **Timelock-mutable** in the build phase per §17 (re-pointable in an emergency; immutability is the deferred pre-prod lock-down). A zero Forwarder still makes `onReport` permissionless `:82-85`. (So `SzAlphaRateOracle` and every other `ReceiverTemplate` HAS an owner; only the economic knobs are immutable.) | `reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol` |
 | Data Streams (optional transport) | `VerifierProxy :: verify` (state-changing, charges LINK/native fee via `FeeManager`), RWA report v4/v8. Not required: the regional HPI bound arrives as a CRE HTTP input (§4.1/§8.10), not via DS | `reference/chainlink-evm/contracts/src/v0.8/llo-feeds/v0.5.1/VerifierProxy.sol` |
 | IRM | set via `setInterestRateModel`. **Uses a flat/fixed rate** — `IRMLinearKink(baseRate, 0, 0, kink)` (`baseRate` immutable line 14; the two slope args 0 → constant APR; constructor line 22 — a negotiated credit-line rate, not utilization-floating) | `reference/euler-vault-kit/src/InterestRateModels/IRMLinearKink.sol`, `reference/evk-periphery/src` (IRM) |
 | Async redeem base | `BaseERC7540 is ERC4626, Owned, IERC7540Operator` (`:12`, `setOperator :34`), `ControlledAsyncRedeem` (`requestRedeem :39`, `fulfillRedeem onlyOwner :65`, pending/claimable `:22-32`) | `reference/erc7540-reference/src/{BaseERC7540,ControlledAsyncRedeem}.sol` (**MIT — fork**) |
@@ -323,7 +323,7 @@ supersedes the old `sUSD3` cooldown + soulbound-claim model, which assumed a rag
    forfeit** — the basket is never confiscated against a frozen slice; the frozen equity stays the holder's (steps
    4-6) and clears as it frees. The operator tier here is a **set-once `windowController`** (narrow blast radius —
    it can only post the discounted bid + drive `burnFor`, never mint or change authority). **The buy-burn FILL is
-   intentionally NOT fill-time coverage-gated (kill-list M3):** `postBid` checks `covered()` at POST time, but the
+   intentionally NOT fill-time coverage-gated:** `postBid` checks `covered()` at POST time, but the
    solver fill is not re-gated, because the USDC the bid spends is free-side engine-Safe value that the coverage
    floor (`coverageValue()`) already EXCLUDES — so a fill after coverage drifts cannot breach the floor. A CoW
    pre-/post-interaction hook to re-check coverage at fill is **rejected** (`APP_DATA` is pinned to `0`, which
@@ -349,7 +349,7 @@ supersedes the old `sUSD3` cooldown + soulbound-claim model, which assumed a rag
    capitulates to a lower bid now, it is one book and their own limit — never a protocol haircut. Their share of
    the frozen slice is theirs throughout; it is realized when the market fills them or the freeze releases.
 
-**Re-affirmed (kill-list I1):** there is **no on-chain junior redeem-for-assets** — the szipUSD exit is the
+**Re-affirmed:** there is **no on-chain junior redeem-for-assets** — the szipUSD exit is the
 NAV-tracking CoW secondary above (rest a sell → treasury just-in-time buy-burn or external fill → `burnFor`), never
 an on-chain "burn share, receive basket" call. This is the **junior-exit valve only — zipUSD itself never freezes**
 (the senior is the composable dollar; its only throttle is the epoch queue, §6.1). The sidecar is the freeze; gate custody removes the raw-ragequit footgun; the
@@ -384,7 +384,7 @@ There are **three pricing inputs**, all CRE-mediated (same DON push-cache trust 
 CRE pushes **only** the prices it cannot read on Base (the xALPHA `alphaUSD` leg; HYDX if thin); the contract **reads
 all quantities on-chain** (balances across the main + sidecar Safes incl. the **staked** ICHI LP read off the gauge),
 composes the basket NAV, and maintains an **on-chain cumulative TWAP accumulator** on `navPerShare`. Consumers read
-the **time-weighted** share price over a governed window **`W ≈ 4h`** (§17). **(kill-list I2 — precise:** the
+the **time-weighted** share price over a governed window **`W ≈ 4h`** (§17). **(Precise:** the
 szipUSD **share** is NAV-priced both ways (`navEntry = max(spot,twap)` / `navExit = min(spot,twap)`); the flat **$1**
 appears **only** as the **zipUSD basket-leg / deposit-input** mark, never on the share. The real latent risk is a
 zipUSD **de-peg**: it would value the zipUSD leg above its realized backing and **over-issue szipUSD, diluting
@@ -543,7 +543,7 @@ tags MUST match these exactly (§4.4 / `ZipcodeOracleRegistry.sol:93` / `SzipNav
   (on-chain it is last-write-wins, so a dup is a silent-correctness footgun the producer must prevent) and
   enforce equal-length `liens`/`prices` **before** encoding (don't rely on the on-chain revert to catch a
   malformed batch). No malformed/dup entry, atomic per batch.
-  - **(kill-list L4 — the all-or-nothing batch is the mitigation, not a bug.)** The per-batch atomicity is the
+  - **(The all-or-nothing batch is the mitigation, not a bug.)** The per-batch atomicity is the
     intentional fail-closed design: a poison key reverts its own shard so no partial/inconsistent revaluation lands.
     Adding a per-key `try/catch` inside `_processReport` to skip-and-continue is **rejected** — it would swallow
     poison keys and let an inconsistent partial set through, weakening exactly the WOOF-02 guarantee. The producer
@@ -715,7 +715,7 @@ a CRE workflow (`cre/szalpha-rate/`) **pulls that ONE primitive from 964 and pus
 `SzAlphaRateOracle` (`contracts/src/bridge/SzAlphaRateOracle.sol`, `reportType RATE = 8`, payload `(uint256 rate,
 uint48 ts)`). **CRE transports the rate; the chain derives everything else** (NAV, APR) on Base from it — nothing
 pre-computed is ever pushed or bridged. `SzAlphaRateOracle` is the Base-side `IXAlphaRate`: `exchangeRate()` (the
-last pushed rate) + `fresh()`/`lastUpdate()`. (**As-built, kill-list I4:** it `is ReceiverTemplate is Ownable` — it
+last pushed rate) + `fresh()`/`lastUpdate()`. (**As-built:** it `is ReceiverTemplate is Ownable` — it
 is NOT "ownerless / fully immutable." The Forwarder + workflow identity are **Timelock-mutable** (§17); only the
 economic knobs — `maxStaleness`/`window`/`aprCap` — are `immutable`.) Push guards are truthful, not adversarial — non-zero, not-future,
 **strictly-newer** (no replay/out-of-order); deliberately **no deviation band** (a validator slash legitimately
@@ -1133,7 +1133,7 @@ recovery is high) and **writes back up on verified recovery**; the loss is borne
 holder via the lower share price**, never by a per-holder share-burn, and only after the junior is exhausted is
 the senior at risk.
 
-**Impairment routing — where the "bad-loan" signal lands (kill-list prorata + I3).** The premise that there is "no
+**Impairment routing — where the "bad-loan" signal lands.** The premise that there is "no
 loan-marked-bad signal" is **wrong**: `DefaultCoordinator.writeProvision` writes the impairment into the **junior**
 `SzipNavOracle` NAV, so the junior `ExitGate` CoW exit **self-prices on impairment continuously** (an exiter sells
 into a marked-down NAV). The **senior par queue** (`ZipRedemptionQueue`, §6.1) is **intentionally impairment-blind** —

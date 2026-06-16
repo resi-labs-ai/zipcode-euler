@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {Module} from "@gnosis-guild/zodiac-core/core/Module.sol";
 
-/// @dev Shared init-lock base for the szipUSD engine-module mastercopies (SEC-14 / kill-list L18).
+/// @dev Shared init-lock base for the szipUSD engine-module mastercopies.
 ///      Each engine module is deployed once as a `ModuleProxyFactory` mastercopy, then EIP-1167-cloned
 ///      per Safe; the clone's wiring is written by `setUp(bytes)` under the zodiac-core one-shot
 ///      `initializer` modifier. WITHOUT this base the mastercopy's `_initialized` stays false, so anyone

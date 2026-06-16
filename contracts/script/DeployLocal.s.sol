@@ -146,7 +146,7 @@ contract DeployLocal is DeployZipcode {
 
         _eeCall(ee, abi.encodeWithSignature("setCurator(address)", address(d.adapter)));
 
-        // SEC-08 (kill-list M6): deploy-time perspective probe. Build a throwaway vault with the SAME shape `openLine`
+        // Deploy-time perspective probe. Build a throwaway vault with the SAME shape `openLine`
         // mints for a credit line and assert the EE factory's CONFIGURED perspective accepts it (reach the factory via
         // `creator()`). The live perspective is provenance-only so this passes today; its value is failing LOUDLY at
         // deploy if a FUTURE external perspective swap (e.g. an ungoverned-only perspective) would reject the

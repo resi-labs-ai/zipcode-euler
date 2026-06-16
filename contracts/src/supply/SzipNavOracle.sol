@@ -365,7 +365,7 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         NAV-invariant (closes the §8.2 mid-loop blind spot). Saturates at 0 (debt can never exceed the basket
     ///         in solvent operation; the floor guards the insolvent edge).
     function grossBasketValue() public view returns (uint256 value) {
-        // kill-list I2: the flat $1 mark is on the zipUSD BASKET LEG / deposit input only — the szipUSD SHARE itself
+        // the flat $1 mark is on the zipUSD BASKET LEG / deposit input only — the szipUSD SHARE itself
         // is NAV-priced (`navEntry = max(spot,twap)`, `navExit = min(spot,twap)`), never flat $1. Latent risk: a
         // zipUSD de-peg would value this leg above its realized backing and over-issue szipUSD (diluting stayers);
         // LOW, mitigated by atomic capacity-gated minting. Optional hardening (price this leg off realized backing)
@@ -411,7 +411,7 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice The path-locked LP equity (18-dp USD): the MAIN-Safe ICHI LP in every state (loose + gauge-staked +
     ///         escrow-collateralized), NET of the main Safe's reservoir strike debt. MAIN-SAFE ONLY — the SIDECAR's
     ///         LP + debt are already owned by `committedValue()` (`_grossValueOf(sidecar)`), so summing this into
-    ///         `coverageValue()` counts every Safe's LP exactly once (SEC-02 / kill-list Group 2 double-count fix).
+    ///         `coverageValue()` counts every Safe's LP exactly once (double-count fix).
     ///         The freeze module adds this to `committedValue()` for its coverage floor because the LP is fenced — its
     ///         only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it cannot reach an exit
     ///         below the floor. build/lp-path-lock.md.
@@ -528,7 +528,7 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice The oldest CRE-push timestamp among the marks `navExit()`/`fresh()` are built from — the two required
     ///         pushed legs (`LEG_ALPHA_USD`, `LEG_HYDX_USD`) and, when wired (`xAlphaRateOracle != 0`), the
     ///         cross-chain xALPHA rate's `lastUpdate()`. A resting §7 buy-burn bid anchors its `validTo` ceiling to
-    ///         `oldestRequiredLegTs() + maxAge` (SEC-13 / kill-list L12) so the NAV mark it can fill against is at
+    ///         `oldestRequiredLegTs() + maxAge` so the NAV mark it can fill against is at
     ///         most `maxAge` old at fill, not `2·maxAge` (the pre-fix post-time anchor allowed legs already up to
     ///         `maxAge` old at post-time to age another full `maxAge` while the bid rests).
     /// @dev    Unset-leg / unseeded-rate handling: an unpushed required leg (`ts == 0`) yields `0`, which fails the

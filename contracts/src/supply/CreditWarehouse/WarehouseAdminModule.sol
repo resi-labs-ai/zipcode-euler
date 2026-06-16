@@ -40,7 +40,7 @@ contract WarehouseAdminModule is ReceiverTemplate {
     /// @notice The role key this adapter is `assignRoles`'d to (must be non-zero — zero is the NoMembership sentinel).
     bytes32 public roleKey;
     /// @notice The warehouse Safe — the Roles `avatar`/`target`; the EE-share + USDC custodian.
-    /// @dev kill-list I5 (PARITY — load-bearing): this injected `safe` and the Roles modifier's own `avatar` slot are
+    /// @dev PARITY — load-bearing: this injected `safe` and the Roles modifier's own `avatar` slot are
     ///      INDEPENDENT (`safe` is set here via `setSafe`; `avatar` is set on the Roles instance via its own
     ///      `setAvatar`). SUPPLY/REDEEM inject this `safe` as the deposit/redeem owner while the Roles scope checks
     ///      `receiver == avatar`, so they MUST be the same address. A one-sided re-point (change one, not the other)
@@ -120,7 +120,7 @@ contract WarehouseAdminModule is ReceiverTemplate {
     }
 
     /// @notice Re-point the warehouse Safe (Roles avatar/custodian). `onlyOwner` (Timelock).
-    /// @dev kill-list I5: this re-point MUST be paired with `setAvatar(safe_)` on the Roles modifier instance (and a
+    /// @dev this re-point MUST be paired with `setAvatar(safe_)` on the Roles modifier instance (and a
     ///      post-condition parity check `roles.avatar() == safe`), or SUPPLY/REDEEM brick (fail-closed). See the
     ///      `safe` storage docstring above and the warehouse runbook.
     function setSafe(address safe_) external onlyOwner {

@@ -7,7 +7,7 @@ import {EulerRouter} from "euler-price-oracle/EulerRouter.sol";
 import {IEulerEarnFactory} from "euler-earn/interfaces/IEulerEarnFactory.sol";
 
 /// @title SzipPerspectiveProbe
-/// @notice SEC-08 (kill-list M6) deploy-time guardrail: build a throwaway vault with the SAME shape `openLine` mints
+/// @notice Deploy-time guardrail: build a throwaway vault with the SAME shape `openLine` mints
 ///         for a credit line, then assert the EulerEarn factory's CONFIGURED perspective accepts it
 ///         (`isStrategyAllowed`). `openLine` onboards each line vault via a same-tx `submitCap`+`acceptCap`, both of
 ///         which require `IEulerEarnFactory(creator).isStrategyAllowed(id) = perspective.isVerified(id) || isVault[id]`
@@ -70,7 +70,7 @@ contract SzipPerspectiveProbe {
 
     /// @notice Build the per-line vault SHAPE. MUST MIRROR `EulerVenueAdapter.openLine` steps 1/2/3/6
     ///         (`EulerVenueAdapter.sol:205-243`). If `openLine`'s vault construction changes, update this in lockstep
-    ///         (SEC-08 / kill-list M6) — the probe is only meaningful while it matches what `openLine` actually builds.
+    ///         — the probe is only meaningful while it matches what `openLine` actually builds.
     function buildLineVaultShape(
         GenericFactory factory,
         address evc,

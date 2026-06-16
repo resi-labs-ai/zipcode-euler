@@ -71,8 +71,7 @@ is NOT renounce-frozen here, §17).
    NAV-invariant (closes the §8.2 mid-loop blind spot; LP path-lock 2026-06-13).
 
 **`grossBasketValue()`** sums legs (1)–(6) then SUBTRACTS the reservoir debt (saturating at 0). **New views:**
-`pathLockedLpEquity()` = `_lpValue(_lpShares(mainSafe)) − _reservoirDebt(mainSafe)` — **MAIN-SAFE ONLY** (SEC-02 /
-kill-list M2/Group-2 double-count fix: the sidecar LP + debt are already owned by `committedValue()` =
+`pathLockedLpEquity()` = `_lpValue(_lpShares(mainSafe)) − _reservoirDebt(mainSafe)` — **MAIN-SAFE ONLY** (double-count fix: the sidecar LP + debt are already owned by `committedValue()` =
 `_grossValueOf(sidecar)`, so scoping this to the main Safe makes `coverageValue() = committedValue() +
 pathLockedLpEquity()` count every Safe's LP exactly once). It is the fenced LP equity the
 freeze module adds to `committedValue()` for its coverage floor; `lpShareValue(lpShares)` = the USD mark of an
