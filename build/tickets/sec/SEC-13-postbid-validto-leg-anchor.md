@@ -134,4 +134,4 @@ the fill-time mark age at exactly `maxAge`.
   and the §7 exit asymmetry are untouched). **No back-pressure / no new obligation** (the rate oracle already exposes
   `lastUpdate()`). Doc-sync: kill-list L12 `[x]`; audit finding #12 RESOLVED (summary table + `fix:` line, noting the
   addition-not-subtraction form); wire docs `8-B4-SzipNavOracle.md` + `8-B14-SzipBuyBurnModule.md` updated (consumer
-  surface, guard list, fence gotcha). Report: `build/reports/SEC-13-report.md`.
+  surface, guard list, fence gotcha). *(Standalone report pruned 2026-06-16; this ticket is the retained record.)*

@@ -85,7 +85,7 @@ confirming no behavior changed. No new regression test (doc-only). The 4 rejecte
 - **audit-claude:** `SUMMARY.md` (M3/M8 rows ✅ + LOW-line L4/L6r/L13/L15/L16/L17 tagged + setOperator ✅(SEC-15) + INFORMATIONAL I1/I2/I3/I4); `findings.md` #5 (M3); `interconnection-findings.md` C3 (M8) + C-L4 (L17); `role-based-findings.md` R11 (I4); `reference-diff-findings.md` (I5).
 - **wires:** `8-Bw-CreditWarehouse` (I4+I5), `9-ZipRedemptionQueue` (I3+prorata), `8-B14-SzipBuyBurnModule` (M3). `8x-02-SzAlphaRateOracle` confirmed already-correct for I4.
 - **spec:** `claude-zipcode.md` §3:146, §6.4, §7, §8.1, §8.8, §12 edited.
-- **Report:** `build/reports/SEC-DOC-report.md`.
+- *(The standalone `build/reports/SEC-DOC-report.md` was pruned 2026-06-16; this DONE-note is the retained record.)*
 
 ### Interpretation notes folded back (for cold rebuild)
 - **L4 runbook** lives in `claude-zipcode.md` §8.1 (already present), NOT a new `build/cre-producer-runbook.md`; the registry NatDoc points there.

@@ -126,4 +126,4 @@ storage (`_initialized == 0`), so `setUp` works exactly as the old bare instance
 - **No spec change** (interface-level QA fix; spec carries no init-lock claim). **No back-pressure / no new obligation.**
   Doc-sync: kill-list L18 `[x]`; audit R10 RESOLVED (role-based + reference-diff + SUMMARY); 8 module wire-doc runbooks
   corrected (the old "deploy then `setUp` once to lock" step was itself WRONG — the deploy never touched the mastercopy).
-  Report: `build/reports/SEC-14-report.md`.
+  *(Standalone report pruned 2026-06-16; this ticket is the retained record.)*
