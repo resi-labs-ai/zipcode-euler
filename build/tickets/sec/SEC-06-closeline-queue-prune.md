@@ -1,7 +1,7 @@
 # SEC-06 — `closeLine` prunes the closed line from the EE supply queue (Group 3a / H2)
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` Group 3 / H2; audit `findings.md` (H2);
-`reference/euler-earn/src/EulerEarn.sol` (`setSupplyQueue`), `.../libraries/ConstantsLib.sol` · **Status:** PROPOSED
+`reference/euler-earn/src/EulerEarn.sol` (`setSupplyQueue`), `.../libraries/ConstantsLib.sol` · **Status:** DONE 2026-06-15
 
 > Scope authored 2026-06-15. Group 3 (Euler venue) splits into THREE distinct `closeLine`/`fund` fixes: H2
 > (this ticket — supply-queue prune), L8 (SEC-07 — line→base USDC defund), L9 (SEC-11 — `fund` sizing). H2 and
@@ -65,3 +65,46 @@ permanently bricked** — even though most of those lines are long since closed.
 - None. **Ordering note for SEC-07 (L8):** when both land, `closeLine` should defund the line leg back to base
   (SEC-07) and prune the supply queue (this ticket) in the same call; do the prune AFTER the redeem/defund so the
   removed market is empty. Independent correctness, shared function. On land: `PROGRESS.md` "Just done — SEC-06".
+
+---
+
+## DONE 2026-06-15
+
+**Fix (1 file, `contracts/src/venue/EulerVenueAdapter.sol`):** after the existing collateral redeem (`:350-356`)
+and before `L.open = false`, `closeLine` now rebuilds the EE supply queue into a `qlen - 1` array, skipping the
+entry whose address `== lineRef` (by **address match** — does not assume last position), and calls
+`eulerEarn.setSupplyQueue(newQueue)` (the symmetric un-do of `openLine`'s `:227-233` append). The redeem and
+`L.open = false`/`LineClosed` are untouched (additive prune). No cap-revoke / withdraw-queue / timelock path —
+every surviving entry keeps `cap != 0`, so EE's per-entry check passes; the just-redeemed line carries no balance.
+
+**Critics ran clean.** spec-fidelity **PASS** (faithful to H2, no invented mechanism, Do-NOTs correct, the
+redeem-before-prune ordering is an SEC-07 convenience not an H2 correctness precondition since `setSupplyQueue`
+never inspects the removed market's balance — `EulerEarn.sol:328-332`). reference-verifier: bindings exist+usable
+(`IEulerEarn.{supplyQueueLength,supplyQueue,setSupplyQueue}` at `IEulerEarn.sol:58/55/156`; `MAX_QUEUE_LENGTH==30`
+at `ConstantsLib.sol:17`; `setSupplyQueue` checks `cap!=0` on the NEW queue only, no removal/timelock) — **and
+flagged the one actionable gap:** `MockEulerEarn.setSupplyQueue` enforced nothing, so the churn regression could
+not fail pre-fix. Resolved by making the mock faithful (revert `MaxQueueLengthExceeded` at `length > 30`, mirroring
+`EulerEarn.sol:328`) + a `queueContains(address)` view helper.
+
+**Regression (3 new `test_SEC06_*` in `test/EulerVenueAdapter.t.sol`, section (N)):**
+- `test_SEC06_CloseLine_PrunesSupplyQueue` — open → queue `[base, line]` (len 2); close → queue `[base]` (len 1),
+  line absent.
+- `test_SEC06_CloseLine_LeavesOtherOpenLineFundable` — two lines open `[base, A, B]`; close A → `[base, B]`, B
+  retained, B still `fund`able (reallocate succeeds).
+- `test_SEC06_NoBrickAcrossChurnPastQueueCap` — 33 open→close cycles (>30, single `LIEN_A` recycled via the close
+  redeem); queue stays bounded at `[base, line]`/`[base]` every cycle and every `openLine` succeeds.
+
+**Fail-before / pass-after confirmed** — with the prune reverted (faithful mock + tests kept) all 3 fail
+(`queue dropped to [base]: 2 != 1`, `queue = [base, B]: 3 != 2`, `queue back to [base]: 2 != 1`); restored → all pass.
+
+**Gate green:** `forge build` clean; `forge test`:
+```
+Ran 52 test suites in 30.05s (93.86s CPU time): 784 tests passed, 0 failed, 3 skipped (787 total tests)
+```
+(+3 over SEC-05's 781 — the 3 new SEC06 tests; the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold.)
+
+**No spec change** (interface-level fix; §4.7 intent unchanged — the spec already prescribes queue management as the
+adapter's allocator role; this fences the missing un-do of the `openLine` append). **No back-pressure / no new
+obligation** (uses EE's existing `setSupplyQueue` surface, which the adapter already drives in `openLine`). The
+standing **concurrent-line-ceiling** design obligation is unchanged — SEC-06 reclaims *closed*-line slots only, not
+the ~29 *concurrent* ceiling.

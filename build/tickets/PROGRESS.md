@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-06 — `closeLine` prunes the closed line from the EE supply queue (Group 3a / H2).** Ticket: `build/tickets/sec/SEC-06-closeline-queue-prune.md`.
-- **Deliverable:** in `EulerVenueAdapter.closeLine`, remove the closed line's borrow EVAULT from the EulerEarn supply queue (`setSupplyQueue` minus the closed vault) so the 30-slot queue does not grow unboundedly and origination cannot permanently brick.
-- **Source:** `build/kill-list.md` Group 3 / H2. Driver: `build/kill-list-driver.md`. (See the standing concurrent-line-ceiling design obligation below — SEC-06 reclaims *closed*-line slots only, not the ~29 concurrent ceiling.)
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC06_*` regression (open→close→reopen churn past the cap stays live); test output quoted in the ticket.
+**SEC-07 — `closeLine` defunds the line's USDC back to base (Group 3b / L8).** Ticket: `build/tickets/sec/SEC-07-closeline-defund-to-base.md`.
+- **Deliverable:** in `EulerVenueAdapter.closeLine`, add a line→base `reallocate` so the EE pool's USDC supplied into the closed line vault is returned to the base USDC market instead of stranding (which otherwise underflows a later `fund`'s `baseBalance - amount`). Sequence the defund BEFORE the SEC-06 supply-queue prune so the removed market is empty.
+- **Source:** `build/kill-list.md` Group 3 / L8. Driver: `build/kill-list-driver.md`. Group-3 sibling of SEC-06 (H2) — same fn, distinct fix (USDC-reclaim vs queue-prune), neither subsumes the other.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC07_*` regression (stranded-USDC reclaim + no `fund` underflow across churn); test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 + SEC-04 + SEC-05 are DONE (2026-06-15); SEC-06 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 + SEC-04 + SEC-05 + SEC-06 are DONE (2026-06-15); SEC-07 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -43,8 +43,8 @@ doc/comment-only (no regression test).
 | SEC-03 | H4 | CCIP admin handoff — `transferAdminRole`(964→ccipAdmin, Base→timelock) + accept runbook + pendingAdministrator assert | **DONE 2026-06-15** — `sec/SEC-03-ccip-admin-handoff.md` |
 | SEC-04 | H5 | `_xAlphaUSD()` fail-close on unseeded rate (keep §7 asymmetry) | **DONE 2026-06-15** — `sec/SEC-04-xalphausd-fail-close.md` |
 | SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **DONE 2026-06-15** — `sec/SEC-05-seal-lporacle-identity.md` |
-| SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **NEXT** — `sec/SEC-06-closeline-queue-prune.md` |
-| SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **TICKETED** — `sec/SEC-07-closeline-defund-to-base.md` |
+| SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **DONE 2026-06-15** — `sec/SEC-06-closeline-queue-prune.md` |
+| SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **NEXT** — `sec/SEC-07-closeline-defund-to-base.md` |
 | SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **TICKETED** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
 | SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **TICKETED** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
 | SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **TICKETED** — `sec/SEC-10-setlptwapwindow-validation.md` |
@@ -58,6 +58,34 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-06 (2026-06-15)
+**`closeLine` now prunes the closed line's borrow vault from the EE supply queue** (kill-list Group 3a / H2; audit
+finding #2 / ref-B / interconnection-C). `openLine` appends every new EVAULT to the EulerEarn supply queue
+(`:227-233`) so `fund` can route into it, but `closeLine` never removed it — the queue grew **monotonically in
+cumulative line count** toward the hard `MAX_QUEUE_LENGTH = 30` cap, so once ~29 lifetime lines existed the next
+`openLine`'s `setSupplyQueue` reverted `MaxQueueLengthExceeded` and **origination bricked permanently** (even with
+most lines long since closed), *after* the CREATE2 LineAccount + both EVK proxies + router + cap submit/accept ran.
+- **Fix (1 file, `EulerVenueAdapter.sol:357-373`):** after the existing collateral redeem and before
+  `L.open = false`, rebuild the supply queue into a `qlen - 1` array skipping the entry whose address `== lineRef`
+  (**by address match — not last-position**, since interleaved opens/closes move it) and `setSupplyQueue(newQueue)`
+  — the symmetric un-do of the `openLine` append. Redeem + `L.open=false`/`LineClosed` untouched (additive). Queue is
+  now bounded by **concurrent**, not cumulative, open lines.
+- **Do-NOT honored:** no cap-revoke / withdraw-queue / timelock — every surviving entry keeps `cap != 0`, so EE's
+  per-entry check (`EulerEarn.sol:330-332`) passes; the just-redeemed line carries no balance. `openLine`'s append
+  unchanged. Scope stayed off L8 (USDC defund → SEC-07) and L9 (`fund` sizing → SEC-11).
+- **Gate green:** `forge build` clean; `forge test` **784 passed / 0 failed / 3 skipped** (+3 over SEC-05's 781; the
+  3 skips are the pre-existing `DeployZipcode.t.sol` scaffold). 3 new `test_SEC06_*` in `EulerVenueAdapter.t.sol`
+  (prune-happens; other-open-line-retained-and-fundable; >30-origination open→close churn stays live). To make the
+  churn regression meaningful, `MockEulerEarn.setSupplyQueue` was made **faithful** to the real EE (revert
+  `MaxQueueLengthExceeded` at `length > 30`, mirroring `EulerEarn.sol:328`) + a `queueContains` view helper — flagged
+  by the reference-verifier critic, which found the mock previously enforced nothing. **Fail-before/pass-after
+  confirmed** (prune reverted → all 3 fail with the no-prune signature `2 != 1` / `3 != 2`; restored → pass).
+- **No spec change** (interface-level fix; §4.7 intent unchanged — queue management is already the adapter's
+  allocator role; this fences the missing un-do of the append). **No back-pressure / no new obligation** (uses EE's
+  existing `setSupplyQueue`). The standing **concurrent-line-ceiling** obligation is unchanged — SEC-06 reclaims
+  *closed*-line slots only, not the ~29 *concurrent* ceiling. Ticket (full output):
+  `build/tickets/sec/SEC-06-closeline-queue-prune.md`. Report: `build/reports/SEC-06-report.md`.
 
 ### Just done — SEC-05 (2026-06-15)
 **Sealed the un-looped CRE-push `lpOracle`'s workflow identity + extended the deploy pre-gate** (kill-list M4; audit

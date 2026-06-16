@@ -58,7 +58,7 @@ coverage/freeze decisions.
   `seedPrice` clobber); `error StaleReport()` declared. Kill-list H1. The NAV (M1) + LP (L3) siblings fixed in the
   same ticket. Regression: `test_SEC01_reval_backdated_reverts` / `_equalTs_reverts` / `_seedPrice_equalTs_reverts`.
 
-### 2. Unbounded supply-queue growth in `openLine` bricks all future origination
+### 2. Unbounded supply-queue growth in `openLine` bricks all future origination — **RESOLVED 2026-06-15 (SEC-06)**
 - **contract/fn:** `EulerVenueAdapter` / `openLine`
 - **location:** `src/venue/EulerVenueAdapter.sol:225-233`
 - **class:** dos · **invariant_broken:** origination atomicity / core protocol liveness (the adapter is
@@ -75,7 +75,10 @@ coverage/freeze decisions.
   4. From then on every `openLine` reverts *after* the CREATE2 LineAccount, both EVK proxies, the router,
      and the cap submit/accept have run — origination is permanently dead, unrecoverable via the venue.
 - **fix:** prune closed-line vaults from the supply queue in `closeLine`, or cap concurrent (not
-  cumulative) lines and reuse queue slots.
+  cumulative) lines and reuse queue slots. **RESOLVED 2026-06-15 (SEC-06):** `closeLine` now rebuilds the
+  supply queue into a `qlen-1` array excluding the closed `lineRef` (by address match — not assuming last
+  position) and calls `setSupplyQueue` (`EulerVenueAdapter.sol:357-373`). Queue length is now bounded by
+  *concurrent* open lines, not cumulative; a >30-origination open→close churn test stays live.
 
 ---
 

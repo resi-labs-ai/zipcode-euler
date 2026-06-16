@@ -75,7 +75,8 @@ explains why the guard is mandatory — yet three sibling oracles omit it. Fix i
 ## Cross-confirmations (independently re-derived → high confidence)
 - **#2 queue-cap origination brick** — re-derived by the DoS specialist *and verified directly against
   `reference/euler-earn/src/EulerEarn.sol:328` (MAX_QUEUE_LENGTH=30) and `ConstantsLib.sol`*, confirming no
-  prune path exists anywhere in `src/`.
+  prune path exists anywhere in `src/`. **RESOLVED 2026-06-15 (SEC-06)** — `closeLine` now prunes the closed
+  line from the supply queue (`EulerVenueAdapter.sol:357-373`); the prune path now exists.
 - **#3 registry no monotonic guard** — independently hit by the oracle *and* proxy specialists.
 - **#6 xALPHA zero-rate** — oracle specialist confirmed and **extended**: the un-gated read also feeds
   `DurationFreezeModule.covered()`/`release()`, so a stale/zero cross-chain rate steers the autonomous

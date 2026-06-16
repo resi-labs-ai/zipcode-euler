@@ -74,10 +74,11 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   content is the M2 double-count. No separate work; verify the partition `gross − coverageValue = Pm` after M2.
 
 ### Group 3 — Euler venue (`EulerVenueAdapter.sol`)
-- [ ] **H2** (HIGH) · `openLine` appends to the EE supply queue every origination; `closeLine` never
+- [x] **H2** (HIGH) · `openLine` appends to the EE supply queue every origination; `closeLine` never
   prunes (`:222-233,:343-360`). `MAX_QUEUE_LENGTH=30` (confirmed `reference/euler-earn/.../ConstantsLib.sol:17`)
   → origination permanently bricks after ~29 lines. **Fix:** prune the closed-line vault in `closeLine`
   (`setSupplyQueue` only requires `cap!=0` on *remaining* entries — no timelock/removal path needed).
+  **DONE 2026-06-15 (SEC-06).**
 - [ ] **L8** (MED) · `fund` only withdraws from base; closed-line USDC strands, `baseBalance` underflows
   on a later `fund` (`:285-292`). **Fix:** add a line→base defund `reallocate` in `closeLine` (`assets:0` on
   the line leg redeems all shares; base leg absorbs it; market must still be EE-enabled). *Distinct from H2 —
