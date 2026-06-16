@@ -45,9 +45,26 @@ contract MockEulerEarn {
     ///      `submitCap` that set `validAt = now + timelock` reverts while `timelock != 0`. SEC-08's openLine precheck
     ///      fires BEFORE this — so without the fix, openLine builds all line proxies, THEN reverts here (orphaned).
     error TimelockNotElapsed();
+    /// @dev Mirrors EulerEarn.reallocate's terminal invariant (reference EulerEarn.sol:441): the zero-sum check
+    ///      `if (totalWithdrawn != totalSupplied) revert InconsistentReallocation()`. This is the exact revert
+    ///      the L9/SEC-11 donation grief triggers when `fund` sizes targets off the donation-skewed live balance
+    ///      while reallocate measures positions off the unskewed TRACKED `config.balance`.
+    error InconsistentReallocation();
+    /// @dev Mirrors EulerEarn.reallocate's per-market gate (reference EulerEarn.sol:390).
+    error MarketNotEnabled(address id);
 
     /// @notice The pool asset (USDC) the mock moves between markets during a faithful reallocate.
     address public immutable asset;
+
+    // ----- EE-tracked per-market config (security L9/SEC-11) -----
+    // The crux of the donation bug: EE tracks each market's supplied SHARE balance INTERNALLY (`config.balance`),
+    // updated ONLY through the deposits/redeems EE itself performs. A direct share transfer into the pool inflates
+    // the market vault's live `balanceOf(EE)` but NOT this tracked balance (reference IEulerEarn.sol:69,73 "ignores
+    // direct shares transfer"). reallocate measures every position as `previewRedeem(config.balance)` — NOT
+    // `convertToAssets(balanceOf)` — so a target sized off the live balance diverges from EE's own accounting and
+    // breaks the zero-sum check. This mock mirrors that: `cfgBalance` is bumped only inside `reallocate`/`seedConfig`.
+    mapping(address => uint112) public cfgBalance; // EE-tracked share balance per market
+    mapping(address => bool) public cfgEnabled; // a market is reallocate-eligible once its cap is accepted
 
     /// @notice The EE pool timelock (SEC-08). Default 0 (immediate cap config); a test raises it as the EE owner.
     uint256 public timelock;
@@ -74,6 +91,24 @@ contract MockEulerEarn {
     function acceptCap(IOZERC4626 id) external {
         if (timelock != 0) revert TimelockNotElapsed(); // faithful afterTimelock: same-tx accept fails while > 0
         acceptedCaps.push(address(id));
+        cfgEnabled[address(id)] = true; // faithful: accepting a cap enables the market for reallocate/withdraw
+    }
+
+    /// @dev The EE-tracked config getter the L9/SEC-11 `_eeSupplyAssets` helper reads. ABI-identical to the real
+    ///      `IEulerEarn.config(IERC4626)` (struct `MarketConfig memory` — encodes the same as this 4-tuple). `cap`
+    ///      is reported as max (the line cap openLine leaves unrevoked) and `removableAt` as 0; only `.balance`
+    ///      (the tracked share count) and `.enabled` are load-bearing for the adapter/this mock.
+    function config(IOZERC4626 id) external view returns (uint112 balance, uint136 cap, bool enabled, uint64 removableAt) {
+        return (cfgBalance[address(id)], type(uint136).max, cfgEnabled[address(id)], 0);
+    }
+
+    /// @dev Test helper: seed the EE-tracked position for a market the test funded DIRECTLY (bypassing reallocate,
+    ///      e.g. `_fundBaseMarket`/`_supplyToLine`). Records `shares` as legitimately-tracked supply + enables the
+    ///      market. A donation, by contrast, transfers shares to the EE address WITHOUT calling this — so
+    ///      `balanceOf(EE) > cfgBalance`, which is exactly the L9 skew.
+    function seedConfig(address market, uint256 shares) external {
+        cfgBalance[market] += uint112(shares);
+        cfgEnabled[market] = true;
     }
 
     /// @dev SEC-08 test hook: the external EE owner raises the timelock post-deploy.
@@ -112,39 +147,61 @@ contract MockEulerEarn {
         return _queue[i];
     }
 
-    /// @dev Faithful to EulerEarn.reallocate (reference EulerEarn.sol:383-442): ABSOLUTE-target, zero-sum. The
-    ///      prior recording-only mock could not move funds, so a stranded base balance never formed and SEC-07's
-    ///      "no strand" / "no later-fund underflow" regressions were not exercisable (flagged by the junior-dev
-    ///      critic). This now actually moves USDC between the real EVK vaults as the EE address: pass 1 withdraws
-    ///      every market whose target < current (assets:0 -> redeem ALL shares, matching reference :399-402) into
-    ///      this pool's USDC cash; pass 2 deposits the cash into every market whose target > current. Both `fund`
-    ///      and `closeLine`'s defund route through here, so the strand and its reclaim are now real on-chain state.
+    /// @dev Faithful to EulerEarn.reallocate (reference EulerEarn.sol:383-442): ABSOLUTE-target, zero-sum, sized off
+    ///      the TRACKED `config.balance` (NOT live `balanceOf`). Single-pass in allocation order, mirroring the
+    ///      reference exactly so both the SEC-07 strand/reclaim AND the L9/SEC-11 donation-grief are reproducible:
+    ///      per market, `supplyAssets = previewRedeem(config.balance)`; if `target < supplyAssets` it withdraws the
+    ///      difference (or, when `target == 0`, redeems ALL tracked shares — the reference's :397-402
+    ///      "donations can be withdrawn" full-redeem branch); else it supplies `target - supplyAssets`; finally the
+    ///      `totalWithdrawn != totalSupplied -> InconsistentReallocation` invariant (reference :441). `cfgBalance`
+    ///      is updated on every move (reference :415,:431) so the tracked balance stays the source of truth — a
+    ///      direct share donation never touches it. Callers (`fund`, `closeLine` defund) order withdraw-before-supply
+    ///      so the single in-order pass has cash before it deposits. Real USDC moves between the real EVK vaults.
     function reallocate(MarketAllocation[] calldata allocs) external {
         delete lastReallocIds;
         delete lastReallocAssets;
-        // pass 1: withdrawals -> USDC cash held by this pool
+        uint256 totalSupplied;
+        uint256 totalWithdrawn;
         for (uint256 i; i < allocs.length; ++i) {
             lastReallocIds.push(address(allocs[i].id));
             lastReallocAssets.push(allocs[i].assets);
-            IEVault v = IEVault(address(allocs[i].id));
-            uint256 current = v.convertToAssets(v.balanceOf(address(this)));
-            if (allocs[i].assets == 0) {
-                uint256 sh = v.balanceOf(address(this));
-                if (sh != 0) v.redeem(sh, address(this), address(this));
-            } else if (allocs[i].assets < current) {
-                v.withdraw(current - allocs[i].assets, address(this), address(this));
+            address id = address(allocs[i].id);
+            if (!cfgEnabled[id]) revert MarketNotEnabled(id);
+            IEVault v = IEVault(id);
+
+            uint256 supplyShares = cfgBalance[id];
+            uint256 supplyAssets = v.previewRedeem(supplyShares);
+            uint256 target = allocs[i].assets;
+            uint256 withdrawn = supplyAssets > target ? supplyAssets - target : 0;
+
+            if (withdrawn > 0) {
+                uint256 shares;
+                if (target == 0) {
+                    // reference :397-402: target 0 redeems ALL shares (sweeps any donation), withdrawn reset to 0.
+                    shares = supplyShares;
+                    withdrawn = 0;
+                }
+                uint256 withdrawnAssets;
+                uint256 withdrawnShares;
+                if (shares == 0) {
+                    withdrawnAssets = withdrawn;
+                    withdrawnShares = v.withdraw(withdrawn, address(this), address(this));
+                } else {
+                    withdrawnAssets = v.redeem(shares, address(this), address(this));
+                    withdrawnShares = shares;
+                }
+                cfgBalance[id] = uint112(supplyShares - withdrawnShares);
+                totalWithdrawn += withdrawnAssets;
+            } else {
+                uint256 suppliedAssets = target > supplyAssets ? target - supplyAssets : 0;
+                if (suppliedAssets == 0) continue;
+                IERC20(asset).approve(id, suppliedAssets);
+                uint256 suppliedShares = v.deposit(suppliedAssets, address(this));
+                cfgBalance[id] = uint112(supplyShares + suppliedShares);
+                totalSupplied += suppliedAssets;
             }
         }
-        // pass 2: deposits from cash -> target markets
-        for (uint256 i; i < allocs.length; ++i) {
-            IEVault v = IEVault(address(allocs[i].id));
-            uint256 current = v.convertToAssets(v.balanceOf(address(this)));
-            if (allocs[i].assets > current) {
-                uint256 delta = allocs[i].assets - current;
-                IERC20(asset).approve(address(v), delta);
-                v.deposit(delta, address(this));
-            }
-        }
+        if (totalWithdrawn != totalSupplied) revert InconsistentReallocation();
         reallocCount++;
     }
 
@@ -306,19 +363,24 @@ contract EulerVenueAdapterTest is ForkConfig {
     }
 
     /// @dev Fund the EE mock's position in the base market so fund()'s absolute-target math has a base balance.
+    ///      Deposit as the EE, then record the minted shares as EE-tracked config.balance (security L9/SEC-11): a
+    ///      legitimate supply IS tracked (unlike a donation). Seeding the ACTUAL shares minted (not usdcAmount)
+    ///      keeps cfgBalance == balanceOf(EE) so the no-donation path nets exactly.
     function _fundBaseMarket(uint256 usdcAmount) internal {
         deal(usdc, address(this), usdcAmount);
         IERC20(usdc).approve(baseUsdcMarket, usdcAmount);
-        // Credit shares to the EE mock so convertToAssets(balanceOf(EE)) > 0.
-        IEVault(baseUsdcMarket).deposit(usdcAmount, address(ee));
+        uint256 shares = IEVault(baseUsdcMarket).deposit(usdcAmount, address(ee));
+        ee.seedConfig(baseUsdcMarket, shares);
     }
 
     /// @dev Supply USDC cash into a line's borrow vault so a draw has liquidity (mirrors what fund() does on a
-    ///      live EE). The EE mock cannot move real assets, so we deposit directly as the EE.
+    ///      live EE). The EE mock cannot move real assets, so we deposit directly as the EE and record the minted
+    ///      shares as EE-tracked config.balance (security L9/SEC-11), keeping cfgBalance == balanceOf(EE).
     function _supplyToLine(address lineRef, uint256 usdcAmount) internal {
         deal(usdc, address(this), usdcAmount);
         IERC20(usdc).approve(lineRef, usdcAmount);
-        IEVault(lineRef).deposit(usdcAmount, address(ee));
+        uint256 shares = IEVault(lineRef).deposit(usdcAmount, address(ee));
+        ee.seedConfig(lineRef, shares);
     }
 
     // ============================================================
@@ -623,6 +685,125 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(ee.lastReallocAssets(0), baseBal - amount, "item0 absolute target = base - amount");
         assertEq(ee.lastReallocIds(1), lineRef, "item1 = lineRef (supply)");
         assertEq(ee.lastReallocAssets(1), lineBal + amount, "item1 absolute target = line + amount");
+    }
+
+    // ============================================================
+    // (H2) SEC-11 (L9) — fund/defund sized off the EE-TRACKED position (previewRedeem(config.balance)),
+    //       donation-immune. Pre-fix (convertToAssets(balanceOf)) a share donation skews the targets so the
+    //       reallocate deltas no longer net and funding bricks.
+    // ============================================================
+
+    /// @dev Donate `usdcAmount` worth of `market`'s EVK shares directly into the EE pool: mint to this test
+    ///      contract, then raw-transfer the shares to the pool. This inflates the pool's LIVE `balanceOf(EE)`
+    ///      WITHOUT touching the EE-tracked `cfgBalance` (the L9 skew — a raw transfer never calls reallocate /
+    ///      seedConfig). Returns the donated share count.
+    function _donateBaseShares(address market, uint256 usdcAmount) internal returns (uint256 shares) {
+        deal(usdc, address(this), usdcAmount);
+        IERC20(usdc).approve(market, usdcAmount);
+        shares = IEVault(market).deposit(usdcAmount, address(this));
+        IEVault(market).transfer(address(ee), shares);
+    }
+
+    /// @dev Post-fix: `fund` sizes both legs off `previewRedeem(config.balance)`, so a base-market share donation
+    ///      is invisible to the sizing — the reallocate deltas net exactly and funding succeeds (the line is then
+    ///      drawable on the funded liquidity). The pre-fix `convertToAssets(balanceOf)` sizing reverts on the same
+    ///      donation — see `test_SEC11_PreFixSizing_Reverts_OnDonation`.
+    function test_SEC11_Fund_DonationImmune() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _fundBaseMarket(1_000_000e6);
+
+        // Donate 1 USDC of base-market shares into the pool: live balance now EXCEEDS the EE-tracked balance.
+        uint256 donated = _donateBaseShares(baseUsdcMarket, 1e6);
+        assertGt(donated, 0, "donation minted base-market shares");
+        assertGt(
+            IEVault(baseUsdcMarket).balanceOf(address(ee)),
+            ee.cfgBalance(baseUsdcMarket),
+            "live balanceOf(EE) > EE-tracked cfgBalance after donation (the L9 skew)"
+        );
+
+        uint256 amount = 200_000e6;
+        uint256 baseTrackedBefore = IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket));
+        uint256 lineTrackedBefore = IEVault(lineRef).previewRedeem(ee.cfgBalance(lineRef));
+
+        adapter.fund(lineRef, amount); // post-fix: succeeds despite the donation
+
+        // EE-TRACKED supplied assets moved by exactly `amount`: base fell, line rose.
+        assertEq(
+            IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket)),
+            baseTrackedBefore - amount,
+            "base EE-tracked supplied assets fell by amount"
+        );
+        assertEq(
+            IEVault(lineRef).previewRedeem(ee.cfgBalance(lineRef)),
+            lineTrackedBefore + amount,
+            "line EE-tracked supplied assets rose by amount"
+        );
+
+        // The line is drawable on the funded liquidity (50k < 0.7 * $300k collateral, < 200k funded).
+        uint256 erBefore = IERC20(usdc).balanceOf(erebor);
+        adapter.draw(lineRef, 50_000e6, erebor);
+        assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, 50_000e6, "erebor received the draw");
+        assertEq(IEVault(lineRef).debtOf(adapter.getLine(lineRef).borrowAccount), 50_000e6, "line debt == draw");
+    }
+
+    /// @dev Proves the bug the fix closes: reconstructs the PRE-FIX sizing verbatim
+    ///      (`convertToAssets(balanceOf(EE))`) on a donated pool and drives `reallocate` directly — it reverts
+    ///      (the donation-skewed targets withdraw `amount - donation` from base but try to supply `amount` to the
+    ///      line, so the deltas cannot net). The post-fix `fund` does NOT revert — see
+    ///      `test_SEC11_Fund_DonationImmune`. (Bare `expectRevert`: the concrete revert is the supply leg failing
+    ///      to cover the over-supply from the under-withdrawn cash — i.e. EE's `InconsistentReallocation`
+    ///      invariant whenever idle cash covers the deposit, else the deposit-side shortfall — both brick funding.)
+    function test_SEC11_PreFixSizing_Reverts_OnDonation() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        _fundBaseMarket(1_000_000e6);
+        _donateBaseShares(baseUsdcMarket, 1e6);
+
+        uint256 amount = 200_000e6;
+        // PRE-FIX sizing verbatim (the formula SEC-11 replaced): live balance, donation-skewed.
+        uint256 baseBalancePreFix =
+            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee)));
+        uint256 lineBalancePreFix = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee)));
+
+        MarketAllocation[] memory allocs = new MarketAllocation[](2);
+        allocs[0] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: baseBalancePreFix - amount});
+        allocs[1] = MarketAllocation({id: IOZERC4626(lineRef), assets: lineBalancePreFix + amount});
+
+        vm.expectRevert();
+        ee.reallocate(allocs);
+    }
+
+    /// @dev The happy path is unchanged: with no donation (live balance == EE-tracked balance) `fund` still moves
+    ///      exactly `amount` from base to the line.
+    function test_SEC11_Fund_NoDonation_StillMoves() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _fundBaseMarket(1_000_000e6);
+
+        uint256 amount = 200_000e6;
+        uint256 baseTrackedBefore = IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket));
+        // No donation: the live and tracked balances agree.
+        assertEq(
+            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee))),
+            baseTrackedBefore,
+            "no skew absent a donation"
+        );
+
+        adapter.fund(lineRef, amount);
+
+        assertEq(
+            IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket)),
+            baseTrackedBefore - amount,
+            "base fell by amount"
+        );
+        assertEq(
+            IEVault(lineRef).previewRedeem(ee.cfgBalance(lineRef)),
+            amount,
+            "line rose from zero to amount"
+        );
     }
 
     // ============================================================

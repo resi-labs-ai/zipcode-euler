@@ -284,17 +284,31 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         emit LineLimitsSet(lineRef, borrowLTV, liqLTV, cap);
     }
 
+    /// @notice The EE pool's INTERNALLY-TRACKED supplied assets in `market`, byte-matching what `reallocate`
+    ///         measures (security L9 / SEC-11). `reallocate` sizes each market's current position as
+    ///         `previewRedeem(config[id].balance)` (EulerEarn.sol:392-393) — the EE's *tracked* share balance,
+    ///         which deliberately IGNORES direct share transfers (IEulerEarn.sol:69,73). Sizing the absolute
+    ///         reallocate targets from `convertToAssets(balanceOf(EE))` (the *live* balance) instead lets anyone
+    ///         donate even 1 EVK share into the pool to skew the targets so the withdraw/supply deltas no longer
+    ///         net — `reallocate` then reverts `InconsistentReallocation` and funding/defunding bricks (grief).
+    ///         Reading the same `previewRedeem(config.balance)` the pool uses is donation-immune by construction.
+    function _eeSupplyAssets(address market) internal view returns (uint256) {
+        return IEVault(market).previewRedeem(eulerEarn.config(IOZERC4626(market)).balance);
+    }
+
     /// @inheritdoc IZipcodeVenue
     function fund(address lineRef, uint256 amount) external onlyController {
         if (!lines[lineRef].open) revert UnknownLine(lineRef);
 
-        // reallocate is zero-sum + ABSOLUTE-target. Read both absolute bases from the EE's SUPPLIED position
-        // (convertToAssets(balanceOf(EE))), NOT maxWithdraw (which is capped by idle cash and under-reads once a
-        // prior line borrowed the cash out). Two-item allocation: withdraw `amount` from baseUsdcMarket, supply it
-        // to lineRef to reach the new absolute target.
-        uint256 baseBalance =
-            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(eulerEarn)));
-        uint256 lineBalance = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(eulerEarn)));
+        // reallocate is zero-sum + ABSOLUTE-target. Read both absolute bases from the EE's TRACKED supplied
+        // position (`previewRedeem(config.balance)` via `_eeSupplyAssets`, security L9) — the SAME measure
+        // `reallocate` uses internally, so a direct share donation cannot skew the targets (NOT
+        // `convertToAssets(balanceOf(EE))`, which counts donated shares the pool's accounting ignores; NOT
+        // `maxWithdraw`, which is capped by idle cash and under-reads once a prior line borrowed the cash out).
+        // Two-item allocation: withdraw `amount` from baseUsdcMarket, supply it to lineRef to reach the new
+        // absolute target.
+        uint256 baseBalance = _eeSupplyAssets(baseUsdcMarket);
+        uint256 lineBalance = _eeSupplyAssets(lineRef);
 
         MarketAllocation[] memory allocs = new MarketAllocation[](2);
         allocs[0] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: baseBalance - amount});
@@ -370,17 +384,20 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         // on close that USDC strands in the now-closed vault, permanently depressing the base market's EE balance
         // until a later `fund`'s `baseBalance - amount` (:290) underflows and origination funding bricks. Reclaim
         // it with the INVERSE of fund's reallocate: redeem ALL of the EE's line shares (absolute target 0 -> EE
-        // redeems the full position) and add that USDC to base's absolute target. Read the SUPPLIED position
-        // (convertToAssets(balanceOf(EE))), matching fund's sizing (NOT maxWithdraw, which under-reads). The
-        // line's cap is still non-zero (openLine left it type(uint136).max; never revoked) so the market stays
-        // reallocate-eligible (EE gates on config[].enabled, set by acceptCap — independent of supply-queue
-        // membership). Must run BEFORE the queue prune below so the pruned market is already emptied. No-op guard:
-        // a line opened/closed without ever being funded has lineBalance == 0 -> skip (a zero-sum reallocate on an
-        // empty market is pointless and a {x:0} withdrawal-only leg cannot balance).
-        uint256 lineBalance = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(eulerEarn)));
+        // redeems the full position) and add that USDC to base's absolute target. Size BOTH legs off the EE's
+        // TRACKED position (`_eeSupplyAssets` = `previewRedeem(config.balance)`, security L9/SEC-11) so the defund
+        // is equally donation-immune (matching fund's sizing; NOT `convertToAssets(balanceOf(EE))`, which a share
+        // donation skews into an `InconsistentReallocation` revert; NOT maxWithdraw, which under-reads). The line
+        // leg stays `assets:0` (a full redeem already sweeps any donated shares per EulerEarn.sol:397-402); only
+        // the base target adds the line's tracked assets. The line's cap is still non-zero (openLine left it
+        // type(uint136).max; never revoked) so the market stays reallocate-eligible (EE gates on config[].enabled,
+        // set by acceptCap — independent of supply-queue membership). Must run BEFORE the queue prune below so the
+        // pruned market is already emptied. No-op guard: a line opened/closed without ever being funded has
+        // lineBalance == 0 -> skip (a zero-sum reallocate on an empty market is pointless and a {x:0}
+        // withdrawal-only leg cannot balance).
+        uint256 lineBalance = _eeSupplyAssets(lineRef);
         if (lineBalance != 0) {
-            uint256 baseBalance =
-                IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(eulerEarn)));
+            uint256 baseBalance = _eeSupplyAssets(baseUsdcMarket);
             MarketAllocation[] memory defund = new MarketAllocation[](2);
             defund[0] = MarketAllocation({id: IOZERC4626(lineRef), assets: 0});
             defund[1] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: baseBalance + lineBalance});

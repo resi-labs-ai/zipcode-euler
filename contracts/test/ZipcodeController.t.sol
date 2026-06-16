@@ -62,6 +62,16 @@ contract MockEulerEarn {
     function submitCap(IOZERC4626, uint256) external {}
     function acceptCap(IOZERC4626) external {}
 
+    /// @dev SEC-11 (L9): `fund`/`closeLine` now size off the EE-tracked `previewRedeem(config.balance)`. This
+    ///      controller-integration mock has NO donation path (no raw share transfers into the pool), so the tracked
+    ///      balance is exactly the live share balance — return `balanceOf(this)` so the production sizing is
+    ///      byte-identical to the prior `convertToAssets(balanceOf)`. The donation DIVERGENCE that SEC-11 fixes is
+    ///      exercised against the faithful mock in `EulerVenueAdapter.t.sol`, not here. ABI-identical to the real
+    ///      `IEulerEarn.config(IERC4626)` struct getter (4-tuple encodes the same as `MarketConfig memory`).
+    function config(IOZERC4626 id) external view returns (uint112 balance, uint136 cap, bool enabled, uint64 removableAt) {
+        return (uint112(IOZERC4626(address(id)).balanceOf(address(this))), type(uint136).max, true, 0);
+    }
+
     function setSupplyQueue(IOZERC4626[] calldata q) external {
         delete _queue;
         for (uint256 i; i < q.length; ++i) {
