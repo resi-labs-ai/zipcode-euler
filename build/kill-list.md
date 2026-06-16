@@ -136,10 +136,12 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   prove the fix mechanism; the SCRIPT WIRING is proven end-to-end via `DeployLocal` on a fresh Base-fork anvil —
   before: live pre-fix lpOracle `getExpectedWorkflowId()==0x0`; after: sealed `==0x..01` + owner=Timelock;
   fail-closed: seal removed → deploy reverts `ReceiverIdentityNotWired` at the pre-gate.
-- [ ] **L2** (LOW→MED) · `setLpTwapWindow(>0)` against a plugin-less/under-seeded Algebra pool bricks *every*
+- [x] **L2** (LOW→MED) · `setLpTwapWindow(>0)` against a plugin-less/under-seeded Algebra pool bricks *every*
   NAV read; setter has zero validation (`SzipNavOracle.sol:247-250`). **Fix:** in the setter, for non-zero window
   assert `IAlgebraPool(pool).plugin() != 0` and `IAlgebraOraclePlugin(plugin).isInitialized()`. (Full cardinality
   isn't queryable on-chain; the residual window>history edge fails closed on first read, recoverable via `set(0)`.)
+  **DONE 2026-06-15 (SEC-10).** Added `error LpTwapPluginNotReady()` + a non-zero-window precheck (require `ichiVault`
+  wired, `pool.plugin() != 0`, `plugin.isInitialized()`); `set(0)` stays unconditionally valid.
 - [x] **M7** (LOW-MED grief) · `RecycleModule.divert` (`:285-310`) bounds per-call but not cumulatively; the
   docstring's "can never over-fill" is false across calls. **Fix:** NOT `divertedAgainst[hole]` (provision is a
   single re-markable scalar — keying by value is buggy). Use `lastSeenProvision` + `divertedSinceProvisionChange`,

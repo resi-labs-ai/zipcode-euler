@@ -39,11 +39,16 @@ explains why the guard is mandatory — yet three sibling oracles omit it. Fix i
   case is liveness/grief on the reservoir loop, not an unsafe open. Same one-line fix.
 
 ### R-DoS group — liveness dead-ends and fail-closed traps
-- **`lpTwapWindow` misconfig cascade-bricks NAV (LOW-MED).** If the Timelock sets `lpTwapWindow>0`
+- **`lpTwapWindow` misconfig cascade-bricks NAV (LOW-MED). ✅ RESOLVED 2026-06-15 (SEC-10).** If the Timelock sets `lpTwapWindow>0`
   against an Algebra pool with no plugin or insufficient observation history, `IchiAlgebraFairReserves`
   reverts (`NoPlugin`/"OLD"), and because `grossBasketValue`→`_lpValue` is on the path, **every** NAV
   read reverts — issuance, exit, `covered()`, and `poke`/`writeProvision` all die. Recoverable
   (`setLpTwapWindow(0)`), but no plugin/cardinality sanity-check exists. `SzipNavOracle.sol:420-421`.
+  **fix:** `setLpTwapWindow` now validates a non-zero window at set-time — `error LpTwapPluginNotReady()` reverts
+  unless `ichiVault` is wired, `pool.plugin() != 0`, and `plugin.isInitialized()`. Turns the silent protocol-wide
+  brick into a clean setter revert. The **plugin-less / uninitialized-plugin** brick is closed; the residual
+  **window > accumulated-history** edge (observation cardinality is NOT on-chain-queryable) still fails closed at
+  read-time and is recoverable via `setLpTwapWindow(0)` — accepted per the kill-list.
 - **Revaluation batch all-or-nothing (LOW).** One malformed lien key (`price==0`/bad decimals) reverts
   the whole RT-3 batch, so every healthy lien in it goes unrefreshed and ages toward `TooStale` →
   fail-closed lending DoS. `ZipcodeOracleRegistry.sol:114-133`.

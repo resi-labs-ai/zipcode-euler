@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-10 — `setLpTwapWindow(>0)` Algebra plugin/init validation (L2).** Ticket: `build/tickets/sec/SEC-10-setlptwapwindow-validation.md`.
-- **Deliverable:** validate, in `setLpTwapWindow`, that a non-zero window points at an Algebra pool with an **initialized TWAP plugin** — so a mis-set window cannot brick every NAV read (`navEntry`/`navExit`/`coverageValue` all flow through `grossBasketValue → _lpValue → fairReserves`).
-- **Source:** `build/kill-list.md` L2 (LOW→MED). Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC10_*` regression; test output quoted in the ticket.
+**SEC-11 — `fund` sizing via `previewRedeem(config.balance)` (L9).** Ticket: `build/tickets/sec/SEC-11-fund-previewredeem-sizing.md`.
+- **Deliverable:** size `fund`'s base-market read off `previewRedeem(config[id].balance)` (the EE-internal share accounting) rather than `convertToAssets(balanceOf(EE))`, so a direct USDC donation into the base market can't grief/DoS funding. Introduce a shared `_eeSupplyAssets` helper (the SEC-07 defund base-leg read should adopt it too).
+- **Source:** `build/kill-list.md` L9. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC11_*` regression; test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-09 are DONE (2026-06-15); SEC-10 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-10 are DONE (2026-06-15); SEC-11 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -47,8 +47,8 @@ doc/comment-only (no regression test).
 | SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **DONE 2026-06-15** — `sec/SEC-07-closeline-defund-to-base.md` |
 | SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **DONE 2026-06-15** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
 | SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **DONE 2026-06-15** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
-| SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **NEXT** — `sec/SEC-10-setlptwapwindow-validation.md` |
-| SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **TICKETED** — `sec/SEC-11-fund-previewredeem-sizing.md` |
+| SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **DONE 2026-06-15** — `sec/SEC-10-setlptwapwindow-validation.md` |
+| SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **NEXT** — `sec/SEC-11-fund-previewredeem-sizing.md` |
 | SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **TICKETED** — `sec/SEC-12-redeem-canonical-shares-event.md` |
 | SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **TICKETED** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
 | SEC-14 | L18 | Init-lock 9 mastercopies (empty `initializer` ctor lock — NOT `_disableInitializers`) + fix docstrings | **TICKETED** — `sec/SEC-14-mastercopy-init-lock.md` |
@@ -58,6 +58,41 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-10 (2026-06-15)
+**`setLpTwapWindow(>0)` now validates the Algebra TWAP plugin at set-time** (kill-list L2; audit R-DoS "lpTwapWindow
+misconfig cascade-bricks NAV"). `lpTwapWindow` selects the junior LP valuation: `0` ⇒ spot `getTotalAmounts()`,
+non-zero ⇒ the manipulation-resistant Algebra TWAP reconstruction (`_lpValue`→`IchiAlgebraFairReserves.fairReserves`,
+which reverts `NoPlugin` if the pool has no plugin / reverts in `getTimepoints` if the plugin is uninitialized). The
+setter had **zero validation**, so a Timelock setting a non-zero window against a plugin-less/under-seeded pool would
+**instantly brick every NAV read** — `navEntry`/`navExit`/`grossBasketValue`/`coverageValue`/`poke`/`writeProvision`
+all flow through `grossBasketValue → _lpValue → fairReserves`. Set-time validation turns a silent protocol-wide brick
+into a clean setter revert.
+- **Fix (1 file, `SzipNavOracle.sol`):** declared `error LpTwapPluginNotReady();`; added imports `IAlgebraPool`/
+  `IAlgebraOraclePlugin`. `setLpTwapWindow` now, when `lpTwapWindow_ != 0`, requires `ichiVault != address(0)`, reads
+  `pool = IICHIVault(ichiVault).pool()` → `plugin = IAlgebraPool(pool).plugin()`, and reverts `LpTwapPluginNotReady()`
+  if `plugin == address(0) || !IAlgebraOraclePlugin(plugin).isInitialized()`. `setLpTwapWindow(0)` stays
+  **unconditionally valid** (the recovery/escape path). `_lpValue`/`fairReserves`/the spot path are byte-for-byte
+  untouched (Do-NOT honored).
+- **Scope (matches the kill-list's own carve-out):** the setter closes only the **gross "no plugin / uninitialized
+  plugin"** brick. `isInitialized() == true` is **necessary-not-sufficient** — a window longer than the plugin's
+  accumulated history can still revert in `getTimepoints` on first read (observation cardinality is NOT
+  on-chain-queryable). That residual fails closed at read-time and is recoverable via `setLpTwapWindow(0)` — accepted,
+  not in scope (per kill-list L2's parenthetical). Critics ran clean (spec-fidelity **PASS all dimensions** incl. §17
+  "settable-not-frozen" — this is input-validation, not a freeze; reference-verifier — every binding usable;
+  junior-dev's most-blocking item — the test fixture is net-new mock infra, not a trivial extend — was folded into the
+  ticket's Test-fixture section before the cold-build).
+- **Gate green:** `forge build` clean; `forge test` **800 passed / 0 failed / 3 skipped** (+4 over SEC-09's 796; the 3
+  skips are the pre-existing `DeployZipcode.t.sol` scaffold). 4 new `test_SEC10_*` in `SzipNavOracle.t.sol`
+  (no-plugin-reverts, uninitialized-plugin-reverts, ready-pool-succeeds-and-reads-TWAP, escape-zero-always-succeeds).
+  New mocks: `MockAlgebraPool` (settable `plugin()`), `MockAlgebraPlugin` (settable `isInitialized()` + `getTimepoints`
+  returning the real on-chain cumulatives `[-1380399043048, -1381518031724]`), `MockICHIVault` extended with `pool()` +
+  position/tick getters (L=0 so reserves come from idle balances). **Fail-before/pass-after confirmed** — commenting out
+  the guard makes `test_SEC10_no_plugin_reverts` FAIL (`next call did not revert as expected`); a throwaway demo showed
+  the setter then succeeds and a subsequent `grossBasketValue()` reverts (NAV bricked); restored → green.
+- **No spec change** (interface-level setter validation; §7 intent unchanged — the spec already prescribed the fair-LP
+  TWAP opt-in, this fences a misconfig brick). **No back-pressure / no new obligation** (uses existing surfaces).
+  Ticket: `build/tickets/sec/SEC-10-setlptwapwindow-validation.md`. Report: `build/reports/SEC-10-report.md`.
 
 ### Just done — SEC-09 (2026-06-15)
 **`RecycleModule.divert` now bounds the diverted total CUMULATIVELY against the live hole, not just per-call** (kill-list

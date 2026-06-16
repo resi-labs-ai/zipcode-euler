@@ -62,7 +62,9 @@ is NOT renounce-frozen here, §17).
    Timelock-settable `lpTwapWindow != 0`, reserves are reconstructed at the Algebra pool's TWAP tick
    (`IchiAlgebraFairReserves`) so an in-block swap cannot move the LP mark — the build/twap-ring.md +
    build/fair-lp.md fair-LP defense-in-depth. Set `lpTwapWindow` (via `setLpTwapWindow`) only once the LP is a
-   live Algebra pool exposing a TWAP plugin (else `_lpValue` reverts `NoPlugin`).
+   live Algebra pool exposing an initialized TWAP plugin — **SEC-10** now enforces this at set-time
+   (`setLpTwapWindow(>0)` reverts `LpTwapPluginNotReady` if the pool has no/uninitialized plugin), so a misconfig
+   can no longer silently brick every NAV read via `_lpValue`→`fairReserves`→`NoPlugin`.
 7. **Reservoir strike debt SUBTRACTED** (only if `borrowVault != 0`): `_reservoirDebt(safe) =
    IReservoirDebt(borrowVault).debtOf(safe) × 1e12` (USDC 6-dp -> 18-dp). The loop's borrowed USDC is counted in
    leg (2), so its debt must net out — making a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle
@@ -101,8 +103,14 @@ lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wir
   collateralized LP counted + strike debt subtracted; both set together, both zero-guarded).
 - `setEngineSafe(engineSafe_)` → `engineSafe` (the 8-B14 buy-and-burn Safe, denominator-excluded).
 - `setDefaultCoordinator(dc_)` → `defaultCoordinator` (the sole `writeProvision` caller).
-- `setLpTwapWindow(window_)` → `lpTwapWindow` (**not** zero-guarded — `0` = the valid "use spot
-  `getTotalAmounts()`" default; non-zero = fair-LP TWAP reconstruction, build/fair-lp.md).
+- `setLpTwapWindow(window_)` → `lpTwapWindow` (`0` = the valid "use spot `getTotalAmounts()`" default, always
+  accepted; non-zero = fair-LP TWAP reconstruction, build/fair-lp.md). **SEC-10:** a NON-ZERO window is validated
+  at set-time — reverts `error LpTwapPluginNotReady()` unless `ichiVault` is wired AND
+  `IAlgebraPool(IICHIVault(ichiVault).pool()).plugin() != 0` AND that plugin's `isInitialized()` is true. This
+  closes the gross "no plugin / uninitialized plugin" brick (a non-zero window against a plugin-less pool would
+  otherwise make every NAV read revert via `_lpValue`→`fairReserves`→`NoPlugin`). `isInitialized()` is
+  necessary-not-sufficient: the residual window > accumulated-history edge (observation cardinality is NOT
+  on-chain-queryable) still fails closed at read-time in `getTimepoints` and is recoverable via `setLpTwapWindow(0)`.
 
 (A **fifth** setter `setXAlphaRateOracle(rateOracle_)` exists — `onlyOwner`, **not** zero-guarded because
 `address(0)` is the valid "use M1 fallback" value. When set, `rateSrc = xAlphaRateOracle` and `navEntry`/`fresh`
