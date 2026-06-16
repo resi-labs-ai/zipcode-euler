@@ -41,6 +41,9 @@ contract MockEulerEarn {
 
     error MaxQueueLengthExceeded();
 
+    /// @notice The pool asset (USDC) the mock moves between markets during a faithful reallocate.
+    address public immutable asset;
+
     address[] public submittedCaps;
     address[] public acceptedCaps;
     IOZERC4626[] internal _queue;
@@ -49,6 +52,10 @@ contract MockEulerEarn {
     address[] public lastReallocIds;
     uint256[] public lastReallocAssets;
     uint256 public reallocCount;
+
+    constructor(address asset_) {
+        asset = asset_;
+    }
 
     function submitCap(IOZERC4626 id, uint256) external {
         submittedCaps.push(address(id));
@@ -84,12 +91,38 @@ contract MockEulerEarn {
         return _queue[i];
     }
 
+    /// @dev Faithful to EulerEarn.reallocate (reference EulerEarn.sol:383-442): ABSOLUTE-target, zero-sum. The
+    ///      prior recording-only mock could not move funds, so a stranded base balance never formed and SEC-07's
+    ///      "no strand" / "no later-fund underflow" regressions were not exercisable (flagged by the junior-dev
+    ///      critic). This now actually moves USDC between the real EVK vaults as the EE address: pass 1 withdraws
+    ///      every market whose target < current (assets:0 -> redeem ALL shares, matching reference :399-402) into
+    ///      this pool's USDC cash; pass 2 deposits the cash into every market whose target > current. Both `fund`
+    ///      and `closeLine`'s defund route through here, so the strand and its reclaim are now real on-chain state.
     function reallocate(MarketAllocation[] calldata allocs) external {
         delete lastReallocIds;
         delete lastReallocAssets;
+        // pass 1: withdrawals -> USDC cash held by this pool
         for (uint256 i; i < allocs.length; ++i) {
             lastReallocIds.push(address(allocs[i].id));
             lastReallocAssets.push(allocs[i].assets);
+            IEVault v = IEVault(address(allocs[i].id));
+            uint256 current = v.convertToAssets(v.balanceOf(address(this)));
+            if (allocs[i].assets == 0) {
+                uint256 sh = v.balanceOf(address(this));
+                if (sh != 0) v.redeem(sh, address(this), address(this));
+            } else if (allocs[i].assets < current) {
+                v.withdraw(current - allocs[i].assets, address(this), address(this));
+            }
+        }
+        // pass 2: deposits from cash -> target markets
+        for (uint256 i; i < allocs.length; ++i) {
+            IEVault v = IEVault(address(allocs[i].id));
+            uint256 current = v.convertToAssets(v.balanceOf(address(this)));
+            if (allocs[i].assets > current) {
+                uint256 delta = allocs[i].assets - current;
+                IERC20(asset).approve(address(v), delta);
+                v.deposit(delta, address(this));
+            }
         }
         reallocCount++;
     }
@@ -188,7 +221,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         LIEN_B = new LienCollateralToken(controller);
 
         irm = new ZeroIRM();
-        ee = new MockEulerEarn();
+        ee = new MockEulerEarn(usdc);
 
         // A live base USDC market (no-borrow holding vault) that fund() withdraws from.
         baseUsdcMarket =
@@ -714,5 +747,80 @@ contract EulerVenueAdapterTest is ForkConfig {
             assertEq(ee.supplyQueueLength(), 1, "queue back to [base] after each close");
             assertEq(LIEN_A.balanceOf(controller), 1e18, "lien recycled to controller after close");
         }
+    }
+
+    // ============================================================
+    // (O) SEC-07 — closeLine defunds the line's USDC back to base (L8)
+    // ============================================================
+
+    /// @dev No strand: open->fund->close returns the line's supplied USDC to the base market. The faithful EE
+    ///      mock actually moves funds, so pre-fix (no defund) the base EE balance stays depressed at base-amount
+    ///      and the line vault keeps the stranded USDC; post-fix base is restored and the line is emptied.
+    function test_SEC07_CloseLine_DefundsUsdcToBase() public {
+        _fundBaseMarket(1_000_000e6);
+        uint256 baseStart = IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee)));
+        assertEq(baseStart, 1_000_000e6, "base seeded with 1M");
+
+        (address lineRef,) = _openA();
+        adapter.fund(lineRef, 300_000e6); // moves 300k base -> line (faithful reallocate)
+
+        // After fund: base depressed, line holds the stranded USDC.
+        assertApproxEqAbs(
+            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee))),
+            700_000e6,
+            2,
+            "base drawn down by the fund"
+        );
+        assertApproxEqAbs(
+            IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee))),
+            300_000e6,
+            2,
+            "line holds the funded USDC"
+        );
+
+        adapter.closeLine(lineRef); // no draw -> debt 0; defund must reclaim the 300k
+
+        // Post-fix: base restored, line emptied (assets:0 -> redeem all shares).
+        assertApproxEqAbs(
+            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee))),
+            1_000_000e6,
+            2,
+            "base balance restored by the defund"
+        );
+        assertEq(IEVault(lineRef).balanceOf(address(ee)), 0, "line EE position fully redeemed");
+    }
+
+    /// @dev No later-fund underflow: after an open->fund->close cycle that defunds back to base, a NEW line can be
+    ///      funded for an amount near the FULL base balance. Pre-fix the strand leaves base depressed and the new
+    ///      fund's `baseBalance - amount` (:290) underflows and reverts.
+    function test_SEC07_NoLaterFundUnderflow() public {
+        _fundBaseMarket(1_000_000e6);
+
+        (address lineA,) = _openA();
+        adapter.fund(lineA, 900_000e6); // strand 900k pre-fix
+        adapter.closeLine(lineA); // defund returns it to base
+
+        // Base is whole again; a NEW line funds for 950k (> the pre-fix residual 100k) without underflowing.
+        (address lineB,) = _openB();
+        adapter.fund(lineB, 950_000e6);
+
+        assertApproxEqAbs(
+            IEVault(lineB).convertToAssets(IEVault(lineB).balanceOf(address(ee))),
+            950_000e6,
+            2,
+            "new line funded near the full base balance (pre-fix this reverts on the :290 underflow)"
+        );
+    }
+
+    /// @dev Never-funded line: open then immediately close (lineBalance == 0). The no-op guard SKIPS the defund —
+    ///      no reallocate is emitted (reallocCount unchanged), and the close completes without reverting.
+    function test_SEC07_NeverFundedLine_NoDefund() public {
+        (address lineRef,) = _openA();
+        uint256 reallocBefore = ee.reallocCount();
+
+        adapter.closeLine(lineRef); // lineBalance == 0 -> guard skips the defund
+
+        assertEq(ee.reallocCount(), reallocBefore, "no defund reallocate on a never-funded line");
+        assertFalse(adapter.getLine(lineRef).open, "line closed");
     }
 }

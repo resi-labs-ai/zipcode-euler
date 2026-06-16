@@ -355,6 +355,28 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
             abi.encodeCall(IEVKERC4626.redeem, (shares, controller, L.borrowAccount))
         );
 
+        // Defund the line's USDC supply back to the base market (security L8). `fund` moved the EE pool's USDC
+        // from base INTO this line's borrow vault (an absolute-target reallocate, :289-292); without returning it
+        // on close that USDC strands in the now-closed vault, permanently depressing the base market's EE balance
+        // until a later `fund`'s `baseBalance - amount` (:290) underflows and origination funding bricks. Reclaim
+        // it with the INVERSE of fund's reallocate: redeem ALL of the EE's line shares (absolute target 0 -> EE
+        // redeems the full position) and add that USDC to base's absolute target. Read the SUPPLIED position
+        // (convertToAssets(balanceOf(EE))), matching fund's sizing (NOT maxWithdraw, which under-reads). The
+        // line's cap is still non-zero (openLine left it type(uint136).max; never revoked) so the market stays
+        // reallocate-eligible (EE gates on config[].enabled, set by acceptCap — independent of supply-queue
+        // membership). Must run BEFORE the queue prune below so the pruned market is already emptied. No-op guard:
+        // a line opened/closed without ever being funded has lineBalance == 0 -> skip (a zero-sum reallocate on an
+        // empty market is pointless and a {x:0} withdrawal-only leg cannot balance).
+        uint256 lineBalance = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(eulerEarn)));
+        if (lineBalance != 0) {
+            uint256 baseBalance =
+                IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(eulerEarn)));
+            MarketAllocation[] memory defund = new MarketAllocation[](2);
+            defund[0] = MarketAllocation({id: IOZERC4626(lineRef), assets: 0});
+            defund[1] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: baseBalance + lineBalance});
+            eulerEarn.reallocate(defund);
+        }
+
         // Prune the closed line's borrow vault from the EE supply queue (security H2). `openLine` appends every
         // new EVAULT to the queue (:227-233); without this prune the queue grows monotonically toward the hard
         // MAX_QUEUE_LENGTH = 30 cap, and once ~29 lines exist the next openLine's setSupplyQueue reverts
@@ -362,7 +384,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         // Rebuild into a qlen-1 array, skipping `lineRef` by ADDRESS match (do NOT assume it is the last entry —
         // interleaved opens/closes move it). Every surviving entry still has cap != 0 (base market + other open
         // lines), so EE's per-entry cap check passes; no cap-revoke / withdraw-queue / timelock path is needed.
-        // The collateral was just redeemed, so the removed market carries no balance.
+        // The defund above just returned the line's USDC to base, so the removed market carries no balance.
         uint256 qlen = eulerEarn.supplyQueueLength();
         IOZERC4626[] memory newQueue = new IOZERC4626[](qlen - 1);
         uint256 j;
