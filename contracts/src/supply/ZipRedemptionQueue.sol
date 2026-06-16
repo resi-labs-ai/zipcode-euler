@@ -240,6 +240,7 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
         assets = shares / scaleUp;
         if (assets == 0) revert ZeroAssets(); // reject redeem(shares < scaleUp)
         if (assets > claimableAssets[requester]) revert InsufficientClaimable();
+        shares = assets * scaleUp; // canonical zipUSD-equivalent actually redeemed (mirror withdraw :221)
 
         claimableAssets[requester] -= assets; // effects BEFORE interaction
         reservedAssets -= assets;

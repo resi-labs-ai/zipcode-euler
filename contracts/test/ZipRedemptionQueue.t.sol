@@ -574,6 +574,40 @@ contract ZipRedemptionQueueTest is QueueBase {
         assertEq(usdc.balanceOf(controller), 0, "controller extracted nothing");
     }
 
+    // -------------------------------------------------------------- SEC-12: redeem emits canonical shares
+    function test_SEC12_redeem_subUnitExcess_emits_canonical_shares() public {
+        // Fund alice with exactly 1 unit (1 USDC) of par-claimable. A sub-unit-excess redeem (1.5 * scaleUp) pays
+        // assets == 1 but must emit the canonical shares == assets*scaleUp (== scaleUp), NOT the raw 1.5*scaleUp.
+        _fullFillAlice(SCALE); // 1 zipUSD escrowed/filled -> claimableAssets[alice] == 1 USDC
+        assertEq(queue.claimableAssets(alice), 1, "alice has 1 USDC claimable");
+
+        uint256 rawInput = SCALE + SCALE / 2; // sub-unit excess
+        vm.expectEmit(true, true, true, true, address(queue));
+        emit ZipRedemptionQueue.Withdraw(alice, alice, alice, 1, SCALE); // assets==1, shares==scaleUp (canonical)
+        vm.prank(alice);
+        uint256 assets = queue.redeem(rawInput, alice, alice);
+        assertEq(assets, 1, "floored par payout");
+        assertEq(usdc.balanceOf(alice), 1, "exactly 1 USDC paid");
+    }
+
+    function test_SEC12_redeem_cleanMultiple_emits_unchanged() public {
+        // Clean multiple: redeem(k*scaleUp) emits shares == k*scaleUp (recompute is a no-op for exact inputs).
+        uint256 k = 400e6;
+        _fullFillAlice(1000e18);
+        vm.expectEmit(true, true, true, true, address(queue));
+        emit ZipRedemptionQueue.Withdraw(alice, alice, alice, k, k * SCALE);
+        vm.prank(alice);
+        queue.redeem(k * SCALE, alice, alice);
+    }
+
+    function test_SEC12_redeem_returnValue_unchanged() public {
+        // Return value stays `assets` (shares / scaleUp), unchanged by the event recompute.
+        _fullFillAlice(1000e18);
+        vm.prank(alice);
+        uint256 assets = queue.redeem(400e6 * SCALE, alice, alice);
+        assertEq(assets, 400e6, "redeem still returns assets unchanged");
+    }
+
     // -------------------------------------------------------------- helpers
     function _fullFillAlice(uint256 q) internal {
         _giveZip(alice, q);
