@@ -20,7 +20,7 @@ documented blast radius) are excluded from findings and listed separately as pos
 | 9 | LOW | high | szipUSD | `requiredCommittedValue` gross-cap can make `covered()` permanently false → bricks release/postBid/removeLiquidity |
 | 10 | LOW | high | venue | `openLine` atomicity silently depends on un-asserted EulerEarn preconditions (zero timelock + perspective allow-list) — ✅ RESOLVED 2026-06-15 (SEC-08 / kill-list M6) |
 | 11 | LOW | high | bridge | CCT TokenAdminRegistry admin left as the transient deploy contract, never handed to Timelock → pool re-point bricked — ✅ RESOLVED 2026-06-15 (SEC-03, escalated to H4) |
-| 12 | LOW | med | szipUSD | NAV-freshness `validTo` fence permits a fill against an effectively-stale mark at the edge of the bid window |
+| 12 | LOW | med | szipUSD | NAV-freshness `validTo` fence permits a fill against an effectively-stale mark at the edge of the bid window ✅(SEC-13) |
 
 **Cross-cutting theme:** the protocol enforces freshness/monotonicity on *some* oracle read surfaces
 (`SzAlphaRateOracle` strictly-newer; `navEntry()`/`fresh()` fail-closed) but **omits the same guard on
@@ -210,12 +210,22 @@ coverage/freeze decisions.
   news:* legitimate pool re-pointing for an RMN/CCIP upgrade is bricked, and §2 mis-states where this
   authority lives. **fix:** explicit `transferAdminRole(timelock)` step; correct the doc.
 
-### 12. NAV-freshness `validTo` fence permits an edge-stale fill
+### 12. NAV-freshness `validTo` fence permits an edge-stale fill — RESOLVED 2026-06-15 (SEC-13)
 - `SzipBuyBurnModule` / `postBid` — `src/supply/szipUSD/SzipBuyBurnModule.sol:299-308`
 - oracle. The fence bounds `validTo ≤ now + maxAge` relative to *post time*, not to the legs' push
   timestamps, so a bid posted when a leg is nearly `maxAge` old can fill ~`maxAge` later against a mark
   the oracle itself would reject as stale. Small impact (deviation band bounds per-push movement).
   **fix:** derive the `validTo` ceiling from `maxAge − age_of_oldest_required_leg`.
+- **RESOLVED (SEC-13):** added an additive `SzipNavOracle.oldestRequiredLegTs()` view (min of the two pushed
+  legs `LEG_ALPHA_USD`/`LEG_HYDX_USD`, plus the wired xALPHA rate oracle's `lastUpdate()` when seeded) and
+  re-anchored the fence to `oldestRequiredLegTs() + maxAge`. **Implemented as ADDITION, not the proposed
+  subtraction** (`maxAge − age_of_oldest_required_leg` underflows when the oldest leg is exactly `maxAge` old /
+  `maxAge==0`); `anchor + maxAge` is the underflow-safe equivalent and caps the fill-time mark age at exactly
+  `maxAge`, not `2·maxAge`. Intended side effect: an age-stale pushed leg now trips this fence BEFORE
+  `fresh()`/`StaleNav` (strictly tighter, still fail-closed); `StaleNav` stays reachable via the rate-stale path.
+  Rate-leg window note: the rate's native freshness is its own `maxStaleness` (tighter than `maxAge`), still
+  enforced at post-time by `fresh()`; folding its ts into the min only lowers the anchor, never weakening the
+  per-leg `maxAge` guarantee. No back-pressure (the rate oracle already exposes `lastUpdate()`).
 
 ---
 

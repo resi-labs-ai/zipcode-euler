@@ -159,9 +159,12 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   **Fix:** recompute `shares = assets * scaleUp` before emit (mirror `withdraw()` `:221`). *Prefer this over adding
   a `% scaleUp` revert guard — the guard changes currently-accepted inputs.* Redeem is effectively dead in the
   single-requester topology anyway. **DONE 2026-06-15 (SEC-12).**
-- [ ] **L12** (LOW) · `postBid` `validTo` ceiling is anchored to post-time, so worst-case fill age is `2·maxAge`
+- [x] **L12** (LOW) · `postBid` `validTo` ceiling is anchored to post-time, so worst-case fill age is `2·maxAge`
   (`SzipBuyBurnModule.sol:304`). **Fix:** cap `validTo <= min(required leg.ts) + maxAge`; guard the `maxAge==0`/oldest-leg-age==maxAge
-  underflow edge.
+  underflow edge. **DONE 2026-06-15 (SEC-13).** Added additive `SzipNavOracle.oldestRequiredLegTs()` (min of the two
+  pushed legs + the wired xALPHA rate's `lastUpdate()` when seeded) and anchored the fence to `anchor + maxAge` (pure
+  addition — no underflow). Side effect (intended, fail-closed): an age-stale pushed leg now trips this fence BEFORE
+  `fresh()`/`StaleNav` (the fence is strictly tighter); `StaleNav` stays reachable via the rate-stale path.
 - [ ] **L18** (info/QA) · 9 module mastercopies aren't init-locked despite the docstring claim. *The proposed
   `_disableInitializers()` does NOT exist in zodiac-core's `Initializable` (OZ-only) — won't compile.* **Fix:**
   use the zodiac-core `TestModule` idiom (constructor calls `setUp` under the `initializer` modifier) or add a

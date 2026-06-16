@@ -28,7 +28,7 @@ the **first engine Zodiac Module** — it set the `is Module` / `setUp`-under-`i
 |---|---|
 | `SzipBuyBurnModule` (`is Module`, zodiac-core) | The whole bid engine. `setUp`-under-`initializer` set-once wiring (10 args, +`coverageGate`; NO immutable — clone); `onlyOperator` `postBid` (validate the 3-field order → cap → **coverage gate `covered()`** → price-bound vs `navExit` → NAV-freshness fence → build canonical GPv2 uid → `exec` USDC `approve(vaultRelayer)` + `exec` `setPreSignature(uid,true)`) + `cancelBid` (operator-or-owner; presig→false + allowance→0; idempotent); `_orderUid` (in-contract canonical GPv2 hashing); `onlyOwner` (Timelock) governed-param setters (`setDiscountBps`/`setBuybackCap`) + 8 Timelock-settable wiring setters (incl. `setCoverageGate`); `currentBid`/`quoteMaxPrice` views. |
 | `IGPv2Settlement` (`contracts/src/interfaces/cow/IGPv2Settlement.sol`) | The minimal CoW `GPv2Settlement` surface (Base 8453 `0x9008…ab41`, same address all chains): `domainSeparator()` + `vaultRelayer()` (both read LIVE in `setUp`), `setPreSignature(bytes,bool)` (the PRESIGN target — the `owner` packed into `orderUid` MUST == `msg.sender` == the engine Safe), `preSignature(bytes)` (read-back: 0 = unsigned). |
-| `INavOracle` (declared inline in the .sol) | The minimal `SzipNavOracle` surface the module reads: `navExit()` (= `min(spot, twap)`, NEVER reverts on staleness — the §3 buyer-conservative exit mark), `fresh()` (both pushed legs within `maxAge` — gates `postBid`), `maxAge()` (the NAV-freshness fence bound). |
+| `INavOracle` (declared inline in the .sol) | The minimal `SzipNavOracle` surface the module reads: `navExit()` (= `min(spot, twap)`, NEVER reverts on staleness — the §3 buyer-conservative exit mark), `fresh()` (both pushed legs within `maxAge` — gates `postBid`), `maxAge()` (the NAV-freshness fence bound), `oldestRequiredLegTs()` (SEC-13 — the oldest required-leg push timestamp; the fence anchors `validTo ≤ this + maxAge`). |
 | `ICoverageGate` (declared inline in the .sol) | The coverage seam `postBid` reads (the `DurationFreezeModule`): `covered() → bool`. Zero ⇒ gate OFF (M1 / kill-switch). |
 | `IERC20Approve` (declared inline) | The `approve(spender, amount)` face the module builds calldata for (the USDC → VaultRelayer allowance). |
 
@@ -65,8 +65,15 @@ enters the hash). Validation order:
    sidecar+LP coverage is below the debt floor (incl. a price-drift breach). Transparent at zero senior debt
    (`floor = 0 ⇒ covered() == true`). `coverageGate == 0` is the M1 / kill-switch state.
 4. `validTo <= now || validTo > now + MAX_BID_TTL (1 day)` ⇒ `BadValidTo`.
-5. **NAV-freshness fence:** `validTo > now + INavOracle(navOracle).maxAge()` ⇒ `ValidToBeyondNavFreshness` (see Gotchas — the collapsed "fulfillment controller").
-6. `!INavOracle(navOracle).fresh()` ⇒ `StaleNav`; `dBps == 0 || dBps >= 10_000` ⇒ `BadDiscount` (re-asserted).
+5. **NAV-freshness fence (SEC-13 / L12, leg-anchored):** `anchor = INavOracle(navOracle).oldestRequiredLegTs()`;
+   `validTo > anchor + INavOracle(navOracle).maxAge()` ⇒ `ValidToBeyondNavFreshness` (see Gotchas — the collapsed
+   "fulfillment controller"). The anchor is the OLDEST required-leg push ts (not post-time), so the mark a fill can
+   land against is at most `maxAge` old, not `2·maxAge`. Pure addition (`anchor + maxAge`) — no underflow at the
+   `oldest-leg-age == maxAge` / `maxAge == 0` edges. An unset leg (`ts == 0`) ⇒ `anchor == 0` ⇒ fails closed here.
+6. `!INavOracle(navOracle).fresh()` ⇒ `StaleNav`; `dBps == 0 || dBps >= 10_000` ⇒ `BadDiscount` (re-asserted). NB
+   (SEC-13): an **age-stale pushed leg** now trips the fence (#5) BEFORE this `fresh()` gate (the fence is strictly
+   tighter — `anchor + maxAge < now < validTo`); `StaleNav` stays reachable via the **rate-stale** path (fresh pushed
+   legs but a stale wired cross-chain rate, which the leg-only anchor does not pre-empt).
 7. Read `navExit18 = INavOracle(navOracle).navExit()` (USD-18dp per 1e18 share). **Price bound** (exact
    no-truncation integer form, USD-18dp basis, floored against the buyer): `sellAmount * 1e12 * 10_000 * 1e18 >
    buyAmount * navExit18 * (10_000 − dBps)` ⇒ `BidAboveDiscount`. (The `/10_000` and `/1e18` are moved to the LHS
@@ -164,15 +171,28 @@ on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for mon
 ## Gotchas
 - **The NAV-freshness fence is the COLLAPSED "fulfillment controller" (credit-union C2, 2026-06-09).** Per the
   superintendent directive there is **no separate `ExitFulfillmentController`** — its only on-chain value-add (the
-  `validTo <= now + maxAge` fence) was folded directly into `postBid` (error `ValidToBeyondNavFreshness`, plus
-  `maxAge()` added to the local `INavOracle`). A resting bid must not fill against a NAV mark that has since gone
-  stale: `navExit` is priced now off `fresh()` legs, but the order rests until `validTo`, so the fence bounds
-  `validTo` to the oracle's freshness window. The CRE drives `postBid`/`burnFor` directly (it already holds both
-  `operator` and `windowController`); the UI tracks fills via the existing `BidPosted` / Gate `Burned` events.
-- **The fence is inert at the production default.** It binds before `BadValidTo` ONLY when `maxAge < MAX_BID_TTL`.
-  At the default (`SzipNavOracle.maxAge == 1 day == MAX_BID_TTL`) it is a safety ceiling, not the active bound. To
-  make `maxAge` actually clamp the resting TTL, set the oracle `maxAge < 1 day` (an immutable ctor arg) or lower
-  `MAX_BID_TTL`.
+  `validTo` freshness fence) was folded directly into `postBid` (error `ValidToBeyondNavFreshness`, plus
+  `maxAge()` + `oldestRequiredLegTs()` added to the local `INavOracle`). A resting bid must not fill against a NAV
+  mark that has since gone stale: `navExit` is priced now off `fresh()` legs, but the order rests until `validTo`,
+  so the fence bounds `validTo` to the oracle's freshness window. The CRE drives `postBid`/`burnFor` directly (it
+  already holds both `operator` and `windowController`); the UI tracks fills via the existing `BidPosted` / Gate
+  `Burned` events.
+- **SEC-13 (L12): the fence is LEG-ANCHORED, not post-time-anchored.** It originally read `validTo > now + maxAge`,
+  but the legs feeding `navExit` may already be up to `maxAge` old at post-time (`fresh()` only requires age ≤
+  `maxAge`), so the worst-case fill-time mark age was `maxAge` (already elapsed) + `maxAge` (resting) = `2·maxAge`.
+  It now reads `validTo > oldestRequiredLegTs() + maxAge`, capping the fill-time mark age at exactly `maxAge`.
+  `oldestRequiredLegTs()` (additive `SzipNavOracle` view) = min of the two pushed legs (`LEG_ALPHA_USD`,
+  `LEG_HYDX_USD`), plus the wired xALPHA rate oracle's `lastUpdate()` when seeded (`!= 0`). Underflow-safe by
+  construction (ADDITION, never `maxAge − age`). Side effect (intended, fail-closed): an age-stale pushed leg now
+  trips this fence before `fresh()`/`StaleNav` (strictly tighter); an unset leg (`anchor == 0`) also fails closed
+  here. Rate-leg window note: the rate's native freshness is its own `maxStaleness` (tighter than `maxAge`), still
+  enforced at post-time by `fresh()`; folding its ts into the min only LOWERS the anchor.
+- **The fence's `+ maxAge` head-room is inert at the production default; the leg anchor is always active.** The
+  `+ maxAge` ceiling binds before `BadValidTo` ONLY when `oldestRequiredLegTs() + maxAge < now + MAX_BID_TTL` — at
+  the default (`SzipNavOracle.maxAge == 1 day == MAX_BID_TTL`) with freshly-pushed legs it coincides with the
+  post-time ceiling. But because the anchor is the leg ts (not `now`), the moment any required leg ages the fence
+  tightens automatically. To make `maxAge` clamp the resting TTL more aggressively, set the oracle `maxAge < 1 day`
+  (an immutable ctor arg) or lower `MAX_BID_TTL`.
 - **Bid-only — the module never burns, never holds Loot.** The buy and the burn are split by authority; do not
   look for a burn path here. The burn is `ExitGate.burnFor` (windowController), and it is NOT atomic with the buy
   (async CoW fill — a CRE-orchestrated 3-step).

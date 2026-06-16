@@ -1,7 +1,7 @@
 # SEC-13 — `postBid` `validTo` anchored to oldest required leg (L12)
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` L12; `build/CoW-exit.md`, `build/twap-ring.md`;
-audit `findings.md` (L12) · **Status:** PROPOSED
+audit `findings.md` (L12) · **Status:** DONE 2026-06-15
 
 > Scope authored 2026-06-15. Spans TWO of our contracts (same track, not external back-pressure): a small
 > additive view on `SzipNavOracle` + the `postBid` fence in `SzipBuyBurnModule`.
@@ -71,3 +71,67 @@ the fill-time mark age at exactly `maxAge`.
 
 ## Depends on
 - None. On land: `PROGRESS.md` "Just done — SEC-13" with the finding note (+ any rate-ts back-pressure if surfaced).
+
+---
+
+## DONE — 2026-06-15
+
+**`postBid`'s `validTo` fence is now LEG-ANCHORED** (kill-list L12; audit finding #12). Two of our own contracts changed
+(same track, not external back-pressure): an additive view on `SzipNavOracle` + the fence in `SzipBuyBurnModule`.
+
+- **Fix (2 src files):**
+  - `SzipNavOracle.sol` — declared `oldestRequiredLegTs() external view returns (uint48)` returning
+    `min(legCache[LEG_ALPHA_USD].ts, legCache[LEG_HYDX_USD].ts)`, and **folding the wired xALPHA rate oracle's
+    `lastUpdate()` into the min** when `xAlphaRateOracle != 0` AND `lastUpdate() != 0` (the `!= 0` guard routes an
+    unseeded-but-wired rate to the cleaner `fresh()`/`StaleNav` gate instead of clamping the anchor to 0). Extended the
+    inline `IXAlphaRateFresh` interface with `lastUpdate()` (the real `SzAlphaRateOracle.lastUpdate()` already exposes
+    it at `:116` — **no back-pressure**).
+  - `SzipBuyBurnModule.sol` — extended the inline `INavOracle` with `oldestRequiredLegTs()`; replaced the `:304`
+    post-time fence with `uint256 anchor = INavOracle(navOracle).oldestRequiredLegTs(); if (order.validTo > anchor +
+    INavOracle(navOracle).maxAge()) revert ValidToBeyondNavFreshness();`. Pure addition (no underflow). The absolute
+    `MAX_BID_TTL` (`:299`) and the `fresh()` check (`:305`) are untouched (independent ceilings, Do-NOTs honored).
+
+- **Decision sanity-check (rate-leg window, flagged by the spec-fidelity critic):** the rate oracle's native freshness
+  is its own `maxStaleness` (6h), tighter than `maxAge` (1 day). Folding the rate ts with `+ maxAge` bounds the rate's
+  fill-time age to `maxAge`, NOT its tighter native window. Kept (faithful to the ticket's "reflect the full `fresh()`
+  set" + the authored deliverable) because: (a) including the rate only ever LOWERS the anchor, so the per-pushed-leg
+  `maxAge` guarantee is never weakened; (b) it is strictly better than excluding the rate (which would expose it to
+  `maxStaleness + restingWindow`); (c) the tighter `maxStaleness` is still enforced at post-time by `:305 fresh()`.
+  Documented as accepted residual in the view's NatDoc + both wire docs.
+
+- **Intended behavior change (fail-closed, folded back into the test suite):** for an **age-stale pushed leg**, the
+  leg-anchored fence now reverts `ValidToBeyondNavFreshness` BEFORE the `:305 fresh()`/`StaleNav` gate (the fence is
+  strictly tighter — `anchor + maxAge < now < validTo`). Two pre-existing tests that asserted `StaleNav` for the
+  stale-by-age / never-pushed cases were updated to expect `ValidToBeyondNavFreshness` (the bid is rejected fail-closed
+  either way; only the selector changed). `StaleNav` remains reachable via the **rate-stale** path (fresh pushed legs,
+  stale wired rate) — the leg-only anchor does not pre-empt it.
+
+- **Gate green:** `cd contracts && forge build` clean; `forge test` **812 passed / 0 failed / 3 skipped** (+6 over
+  SEC-12's 806 = the 6 new SEC13 tests; the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold). New tests:
+  - `test/SzipNavOracle.t.sol` (2): `test_SEC13_oldestRequiredLegTs_min_of_two_legs` (push legs at different times →
+    returns the older), `test_SEC13_oldestRequiredLegTs_folds_rate_ts_when_wired` (unseeded rate excluded; older rate
+    folds in; newer rate does not raise the anchor).
+  - `test/SzipBuyBurnModule.t.sol` (4, real oracle w/ `maxAge = 1 hours < MAX_BID_TTL`):
+    `test_SEC13_two_maxAge_window_closed` (legs@t0, warp 30m, the OLD post-time ceiling now reverts; the new ceiling
+    `t0+maxAge` posts), `test_SEC13_fill_age_capped_at_maxAge` (exact ceiling posts, `+1` reverts),
+    `test_SEC13_edge_legs_at_freshness_limit_fail_closed` (legs aged exactly `maxAge`, `anchor+maxAge == now`, any
+    `validTo > now` reverts cleanly — no panic), `test_SEC13_fresh_legs_near_term_validTo_posts` (small age, near-term
+    validTo posts).
+  - **Fail-before/pass-after confirmed:** restoring the post-time anchor (`block.timestamp + maxAge`) makes all 3
+    fence regressions FAIL (`next call did not revert as expected`); restored → all 6 pass.
+
+  ```
+  Ran 52 test suites in 29.90s (88.38s CPU time): 812 tests passed, 0 failed, 3 skipped (815 total tests)
+  ```
+
+- **Fixtures:** `MockNavOracle` (buy-burn suite) gained `oldestRequiredLegTs()` (settable; default returns
+  `block.timestamp` so existing fence tests behave identically) + `setOldestTs`; `MockRateOracle` (NAV suite) gained
+  `lastUpdate()`/`setLastUpdate`; new `_realOracleMaxAge(maxAge)` + `_moduleFor(oracle)` helpers (the existing
+  `_newRealOracle` hard-codes `maxAge == 1 day == MAX_BID_TTL`, which can't exercise the leg anchor binding before
+  `BadValidTo`).
+
+- **No spec change** (interface-level fence-tightening; §7 buy-and-burn intent unchanged — `navExit`/`fresh()` semantics
+  and the §7 exit asymmetry are untouched). **No back-pressure / no new obligation** (the rate oracle already exposes
+  `lastUpdate()`). Doc-sync: kill-list L12 `[x]`; audit finding #12 RESOLVED (summary table + `fix:` line, noting the
+  addition-not-subtraction form); wire docs `8-B4-SzipNavOracle.md` + `8-B14-SzipBuyBurnModule.md` updated (consumer
+  surface, guard list, fence gotcha). Report: `build/reports/SEC-13-report.md`.

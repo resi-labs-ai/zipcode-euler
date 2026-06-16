@@ -10,10 +10,14 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-13 — `postBid` `validTo` anchored to oldest required leg (L12).** Ticket: `build/tickets/sec/SEC-13-postbid-validto-leg-anchor.md`.
-- **Deliverable:** add an additive `SzipNavOracle.oldestRequiredLegTs()` view, then bound a resting buy-burn bid's `validTo` to `min(required leg.ts) + maxAge` (the oldest NAV leg's age, not post-time) so a bid can never fill against a NAV mark older than `maxAge` (pre-fix worst case is `2·maxAge`). Spans two of our own contracts (same track, not external back-pressure). Audit L12.
-- **Source:** `build/kill-list.md` L12. Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC13_*` regression; test output quoted in the ticket.
+**SEC-14 — init-lock 9 module mastercopies (L18).** Ticket: `build/tickets/sec/SEC-14-mastercopy-init-lock.md`.
+- **Deliverable:** init-lock the 9 Zodiac-module mastercopies via the zodiac-core `TestModule` idiom (an empty
+  `constructor` that calls `setUp("")`/marks the mastercopy initialized under the `initializer` modifier) — NOT
+  `_disableInitializers()`, which does not exist in zodiac-core's `Initializable` (OZ-only, won't compile) — and fix the
+  docstrings that claim the lock already exists. Audit L18 (info/QA).
+- **Source:** `build/kill-list.md` L18. Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC14_*` regression (each mastercopy's `setUp`
+  reverts post-deploy); test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +35,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-12 are DONE (2026-06-15); SEC-13 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-13 are DONE (2026-06-15); SEC-14 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -50,14 +54,52 @@ doc/comment-only (no regression test).
 | SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **DONE 2026-06-15** — `sec/SEC-10-setlptwapwindow-validation.md` |
 | SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **DONE 2026-06-15** — `sec/SEC-11-fund-previewredeem-sizing.md` |
 | SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **DONE 2026-06-15** — `sec/SEC-12-redeem-canonical-shares-event.md` |
-| SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **NEXT** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
-| SEC-14 | L18 | Init-lock 9 mastercopies (empty `initializer` ctor lock — NOT `_disableInitializers`) + fix docstrings | **TICKETED** — `sec/SEC-14-mastercopy-init-lock.md` |
+| SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **DONE 2026-06-15** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
+| SEC-14 | L18 | Init-lock 9 mastercopies (empty `initializer` ctor lock — NOT `_disableInitializers`) + fix docstrings | **NEXT** — `sec/SEC-14-mastercopy-init-lock.md` |
 | SEC-15 | I6 | `setOperator` re-point `OwnerIsOperator` guard on 8 modules (mirror LpStrategyModule) | **TICKETED** — `sec/SEC-15-setoperator-owner-recheck.md` |
 | SEC-DOC | M3 M8 L4 L6r L13 L15 L17 L16 I1-I5 prorata | Doc/runbook sweep (no behavioral code; 4 explicit rejects) | **TICKETED** — `sec/SEC-DOC-doc-runbook-sweep.md` |
 
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-13 (2026-06-15)
+**`postBid`'s `validTo` fence is now LEG-ANCHORED, not post-time-anchored** (kill-list L12; audit finding #12). The fence
+read `validTo > now + maxAge`, but the legs feeding `navExit` may already be up to `maxAge` old at post-time (`fresh()`
+only requires age ≤ `maxAge`), so a resting bid's worst-case fill-time mark age was `maxAge` (elapsed) + `maxAge`
+(resting) = **2·maxAge**. Anchoring the ceiling to the OLDEST required leg's timestamp caps the fill-time mark age at
+exactly `maxAge`. Spans two of our own contracts (same track, not external back-pressure).
+- **Fix (2 src files):** `SzipNavOracle.sol` — additive `oldestRequiredLegTs() returns (uint48)` = `min(legCache[
+  LEG_ALPHA_USD].ts, legCache[LEG_HYDX_USD].ts)`, folding the wired xALPHA rate oracle's `lastUpdate()` into the min
+  when `xAlphaRateOracle != 0 && lastUpdate() != 0` (the `!= 0` guard routes an unseeded-but-wired rate to the cleaner
+  `fresh()`/`StaleNav` gate instead of clamping the anchor to 0); extended the inline `IXAlphaRateFresh` with
+  `lastUpdate()` (the real `SzAlphaRateOracle.lastUpdate()` already exposes it at `:116` — **no back-pressure**).
+  `SzipBuyBurnModule.sol` — extended the inline `INavOracle` with `oldestRequiredLegTs()`; replaced the `:304` post-time
+  fence with `anchor = oldestRequiredLegTs(); if (validTo > anchor + maxAge()) revert ValidToBeyondNavFreshness();`.
+  **Pure addition — no underflow** at the `oldest-leg-age==maxAge` / `maxAge==0` edges (Do-NOT honored). `MAX_BID_TTL`
+  (`:299`) and `fresh()` (`:305`) untouched (independent ceilings).
+- **Decisions to sanity-check (rate-leg window, flagged by spec-fidelity critic):** the rate oracle's native freshness
+  is its own `maxStaleness` (6h), tighter than `maxAge` (1 day). Folding the rate ts with `+ maxAge` bounds the rate's
+  fill-age to `maxAge`, not its tighter window. KEPT (faithful to the authored deliverable + "reflect the full
+  `fresh()` set") because including the rate only ever LOWERS the anchor (never weakens the per-pushed-leg `maxAge`
+  guarantee), it is strictly better than excluding it, and the tight `maxStaleness` is still enforced at post-time by
+  `:305 fresh()`. Documented as accepted residual in the view NatDoc + both wire docs.
+- **Intended behavior change (fail-closed):** for an **age-stale pushed leg**, the fence now reverts
+  `ValidToBeyondNavFreshness` BEFORE the `:305 fresh()`/`StaleNav` gate (strictly tighter — `anchor + maxAge < now <
+  validTo`). Two pre-existing tests (`test_freshness_gate_stale_reverts`, `test_freshness_never_pushed_reverts`) that
+  asserted `StaleNav` were updated to expect `ValidToBeyondNavFreshness` (bid rejected fail-closed either way; only the
+  selector changed). `StaleNav` stays reachable via the **rate-stale** path (fresh legs, stale wired rate).
+- **Gate green:** `forge build` clean; `forge test` **812 passed / 0 failed / 3 skipped** (+6 over SEC-12's 806 = the 6
+  new SEC13 tests; the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold). 2 view tests (`SzipNavOracle.t.sol`)
+  + 4 fence tests (`SzipBuyBurnModule.t.sol`, real oracle w/ `maxAge = 1 hours < MAX_BID_TTL`: 2·maxAge-closed,
+  fill-age-capped, edge-fail-closed, fresh-near-term-posts). **Fail-before/pass-after confirmed** — restoring the
+  post-time anchor makes all 3 fence regressions FAIL (`next call did not revert as expected`); restored → all pass.
+  Fixtures: `MockNavOracle` gained `oldestRequiredLegTs()` (default returns `block.timestamp` so existing fence tests
+  behave identically); `MockRateOracle` gained `lastUpdate()`; new `_realOracleMaxAge`/`_moduleFor` helpers.
+- **No spec change** (interface-level fence-tightening; §7 buy-and-burn intent unchanged — `navExit`/`fresh()` and the
+  §7 exit asymmetry untouched). **No back-pressure / no new obligation** (rate oracle already exposes `lastUpdate()`).
+  Wire docs `8-B4-SzipNavOracle.md` + `8-B14-SzipBuyBurnModule.md` updated (consumer surface, guard list, fence gotcha).
+  Ticket: `build/tickets/sec/SEC-13-postbid-validto-leg-anchor.md`. Report: `build/reports/SEC-13-report.md`.
 
 ### Just done — SEC-12 (2026-06-15)
 **`ZipRedemptionQueue.redeem()` now emits the CANONICAL `shares = assets * scaleUp` in its `Withdraw` event**
