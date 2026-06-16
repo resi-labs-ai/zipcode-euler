@@ -140,10 +140,11 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
   NAV read; setter has zero validation (`SzipNavOracle.sol:247-250`). **Fix:** in the setter, for non-zero window
   assert `IAlgebraPool(pool).plugin() != 0` and `IAlgebraOraclePlugin(plugin).isInitialized()`. (Full cardinality
   isn't queryable on-chain; the residual window>history edge fails closed on first read, recoverable via `set(0)`.)
-- [ ] **M7** (LOW-MED grief) · `RecycleModule.divert` (`:285-310`) bounds per-call but not cumulatively; the
+- [x] **M7** (LOW-MED grief) · `RecycleModule.divert` (`:285-310`) bounds per-call but not cumulatively; the
   docstring's "can never over-fill" is false across calls. **Fix:** NOT `divertedAgainst[hole]` (provision is a
   single re-markable scalar — keying by value is buggy). Use `lastSeenProvision` + `divertedSinceProvisionChange`,
   reset on any provision change; assert `diverted + amount*1e12 <= hole`. (Do not have `divert` write provision.)
+  **DONE 2026-06-15 (SEC-09).**
 - [ ] **I6** (LOW) — *upgraded DOC → FIX.* 8 of 9 szipUSD modules drop the init-time `operator != owner`
   invariant on `setOperator` re-point; `LpStrategyModule.sol:141` is the only one that re-checks. The
   `OwnerIsOperator` error already exists in each. **Fix:** add `if (operator_ == owner) revert OwnerIsOperator();`

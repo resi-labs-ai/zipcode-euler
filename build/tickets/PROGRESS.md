@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-09 — `RecycleModule.divert` cumulative hole bound (M7).** Ticket: `build/tickets/sec/SEC-09-recycle-divert-cumulative-bound.md`.
-- **Deliverable:** bound `divert` **cumulatively** against the live hole across calls (not just per-call), via a running tally that resets whenever the provision is re-marked — so total diverted USDC can never exceed the hole.
-- **Source:** `build/kill-list.md` M7 (FIX, fix-mechanism CORRECTED). Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC09_*` regression; test output quoted in the ticket.
+**SEC-10 — `setLpTwapWindow(>0)` Algebra plugin/init validation (L2).** Ticket: `build/tickets/sec/SEC-10-setlptwapwindow-validation.md`.
+- **Deliverable:** validate, in `setLpTwapWindow`, that a non-zero window points at an Algebra pool with an **initialized TWAP plugin** — so a mis-set window cannot brick every NAV read (`navEntry`/`navExit`/`coverageValue` all flow through `grossBasketValue → _lpValue → fairReserves`).
+- **Source:** `build/kill-list.md` L2 (LOW→MED). Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC10_*` regression; test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-08 are DONE (2026-06-15); SEC-09 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-09 are DONE (2026-06-15); SEC-10 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -46,8 +46,8 @@ doc/comment-only (no regression test).
 | SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **DONE 2026-06-15** — `sec/SEC-06-closeline-queue-prune.md` |
 | SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **DONE 2026-06-15** — `sec/SEC-07-closeline-defund-to-base.md` |
 | SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **DONE 2026-06-15** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
-| SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **NEXT** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
-| SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **TICKETED** — `sec/SEC-10-setlptwapwindow-validation.md` |
+| SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **DONE 2026-06-15** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
+| SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **NEXT** — `sec/SEC-10-setlptwapwindow-validation.md` |
 | SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **TICKETED** — `sec/SEC-11-fund-previewredeem-sizing.md` |
 | SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **TICKETED** — `sec/SEC-12-redeem-canonical-shares-event.md` |
 | SEC-13 | L12 | `postBid` `validTo` anchored to `min(leg.ts)+maxAge` (+ new oracle `oldestRequiredLegTs` view) | **TICKETED** — `sec/SEC-13-postbid-validto-leg-anchor.md` |
@@ -58,6 +58,42 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-09 (2026-06-15)
+**`RecycleModule.divert` now bounds the diverted total CUMULATIVELY against the live hole, not just per-call** (kill-list
+M7; audit interconnection-C2). `divert` supplies free-value USDC into the senior pool to fill the junior **hole**
+(`provision()`, the §11 markdown) but never writes `provision` (the CRE reduces it later via `DefaultCoordinator.Recovery`),
+so the old per-call `usdcAmount * 1e12 <= hole` check let several diverts between provision re-marks **cumulatively
+over-fill** the hole (hole = $100; divert $60, then $60 again → $120 of junior free-value drained into senior backing
+for a single $100 markdown — grief, operator-trusted, not theft).
+- **Fix (1 file, `RecycleModule.sol`):** added `uint256 public lastSeenProvision;` + `uint256 public divertedSinceProvisionChange;`
+  (18-dp USD). `divert` now (after the `hole == 0`/`NoHole` check, before the spend) does **reset-on-change**
+  (`if (hole != lastSeenProvision) { lastSeenProvision = hole; divertedSinceProvisionChange = 0; }`), computes
+  `scaled = usdcAmount * 1e12`, and **replaces** the per-call `:290` check with the **cumulative**
+  `if (divertedSinceProvisionChange + scaled > hole) revert ExceedsHole();` (strict `>` → exact cumulative fill allowed).
+  The tally is bumped `divertedSinceProvisionChange += scaled;` immediately after `_spendFreeValue` and before the first
+  value-moving `_exec` (effects-phase / CEI; rolls back atomically with the ledger on a post-deposit guard revert).
+  `_spendFreeValue` untouched; **divert still never writes `provision`** (enforced by OBSERVING it, never mutating it).
+- **Mechanism (the fix-mechanism correction the kill-list flagged):** **NOT** the value-keyed `divertedAgainst[hole]`
+  the audit's `fix:` line floated — a `$100 → $80 → $100` re-mark would resurrect a stale value-key tally (buggy). The
+  `lastSeenProvision` (last observed) + single running counter is re-mark-churn-safe. `lastSeenProvision == 0` is a safe
+  "never observed" sentinel because `hole == 0` reverts `NoHole`, so the reset block can never set it to 0. The guarantee
+  is **per-provision-epoch** (between re-marks); cross-re-mark over-supply remains possible but **benign** — extra USDC
+  backing only strengthens the peg, and every spend is hard-capped by the finite CRE-credited `freeValueAccrued` + the
+  trusted single CRE writer (§17). (Validated by all three critics — spec-fidelity PASS, walking the partial-Recovery /
+  hole-grows / stale-churn scenarios; reference-verifier confirmed every binding; junior-dev's blockers folded into the
+  ticket: increment placement, SEED ledger-bound caveat, existing-suite safety.)
+- **Gate green:** `forge build` clean; `forge test` **796 passed / 0 failed / 3 skipped** (+5 over SEC-08's 791; the 3
+  skips are the pre-existing `DeployZipcode.t.sol` scaffold). 5 new `test_SEC09_*` in `RecycleModuleDivertTest`
+  (cumulative-over-fill-blocked, exact-fill-and-one-wei-over, reset-on-re-mark-allows-fresh-budget,
+  stale-value-re-mark-does-not-resurrect, divert-never-writes-provision). The 13 existing divert tests stayed green (the
+  cumulative check is strictly tighter than the old per-call check). **Fail-before/pass-after confirmed** — reverting to
+  the old per-call check (no tally) makes the cumulative-over-fill test FAIL (`0 != 60000000000000000000000`); restored → pass.
+- **No spec change** (interface-level fix; §8.4/§11 intent unchanged — the spec already prescribed `divert` bounded by the
+  live hole; this fences the across-calls gap). **No back-pressure / no new obligation** (uses the existing `provision()`
+  read + `ExceedsHole`). Also fixed the stale `SzipNavOracle.sol:102`→`:135` `provision` line ref in the `RecycleModule`
+  interface comment + the `8-B10` wire doc. Ticket: `build/tickets/sec/SEC-09-recycle-divert-cumulative-bound.md`.
+  Report: `build/reports/SEC-09-report.md`.
 
 ### Just done — SEC-08 (2026-06-15)
 **`openLine` now prechecks the EE timelock at runtime, and the deploy probes that a line-vault-shaped vault passes the

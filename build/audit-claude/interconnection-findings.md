@@ -25,7 +25,8 @@ seams, and escalated the xALPHA-rate issue to HIGH by tracing its full cross-cha
 
 ## MEDIUM
 
-### C2 — `RecycleModule.divert` has no cumulative tally vs `provision()` → the same default markdown can be over-filled across calls
+### C2 ✅ — `RecycleModule.divert` has no cumulative tally vs `provision()` → the same default markdown can be over-filled across calls
+- **RESOLVED 2026-06-15 (SEC-09):** `divert` now carries a `lastSeenProvision` + `divertedSinceProvisionChange` tally (18-dp USD); the per-call `:290` check is replaced by the cumulative `if (divertedSinceProvisionChange + scaled > hole) revert ExceedsHole();`, with the tally reset on any observed `provision()` change and bumped in the effects phase (after `_spendFreeValue`, before the value-moving execs). **NOT** the value-keyed `divertedAgainst[hole]` the fix line floated (a `$100→$80→$100` re-mark resurrects a stale value-key tally — buggy); last-seen + single-counter is re-mark-churn-safe. Divert still never writes `provision` (the CRE owns the hole reduction). Guarantee is **per-provision-epoch** — cross-re-mark over-supply remains possible but benign (extra USDC backing only strengthens the peg; spend is hard-capped by the finite `freeValueAccrued` + the trusted single CRE writer, §17).
 - **flow:** loss waterfall. **contracts:** `RecycleModule` ↔ `SzipNavOracle.provision` ↔ `DefaultCoordinator`.
 - **location:** `RecycleModule.sol:285-310`; `SzipNavOracle.sol:304-309`; `DefaultCoordinator.sol:230-261`.
 - **class:** cross-contract accounting double-count · **severity: MED · confidence: med**
