@@ -1,7 +1,20 @@
 # SEC-08 — `openLine` EE-timelock precheck + deploy-time perspective probe (M6)
 
 **Track:** SEC (auditor-prep) · **Source docs:** `build/kill-list.md` Group 3 / M6 (FIX, proposed fix REVISED);
-audit `findings.md` (M6); `reference/euler-earn/src/EulerEarn.sol`, `.../EulerEarnFactory.sol` · **Status:** PROPOSED
+audit `findings.md` (M6); `reference/euler-earn/src/EulerEarn.sol`, `.../EulerEarnFactory.sol` · **Status:** DONE 2026-06-15
+
+> **FRAMING CORRECTION (validated by the spec-fidelity critic, 2026-06-15).** The ticket below calls perspective
+> rejection of the custom line-vault config "the dominant brick." That premise is FALSE against the *live* EE-factory
+> perspective: it is `EVKFactoryPerspective`, which is **provenance-only** (`isVerified(v) = vaultFactory.isProxy(v)`,
+> `reference/evk-periphery/src/Perspectives/deployed/EVKFactoryPerspective.sol:27`) — it never inspects IRM, hook,
+> governor, oracle, or unit-of-account. A line vault is an EVK-`GenericFactory` proxy, so it passes today purely on
+> provenance; the custom config is invisible to the gate. **The probe's real value is therefore guarding a FUTURE
+> external `setPerspective` swap** (the EE-factory owner is external; `EulerEarnFactory.sol:81` `setPerspective` is
+> owner-settable): a config-inspecting successor (e.g. an ungoverned-only perspective requiring `governorAdmin==0` +
+> `hookTarget==0`) would REJECT the governed+hooked line vault and brick origination. The deliverable is unchanged
+> (both guards ship); only the justification is corrected. The probe checks the **external** EE factory's gate, NOT a
+> protocol-owned perspective — §17 "perspectives dropped entirely" governs the protocol's own design, not external EE
+> infra, so no §17 conflict. "Deploy probe passes live" is a PROVENANCE pass, not config-acceptance.
 
 > Scope authored 2026-06-15. The audit's proposed deploy-time `timelock()==0` assert is a one-time snapshot
 > (the external EE owner can raise the timelock later) AND misses the dominant brick (perspective rejection of
@@ -85,3 +98,36 @@ loud deploy-time failure, instead of an opaque mid-origination revert.
 
 ## Depends on
 - None. On land: `PROGRESS.md` "Just done — SEC-08" with the finding note (and any perspective back-pressure if surfaced).
+
+## DONE 2026-06-15
+**Both guards shipped; gate green.** `forge build` clean; `forge test` **791 passed / 0 failed / 3 skipped** (+4 over
+SEC-07's 787; the 3 skips are the pre-existing `DeployZipcode.t.sol` scaffold).
+
+- **(1) Runtime precheck** (`src/venue/EulerVenueAdapter.sol`): added `error EulerEarnTimelockNonZero();` and, at the
+  TOP of `openLine` (right after the `collateralAmount != 1e18` guard, before step 0),
+  `if (eulerEarn.timelock() != 0) revert EulerEarnTimelockNonZero();`. Read LIVE per origination (no new import —
+  `timelock()` is on the already-imported `IEulerEarn`).
+- **(2) Deploy-time probe**: new `script/SzipPerspectiveProbe.sol` — a standalone **CONTRACT** (NOT a library: a
+  library inlines into the ephemeral deploy script and `forge script --broadcast` rejects the script's `address(this)`
+  being baked into deployed state — discovered when the first library version reverted *"Usage of `address(this)`
+  detected in script contract"* mid-deploy; the contract form mirrors `ReservoirMarketDeployer`). `buildLineVaultShape`
+  mirrors `openLine` steps 1/2/3/6 (escrow + per-line router + USDC borrow vault with custom IRM + gating hook +
+  governor retained, router frozen); `assertLineVaultAllowed` reaches the factory via `eulerEarn.creator()` (low-level
+  staticcall) and reverts `LineVaultPerspectiveRejected` if `isStrategyAllowed(probe)` is false. Wired into
+  `DeployLocal._configureEulerEarn` (the EE pool + adapter + factory are all live there).
+- **3 new regression tests** in `test/EulerVenueAdapter.t.sol`: `test_SEC08_TimelockPrecheck_RevertsEarly_NoOrphan`
+  (raise the mock EE timelock → openLine reverts the legible error AND the factory proxy list is unchanged — no
+  orphaned proxies), `test_SEC08_TimelockZero_HappyPath`, `test_SEC08_DeployProbe_PassesLive` (full probe path against
+  the **live** `EULER_EARN_FACTORY` — provenance pass), `test_SEC08_DeployProbe_Bites` (a `MockRejectingEarnFactory`
+  whose `isStrategyAllowed` returns false → probe reverts `LineVaultPerspectiveRejected`). `MockEulerEarn` gained
+  `timelock`/`setTimelock`/`creator`/`setCreator` + a faithful `acceptCap` that reverts `TimelockNotElapsed` while
+  `timelock != 0` (so pre-fix the brick orphans real proxies — meaningful fail-before). `ZipcodeController.t.sol`'s own
+  `MockEulerEarn` gained a `timelock()==0` stub (the precheck runs on every controller-driven `openLine`).
+- **Fail-before/pass-after confirmed.** Disabling the precheck → the timelock test reverts opaquely as
+  `TimelockNotElapsed` (not `EulerEarnTimelockNonZero`) at **3.25M gas** (proxies built) vs the post-fix **66k** early
+  revert. Disabling the probe's `isStrategyAllowed` assert → the bites test no longer reverts.
+- **Deploy-script gate (per harness):** ran the real `DeployLocal --broadcast --slow` against a **fresh** anvil Base
+  fork @47096000 (port 8546) → **"ONCHAIN EXECUTION COMPLETE & SUCCESSFUL" / "Script ran successfully"** — the probe
+  assert in `_configureEulerEarn` passed end-to-end and the full stack deployed.
+- **No spec change** (interface-level guard + deploy-only probe; §4.7 intent unchanged). **No back-pressure / no new
+  obligation** — the provenance-only perspective accepts the line vault today, so the back-pressure clause did not fire.

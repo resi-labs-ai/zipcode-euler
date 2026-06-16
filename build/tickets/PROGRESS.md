@@ -10,10 +10,10 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**SEC-08 — `openLine` runtime EE-timelock precheck + deploy-time perspective probe (M6).** Ticket: `build/tickets/sec/SEC-08-openline-timelock-precheck-perspective-probe.md`.
-- **Deliverable:** (1) a runtime precheck in `openLine` reading `eulerEarn.timelock()` with a legible revert (the deploy-time `timelock()==0` snapshot is insufficient — the external EE owner can raise it later); (2) a deploy-time assert that the EE factory perspective verifies a probe vault built identically to `openLine`'s custom line vault (custom IRM + gating hook + retained governor), the dominant brick the snapshot misses.
-- **Source:** `build/kill-list.md` Group 3 / M6 (FIX, REVISE — proposed fix was incomplete). Driver: `build/kill-list-driver.md`.
-- **Done when:** `forge build` clean; `forge test` green + the named `SEC08_*` regression; test output quoted in the ticket.
+**SEC-09 — `RecycleModule.divert` cumulative hole bound (M7).** Ticket: `build/tickets/sec/SEC-09-recycle-divert-cumulative-bound.md`.
+- **Deliverable:** bound `divert` **cumulatively** against the live hole across calls (not just per-call), via a running tally that resets whenever the provision is re-marked — so total diverted USDC can never exceed the hole.
+- **Source:** `build/kill-list.md` M7 (FIX, fix-mechanism CORRECTED). Driver: `build/kill-list-driver.md`.
+- **Done when:** `forge build` clean; `forge test` green + the named `SEC09_*` regression; test output quoted in the ticket.
 
 > **SEC track is the active build phase** (auditor-prep, 16 tickets authored — see the SEC track section below).
 > Work them one at a time in the correctness-first order: SEC-01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10 →
@@ -31,7 +31,7 @@ Source of truth: `build/kill-list.md` (16 FIX, 14 DOC). Driver: `build/kill-list
 → one `SEC-DOC` sweep). One ticket at a time: focused change, regression test, verify, mark done, next.
 Worked correctness-first per the driver's suggested order.
 
-**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01 + SEC-02 + SEC-03 + SEC-04 + SEC-05 + SEC-06 + SEC-07 are DONE (2026-06-15); SEC-08 is now NEXT.**
+**All 16 SEC tickets are AUTHORED** (SEC-01…SEC-15 FIX + SEC-DOC). **SEC-01…SEC-08 are DONE (2026-06-15); SEC-09 is now NEXT.**
 The harness drives builds one at a time; gate per SEC ticket is `forge build` + `forge test` green + the named
 `SECnn_*` regression test (deploy-script tickets re-run `DeployLocal` against a fresh anvil fork). SEC-DOC is
 doc/comment-only (no regression test).
@@ -45,8 +45,8 @@ doc/comment-only (no regression test).
 | SEC-05 | M4 | Seal `lpOracle` CRE identity in P9 + extend pre-gate (both conditional on `lpOracle != 0`) | **DONE 2026-06-15** — `sec/SEC-05-seal-lporacle-identity.md` |
 | SEC-06 | Group 3a (H2) | `closeLine` prune of closed-line vault from EE supply queue | **DONE 2026-06-15** — `sec/SEC-06-closeline-queue-prune.md` |
 | SEC-07 | L8 | `closeLine` line→base defund reallocate (reclaim stranded USDC) | **DONE 2026-06-15** — `sec/SEC-07-closeline-defund-to-base.md` |
-| SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **NEXT** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
-| SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **TICKETED** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
+| SEC-08 | M6 | `openLine` runtime EE-timelock precheck + deploy-time perspective probe | **DONE 2026-06-15** — `sec/SEC-08-openline-timelock-precheck-perspective-probe.md` |
+| SEC-09 | M7 | `RecycleModule.divert` cumulative bound (lastSeenProvision tally) | **NEXT** — `sec/SEC-09-recycle-divert-cumulative-bound.md` |
 | SEC-10 | L2 | `setLpTwapWindow(>0)` Algebra plugin/init validation | **TICKETED** — `sec/SEC-10-setlptwapwindow-validation.md` |
 | SEC-11 | L9 | `fund` sizing via `previewRedeem(config.balance)` (donation-immune; shared `_eeSupplyAssets` helper) | **TICKETED** — `sec/SEC-11-fund-previewredeem-sizing.md` |
 | SEC-12 | L11 | `ZipRedemptionQueue.redeem()` recompute canonical shares before emit (event-only) | **TICKETED** — `sec/SEC-12-redeem-canonical-shares-event.md` |
@@ -58,6 +58,44 @@ doc/comment-only (no regression test).
 > DISMISS (H3/L5/L10) + DEFER (drawgate/covguard/exitbook) left untouched per the kill-list — keep the
 > existing `loot.paused()` test (H3) and add the deploy invariants the kill-list names where applicable.
 > SEC-NN numbering above is provisional ordering, not final IDs; each ticket fixes its ID on authoring.
+
+### Just done — SEC-08 (2026-06-15)
+**`openLine` now prechecks the EE timelock at runtime, and the deploy probes that a line-vault-shaped vault passes the
+EE factory's perspective** (kill-list M6; audit finding #10). `openLine` onboards each per-line borrow vault via a
+same-tx `submitCap`+`acceptCap`; two external EE-side conditions can brick that: a non-zero EE timelock (`acceptCap`'s
+`afterTimelock` reverts in-tx) and perspective rejection of the line vault. The audit's proposed deploy-time
+`timelock()==0` assert is a snapshot — the **external** EE owner can RAISE the timelock post-deploy — and misses the
+perspective leg.
+- **Fix (3 files + 1 new):** (1) `EulerVenueAdapter.sol` — `error EulerEarnTimelockNonZero()` + a top-of-`openLine`
+  precheck `if (eulerEarn.timelock() != 0) revert EulerEarnTimelockNonZero();` (read LIVE, before any line state is
+  built, so the brick can't orphan half-built proxies). No new import (`timelock()` is on the imported `IEulerEarn`).
+  (2) new `script/SzipPerspectiveProbe.sol` — a standalone **contract** (not a library: `forge script --broadcast`
+  rejects a script's `address(this)` baked into deployed state — the first library version reverted *"Usage of
+  `address(this)` detected in script contract"* mid-deploy; the contract form mirrors `ReservoirMarketDeployer`) whose
+  `buildLineVaultShape` mirrors `openLine` steps 1/2/3/6 and `assertLineVaultAllowed` reaches the factory via
+  `eulerEarn.creator()` and reverts `LineVaultPerspectiveRejected` if `isStrategyAllowed(probe)` is false. Wired into
+  `DeployLocal._configureEulerEarn`. (3) `MockEulerEarn` (adapter test) gained `timelock`/`setTimelock`/`creator`/
+  `setCreator` + a faithful `acceptCap` reverting `TimelockNotElapsed` while `timelock != 0`; `ZipcodeController.t.sol`'s
+  own mock gained a `timelock()==0` stub.
+- **Finding (validated by the spec-fidelity critic; framing corrected in the ticket/kill-list/audit/wire):** the live
+  EE-factory perspective is `EVKFactoryPerspective` — **provenance-only** (`isVerified = vaultFactory.isProxy`, never
+  inspects IRM/hook/governor/oracle). So the kill-list's "dominant brick" (perspective rejecting the custom config) does
+  **NOT exist** under the *current* perspective — a line vault passes purely as a factory proxy. The probe's real value
+  is guarding a **FUTURE** external `setPerspective` swap (EE-factory-owner-settable) to a config-inspecting/ungoverned-
+  only perspective that would reject the governed+hooked line vault and brick origination. The probe checks the
+  **external** EE factory's gate, not a protocol-owned perspective (no §17 "perspectives dropped" conflict). "Deploy
+  probe passes live" is a provenance pass, not config-acceptance.
+- **Gate green:** `forge build` clean; `forge test` **791 passed / 0 failed / 3 skipped** (+4 over SEC-07's 787; the 3
+  skips are the pre-existing `DeployZipcode.t.sol` scaffold). 4 new `test_SEC08_*` in `EulerVenueAdapter.t.sol`
+  (timelock-precheck-no-orphan, timelock-zero-happy-path, deploy-probe-passes-live against the **real**
+  `EULER_EARN_FACTORY`, deploy-probe-bites via a `MockRejectingEarnFactory`). **Fail-before/pass-after confirmed**
+  (precheck off → opaque `TimelockNotElapsed` at 3.25M gas w/ proxies built, vs 66k early revert; probe assert off →
+  bites no longer reverts). **Deploy-script gate (per harness):** real `DeployLocal --broadcast --slow` against a
+  **fresh** anvil Base fork @47096000 (port 8546) → "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL" — the probe passed
+  end-to-end and the full stack deployed.
+- **No spec change** (interface-level guard + deploy-only probe; §4.7 intent unchanged). **No back-pressure / no new
+  obligation** (the provenance-only perspective accepts the line vault today). Ticket: `build/tickets/sec/SEC-08-openline-timelock-precheck-perspective-probe.md`.
+  Report: `build/reports/SEC-08-report.md`.
 
 ### Just done — SEC-07 (2026-06-15)
 **`closeLine` now defunds the line's USDC back to base before the SEC-06 prune** (kill-list Group 3 / L8; audit finding

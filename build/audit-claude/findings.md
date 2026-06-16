@@ -18,7 +18,7 @@ documented blast radius) are excluded from findings and listed separately as pos
 | 7 | MED | med | szipUSD | `coverageValue()` double-counts sidecar ICHI-LP, inflating coverage + corrupting the LP-dissolution gate |
 | 8 | MED | high | szipUSD | Coverage gate defaults OFF (`coverageGate==0`) leaves buy-burn outflow + LP dissolution unfenced |
 | 9 | LOW | high | szipUSD | `requiredCommittedValue` gross-cap can make `covered()` permanently false → bricks release/postBid/removeLiquidity |
-| 10 | LOW | high | venue | `openLine` atomicity silently depends on un-asserted EulerEarn preconditions (zero timelock + perspective allow-list) |
+| 10 | LOW | high | venue | `openLine` atomicity silently depends on un-asserted EulerEarn preconditions (zero timelock + perspective allow-list) — ✅ RESOLVED 2026-06-15 (SEC-08 / kill-list M6) |
 | 11 | LOW | high | bridge | CCT TokenAdminRegistry admin left as the transient deploy contract, never handed to Timelock → pool re-point bricked — ✅ RESOLVED 2026-06-15 (SEC-03, escalated to H4) |
 | 12 | LOW | med | szipUSD | NAV-freshness `validTo` fence permits a fill against an effectively-stale mark at the edge of the bid window |
 
@@ -182,7 +182,16 @@ coverage/freeze decisions.
   holds value → `covered()` is structurally false, bricking every coverage-gated outflow (`postBid`,
   `removeLiquidity`) and `release` exactly when exits/dissolution are most needed. No attacker; liveness.
 
-### 10. `openLine` atomicity depends on un-asserted EulerEarn preconditions
+### 10. `openLine` atomicity depends on un-asserted EulerEarn preconditions — ✅ RESOLVED 2026-06-15 (SEC-08)
+- **RESOLVED 2026-06-15 (SEC-08 / kill-list M6):** (1) runtime precheck `if (eulerEarn.timelock() != 0) revert
+  EulerEarnTimelockNonZero();` at the top of `openLine` (`src/venue/EulerVenueAdapter.sol:201`) — reads the timelock
+  LIVE (the external EE owner can raise it post-deploy, so a snapshot is insufficient) and fails loud BEFORE any line
+  state is built. (2) deploy-time perspective probe (`script/SzipPerspectiveProbe.sol`, wired into
+  `DeployLocal._configureEulerEarn`): builds a vault with `openLine`'s exact shape and asserts
+  `IEulerEarnFactory(creator).isStrategyAllowed(probe)`. **Finding (validated):** the live EE-factory perspective is
+  `EVKFactoryPerspective` — **provenance-only** (`isVerified = vaultFactory.isProxy`, never inspects IRM/hook/governor),
+  so the perspective half of this finding cannot brick origination under the *current* perspective; the probe guards a
+  **future** external `setPerspective` swap. See `reports/SEC-08-report.md`.
 - `EulerVenueAdapter` / `openLine` — `src/venue/EulerVenueAdapter.sol:225-226`
 - cross-contract. The same-tx `submitCap`→`acceptCap` only succeeds if the fresh vault is already
   perspective-verified (`isStrategyAllowed`) **and** the EE timelock is 0; otherwise every `openLine`

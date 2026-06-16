@@ -49,10 +49,11 @@ deploy script**, kept SEPARATE from the audited core counts. Nobody forgotten.
 | `src/bridge/SzAlphaLockReleasePool.sol` | `8x-01-szALPHA-bridge.md` |
 | `src/bridge/SzAlphaRateOracle.sol` | `8x-02-SzAlphaRateOracle.md` |
 
-## B. Deploy/helper scripts (`script/`) — 8 files
+## B. Deploy/helper scripts (`script/`) — 9 files
 | File | Doc |
 |---|---|
 | `script/DeployZipcode.s.sol` | `DeployZipcode.md` |
+| `script/SzipPerspectiveProbe.sol` | `WOOF-04.md` (SEC-08 deploy-time line-vault perspective probe) |
 | `script/DeployLocal.s.sol` | `DeployZipcode.md` (anvil-fork wrapper of the orchestrator) |
 | `script/DeployMainnet.s.sol` | `DeployZipcode.md` + `script/RUNBOOK-mainnet-deploy.md` (live-network wrapper) |
 | `script/BaseAddresses.sol` | `WOOF-00.md` |

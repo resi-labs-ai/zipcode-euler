@@ -86,12 +86,19 @@ three siblings omit it. **Each site must also DECLARE `error StaleReport()` — 
 - [ ] **L9** (LOW grief) · `fund` sizes off `convertToAssets(balanceOf(EE))`; a 1-share donation reverts
   `reallocate` (`:285-287`). **Fix:** use `config[id].balance` run through **`previewRedeem`** (not
   `convertToAssets`) to byte-match EE's internal rounding.
-- [ ] **M6** (MED liveness) — *FIX, but the proposed fix was incomplete (REVISE).* A deploy-time
+- [x] **M6** (MED liveness) — *FIX, but the proposed fix was incomplete (REVISE).* A deploy-time
   `timelock()==0` assert is a one-time snapshot: the external EE owner can raise the timelock later, and the
   **dominant** brick is perspective-verification of the custom line vault (custom IRM + gating hook + retained
   governor), which the assert doesn't touch. **Fix:** (1) runtime precheck in `openLine` reading
   `eulerEarn.timelock()` with a legible revert; (2) deploy-time assert the EE factory perspective verifies a
-  probe vault built identically to `openLine`'s.
+  probe vault built identically to `openLine`'s. **DONE 2026-06-15 (SEC-08).** (1) `openLine` aborts with
+  `EulerEarnTimelockNonZero` before any line state is built (`EulerVenueAdapter.sol:201`). (2) new
+  `SzipPerspectiveProbe` contract builds a line-vault-shaped probe and asserts `isStrategyAllowed`, wired into
+  `DeployLocal._configureEulerEarn`. **Finding (validated, framing corrected):** the live EE-factory perspective
+  is `EVKFactoryPerspective` — **provenance-only** (`isVerified = isProxy`), so it never inspects IRM/hook/governor;
+  the "dominant brick" does NOT exist under the *current* perspective. The probe's real value is guarding a
+  **future** external `setPerspective` swap (e.g. to a config-inspecting/ungoverned-only perspective that would
+  reject the governed+hooked line vault and brick origination). See `reports/SEC-08-report.md`.
 
 ### Standalone FIX
 - [x] **H4** (HIGH) — *overturned from DECIDE.* Registry `administrator` is left as the deploy Script on
