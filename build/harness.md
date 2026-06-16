@@ -132,16 +132,18 @@ ticket and the build re-runs. The code is the proof, the ticket is the intent �
 committed. No findings is a flag to be skeptical, not a win.
 
 ### Step 5 — Conclude (leave a resumable on-disk state, then STOP)
-- **Run the full doc-sync: `build/doc-sync-checklist.md`** — ticket DONE-note, `PROGRESS.md`, the kill-list
-  checkbox, the `audit-claude/` finding(s), the `wires/` truth-source for every CHANGED contract (via
-  `wires/COVERAGE.md`), any `claude-zipcode.md` spec fix, and the report. A FIX that changes built-contract
-  behavior has backward-facing truth-sources to keep in sync, not just the forward ones below.
+- **Doc-sync (the load-bearing step): update the `wires/` truth-source for every CHANGED contract** — look up the
+  owning wire doc via `wires/COVERAGE.md` and fix any enumerated guard/behavior list so it matches the built
+  contract (the most-missed step). Plus `PROGRESS.md`, the `kill-list.md` checkbox, and any `claude-zipcode.md` spec
+  fix. A change to built-contract behavior has backward-facing truth-sources to keep in sync, not just the forward
+  ones below. (Per-item tickets/reports + `audit-claude/` are pruned once work lands — the durable record is
+  `wires/` + `kill-list.md` + the commit; don't re-create them.)
 - Ticket filed under `build/tickets/<track>/`.
 - `build/tickets/PROGRESS.md` updated — mark the item done, set the next `NEXT`, log any spec fix.
 - Any `build/claude-zipcode.md` spec fix saved.
 - The built code committed (`cre/...` or `frontend/...`) with its gate green.
-- `build/reports/<ITEM>-report.md` written: what the window did · decisions to sanity-check · holes →
-  resolution · doc edits · status + NEXT.
+- A concise account of the window — what it did · decisions to sanity-check · holes → resolution · status + NEXT —
+  goes in the commit message and the `PROGRESS.md` note (no separate `reports/` file; that class was pruned).
 - **STOP.** One item per window; the reviewer releases the next.
 
 ---
