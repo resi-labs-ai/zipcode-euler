@@ -251,8 +251,8 @@ can free (§6.3).
 > removed. `requestRedeem` is gated to a **single requester** (the rq Safe), so pro-rata computed a fraction over a
 > set of size one. What remains is a **par-burn sink**: escrow → `min(available, pending)` fill + burn → claim at
 > par. Par redemption is **treasury-internal plumbing** — it converts the rq Safe's idle basket zipUSD into the USDC
-> that funds the CoW buy-burn bid; a real holder never redeems here (see `build/CoW-exit.md` and
-> `build/wires/9-ZipRedemptionQueue.md`). The prose below is retained as design history.
+> that funds the CoW buy-burn bid; a real holder never redeems here (see
+> `build/wires/9-ZipRedemptionQueue.md` + `8-B14-SzipBuyBurnModule.md`). The prose below is retained as design history.
 
 The USDC backing zipUSD is lent out to illiquid lien markets, so par redemption fills only as far as the pool can
 free cash. Lifecycle (`requestRedeem → settleEpoch → withdraw`/`redeem`):

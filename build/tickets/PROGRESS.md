@@ -10,16 +10,25 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**FE — NAV exit-book page (driver `build/CoW.md` item #3).** The two-sided depth chart (x = % of NAV, y =
-cumulative USDC) + liquidity gauge (free reservoir / harvest reserve / utilization) + one-click CoW exit, built
-in the `frontend/zipcode-finance-euler` LAYER on the shipped withdraw spine (FE-04). MVP = read-only depth chart
-first (NAV line via `navExit` + the protocol bid block via `SzipBuyBurnModule.currentBid()` — now maintained by
-the CRE-05a loop — + the external CoW book via the CoW Orderbook API), then the exit action (CoW SDK, wallet-signed
-SELL). Reuse the `useZipTx` 1.3× gas helper + the anvil address/ABI books. Gate: `nuxt build` green in the layer
-(NOT `npm run dev`), anvil up. Binds to: `SzipBuyBurnModule` `0x1288…`, `SzipNavOracle` `0x0C3E…`, reservoir
-`IEVault`/EE pool for the gauge.
-- The reviewer releases the specific NEXT item. Alternatives: socket-or-keeper the next operator/controller module
-  (the systemic seam below — unblocks CRE-02 + the rest of CRE-05), or the broader **CRE-00** scaffold.
+**Reviewer to release — the szipUSD CoW-exit workstream is COMPLETE (drivers retired).** With CTR-01 (report
+socket), CRE-05a (bid-loop), CRE-06 (folded-as-config), and FE-08 (the NAV exit-book page) all landed, the
+`build/CoW.md` + `build/CoW-exit.md` drivers are spent and have been **deleted** (2026-06-16) — the durable record
+is the built code (`cre/buyburn-bid/`, `contracts/src/supply/szipUSD/{SzipBuyBurnModule,CloneReportReceiver}.sol`,
+the layer's exit-book page) + `build/wires/` + this file. Candidate NEXT items (reviewer picks):
+- **The systemic operator-path seam** (Open obligations below): socket-or-keeper the next operator/controller
+  module — unblocks **CRE-02** (`settleEpoch`/`claim`) + the rest of **CRE-05** (the harvest engine legs).
+- **The broader CRE track head — CRE-00** scaffold, then the report-path workflows **CRE-01/03/04**.
+
+> **FE-08 — szipUSD NAV exit-book page — DONE 2026-06-16.** Built in the LAYER (`frontend/zipcode-finance-euler`,
+> commit `a592135` on `resi-labs-ai`): `pages/lender/szip-exit-book.vue` + `composables/{useNavExitBook,
+> useCowOrderbook}.ts` + `components/zipcode/{ZcNavExitBookChart,ZcLiquidityGauge}.vue`. The two-sided depth chart
+> (x = % of NAV, y = cumulative USDC): NAV line @100% + the protocol buy-burn bid block @ `navExit×(1−d)` sized to
+> the live `currentBid().sellAmount` (the CRE-05a loop) + the external CoW book fanned below; a liquidity gauge
+> (free reservoir = `eePool.maxWithdraw(warehouseSafe)`, `U` the donation-immune §8.2 way); a "Sell to floor" CTA
+> that opens the unmodified FE-04 `ZcWithdrawModal` (no new exit logic). Reads all exist (no back-pressure); the
+> registry already had `eePool`/`warehouseSafe`. Gate green: `npm run build` (nuxt) clean + `node
+> .output/server/index.mjs` → `/lender/szip-exit-book` returns 200 (external book empty on the fork, renders fine).
+> Ticket: `build/tickets/frontend/FE-08-nav-exit-book.md`.
 
 > **CRE-05a — buy-burn bid-loop wasip1 workflow — DONE 2026-06-16.** The exit half of CRE-05 (§8.7), unblocked by
 > CTR-01. Built `cre/buyburn-bid/` (the first buildable CRE workflow — also the minimal CRE scaffold): a
@@ -32,7 +41,7 @@ SELL). Reuse the `useZipTx` 1.3× gas helper + the anvil address/ABI books. Gate
 > (encode round-trip byte-matching `_processReport`, 7 simulated-run scenarios, sizing units). Ticket:
 > `build/tickets/cre/CRE-05a-buyburn-bid-loop.md`.
 >
-> **CRE-06 (exit-vs-harvest split) — DISCHARGED-as-config by CRE-05a.** The triage decision (CoW.md §2 item 2
+> **CRE-06 (exit-vs-harvest split) — DISCHARGED-as-config by CRE-05a.** The triage decision (the now-retired CoW driver allowed item 2
 > permits folding it into #1's sizing): the split is the `harvestReserve` + `safetyBuffer` Config params in the
 > bid sizing (M1 = constants; a dynamic, utilization-aware policy is a later parameter swap, not a redesign). No
 > standalone CRE-06 workflow.
@@ -72,9 +81,9 @@ dismissals (the old H3/L5/L10/M5) needed no code and are recoverable from git if
 
 ### CRE (Go → wasip1) — spec §8
 Numbering follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the spec rules intent.
-> **The szipUSD CoW-exit workstream (CRE-05 bid-loop + CRE-06 split + the net-new FE exit-book page) has a driver:
-> `build/CoW.md`** — paste it to a fresh session to author + build those tickets through the harness (design source:
-> `build/CoW-exit.md`). Both drivers retire once the work lands.
+> **The szipUSD CoW-exit workstream is COMPLETE (2026-06-16): CTR-01 (report socket) + CRE-05a (bid-loop) +
+> CRE-06 (folded-as-config) + FE-08 (exit-book page) landed; the `build/CoW.md` + `build/CoW-exit.md` drivers are
+> deleted.** Durable record = the built code + `build/wires/` + this file.
 
 | Item | What | Spec § |
 |---|---|---|
@@ -83,8 +92,8 @@ Numbering follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the sp
 | CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call. *(2026-06-12: `settleEpoch` is now ON-DEMAND — the 30-day epoch gate was removed — so this can be event-driven off the queue's `RedemptionSettled` event rather than a fixed cron: settle → if backlog remains, sequence another REDEEM→REPAY. See `build/wires/9-ZipRedemptionQueue.md`.)* **Scope: `build/tickets/cre/CRE-02-redemption-settle.md`.** | §8.3 / §8.5 |
 | CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` — and the xALPHA-APR feed (the 8x-02 receiver is built; the Go producer remains) | §8.6 / §8.8 |
 | CRE-04 | Senior-warehouse **SUPPLY / APPROVE / REPAY** ops via the Roles adapter | §8.5 |
-| CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy). *(2026-06-12 design inputs: (a) the DurationFreeze main↔sidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth; see `build/CoW-exit.md`.)* **CLARIFICATION (2026-06-16): the freeze's physical lever (`commit`/`release`) is DORMANT by design.** `commit` is `onlyOperator` + discretionary (no auto-machinery), and the sidecar is empty in normal operation because the dominant asset (the staked ICHI LP) can't be moved into it — it is counted toward the floor IN PLACE via the oracle's `pathLockedLpEquity()` (`coverageValue = committedValue + pathLockedLpEquity`). So CRE-05 should drive `commit` ONLY on a coverage shortfall (a price-drift breach where in-place LP + sidecar < `requiredCommittedValue`), to top up with the movable plain legs (USDC/zipUSD preferred — stable backing). The live machinery is the **accounting + outflow gates** (`covered()` on `postBid`/`removeLiquidity`/`release`), not the physical rotation. | §8.7 |
-| CRE-06 | **DISCHARGED-as-config by CRE-05a (2026-06-16).** The exit-vs-harvest split is now the `harvestReserve` + `safetyBuffer` Config params in the buy-burn bid sizing (`clamp(freeReservoir − harvestReserve − safetyBuffer, 0, buybackCap)`) — M1 constants; a dynamic utilization-aware policy is a later parameter swap, not a redesign. No standalone workflow. (Original cross-cutting framing retained in `build/CoW-exit.md`.) | §8.5 / §8.7 |
+| CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy). *(2026-06-12 design inputs: (a) the DurationFreeze main↔sidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth — the exit half SHIPPED as CRE-05a, `cre/buyburn-bid/`.)* **CLARIFICATION (2026-06-16): the freeze's physical lever (`commit`/`release`) is DORMANT by design.** `commit` is `onlyOperator` + discretionary (no auto-machinery), and the sidecar is empty in normal operation because the dominant asset (the staked ICHI LP) can't be moved into it — it is counted toward the floor IN PLACE via the oracle's `pathLockedLpEquity()` (`coverageValue = committedValue + pathLockedLpEquity`). So CRE-05 should drive `commit` ONLY on a coverage shortfall (a price-drift breach where in-place LP + sidecar < `requiredCommittedValue`), to top up with the movable plain legs (USDC/zipUSD preferred — stable backing). The live machinery is the **accounting + outflow gates** (`covered()` on `postBid`/`removeLiquidity`/`release`), not the physical rotation. | §8.7 |
+| CRE-06 | **DISCHARGED-as-config by CRE-05a (2026-06-16).** The exit-vs-harvest split is now the `harvestReserve` + `safetyBuffer` Config params in the buy-burn bid sizing (`clamp(freeReservoir − harvestReserve − safetyBuffer, 0, buybackCap)`) — M1 constants; a dynamic utilization-aware policy is a later parameter swap, not a redesign. No standalone workflow. (Cross-cutting coupling now recorded in the CRE-05a ticket + `build/wires/DurationFreezeModule.md`.) | §8.5 / §8.7 |
 | CRE-05a | **DONE 2026-06-16 — buy-burn bid-loop** (the exit half of CRE-05; `cre/buyburn-bid/`). The single-resting-bid automation via the CTR-01 report path. Gate green (wasip1 build + 14 tests). The REST of CRE-05 (the harvest engine legs 8-B5…8-B10 + main↔sidecar rotation) remains — blocked on the systemic operator-path seam below (socket-or-keeper per module). | §8.7 |
 
 ### Frontend ↔ anvil (Vue/viem, in the `zipcode-finance-euler` LAYER over a read-only `euler-lite` base)
