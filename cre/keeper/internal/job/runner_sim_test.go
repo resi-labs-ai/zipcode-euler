@@ -86,18 +86,21 @@ func newSimEnv(t *testing.T, deploy bool) *simEnv {
 
 	env := &simEnv{t: t, sim: sim, chain: c, signer: signer, stop: stop}
 	if deploy {
-		env.probe = env.deployProbe(client)
+		env.probe = env.deployProbe(client, probeBytecode)
 	}
 	return env
 }
 
+// deployProbe deploys the given creation bytecode and returns its address. The
+// bytecode is a parameter so different probes (OnlyOperatorProbe,
+// ExitGateBurnProbe) can be deployed through the same plumbing.
 func (e *simEnv) deployProbe(client interface {
 	PendingNonceAt(context.Context, common.Address) (uint64, error)
 	SuggestGasTipCap(context.Context) (*big.Int, error)
 	HeaderByNumber(context.Context, *big.Int) (*types.Header, error)
 	SendTransaction(context.Context, *types.Transaction) error
 	TransactionReceipt(context.Context, common.Hash) (*types.Receipt, error)
-}) common.Address {
+}, bytecode string) common.Address {
 	e.t.Helper()
 	ctx := context.Background()
 	from := e.signer.Address()
@@ -116,7 +119,7 @@ func (e *simEnv) deployProbe(client interface {
 	maxFee := new(big.Int).Add(new(big.Int).Mul(head.BaseFee, big.NewInt(2)), tip)
 	tx := types.NewTx(&types.DynamicFeeTx{
 		ChainID: simChainID, Nonce: nonce, GasTipCap: tip, GasFeeCap: maxFee,
-		Gas: 1_000_000, To: nil, Data: common.FromHex(probeBytecode),
+		Gas: 1_000_000, To: nil, Data: common.FromHex(bytecode),
 	})
 	signed, err := e.signer.SignTx(tx, simChainID)
 	if err != nil {

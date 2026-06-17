@@ -10,17 +10,35 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**Reviewer to release.** KEEPER-00 is DONE (below) — the (K) keeper spine now exists, so the engine track is
-unblocked. Candidate NEXT items (reviewer picks):
-- **KEEPER-01 (= rest of CRE-05)** — the engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` + main↔sidecar
-  rotate; regime/split/cap policy) **+ buy-burn fill-detect→`burnFor`** + freeze-`commit`-on-coverage-shortfall.
-  Now unblocked (KEEPER-00 landed). *Recommended — the direct continuation; plugs `Job` impls into the new spine.*
+**Reviewer to release.** KEEPER-00 (spine) + KEEPER-01a (burn job) are DONE (below). **KEEPER-01 was split into
+three** (its sub-systems differ in size + maturity): **01a** fill-detect→`burnFor` (DONE), **01b** the engine
+harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds to the INCOMPLETE
+`DurationFreezeModule`). Candidate NEXT items (reviewer picks):
+- **KEEPER-01b — the engine harvest orchestrator** (8-B5…8-B10 `onlyOperator` legs + main↔sidecar rotation +
+  regime/split/cap policy, as `Job`s on the spine). The large remaining (K) item. *Recommended — the bulk of the
+  engine track; the live yield loop.*
 - **CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package; then the **(R)** workflows
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
 
 The szipUSD CoW-exit workstream is COMPLETE (CTR-01 + CRE-05a + CRE-06 + FE-08; `CoW.md`/`CoW-exit.md` deleted).
+
+> **KEEPER-01a — buy-burn fill-detect → `burnFor` job — DONE 2026-06-17.** The first live (K) write job + the burn
+> half of the hybrid buy-burn cycle (`CRE-OPS-ROUTING.md`): a CoW fill lands szipUSD in the engine Safe; `BurnJob`
+> retires it via `ExitGate.burnFor(amount)` (`onlyWindowController` = the keeper key). Added to `cre/keeper/`:
+> `internal/job/burn_job.go` (`BurnJob`: reads `shareToken()`/`engineSafe()`/`balanceOf` off the Gate each tick
+> §17-re-pointable, burns the **full** engine-Safe balance — `Loot(gate) ≥ that` always, the soulbound-Loot
+> invariant — above a config `MinBurnAmount` floor; no-op on zero/below-floor/unwired) · `internal/chain/encode.go`
+> (`PackUintCall` for one-uint256 write calldata) · `MinBurnAmount` config (env-only `*big.Int`; explicit 0 valid) ·
+> `main.go` registers it after the IdentityJob. **No coverage/freshness gate by design** — `SzipNavOracle.
+> _effectiveSupply()` excludes the engine Safe's pre-burn szipUSD (`:608-613`, denominator at `:474`), so a lagging
+> burn can't move NAV (housekeeping). **No double-burn** because the spine's `Submit` is synchronous on a
+> single-threaded Runner (recorded as load-bearing in a code comment). Gate green: `go vet`/`go build` exit 0
+> (native) + `go test ./...` green (stub-Reader unit suite with the EXACT `0x6f5d0f0b ++ uint256` calldata
+> assertion + no-op/floor/unwired/error branches; simulated-backend end-to-end via `ExitGateBurnProbe`) + all
+> KEEPER-00 tests still pass, clean under `-race`. Zero load-bearing guesses. Ticket:
+> `build/tickets/cre/KEEPER-01a-burn-job.md`. No contract changed → no `wires/` sync owed.
 
 > **KEEPER-00 — the CRE keeper-service scaffold — DONE 2026-06-16.** The foundation for the entire **(K)** surface
 > (the §8.7 operator path's off-chain embodiment; NOT wasip1, imports no `cre-sdk-go`). Built `cre/keeper/` (Go +
@@ -115,7 +133,9 @@ Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) 
 | Item | What | Shape |
 |---|---|---|
 | KEEPER-00 | **DONE 2026-06-16** — CRE keeper-service scaffold (`cre/keeper/`; Go + go-ethereum; key mgmt; nonce-safe read→compute→submit spine + chain-read helpers + the `Job`/`Runner` seam + the IdentityJob template; config). Foundation for every (K) item. NOT wasip1. | (K) |
-| KEEPER-01 | Engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` + main↔sidecar rotate; regime/split/cap policy) **+ buy-burn fill-detect→`burnFor`** (windowController) **+ freeze-`commit`-on-coverage-shortfall** (the DORMANT lever, exception-only). = the rest of CRE-05. **Unblocked** (KEEPER-00 done) — plugs `Job` impls into the `cre/keeper/` spine. | (K) |
+| KEEPER-01a | **DONE 2026-06-17** — buy-burn fill-detect→`burnFor` (windowController). The first live (K) write `Job` on the spine (`cre/keeper/internal/job/burn_job.go`). | (K) |
+| KEEPER-01b | Engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` legs + main↔sidecar rotate; regime/split/cap policy), as `Job`s on the `cre/keeper/` spine. = the bulk of the rest of CRE-05. **Unblocked** (KEEPER-00 done). | (K) |
+| KEEPER-01c | Freeze-`commit`-on-coverage-shortfall (the DORMANT lever, exception-only). **DEFERRED** — binds to the INCOMPLETE `DurationFreezeModule` (premise under review, Open obligations); lock with the freeze rebuild, not against an unsettled module. | (K) |
 
 > **The szipUSD CoW-exit workstream is COMPLETE (2026-06-16): CTR-01 (report socket) + CRE-05a (bid-loop) +
 > CRE-06 (folded-as-config) + FE-08 (exit-book page) landed; the `build/CoW.md` + `build/CoW-exit.md` drivers are

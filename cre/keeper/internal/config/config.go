@@ -7,6 +7,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +26,12 @@ type Config struct {
 	FeeCapMultiplier uint64                    `json:"fee_cap_multiplier"` // base-fee headroom knob (K3)
 	ConfirmTimeout   time.Duration             `json:"confirm_timeout"`
 	Modules          map[string]common.Address `json:"modules"` // address book keyed by name
+
+	// MinBurnAmount is the BurnJob floor (KEEPER_MIN_BURN_AMOUNT, base-10). It is
+	// env-only — `json:"-"` keeps it OUT of the JSON-file overlay (a *big.Int does
+	// not round-trip cleanly through it). Default 0 = burn any non-zero fill;
+	// unlike the scalar knobs, an explicit 0 is VALID here (no Validate rule).
+	MinBurnAmount *big.Int `json:"-"`
 }
 
 // defaults returns a Config seeded with the documented default values. Defaults
@@ -37,6 +44,7 @@ func defaults() Config {
 		FeeCapMultiplier: 2,    // base-fee headroom
 		ConfirmTimeout:   60 * time.Second,
 		Modules:          map[string]common.Address{},
+		MinBurnAmount:    big.NewInt(0), // 0 = burn any non-zero fill (explicit 0 is valid)
 	}
 }
 
@@ -113,6 +121,17 @@ func overlayEnv(cfg *Config) error {
 			return fmt.Errorf("config: KEEPER_CONFIRM_TIMEOUT %q: %w", v, err)
 		}
 		cfg.ConfirmTimeout = d
+	}
+	// MinBurnAmount: env-only, base-10 *big.Int. Replace the default ONLY if the
+	// var is non-empty (so the seeded 0 survives, per the defaults→json→env order).
+	// Reject only an unparseable non-empty value (a Load error, not a Validate
+	// rule — any parsed value ≥0 is valid; 0 = burn any non-zero fill).
+	if v := os.Getenv("KEEPER_MIN_BURN_AMOUNT"); v != "" {
+		n, ok := new(big.Int).SetString(v, 10)
+		if !ok {
+			return fmt.Errorf("config: KEEPER_MIN_BURN_AMOUNT %q is not a base-10 integer", v)
+		}
+		cfg.MinBurnAmount = n
 	}
 
 	if cfg.Modules == nil {

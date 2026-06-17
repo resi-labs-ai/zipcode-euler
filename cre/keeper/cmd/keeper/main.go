@@ -63,6 +63,10 @@ func run(log *slog.Logger) error {
 	}
 	identity := job.NewIdentityJob(signer.Address(), checks)
 
+	// Burn job: retire szipUSD the engine Safe bought below NAV (8-B14). ExitGate
+	// addr reused from MustAddr above; floor from cfg.MinBurnAmount (0 = any fill).
+	burn := job.NewBurnJob(exitGate, cfg.MinBurnAmount)
+
 	// SIGINT/SIGTERM → graceful stop.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -74,8 +78,8 @@ func run(log *slog.Logger) error {
 	log.Info("startup identity assertion passed",
 		"ReservoirLoopModule", reservoir.Hex(), "ExitGate", exitGate.Hex())
 
-	// 5. register IdentityJob as a heartbeat and run the loop.
-	runner := job.NewRunner(c, []job.Job{identity}, cfg.PollInterval, log)
+	// 5. register the jobs (IdentityJob heartbeat first, then BurnJob) and run the loop.
+	runner := job.NewRunner(c, []job.Job{identity, burn}, cfg.PollInterval, log)
 	runner.Run(ctx)
 	return nil
 }
