@@ -10,17 +10,36 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**Reviewer to release.** The operator-path routing decision is DONE (`build/tickets/cre/CRE-OPS-ROUTING.md`,
-2026-06-16) — the CRE track now has two clean build shapes. Candidate NEXT items (reviewer picks):
-- **KEEPER-00 — the CRE keeper-service scaffold** (off-chain Go + go-ethereum; key mgmt; the read→compute→submit
-  spine + shared chain-read helpers; NOT wasip1). The foundation for the entire **(K)** surface (KEEPER-01 + the
-  CRE-02 operator half). *Recommended first — it's the (K) analogue of CRE-00 and unblocks the engine track.*
+**Reviewer to release.** KEEPER-00 is DONE (below) — the (K) keeper spine now exists, so the engine track is
+unblocked. Candidate NEXT items (reviewer picks):
+- **KEEPER-01 (= rest of CRE-05)** — the engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` + main↔sidecar
+  rotate; regime/split/cap policy) **+ buy-burn fill-detect→`burnFor`** + freeze-`commit`-on-coverage-shortfall.
+  Now unblocked (KEEPER-00 landed). *Recommended — the direct continuation; plugs `Job` impls into the new spine.*
 - **CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package; then the **(R)** workflows
-  **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything).
-- **KEEPER-01 (= rest of CRE-05)** — the engine harvest-loop orchestrator + buy-burn `burnFor` + freeze-on-shortfall.
-  Depends on KEEPER-00.
+  **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
+- **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
+  `CRE-OPS-ROUTING.md`.
 
 The szipUSD CoW-exit workstream is COMPLETE (CTR-01 + CRE-05a + CRE-06 + FE-08; `CoW.md`/`CoW-exit.md` deleted).
+
+> **KEEPER-00 — the CRE keeper-service scaffold — DONE 2026-06-16.** The foundation for the entire **(K)** surface
+> (the §8.7 operator path's off-chain embodiment; NOT wasip1, imports no `cre-sdk-go`). Built `cre/keeper/` (Go +
+> go-ethereum v1.17.2): config (env+JSON, defaults-before-validate, re-pointable address book §17) · keymgr
+> (operator hot key, env-hex primary / geth-keystore secondary; key NEVER logged/in-errors/in-Config) · the
+> `chain` client (a minimal `Backend`/`Reader` iface both `*ethclient.Client` AND `simulated.Client` satisfy; view
+> read-helpers `CallUint/Bool/Address`; a **nonce-safe** EIP-1559 `Submit` — local mutex-guarded nonce, advances
+> ONLY after a successful send, `EstimateGas` doubles as a dry-run that aborts without advancing) · the
+> read→compute→submit **`Job` spine** (`Evaluate→chain.Plan`, a `Runner` that ResyncNonce→submits each plan
+> **ordered + abort-on-first-error**, fail-safe between jobs, graceful SIGINT/SIGTERM — liveness-only failure per
+> `CRE-OPS-ROUTING.md`) · one reference read-only **IdentityJob** asserting the §8.7 invariant `operator()==key &&
+> owner()!=key` (the copy-template KEEPER-01 clones; startup fail-fast + heartbeat). Gate green:
+> `go vet ./... && go build ./...` exit 0 (native, NOT wasip1) + `go test ./...` green across chain/config/job/keymgr
+> (submit-spine incl. nonce-gap regression; default-before-validate; abort-on-first-error; IdentityJob incl. the
+> `operator!=owner` branch via a stub Reader), also clean under `-race`. Zero load-bearing guesses. Ticket:
+> `build/tickets/cre/KEEPER-00-keeper-scaffold.md`. No contract changed → no `wires/` sync owed (off-chain code;
+> truth = ticket + code + commit). **Forward notes recorded for KEEPER-01** in the ticket: fill-detect is a
+> balance-poll (no on-chain fill event); harvest legs are discrete txs (no multicall) → ordered `chain.Plan`; the
+> `abi.Pack` native-int quirk bites scalar args.
 
 > **M1 DECISION (2026-06-16): the 8-B14 buy-order bid is HUMAN/MANUAL at launch.** A person posts/cancels it via
 > the operator-key door, reading the FE-08 exit-book dashboard; the CRE-05a robot is **built-but-parked** until
@@ -95,8 +114,8 @@ Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) 
 
 | Item | What | Shape |
 |---|---|---|
-| KEEPER-00 | CRE keeper-service scaffold (Go + go-ethereum; key mgmt; read→compute→submit spine + shared chain-read helpers; config). Foundation for every (K) item. NOT wasip1. | (K) |
-| KEEPER-01 | Engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` + main↔sidecar rotate; regime/split/cap policy) **+ buy-burn fill-detect→`burnFor`** (windowController) **+ freeze-`commit`-on-coverage-shortfall** (the DORMANT lever, exception-only). = the rest of CRE-05. Depends on KEEPER-00. | (K) |
+| KEEPER-00 | **DONE 2026-06-16** — CRE keeper-service scaffold (`cre/keeper/`; Go + go-ethereum; key mgmt; nonce-safe read→compute→submit spine + chain-read helpers + the `Job`/`Runner` seam + the IdentityJob template; config). Foundation for every (K) item. NOT wasip1. | (K) |
+| KEEPER-01 | Engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` + main↔sidecar rotate; regime/split/cap policy) **+ buy-burn fill-detect→`burnFor`** (windowController) **+ freeze-`commit`-on-coverage-shortfall** (the DORMANT lever, exception-only). = the rest of CRE-05. **Unblocked** (KEEPER-00 done) — plugs `Job` impls into the `cre/keeper/` spine. | (K) |
 
 > **The szipUSD CoW-exit workstream is COMPLETE (2026-06-16): CTR-01 (report socket) + CRE-05a (bid-loop) +
 > CRE-06 (folded-as-config) + FE-08 (exit-book page) landed; the `build/CoW.md` + `build/CoW-exit.md` drivers are

@@ -1,0 +1,8 @@
+# Never commit secrets.
+/.env
+
+# geth keystore files (operator key material).
+/keystore/
+*.keystore
+keystore-*.json
+UTC--*
