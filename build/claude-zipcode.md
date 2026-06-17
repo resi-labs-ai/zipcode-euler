@@ -740,6 +740,15 @@ deferred to the treasury module, §17); no additional on-chain mechanism is inve
 junior's pay + self-insurance** (the loop vamps net-new USDC, compounding the basket = "frozen but earning",
 waterfall leg (e), §11). It is bounded — TVL-capped, front-loaded, trailing-realized (`hydrex.md`).
 
+> **The off-chain orchestrator's policy is NOT yet pinned (the build gate for KEEPER-01b).** The execution floors
+> (`minOut`/`maxPayment`/`minShares`), regime params + price source, vote weights, sizing/caps, and the
+> main↔sidecar rotation are enumerated as a decision-needed agenda in
+> `build/tickets/cre/KEEPER-01b-OPEN-POLICY.md` (candidate values live in `pending-docs/hydrex.md` §9.2/§9.3, never
+> lifted here). The harvest orchestrator (KEEPER-01b) is **policy-blocked** until those are ratified; the
+> strike-loop core slice is buildable once the execution floors + sizing constants (A1–A4 + C4 there) are set.
+> `KEEPER-00` (the spine) + `KEEPER-01a` (buy-burn `burnFor`) shipped; rotation stays with the freeze rebuild
+> (`KEEPER-01c`, `DurationFreezeModule` premise under review).
+
 ### 8.8 xALPHA exchange-rate Base oracle + the DERIVED APR (8x-02)
 **The one fact that lives only on Bittensor is the xALPHA `exchangeRate()`** (`staked alpha ÷ supply`, StakingV2
 `0x805`, native to **Subtensor 964**; the Base `SzAlphaMirror` is a plain `BurnMintERC20` with no stake surface). So
