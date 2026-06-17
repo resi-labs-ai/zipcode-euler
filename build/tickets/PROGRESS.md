@@ -22,6 +22,12 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 The szipUSD CoW-exit workstream is COMPLETE (CTR-01 + CRE-05a + CRE-06 + FE-08; `CoW.md`/`CoW-exit.md` deleted).
 
+> **M1 DECISION (2026-06-16): the 8-B14 buy-order bid is HUMAN/MANUAL at launch.** A person posts/cancels it via
+> the operator-key door, reading the FE-08 exit-book dashboard; the CRE-05a robot is **built-but-parked** until
+> there's real exit data to tune the bid's `d`/size rules (flip-on = wire Forwarder + workflow-id, then run). No
+> rework — CTR-01's two-door design already supports manual. The yield engine (8-B5…8-B10) stays robot-run.
+> See `build/tickets/cre/CRE-OPS-ROUTING.md` (M1 operating note).
+
 > **FE-08 — szipUSD NAV exit-book page — DONE 2026-06-16.** Built in the LAYER (`frontend/zipcode-finance-euler`,
 > commit `a592135` on `resi-labs-ai`): `pages/lender/szip-exit-book.vue` + `composables/{useNavExitBook,
 > useCowOrderbook}.ts` + `components/zipcode/{ZcNavExitBookChart,ZcLiquidityGauge}.vue`. The two-sided depth chart

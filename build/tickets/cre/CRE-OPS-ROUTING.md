@@ -44,6 +44,18 @@ introduces.
 | `ExitGate.burnFor` | `onlyWindowController` | **standalone `Ownable`** (NOT a clone) | **(K) keeper** | Async after a CoW fill is detected off-chain; mechanical "szipUSD arrived → retire it", nothing to attest. Already a CRE keeper key. |
 | `DurationFreezeModule.commit/release` | `onlyOperator` | Zodiac clone | **DORMANT (keeper-on-exception)** | Premise under review (PROGRESS obligation: may be obviated by the exit topology; can't move staked LP). Drive `commit` ONLY on a coverage shortfall — no routine driver. Re-decide at the freeze rebuild. |
 
+## M1 operating note — 8-B14 is HUMAN/MANUAL at launch (decided 2026-06-16)
+The 8-B14 bid runs **manually for M1**: a human posts/cancels the bid through the operator-key door
+(`postBid`/`cancelBid`), reading the live NAV / spare-cash / order-book off the FE-08 exit-book dashboard. You
+cannot set good auto-rules for the bid's price (discount `d`) and size until there is **real exit data** to tune
+them — so judgment-first, encode-later. **CRE-05a (the (R) committee-robot workflow) is BUILT-BUT-PARKED:** it is
+not torn out and not run — it's pre-wired to switch on once the tuning data exists (flip = wire the Forwarder +
+workflow-id per the CTR-01 deploy obligation, then run it). The manual door is already there (CTR-01's two-door
+design); manual-for-now removes work, it doesn't add any. (A small "post/cancel bid" admin control on the FE-08
+page — so manual = a click, not a raw tx — is a noted, optional future add, only needed if a non-engineer runs it.)
+The yield-engine machines (8-B5…8-B10) remain robot-run from the start per the table; the same operator-key door
+gives them a manual override too if ever wanted.
+
 ## The correction this ruling makes (record it)
 **CTR-01's socket is the EXCEPTION, not the template.** The systemic-seam obligation implied ~10 modules might
 each get a `CloneReportReceiver`. The ruling: **only 8-B14 warranted (R)** (it pushes a computed economic value);
