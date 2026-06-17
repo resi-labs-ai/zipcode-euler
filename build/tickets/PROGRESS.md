@@ -10,14 +10,17 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**Reviewer to release — the szipUSD CoW-exit workstream is COMPLETE (drivers retired).** With CTR-01 (report
-socket), CRE-05a (bid-loop), CRE-06 (folded-as-config), and FE-08 (the NAV exit-book page) all landed, the
-`build/CoW.md` + `build/CoW-exit.md` drivers are spent and have been **deleted** (2026-06-16) — the durable record
-is the built code (`cre/buyburn-bid/`, `contracts/src/supply/szipUSD/{SzipBuyBurnModule,CloneReportReceiver}.sol`,
-the layer's exit-book page) + `build/wires/` + this file. Candidate NEXT items (reviewer picks):
-- **The systemic operator-path seam** (Open obligations below): socket-or-keeper the next operator/controller
-  module — unblocks **CRE-02** (`settleEpoch`/`claim`) + the rest of **CRE-05** (the harvest engine legs).
-- **The broader CRE track head — CRE-00** scaffold, then the report-path workflows **CRE-01/03/04**.
+**Reviewer to release.** The operator-path routing decision is DONE (`build/tickets/cre/CRE-OPS-ROUTING.md`,
+2026-06-16) — the CRE track now has two clean build shapes. Candidate NEXT items (reviewer picks):
+- **KEEPER-00 — the CRE keeper-service scaffold** (off-chain Go + go-ethereum; key mgmt; the read→compute→submit
+  spine + shared chain-read helpers; NOT wasip1). The foundation for the entire **(K)** surface (KEEPER-01 + the
+  CRE-02 operator half). *Recommended first — it's the (K) analogue of CRE-00 and unblocks the engine track.*
+- **CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package; then the **(R)** workflows
+  **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything).
+- **KEEPER-01 (= rest of CRE-05)** — the engine harvest-loop orchestrator + buy-burn `burnFor` + freeze-on-shortfall.
+  Depends on KEEPER-00.
+
+The szipUSD CoW-exit workstream is COMPLETE (CTR-01 + CRE-05a + CRE-06 + FE-08; `CoW.md`/`CoW-exit.md` deleted).
 
 > **FE-08 — szipUSD NAV exit-book page — DONE 2026-06-16.** Built in the LAYER (`frontend/zipcode-finance-euler`,
 > commit `a592135` on `resi-labs-ai`): `pages/lender/szip-exit-book.vue` + `composables/{useNavExitBook,
@@ -79,8 +82,16 @@ dismissals (the old H3/L5/L10/M5) needed no code and are recoverable from git if
 
 ## Backlog
 
-### CRE (Go → wasip1) — spec §8
-Numbering follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the spec rules intent.
+### CRE — two build shapes (routing decided 2026-06-16, `build/tickets/cre/CRE-OPS-ROUTING.md`)
+**(R) wasip1 workflows** (report path → existing receivers): CRE-00/01/03/04 + CRE-05a (done).
+**(K) the CRE keeper service** (off-chain Go + go-ethereum, hot keys, NOT wasip1): KEEPER-00/01 + the CRE-02 operator half.
+Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) — the spec rules intent.
+
+| Item | What | Shape |
+|---|---|---|
+| KEEPER-00 | CRE keeper-service scaffold (Go + go-ethereum; key mgmt; read→compute→submit spine + shared chain-read helpers; config). Foundation for every (K) item. NOT wasip1. | (K) |
+| KEEPER-01 | Engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` + main↔sidecar rotate; regime/split/cap policy) **+ buy-burn fill-detect→`burnFor`** (windowController) **+ freeze-`commit`-on-coverage-shortfall** (the DORMANT lever, exception-only). = the rest of CRE-05. Depends on KEEPER-00. | (K) |
+
 > **The szipUSD CoW-exit workstream is COMPLETE (2026-06-16): CTR-01 (report socket) + CRE-05a (bid-loop) +
 > CRE-06 (folded-as-config) + FE-08 (exit-book page) landed; the `build/CoW.md` + `build/CoW-exit.md` drivers are
 > deleted.** Durable record = the built code + `build/wires/` + this file.
@@ -128,8 +139,16 @@ track on it.
 
 ## Open obligations / seams
 
-- **SYSTEMIC SEAM (raised 2026-06-16, CTR-01) — the operator/controller modules have NO `cre-sdk-go` write path;
-  pick a driver per module.** `cre-sdk-go`'s evm client has reads + exactly ONE write — `WriteReport` (DON-signed
+- **SYSTEMIC SEAM (raised 2026-06-16, CTR-01) — RESOLVED 2026-06-16 by `build/tickets/cre/CRE-OPS-ROUTING.md`.**
+  The per-module write-path decision is made: **(R) report path only for 8-B14**; **(K) the single trusted
+  operator/keeper for the engine harvest loop (8-B5…8-B10), the redemption operator sequencing (`OffRampModule` +
+  `ZipRedemptionQueue`), and `ExitGate.burnFor`**; **`DurationFreezeModule` stays DORMANT** (on-chain `covered()`
+  is the fail-closed backstop). `RecycleModule.creditFreeValue` is (K) on principle — report-driving it re-opens
+  the §4.5.1 oracle-manipulation exploit. **CTR-01's socket is the exception, not the template** — no further
+  sockets owed. Spawns **KEEPER-00** (keeper-service scaffold) + **KEEPER-01** (= rest of CRE-05 + burnFor +
+  freeze-on-exception); CRE-02 is confirmed (R)+(K) hybrid. Recorded in `claude-zipcode.md` §8.7. The original
+  seam description (kept for context):
+  > `cre-sdk-go`'s evm client has reads + exactly ONE write — `WriteReport` (DON-signed
   → Keystone Forwarder → `IReceiver.onReport`); there is **no raw-tx / keeper primitive**. So a wasip1 CRE workflow
   can only drive contracts that are **report receivers**. Today that is: `WarehouseAdminModule`, `SzipNavOracle`,
   `SzipReservoirLpOracle`, `DefaultCoordinator`, `ZipcodeController`, `ZipcodeOracleRegistry`, `SzAlphaRateOracle`

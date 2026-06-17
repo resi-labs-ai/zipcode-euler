@@ -708,6 +708,17 @@ is the protocol's own automation, not a borrow-side trust surface). The other op
 / `ExitGate.burnFor`) have the **identical gap** and can adopt the same base, OR be driven by an off-chain
 keeper holding the operator/controller key — a per-module decision (logged in `build/tickets/PROGRESS.md`).
 
+**ROUTING DECISION RESOLVED (2026-06-16, `build/tickets/cre/CRE-OPS-ROUTING.md`).** The per-module choice is made:
+**(R) report path ONLY for 8-B14**; **(K) the single trusted operator/keeper for the whole engine harvest loop
+(8-B5…8-B10), the redemption operator sequencing (`OffRampModule` + `ZipRedemptionQueue`), and `ExitGate.burnFor`**;
+**`DurationFreezeModule.commit/release` stays DORMANT** (driven only on a coverage shortfall — the on-chain
+`covered()` gate is the fail-closed backstop). Principle: (R) iff the write is a DON-attestable economic value AND
+report-driving opens no attack surface — which is why `RecycleModule.creditFreeValue` is **(K)**, NOT (R)
+(report-driving it would re-open the §4.5.1 oracle-manipulation exploit operator-trust exists to kill). So
+**CTR-01's socket is the EXCEPTION, not the template** — no further sockets are bolted onto the operator/controller
+surface. The (K) surface is the **CRE keeper service** (off-chain Go + go-ethereum, NOT wasip1); failure is
+liveness-only + fail-safe (the on-chain caps/coverage/EVC guards hold; `setOperator` is the Timelock recovery, §17).
+
 Per epoch + on triggers the operator runs the loop (each leg an `onlyOperator` call, the operator supplying
 **only scalar amounts** — never addresses/calldata — so its blast radius is bounded, `LpStrategyModule.sol:19`):
 1. **claim** oHYDX + fees and **vote** (8-B7 harvest/vote — `Voter.vote` each epoch, `exerciseVe` to defend the
