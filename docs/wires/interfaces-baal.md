@@ -32,7 +32,8 @@ and the ExitGate.
 - **Consumed by:**
   - `contracts/script/SummonSubstrate.s.sol` — reads `avatar()`/`lootToken()`/`sharesToken()`; encodes init `actions[]` via selectors `setAdminConfig`/`setGovernanceConfig`/`setShamans`/`mintShares`/`mintLoot` and `executeAsBaal` (self-add team-multisig owner onto main Safe + sidecar).
   - `contracts/src/supply/szipUSD/ExitGate.sol` — `IBaal public baal`; resolves `loot = baal.lootToken()`, `mainSafe = baal.avatar()`.
-- **Gotchas:** zero-Shares ⇒ governance-**inert** by design (proposal fns exist only to PROVE inertness in tests). `ragequit` is the windowed patient-exit path (Loot held by the Gate). `setShamans` grants the manager(2) shaman bit (mint/burn) — admin=1/manager=2/governor=4. `executeAsBaal` is the only post-summon mutator used (avatar-gated). NatSpec must avoid bare `@word` (solc reads it as a tag).
+  - `contracts/script/DeployZipcode.s.sol` — asserts `IBaal(baal).totalShares() == 0` (`SeamSharesNonZero`, the zero-Shares inertness seam check) and encodes `IBaal.setShamans` to grant the ExitGate the manager(2) shaman.
+- **Gotchas:** zero-Shares ⇒ governance-**inert** by design (proposal fns exist only to PROVE inertness in tests). `ragequit` exists on the DAO but the kept design wires NO ragequit — routine exit is the CoW book + `ExitGate.burnFor` (Loot held by the Gate; a full unwind is an orchestrated CoW drain). `setShamans` grants the manager(2) shaman bit (mint/burn) — admin=1/manager=2/governor=4. `executeAsBaal` is the only post-summon mutator used (avatar-gated). NatSpec must avoid bare `@word` (solc reads it as a tag).
 
 ### `IBaalSummoner.sol`
 - **Shims:** the base **BaalSummoner** factory. NatSpec source-cites

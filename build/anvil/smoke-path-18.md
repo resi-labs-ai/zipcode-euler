@@ -14,7 +14,7 @@ HYDX (CRE leg) / USDC ($1, 6→18dp) legs ; the module enabled on the **existing
 
 **Binds to.** `SzipNavOracleDemoVAMM` `0xF84eF3BA…`, `LpStrategyModuleDemoVAMM` `0xB76FfBa3…`, main Safe `0x0B9C95c7…`,
 vAMM pair `0x605abD18…`, vAMM gauge `0x2dA5744C…`, HYDX `0x00000e7e…`, USDC, the prod `SzipNavOracle` `0x0C3E7731…` (the
-contrast). Source: `contracts/src/demo/*`, `script/DeployShowcaseVAMM.s.sol`; tickets `build/wires/SHOWCASE-VAMM.md`.
+contrast). Source: `contracts/src/hydrex-demo-fork/*`, `script/DeployShowcaseVAMM.s.sol`; tickets `build/wires/SHOWCASE-VAMM.md`.
 
 **Setup.**
 - Showcase deployed + registered (`DeployShowcaseVAMM.s.sol`): demo LP module `enableModule`'d on the main Safe; demo

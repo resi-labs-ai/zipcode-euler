@@ -25,11 +25,11 @@ function convertToAssets(uint256 shares) external view returns (uint256 assets);
 function balanceOf(address account) external view returns (uint256);
 function asset() external view returns (address);
 ```
-Consumed by:
-- `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol` — the ONLY importer of THIS folder
-  file (`import {IEulerEarn} from "../../interfaces/euler/IEulerEarn.sol"`). Builds calldata via
+Consumed by (the two importers of THIS folder file, `import {IEulerEarn} from ".../interfaces/euler/IEulerEarn.sol"`):
+- `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol` — builds calldata via
   `IEulerEarn.deposit.selector` (:155) and `IEulerEarn.redeem.selector` (:163, owner=safe=safe) for the
   warehouse Safe to execute.
+- `contracts/script/CreditWarehouseDeployer.sol` — the deploy/wire script for the warehouse senior pool.
 
 NOT consumers of this file (each declares its OWN `IEulerEarn`, not the folder shim — name collision):
 - `contracts/src/supply/ZipDepositModule.sol` — declares a local `interface IEulerEarn` inline (:18),
@@ -74,7 +74,8 @@ Consumed by:
   `balanceOf(eulerEarn)`** — read `balanceOf(warehouse)`.
 - **Name collision, not reuse:** three contracts declare/import a DIFFERENT `IEulerEarn` than the folder
   shim (ZipDepositModule + RecycleModule inline-declare their own; EulerVenueAdapter imports the real
-  remapped one). The folder `IEulerEarn.sol` has exactly ONE importer: WarehouseAdminModule.
+  remapped one). The folder `IEulerEarn.sol` has exactly TWO importers: WarehouseAdminModule + the
+  CreditWarehouseDeployer script.
 - **EulerEarn never compiled:** source pins exact solc 0.8.26 vs the 0.8.24 engine profile → mocked in
   tests, forked on Base mainnet (8453) in integration. These shims exist solely to avoid importing it.
 - **IZipUSD needs no allowance / no minter grant:** when `burnFrom == _msgSender()` (queue burning its

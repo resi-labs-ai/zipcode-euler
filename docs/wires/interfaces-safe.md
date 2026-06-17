@@ -42,6 +42,8 @@ declared; signatures are Basescan/`cast`-verified, not Foundry auto-ABI. Two fil
   - `contracts/src/supply/szipUSD/DurationFreezeModule.sol` — drives BOTH Safes via `ISafe(mainSafe).execTransactionFromModule(...)` (line 283) and `ISafe(sidecar).execTransactionFromModule(...)` (line 305) for share rotation. Its inherited single-avatar Zodiac exec is inert; rotation goes through explicit `ISafe(src)` calls (lines 89/110/225).
   - `contracts/script/SummonSubstrate.s.sol` — asserts `ISafe(sidecar).isOwner(team)` / `ISafe(mainSafe).isOwner(team)`; builds the `addOwnerWithThreshold(team,1)` payload that Baal (an enabled module) self-calls via `execTransactionFromModule`; drives the main Safe as owner via `execTransaction`.
   - `contracts/script/CreditWarehouseDeployer.sol` — `setup` (build the warehouse Safe initializer), `enableModule`+`isModuleEnabled` (enable the Roles modifier), `getOwners`/`getThreshold` (post-deploy assert), `swapOwner` (hand the 1/1 owner from the deployer to the god owner), all owner-driven via `execTransaction`.
+  - `contracts/script/DeployZipcode.s.sol` — enables the engine Zodiac modules on the engine Safe via the owner `execTransaction` → `enableModule` path.
+  - `contracts/script/DeployShowcaseVAMM.s.sol` — enables the demo LP module on the existing engine Safe the same way.
 
 ### `ISafeProxyFactory.sol`
 - **Shims:** GnosisSafeProxyFactory 1.3.0 @ `0xa6B71E26…6AB2` (generic) and the Baal-owned `0xC22834…10BC` (precompute path).

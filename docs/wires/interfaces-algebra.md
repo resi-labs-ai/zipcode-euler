@@ -7,9 +7,11 @@
 ## Role
 Minimal **interface + fork** shims (per WOOF-00 Strategy A: interfaced, never compiled from source) for
 the **Algebra Integral** AMM that **Hydrex** (Lynex/Algebra fork) runs on Base 8453. Each shim declares
-only the methods/structs we call against the live deployment. The single live consumer today is
-`SellModule` (8-B9 market-sell) → `ISwapRouter`; the other three are present for the LP/pool path
-(NFPM mint/positions, pool `globalState`/`swap`, factory `poolByPair` lookup).
+only the methods/structs we call against the live deployment. Live consumers: `SellModule` (8-B9
+market-sell) → `ISwapRouter`; the fair-LP oracle (`IchiAlgebraFairReserves` / `AlgebraIchiFairLpOracle`)
+and `SzipNavOracle` → `IAlgebraPool` + `IAlgebraOraclePlugin`. NOT consumed by any contract:
+`INonfungiblePositionManager` (reserved for the unbuilt 8-B9 range-sell ladder) and `IAlgebraFactory`
+(build-time pool-address verification only).
 
 Hard distinction baked into every shim: **Algebra Integral, NOT Uniswap V3** — params carry a
 `deployer` field (custom-pool plugin deployer) and `limitSqrtPrice` (not `sqrtPriceLimitX96`), and
@@ -57,7 +59,10 @@ in `BaseAddresses.sol` comments only.
   - `function collect(CollectParams) external payable returns (uint256 amount0, uint256 amount1);`
   - `function burn(uint256 tokenId) external payable;`
   - `function positions(uint256 tokenId) external view returns (uint88 nonce, address operator, address token0, address token1, address deployer, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128, uint128 tokensOwed0, uint128 tokensOwed1);`
-- **Consumed by:** none in `contracts/src` / `contracts/script` yet (present for the LP path).
+- **Consumed by:** none. RESERVED for the planned **8-B9 range-sell ladder** (`NFPM.mint` / `positions`;
+  `build/pending-docs/hydrex.md` §9.1, ticket `KEEPER-01b`) — NOT implemented in any contract. The prod LP path
+  uses ICHI (`IICHIVault.deposit`/`withdraw`), the demo uses the vAMM pair (`IVammPair.mint`); neither touches the
+  NFPM. (Used directly via `cast` in `build/anvil/zipusd-xalpha-pool.sh` for local pool bootstrapping only.)
 - **Gotchas:** `mint(MintParams)` selector = **0xfe3f3be7** (the 3-leading-address struct including
   `deployer`); the guessed UniV3 10-field struct `0x9cc1a283` is ABSENT — Algebra **omits `fee`, ADDS
   `address deployer`** (3rd field). `positions` = `0x99fbab88`, return tuple is **12 fields** (includes
@@ -83,7 +88,8 @@ in `BaseAddresses.sol` comments only.
 ## `IAlgebraFactory.sol` — Algebra Integral factory
 - **Shims:** factory @ `0x36077D39cdC65E1e3FB65810430E5b2c4D5fA29E` (`= pool.factory() = router.factory()`).
 - **Surface:** `function poolByPair(address tokenA, address tokenB) external view returns (address pool);`
-- **Consumed by:** none in `contracts/src` / `contracts/script` yet.
+- **Consumed by:** none. Used only in BUILD/verification — off-chain `poolByPair` reads to confirm pool
+  addresses + the `deployer == address(0)` base-factory assumption. No contract imports it.
 - **Gotchas:** **fee-by-pair, no fee-tier arg** — `poolByPair(HYDX, USDC)` returns the single canonical
   pool `0x51f0…D3D2` (verified). Base-factory pools (this one) ⇒ `deployer == address(0)` everywhere
   the periphery structs above take a `deployer`.

@@ -1,7 +1,7 @@
 # SHOWCASE-VAMM — vAMM auto-compounder demo (wiring map)
 
-> Source of truth = the kept code `contracts/src/demo/SzipNavOracleDemoVAMM.sol`,
-> `contracts/src/demo/LpStrategyModuleDemoVAMM.sol`, `contracts/src/interfaces/hydrex/IVammPair.sol`, and the deploy
+> Source of truth = the kept code `contracts/src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol`,
+> `contracts/src/hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol`, `contracts/src/interfaces/hydrex/IVammPair.sol`, and the deploy
 > script `contracts/script/DeployShowcaseVAMM.s.sol`. This doc IS the truth (the build tickets that authored these
 > forks were retired once built — lean-no-dead-artifacts). Tested: `build/anvil/smoke-path-18.md` (PASS, on anvil).
 

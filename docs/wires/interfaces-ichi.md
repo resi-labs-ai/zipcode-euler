@@ -51,6 +51,9 @@ a live HYDX ICHI vault `0x07e72E46C319a6d5aCA28Ad52f5C41a7821989Ad` (`allVaults(
 - `contracts/src/supply/SzipNavOracle.sol` — values held LP: `balanceOf(mainSafe)+balanceOf(sidecar)`
   (and gauge balance) over `totalSupply()`, pro-rated against `getTotalAmounts()` priced per
   `token0()`/`token1()`.
+- `contracts/src/supply/AlgebraIchiFairLpOracle.sol` + `contracts/src/supply/lib/IchiAlgebraFairReserves.sol`
+  — the fair-LP oracle stack; read `pool()` + the position-introspection getters (`getBasePosition`/
+  `getLimitPosition`, the tick bounds) to reconstruct reserves at the pool's TWAP tick.
 
 **Gotchas.**
 - **DepositGuard NOT needed** — calling `IICHIVault.deposit(...)` directly lands the shares; the guard is

@@ -129,6 +129,8 @@ interface IXAlphaRate {
 - `contracts/src/supply/SzipNavOracle.sol` — the reader: marks the xALPHA NAV leg via
   `IXAlphaRate(rateSrc).exchangeRate() * alphaUSD / 1e18`. `rateSrc` = the Base `SzAlphaRateOracle` when set,
   else falls back to reading `IXAlphaRate(xAlpha)` directly (the M1 stand-in mock).
+- `contracts/src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol` — the demo NAV oracle fork; same xALPHA-leg read
+  as `SzipNavOracle` (`IXAlphaRate(rateSrc).exchangeRate()`), via its own `setXAlphaRateOracle` seam.
 - `contracts/src/bridge/SzAlphaMirror.sol` — references it only in NatSpec to state it has **zero**
   `IXAlphaRate` surface (the mirror is a pure transport token; rate lives on 964).
 

@@ -21,7 +21,9 @@ forwarding. Both consumed only at the boundary: factory by the deployer, Roles b
   from `reference/zodiac-core/contracts/factory/ModuleProxyFactory.sol`.
 - **Surface (as written):**
   - `deployModule(address masterCopy, bytes memory initializer, uint256 saltNonce) returns (address proxy)`
-- **Consumed by:** `contracts/script/CreditWarehouseDeployer.sol:119` — clones the Roles-v2 instance:
+- **Consumed by:** `contracts/script/CreditWarehouseDeployer.sol`, `contracts/script/DeployZipcode.s.sol`,
+  and `contracts/script/DeployShowcaseVAMM.s.sol` (all three import this folder shim to clone mastercopies).
+  `CreditWarehouseDeployer.sol:119` — clones the Roles-v2 instance:
   `IModuleProxyFactory(BaseAddresses.ZODIAC_MODULE_PROXY_FACTORY).deployModule(ZODIAC_ROLES_MASTERCOPY,
   setUp(owner=this, avatar=safe, target=safe)-initializer, saltNonce)`, then asserts the cloned instance's
   `avatar()/target()/owner()` via `IRolesInit`. This is the CREATE2 clone path for **every** engine Zodiac

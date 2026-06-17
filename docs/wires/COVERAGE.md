@@ -141,8 +141,8 @@ The vAMM auto-compounder showcase (SP-18): surgical forks of the verified NAV or
 EXISTING live vAMM HYDX/USDC venue, deployed alongside the prod system (do not ship as core). All → `SHOWCASE-VAMM.md`.
 | File | Doc |
 |---|---|
-| `src/demo/SzipNavOracleDemoVAMM.sol` | `SHOWCASE-VAMM.md` |
-| `src/demo/LpStrategyModuleDemoVAMM.sol` | `SHOWCASE-VAMM.md` |
+| `src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol` | `SHOWCASE-VAMM.md` |
+| `src/hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol` | `SHOWCASE-VAMM.md` |
 | `src/interfaces/hydrex/IVammPair.sol` | `SHOWCASE-VAMM.md` |
 | `script/DeployShowcaseVAMM.s.sol` | `SHOWCASE-VAMM.md` |
 

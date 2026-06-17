@@ -38,7 +38,8 @@ auto-ABI is not trusted).
    - `earned(address token, address account) view returns (uint256)` — **two-arg** form (sel `0x211dc32d`); pass `rewardToken()==oHYDX` as `token`. The guessed single-arg `earned(address)` (`0x008cc262`) is ABSENT.
    - `balanceOf(address account) view returns (uint256)` (sel `0x70a08231`) — staked LP balance.
 3. **Consumed by.** `LpStrategyModule.sol` (stake/unstake/balance), `HarvestVoteModule.sol` (getReward),
-   `SzipNavOracle.sol` (staked-balance mark).
+   `SzipNavOracle.sol` (staked-balance mark), and the demo forks
+   `hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol` + `hydrex-demo-fork/SzipNavOracleDemoVAMM.sol` (same gauge surface).
 4. **Gotchas.** The gauge address is **wired set-once** into the modules (`setGauge`, Timelock), not
    resolved at runtime — the item-10 deploy resolves it via `Voter.gauges(ourPool)` under the hard gate
    `!= address(0)` (our pool's gauge must first be Hydrex-whitelisted; OTC external-governance dep). The
@@ -55,7 +56,8 @@ auto-ABI is not trusted).
    - `getMinPaymentAmount() view returns (uint256)` — **no-arg** flat strike floor (sel `0x2abb945c`; live `10000` = $0.01 6-dp). Charged strike = `max(getDiscountedPrice(amount), getMinPaymentAmount())`.
    - `discount() view returns (uint256)` — whole-percent discount (sel `0x6b6f4a9d`; live `30` == 30%). NAV intrinsic per token = `HYDX × (100 - discount)/100`.
 3. **Consumed by.** `ExerciseModule.sol` (exercise path), `HarvestVoteModule.sol` (harvest), `SzipNavOracle.sol`
-   (oHYDX intrinsic mark via `discount`/`getDiscountedPrice`).
+   (oHYDX intrinsic mark via `discount`/`getDiscountedPrice`), and the demo fork
+   `hydrex-demo-fork/SzipNavOracleDemoVAMM.sol` (same intrinsic mark).
 4. **Gotchas.** Two distinct exercise overloads with **different arity** — cash exercise is 4-arg, ve-exercise
    is 2-arg; the earlier 4-arg ve guess and per-amount `getMinPaymentAmount` guess were both wrong and
    corrected. `paymentToken()`/`discount()` must be read live at mark/approval time so neither caches a stale
@@ -103,6 +105,17 @@ auto-ABI is not trusted).
 4. **Gotchas.** `createLock` is the **V2** 3-arg shape (classic 2-arg `create_lock` reverts). The floor /
    voting-power metric is the **account-aggregate** `getVotes(account)`, summed across all the account's
    veNFTs — do not confuse with per-token `balanceOfNFT`.
+
+## IVammPair.sol — `IVammPair`
+1. **What it shims.** A Solidly-style vAMM pair (the pair contract IS its own LP token). Used only by the
+   SHOWCASE demo fork to build and price a live vAMM HYDX/USDC LP before the real ICHI pool exists. Not used
+   in production (prod LP is the ICHI vault). No fixed address — wired to the live demo pair.
+2. **Declared surface.** `mint(to) → liquidity`, `getReserves() → (r0, r1, ts)`, `token0()`/`token1()`,
+   `totalSupply()`, `balanceOf(account)`.
+3. **Consumed by.** `hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol` (build LP via `mint`) and
+   `hydrex-demo-fork/SzipNavOracleDemoVAMM.sol` (price the LP via `getReserves`). See `SHOWCASE-VAMM.md`.
+4. **Gotchas.** Demo-only — outside the audited core. The `ichiVault` storage slot on both demo forks holds
+   this vAMM pair (the name is kept so the prod ABI/wiring is byte-identical).
 
 ## Cross-cutting gotchas
 - **Gauge resolution is a hard-gated OTC dependency.** All gauge wiring flows through

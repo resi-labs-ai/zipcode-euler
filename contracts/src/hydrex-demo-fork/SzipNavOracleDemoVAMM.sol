@@ -73,7 +73,7 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     address public immutable oHydx; // 18-dp, intrinsic
     address public immutable mainSafe; // free equity (Baal avatar)
     address public immutable sidecar; // committed equity (non-RQ)
-    /// @notice The TWAP window (governed; locked 4h).
+    /// @notice The TWAP window (governed, set at deploy via `NAV_W`; default 1h / `W=3600`).
     uint32 public immutable W;
     /// @notice The pushed-leg staleness bound (governed).
     uint256 public immutable maxAge;

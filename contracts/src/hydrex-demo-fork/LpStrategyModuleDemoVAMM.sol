@@ -186,8 +186,9 @@ contract LpStrategyModuleDemoVAMM is Module {
         return ret;
     }
 
-    /// @notice Build the zipUSD/xALPHA ICHI LP: approve + deposit (single-sided ⇒ one side 0; balanced ⇒ both > 0,
-    ///         the 8-B13 Mode-C path) + reset the approvals. The minted LP lands in the engine Safe.
+    /// @notice DEMO: build the vAMM (Solidly) pair LP by `transfer`ring each non-zero leg straight to the pair, then
+    ///         `IVammPair.mint(engineSafe)` (routerless, NO approval — the pair IS the LP token). Single-sided ⇒ one
+    ///         side 0; balanced ⇒ both > 0. The minted LP lands in the engine Safe.
     /// @param deposit0   token0 amount to add (0 to skip the token0 leg).
     /// @param deposit1   token1 amount to add (0 to skip the token1 leg).
     /// @param minShares  the non-zero slippage floor — revert `Slippage` if the deposit mints fewer LP shares.

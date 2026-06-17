@@ -3,8 +3,8 @@ pragma solidity 0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
 
-import {SzipNavOracleDemoVAMM} from "../src/demo/SzipNavOracleDemoVAMM.sol";
-import {LpStrategyModuleDemoVAMM} from "../src/demo/LpStrategyModuleDemoVAMM.sol";
+import {SzipNavOracleDemoVAMM} from "../src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol";
+import {LpStrategyModuleDemoVAMM} from "../src/hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol";
 import {IModuleProxyFactory} from "../src/interfaces/zodiac/IModuleProxyFactory.sol";
 import {ISafe} from "../src/interfaces/safe/ISafe.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";

@@ -12,9 +12,9 @@ import {SzipUSD} from "./SzipUSD.sol";
 /// @title ExitGate
 /// @notice The szipUSD junior vault's custody + issuance + exit valve (absorbs the old 8-B2 mint shaman + 8-B3
 ///         lock/freeze shaman). It is the **sole Baal `Loot` custodian** (holds `manager` = 2, granted post-deploy
-///         by the team-admin via `setShamans`), the **sole szipUSD minter/burner**, and the **sole `ragequit`
-///         caller** — so depositors hold only the transferable szipUSD (never raw Loot) and the Gate controls
-///         *when* exits happen. `claude-zipcode.md` §6.4/§7; `baal-spec.md` §4/§5/§7.
+///         by the team-admin via `setShamans`) and the **sole szipUSD minter/burner** — so depositors hold only
+///         the transferable szipUSD (never raw Loot) and the Gate controls *when* exits happen. The kept design
+///         wires NO `ragequit`. `claude-zipcode.md` §6.4/§7; `baal-spec.md` §4/§5/§7.
 ///
 ///         Flows:
 ///         1. `depositFor` — NAV-proportional issuance off `SzipNavOracle.navEntry()` (round down); pulls the asset
@@ -30,9 +30,10 @@ import {SzipUSD} from "./SzipUSD.sol";
 ///      - Two-token invariant: `szipUSD.totalSupply() == loot.balanceOf(gate)` at all times — every Loot mint/burn is
 ///        paired with an equal szipUSD mint/burn. The engine Safe's transient pre-burn szipUSD (excluded from the
 ///        *oracle* denominator, not here) is the only transient asymmetry, resolved on the next `burnFor`.
-///      - Exit is **pure in-kind ragequit**: the share is a volatile NAV-bearing claim; you leave, you get your
-///        pro-rata slice of the treasury (worth `shares × NAV/share` by construction — the slice self-prices, so no
-///        oracle read is needed in the exit path; the oracle prices *issuance*). zipUSD-numeraire/cap/sweep is GONE.
+///      - Exit is the **CoW book**: a holder rests a SELL szipUSD order; the treasury's resting buy-and-burn bid
+///        (`SzipBuyBurnModule`, priced off `navExit × (1 − d)`) or an external buyer fills it, and the bought szipUSD
+///        is retired here via `burnFor`. NO in-kind ragequit, no on-chain forfeiting queue. The oracle prices
+///        *issuance* (`navEntry`) and the buy-and-burn bid (`navExit`). zipUSD-numeraire/cap/sweep is GONE.
 ///      - Zero-Shares forever: the Gate never calls `mintShares`; only `mintLoot`/`burnLoot`.
 contract ExitGate is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -42,11 +43,11 @@ contract ExitGate is Ownable, ReentrancyGuard {
     // redeployed Baal substrate / oracle / token / safe is a one-call re-point, not a redeploy cascade. Lock pre-prod.
     IBaal public baal;
     SzipNavOracle public navOracle;
-    address public zipUSD; // 18-dp, $1 — a deposit asset + a basket leg (ragequit pays it in-kind)
-    address public xAlpha; // 18-dp — in-kind (POL-as-LM) deposit asset + a basket leg (ragequit pays it in-kind)
+    address public zipUSD; // 18-dp, $1 — a deposit asset + a basket leg
+    address public xAlpha; // 18-dp — (POL-as-LM) deposit asset + a basket leg
     uint256 public tvlCap; // 18-dp USD gross-basket cap (governed; see 8-B12 overlap note)
     address public loot; // baal.lootToken()
-    address public mainSafe; // baal.avatar() — the ragequit target / the basket
+    address public mainSafe; // baal.avatar() — the main Safe / the basket
     address public shareToken; // szipUSD (deployed after the Gate — its ctor takes the Gate)
     address public windowController; // the CRE operator/keeper that opens windows
     address public engineSafe; // the 8-B14 buy-and-burn Safe whose szipUSD `burnFor` retires
