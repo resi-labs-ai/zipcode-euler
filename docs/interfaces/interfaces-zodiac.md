@@ -4,7 +4,10 @@
 Small interfaces for the Zodiac contracts used at deploy time. Base (chain 8453). Solidity 0.8.24.
 
 ==================================================================================
-Interface → What it is
+Gnosis Safe is the container for the vaults.
+Zodiac Modules are the mechanical operators for the vault's strategies.
+
+Chainlink CRE is the driver for these modules, providing price feeds and operations logic / triggers.
 
 Note: these are interfaces to already-deployed Zodiac contracts — we hand-write only the functions we call. They are separate from the `zodiac-core` `Module` base that our engine modules inherit and compile against.
 

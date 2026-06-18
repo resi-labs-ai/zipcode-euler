@@ -16,14 +16,17 @@ The basket-valuation face of `SzipNavOracle` (`contracts/src/supply/SzipNavOracl
 
 ## Declared surface (exact signatures)
 ```solidity
-function grossBasketValue() external view returns (uint256);   // 18-dp USD, main + sidecar
-function committedValue()   external view returns (uint256);   // 18-dp USD, sidecar-only (committed)
-function freeValue()        external view returns (uint256);   // 18-dp USD, main-only (free)
-function zipUSD()  external view returns (address);
-function usdc()    external view returns (address);
-function xAlpha()  external view returns (address);
-function hydx()    external view returns (address);
-function oHydx()   external view returns (address);
+function grossBasketValue()  external view returns (uint256);          // 18-dp USD, main + sidecar
+function committedValue()    external view returns (uint256);          // 18-dp USD, sidecar-only (committed)
+function freeValue()         external view returns (uint256);          // 18-dp USD, main-only (free)
+function pathLockedLpEquity() external view returns (uint256);         // 18-dp USD, ICHI LP across both Safes net of strike debt
+function lpShareValue(uint256 lpShares) external view returns (uint256); // 18-dp USD value of lpShares LP
+function zipUSD()    external view returns (address);
+function usdc()      external view returns (address);
+function xAlpha()    external view returns (address);
+function hydx()      external view returns (address);
+function oHydx()     external view returns (address);
+function ichiVault() external view returns (address);                  // the 6th movable asset (zipUSD/xALPHA ICHI LP token)
 ```
 
 ## Consumed by

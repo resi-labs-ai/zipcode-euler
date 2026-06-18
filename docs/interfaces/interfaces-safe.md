@@ -4,7 +4,7 @@
 Small interfaces for the Gnosis Safe contracts the modules and deploy scripts drive. Base (chain 8453). Solidity 0.8.24.
 
 ==================================================================================
-Interface → What it is
+Gnosis Safe is the core container for the Junior Tranche, as well as the Credit Warehouse.
 
 Note: Gnosis Safe is on an older Solidity/OZ version than our build, so we don't compile it — we hand-write small interfaces with only the functions we call, matched to the verified on-chain ABI.
 
@@ -29,6 +29,7 @@ Baal's own      0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC   main-Safe address p
 [contracts/script/CreditWarehouseDeployer.sol]
 [contracts/script/SummonSubstrate.s.sol]
 [wires/8-Bw-CreditWarehouse.md]
+[wires/8-B1.md]
 
 Summaries:
 [../wires/interfaces-safe.md]
@@ -39,4 +40,3 @@ References:
 These declare only the calls we make, matched to the Basescan-verified ABI (never compiled — Safe can't share a build with Euler's newer OZ).
 
 - Module calls go through the Safe as Call-only with zero value — no delegatecall, no ETH.
-- The deploy scripts use the owner-signed path with a 1-of-1 pre-validated signature, so the Safe must be threshold-1 at that point.

@@ -4,7 +4,6 @@
 Minimal interface shims for the szALPHA bridge (Bittensor 964 ↔ Base 8453). Solidity 0.8.24.
 
 ==================================================================================
-
 Two external shims (Chainlink's cross-chain registry; Bittensor's staking precompiles) plus one internal rate interface.
 
 Note: we don't import these contracts' real code — for each one we hand-write a small interface listing only the functions we call, and we verified (with `cast`) that those signatures match the live contracts.
@@ -39,7 +38,7 @@ SzAlpha calls them low-level by selector, never as a normal typed call — a typ
 [wires/8x-01-szALPHA-bridge.md]
 
 - IXAlphaRate.sol → the xALPHA exchange-rate interface (internal)
-A single `exchangeRate()` getter: how much alpha one xALPHA is worth (18-dp). The rate comes straight from the staking accounts — staked alpha divided by supply — so it can't be moved by trading against a pool. On 964, SzAlpha computes it natively; on Base, SzAlphaRateOracle serves the rate CRE pushed over. The NAV oracle reads it to value the xALPHA leg of the basket.
+A single `exchangeRate()` getter: how much alpha one xALPHA is worth (18-dp). The rate comes straight from the staking accounts — staked alpha divided by supply. On 964, SzAlpha computes it natively; on Base, SzAlphaRateOracle serves the rate CRE pushed over. The NAV oracle reads it to value the xALPHA leg of the basket.
 [contracts/src/bridge/SzAlpha.sol]
 [contracts/src/bridge/SzAlphaRateOracle.sol]
 [contracts/src/supply/SzipNavOracle.sol]

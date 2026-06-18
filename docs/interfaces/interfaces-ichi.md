@@ -4,7 +4,13 @@
 Small interfaces for ICHI, the automated liquidity manager that holds the junior's LP. Base (chain 8453). Solidity 0.8.24.
 
 ==================================================================================
-Interface → What it is
+Ichi is necessary for two reasons: 
+
+1) Ichi provides single sided deposit LP tokens denominated in zipUSD. -- This actually tends toward a 70% zipUSD / 30% xALPHA LP position, but that strategy is managed by Ichi. 
+
+2) The Ichi LP has a receipt token, which is listed as collateral on an Euler Vault which is only accessible by the Zodiac Module responsible for exercising oHYDX rewards. 
+
+This allows zipUSD holders to earn boosted yield through Hydrex, while remaining within the Junior Tranche.
 
 Note: ICHI is an outside protocol on Base — we don't compile its code, we hand-write interfaces with only the functions we call.
 

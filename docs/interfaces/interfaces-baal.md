@@ -4,7 +4,6 @@
 Minimal interface shims for Baal (Moloch v3) — the Vault substrate for szipUSD — on Base (chain 8453). Solidity 0.8.24.
 
 ==================================================================================
-
 This vault acts as the Junior Tranche, Yield Farm, and Risk Manager for zipUSD.
 
 * Baal is a vault container, built on top of Gnosis Safe, Gnosis Zodiac Modules, and Chainlink CRE.
@@ -23,14 +22,12 @@ Baal's native ragequit() is NOT wired — ragequits are processed via the CoW bu
 Baal is on OpenZeppelin 4.x, which can't coexist with Euler's OpenZeppelin 5.0.2.
 
 - IBaal.sol → a Baal (Moloch v3) DAO instance (template `0xE0F33E95aF46EAd1Fe181d2A74919bff903cD5d4`)
-A Zodiac Module on a Gnosis Safe, launched inert, with the team set as owner. DeployZipcode later grants the ExitGate the manager(2) shaman. From then on the ExitGate is what drives it: it reads the Loot token and main Safe, and mints/burns szipUSD 1:1 against Loot. Exit runs through the CoW orderbook, and ragequits are managed by the SzipBuyBurnModule through the ExitGate.burnFor function.
+A Zodiac Module on a Gnosis Safe, launched inert, with the team set as owner. DeployZipcode later grants the ExitGate the manager(2) shaman. From then on the ExitGate is what drives it: it reads the Loot token and main Safe, and mints/burns szipUSD 1:1 against Loot. Exit runs through the CoW orderbook: SzipBuyBurnModule rests the buy bid, and once it fills the CRE keeper calls ExitGate.burnFor to retire the bought szipUSD and its backing Loot.
 [contracts/src/supply/szipUSD/ExitGate.sol]
-[contracts/src/supply/szipUSD/SzipBuyBurnModule.sol]
 [contracts/script/SummonSubstrate.s.sol]
 [contracts/script/DeployZipcode.s.sol]
 [wires/8-B1.md]
 [wires/ExitGate-szipUSD.md]
-[wires/8-B14-SzipBuyBurnModule.md]
 
 - IBaalAndVaultSummoner.sol → the higher-order summoner `0x2eF2fC8a18A914818169eFa183db480d31a90c5D`
 Produces the Baal DAO + main Safe + a non-ragequittable sidecar Safe in one transaction (`summonBaalAndVault`).
@@ -57,36 +54,33 @@ Baal (Moloch v3) is HausDAO's DAO framework; these shims declare only the calls 
 - [contracts/script/BaseAddresses.sol] — the live Base address pins (summoners + DAO template).
 
 ==================================================================================
+Yield: where the APR comes from
 
-Ragequit: How do I redeem my equity?
-
-Zipcode provides lines of credit to HELOC originators, which subjects the USDC in the Credit Warehouse to duration risk.
-
-In order to manage Duration Risk, and prevent a zipUSD depeg, the safe maintains an accounting of the current utilization of the Credit Warehouse, and only permits withdrawals of available USDC. [USDC not currently in use by loans.]
-
-The junior earns through a liquidity-mining engine on the Baal vault: the zipUSD held by the safe is deposited single-sided into a Hydrex/Ichi pool, and the rewards are recycled back into the vault as equity per share. The APR comes from four sources:
+The junior earns through a liquidity-mining engine on the Baal vault. The zipUSD held by the safe is deposited single-sided into a Hydrex/Ichi pool, and the rewards are recycled back into the vault as equity per share. The APR comes from four sources:
 
 1. szALPHA's endemic APR — the native staking yield on the bridged xALPHA itself.
-2. Direct equity accretion — szALPHA emissions are market-sold for zipUSD into the pool, and that zipUSD is deposited straight into the vault, increasing the amount of zipUSD each Loot share has a claim to.
-3. The Hydrex gauge APR (the auto-compounder) — gauge rewards on the szALPHA/zipUSD pool produce USDC, which is added back into the pool, boosting APR again through direct share donation.
-4. veHYDX fees — the Hydrex veHYDX position earns pool fees denominated in zipUSD and szALPHA, which belong to the Baal safe.
+2. Direct equity accretion — szALPHA emissions are market-sold for zipUSD into the pool, and that zipUSD is deposited straight into the vault, raising the zipUSD each Loot share can claim.
+3. The Hydrex gauge auto-compounder — gauge rewards on the szALPHA/zipUSD pool produce USDC, which is added back into the pool (a direct share donation that lifts APR again).
+4. veHYDX fees — the veHYDX position earns pool fees in zipUSD and szALPHA, which accrue to the Baal safe.
 
-None of these come from the active earning potential of the zipUSD that is deployed in credit lines. All fees from active credit lines accrue to the Credit Warehouse, increasing the USDC that backs zipUSD. And because that warehoused USDC is lent to off-chain originators, zipUSD is only fully liquid as lines of credit repay. 
+None of this comes from the credit-line USDC. Fees from active credit lines accrue to the Credit Warehouse, raising the USDC that backs zipUSD — they never reach szipUSD holders.
 
-A CoW orderbook is used to allow the safe to post USDC for bid fulfillment, or for others to bid during capital constraint.
+==================================================================================
 
-Ragequit typically means "Pro-Rata Claim on Liquid Assets held within a Safe" -- however, since a functioning credit warehouse will always have some percentage of USDC in use by loans, a standard ragequit() does not work.
+Ragequit: how do I redeem my equity?
 
-A native ragequit pays a pro-rata slice of the main Safe's *literal* contents — less than a holder is owed — for two reasons:
+Zipcode lends the warehouse's USDC to HELOC originators, so that USDC carries duration risk — zipUSD is only fully liquid as loans repay. To protect the peg, the safe tracks how much of the warehouse is lent out and only lets you withdraw USDC that isn't currently in a loan.
+
+A standard ragequit (a pro-rata claim on a Safe's liquid assets) does not work here. It would pay a pro-rata slice of the main Safe's *literal* contents, which doesn't reflect the actual value of the safe's equity.
 
 - Utilized equity sits in the non-ragequittable sidecar Safe, so a ragequit only captures the main Safe; it would be correct only at 0% utilization.
 - The junior's LP is staked in the Hydrex gauge, so true per-share value is what the NAV oracle reports, not the Safe's on-chain balance.
 
-Here is how a ragequit is processed on Zipcode:
+So redemption runs through a CoW buy-and-burn:
 
 1. The Zodiac module (SzipBuyBurnModule) rests a USDC bid on CoW — the protocol is the discounted buyer of last resort, bidding for szipUSD at navExit × (1 − d).
-2. An exiting holder sells their szipUSD into that bid through CoW.
+2. An exiting holder sells their szipUSD into that bid.
 3. The bought szipUSD lands in the engine Safe.
-4. The CRE keeper calls ExitGate.burnFor, which destroys BOTH the transferable szipUSD (held in the Safe) and the equal underlying soulbound Loot (the economic equity) 1:1 — so NAV-per-share ticks up for everyone who stayed.
+4. The CRE keeper calls ExitGate.burnFor, which destroys both the transferable szipUSD and the equal underlying soulbound Loot 1:1 — so NAV per share ticks up for everyone who stayed.
 
-A full wind-down is the same mechanism scaled up: liquidate the basket to USDC, raise the buyback cap, and keep the bid posted until szipUSD supply reaches zero (an orchestrated CoW drain).
+A full wind-down is the same mechanism scaled up: liquidate the basket to USDC, raise the buyback cap, and keep the bid posted until szipUSD supply reaches zero.

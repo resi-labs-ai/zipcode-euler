@@ -4,7 +4,7 @@
 Small interfaces for the EulerEarn senior pool and our own zipUSD token. Base (chain 8453). Solidity 0.8.24.
 
 ==================================================================================
-Interface → What it is
+Euler enables onchain settlement for the credit warehouse.
 
 Note: we don't import EulerEarn's real code — it pins a different Solidity version (0.8.26) than our build, so we hand-write small interfaces with only the functions we call. (Other contracts declare their own `IEulerEarn` inline; those are not the same file as this folder's.)
 

@@ -375,6 +375,34 @@ track on it.
   EulerEarn pool (senior deposits), so pool liquidity already hard-bounds total draws; plus per-line LTV/cap + the two
   `covered()` outflow gates. No credible path where draws outrun coverage. Don't re-propose. If ever revisited: a
   `zipUSDValue()` TWAP-bracketed view + an `illiquidSeniorValue() + draw <= zipUSDValue()` check in the draw path.
+- **LOSS — the default/slash flow is M2, not M1-live (from `src/loss/` headers, recorded 2026-06-17).**
+  `LienXAlphaEscrow`'s custody half (`lockXAlpha`/`releaseXAlpha`) is M1-live; the slash half
+  (`slashXAlphaToCapital`/`slashXAlphaToCohort`) + the `DefaultCoordinator` driver are built + mock-tested but go
+  live in M2. The driver is **CRE-01's `rt8` default/recovery action family** (already in the CRE backlog above —
+  not a new workflow) plus the off-chain capital-sink liquidation account (xALPHA→USDC on Bittensor). No contract
+  code owed — it's CRE-01 sequencing + that operational account.
+- **LOSS — cohort-premium should route to the MAIN Safe + a CRE flow, not the sidecar in-kind (design decided 2026-06-18).**
+  As-built, `LienXAlphaEscrow.slashXAlphaToCohort` parks the premium xALPHA in the **sidecar** Safe and the natspec
+  treats it as in-kind ("never market-sold; NAV does the cohort pro-rata for free"). But the flywheel modules
+  (`SellModule`/`LpStrategyModule`/Gate) all operate on the **engine Safe (== `mainSafe`, DeployZipcode:384)**, so they
+  can't reach sidecar xALPHA — the premium just sits there. **Decision:** route the cohort slash to the **main Baal
+  Safe** so the existing yield-flywheel modules can subsume it (xALPHA → zipUSD → LP backing), lifting shares the
+  same way emissions do; and build a **CRE flow that reuses those modules** to process it (fold into the harvest
+  orchestrator KEEPER-01b / the CRE-01 loss leg). M2. Implications to handle in the change: (a) update
+  `slashXAlphaToCohort`'s destination + natspec (drop "never market-sold"); (b) the premium then lands in FREE value,
+  not the committed sidecar bucket — confirm that's intended for the freeze-floor accounting (it should be: a stayer
+  bonus should be liquid/sellable).
+- **LOSS — designate the real "capital hole" safe/wallet for `capitalSink` (recorded 2026-06-18).**
+  `slashXAlphaToCapital` routes the bond to `LienXAlphaEscrow.capitalSink`, but that's only a deploy-config address
+  today (`i.capitalSink` in `DeployZipcode`, a placeholder). A real designated safe/wallet must exist before the M2
+  slash flow goes live: it receives the slashed xALPHA, bridges it to Bittensor, liquidates alpha → TAO → USDC, and
+  returns the USDC to cover the realized capital hole (§11). Operational deliverable (create + wire the safe), not
+  contract code.
+- **LOSS — re-freeze the escrow/coordinator wiring to immutable pre-prod (§17, recorded 2026-06-17).**
+  `LienXAlphaEscrow`'s four wiring slots (`xAlpha`/`coordinator`/`capitalSink`/`sidecar`) and `DefaultCoordinator`'s
+  Timelock-re-pointable `setEscrow` (onlyOwner, NOT set-once) are all Timelock-settable in the build phase. The destination-integrity theft-immunity holds
+  against everyone EXCEPT the Timelock owner until these are re-frozen to immutable at the pre-production lock-down —
+  same class as the other build-phase settable-wiring seams.
 
 ---
 

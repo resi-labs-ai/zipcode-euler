@@ -4,7 +4,9 @@
 Small interfaces for Hydrex, the ve(3,3) emissions venue the harvest loop farms. Base (chain 8453). Solidity 0.8.24.
 
 ==================================================================================
-Interface → What it is
+Hydrex provides the szALPHA/zipUSD liquidity pool, as well as oHYDX emissions which fuel the auto-compounder.
+
+The junior tranche is the likely holder of all LP tokens in the pool, within an Ichi single-sided LP.
 
 Note: Hydrex is an outside protocol on Base — we don't compile its code, we hand-write interfaces with only the functions we call.
 
@@ -13,6 +15,8 @@ Where the LP is staked to earn rewards. The strategy stakes and unstakes the LP 
 [contracts/src/supply/szipUSD/LpStrategyModule.sol]
 [contracts/src/supply/szipUSD/HarvestVoteModule.sol]
 [contracts/src/supply/SzipNavOracle.sol]
+[contracts/src/hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol] (demo)
+[contracts/src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol] (demo)
 [wires/8-B7-HarvestVoteModule.md]
 
 - IOptionToken.sol → oHYDX, the reward token `0xA1136031150E50B015b41f1ca6B2e99e49D8cB78`
@@ -20,6 +24,7 @@ A discounted call option on HYDX — what the gauge actually pays out. The exerc
 [contracts/src/supply/szipUSD/ExerciseModule.sol]
 [contracts/src/supply/szipUSD/HarvestVoteModule.sol]
 [contracts/src/supply/SzipNavOracle.sol]
+[contracts/src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol] (demo)
 [wires/8-B8-ExerciseModule.md]
 
 - IVoter.sol → Hydrex VoterV5 `0xc69E3eF39E3fFBcE2A1c570f8d3ADF76909ef17b`

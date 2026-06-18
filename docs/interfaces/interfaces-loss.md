@@ -4,7 +4,9 @@
 Two internal interfaces the loss coordinator uses to drive other in-repo contracts. Base (chain 8453). Solidity 0.8.24.
 
 ==================================================================================
-Interface → What it is
+Losses must be written off at some point, and moved into collections. These interfaces are responsible for writing off those losses, and slashing an insurance fund which provides boosted yield to cover the duration risk from recouping that loss. 
+
+The Insurance Fund is a slashable szALPHA position which is attached to each line of credit.
 
 Note: both are internal — they point at our own contracts (the bond escrow and the NAV oracle), not outside protocols. The coordinator talks to them through narrow interfaces so it doesn't compile against the whole escrow or oracle.
 
