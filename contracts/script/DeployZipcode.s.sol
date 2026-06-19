@@ -97,7 +97,7 @@ contract DeployZipcode is SummonSubstrate {
         address xAlphaMirror; // XALPHA_MIRROR — 8x-01 Base xALPHA leg (M1 stand-in token ok)
         address polIchiVault; // POL_ICHI_VAULT — the zipUSD/xALPHA ICHI vault (OTC-gated; stand-in)
         address polGauge; // POL_GAUGE — the Hydrex gauge the LP stakes in
-        address capitalSink; // CAPITAL_SINK — the loss-side xALPHA capital sink
+        address treasurySafe; // TREASURY_SAFE — the protocol treasury Safe (loss-side xALPHA recovery custody, §11)
         address workflowAuthor; // WORKFLOW_AUTHOR — the CRE workflow owner (all receivers)
         bytes32 workflowId; // WORKFLOW_ID — the CRE workflow id (all receivers; one author/id family)
         // EE-factory ABI avoidance (pre-step env inputs; see contract NatSpec):
@@ -496,7 +496,7 @@ contract DeployZipcode is SummonSubstrate {
         );
 
         // 27. escrow with the REAL coordinator (ctor-pinned; no placeholder re-point needed).
-        d.escrow = new LienXAlphaEscrow(i.xAlphaMirror, address(d.coord), i.capitalSink, d.sub.sidecar);
+        d.escrow = new LienXAlphaEscrow(i.xAlphaMirror, address(d.coord), i.treasurySafe, d.sub.sidecar);
 
         // 28. close the cycle (coord.setEscrow forceApproves escrow internally per the ctor NatSpec).
         d.coord.setEscrow(address(d.escrow));
@@ -640,7 +640,7 @@ contract DeployZipcode is SummonSubstrate {
         // (`Voter.gauges(pool)`). The CL gauge rejects ICHI ALM wrapper shares (reverts 0x87c5d02a — wrong staking
         // token). See DeployLocal.s.sol's LIVE_HYDREX_GAUGE note (verified on the fork).
         i.polGauge = vm.envAddress("POL_GAUGE");
-        i.capitalSink = vm.envAddress("CAPITAL_SINK");
+        i.treasurySafe = vm.envAddress("TREASURY_SAFE");
         i.workflowAuthor = vm.envAddress("WORKFLOW_AUTHOR");
         i.workflowId = vm.envBytes32("WORKFLOW_ID");
         i.eePool = vm.envAddress("EE_POOL");

@@ -102,7 +102,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         // -- POL (D1: shared pool address; per-silo staked position) --
         address polIchiVault; // == escrowVault.asset() (seam #4)
         address polGauge;
-        address capitalSink; // loss-side capital sink (LienXAlphaEscrow ctor)
+        address treasurySafe; // the protocol treasury Safe — loss-side xALPHA recovery custody (LienXAlphaEscrow ctor, §11)
         // -- numeric knobs --
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV
@@ -303,7 +303,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
 
         // -- 14. Loss side (coordinator FIRST to break the ctor cycle).
         t.coord = new DefaultCoordinator(CRE_KEYSTONE_FORWARDER, address(t.navOracle), p.xAlphaMirror, p.recoveryFloor);
-        t.escrow = new LienXAlphaEscrow(p.xAlphaMirror, address(t.coord), p.capitalSink, sub.sidecar);
+        t.escrow = new LienXAlphaEscrow(p.xAlphaMirror, address(t.coord), p.treasurySafe, sub.sidecar);
         t.coord.setEscrow(address(t.escrow));
         t.navOracle.setDefaultCoordinator(address(t.coord));
         if (t.escrow.coordinator() != address(t.coord)) revert SeamEscrowCoordinator();

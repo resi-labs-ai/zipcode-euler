@@ -96,7 +96,7 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
   obligation, item-10 wiring below.)
 - **`eePool` / `warehouse` → the ONE bank.** `eePool` MUST equal `ZipDepositModule.eePool()` and `warehouse` MUST
   equal the `ZipDepositModule`/`WarehouseAdminModule` warehouse Safe — else diverted USDC supplies the wrong pool
-  / credits the wrong receiver and never fills the hole. Stream 1's `capitalSink` USDC output is supplied to THIS
+  / credits the wrong receiver and never fills the hole. Stream 1's `treasurySafe` USDC output is supplied to THIS
   same warehouse too (a CRE/off-chain step, not on-chain). Enforced by the item-10 deploy-asserts.
 - **`creditFreeValue` is operator-trusted UNBOUNDED** — §17 / §8.7 trust boundary. The policy ceiling (the ledger
   can never route more than the credited free value) is operator-TRUSTED, not cryptographic: an over-credit could

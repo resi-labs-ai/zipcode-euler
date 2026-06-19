@@ -50,8 +50,8 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   surface (none deployed on the Base fork) + donation-immunity needing a real deployed venue (obligations #1/#2/#4
   logged in `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). So the scaling/federation contract
   workstream has NO near-term cold-buildable item left (CTR-10c waits on a 2nd venue actually being wanted; the
-  host is now READY for it). (CTR-11/CTR-12/CTR-13 are independent loss-side / IRM tickets, separate from the
-  scaling ledger.)
+  host is now READY for it). (**CTR-12 DONE 2026-06-19** — note below; **CTR-13 DONE**. **CTR-11** — cohort
+  slash-to-main-safe — is the remaining independent loss-side ticket, separate from the scaling ledger.)
 
 - **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
   needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
@@ -124,6 +124,28 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   rate (SOFR + ~3.9%) is a deferred Timelock IRM-swap (logged as an obligation below). Tests made default-robust
   (read `adapter.feeBps()`; dust amount = `10_000/feeBps - 1`) + a `feeBps == 50` default assertion; gate re-run green
   (adapter 46/46, controller 39/39, reservoir 41/41).
+
+- **CTR-12 note (2026-06-19) — rename `capitalSink` → `treasurySafe` (loss-side recovery destination).** Pure rename,
+  ZERO behavior change. The slashed-bond capital-hole destination is now explicitly named the protocol **treasury
+  Safe** (the recovery custody bridging xALPHA → TAO → USDC, §11), closing the PROGRESS-433 "designate the real safe"
+  item at the NAMING level (Safe creation + bridge process stays M2 ops). **The draft's enumerated surface was STALE**
+  — CTR-06b/06c (built earlier this session) had added `capitalSink` to `script/SiloDeployer.s.sol` +
+  `script/JuniorTrancheDeployer.s.sol` (Params field + ctor pass) and `test/{SiloDeployer,JuniorTrancheDeployer,
+  DefaultCoordinator}.t.sol`; I re-grepped the LIVE tree (not the draft) and swept them all in to satisfy Key-req #2
+  (zero `capitalSink` left). Renamed 3 case variants: `capitalSink`→`treasurySafe` (slot/var/field/getter), `setCapitalSink`
+  →`setTreasurySafe`, `CAPITAL_SINK`→`TREASURY_SAFE` (env), `WiringSet` label `"capitalSink"`→`"treasurySafe"`, test
+  `test_ctor_zero_capitalSink_reverts`→`..._treasurySafe_reverts`; natspec/comments name it "the protocol treasury
+  Safe". `slashXAlphaToCapital`/`SlashedToCapital`/RecycleModule "capital hole" prose UNTOUCHED (Do-NOT honored).
+  **Gate green — FULL suite** (not just touched paths: the public getter `capitalSink()→treasurySafe()` is an ABI
+  change, so per the CTR-08 process lesson I re-ran everything): `forge build` exit 0 + `forge test` = **920 passed /
+  0 failed / 3 skipped (56 suites)** — byte-identical to the CTR-10b baseline, proving behavior-neutrality. `grep -rni
+  capitalsink|capital_sink` over `src`/`script`/`test`/`docs` = NONE. **Doc-sync:** backward wires
+  `docs/wires/8-Bx-LienXAlphaEscrow.md` (slot/setter/WiringSet-label/4-arg-ctor/destination prose), `DefaultCoordinator.md`,
+  `DeployZipcode.md` (`TREASURY_SAFE` env), `8-B10-RecycleModule.md`; `docs/loss.md` was already on "treasury Safe".
+  No `COVERAGE.md` change (no new file). No `claude-zipcode.md` edit (§11/§17 unchanged — the slot was never spec-named).
+  Ticket: `build/tickets/contracts/CTR-12-rename-capitalsink-treasurysafe.md`. **Process note:** a draft ticket's
+  "Binds to (verified)" grep set goes STALE when sibling tickets land between authoring and build — always re-grep the
+  live tree at build time, never trust the enumerated set.
 
 ---
 

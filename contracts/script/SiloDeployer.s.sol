@@ -88,7 +88,7 @@ contract SiloDeployer is Script {
         string eeName;
         string eeSymbol;
         // numeric knobs (pass-through to the sub-deployers)
-        address capitalSink;
+        address treasurySafe;
         uint16 borrowLTV;
         uint16 liqLTV;
         uint32 W;
@@ -307,7 +307,7 @@ contract SiloDeployer is Script {
             oHydx: p.oHydx,
             polIchiVault: p.polIchiVault,
             polGauge: p.polGauge,
-            capitalSink: p.capitalSink,
+            treasurySafe: p.treasurySafe,
             W: p.W,
             maxAge: p.maxAge,
             maxDeviationBps: p.maxDeviationBps,

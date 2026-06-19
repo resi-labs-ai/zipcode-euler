@@ -40,7 +40,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
     address internal creOperator;
     address internal workflowAuthor;
     address internal erebor;
-    address internal capitalSink;
+    address internal treasurySafe;
 
     function setUp() public virtual {
         _selectBaseFork();
@@ -51,7 +51,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         creOperator = makeAddr("creOperator");
         workflowAuthor = makeAddr("workflowAuthor");
         erebor = makeAddr("erebor");
-        capitalSink = makeAddr("capitalSink");
+        treasurySafe = makeAddr("treasurySafe");
 
         _setDeployEnv();
         dep = new DeployZipcode();
@@ -69,7 +69,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         vm.setEnv("WORKFLOW_AUTHOR", vm.toString(workflowAuthor));
         vm.setEnv("WORKFLOW_ID", vm.toString(bytes32(uint256(1)))); // non-zero (identity pre-gate)
         vm.setEnv("EREBOR", vm.toString(erebor));
-        vm.setEnv("CAPITAL_SINK", vm.toString(capitalSink));
+        vm.setEnv("TREASURY_SAFE", vm.toString(treasurySafe));
         vm.setEnv("SUMMON_SALT_NONCE", vm.toString(uint256(1)));
 
         // (T) stand-ins — REPLACE with real/mock fork contracts before un-skipping.

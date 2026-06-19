@@ -275,7 +275,7 @@ contract SiloDeployerTest is ForkConfig {
     address internal creOperator = makeAddr("creOperator");
     address internal godOwner = makeAddr("godOwner");
     address internal receiverAdmin = makeAddr("receiverAdmin");
-    address internal capitalSink = makeAddr("capitalSink");
+    address internal treasurySafe = makeAddr("treasurySafe");
     address internal workflowAuthor = makeAddr("workflowAuthor");
     address internal controller = makeAddr("controller"); // hub controller (an input; never built here)
     address internal oracleRegistry = makeAddr("oracleRegistry"); // hub ZipcodeOracleRegistry (input)
@@ -363,7 +363,7 @@ contract SiloDeployerTest is ForkConfig {
             lineIrm: address(irm),
             eeName: "Zipcode Senior USDC",
             eeSymbol: "zSNR",
-            capitalSink: capitalSink,
+            treasurySafe: treasurySafe,
             borrowLTV: 0.7e4,
             liqLTV: 0.8e4,
             W: 4 hours,

@@ -10,7 +10,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 /// @notice The loss-side sibling of the senior `ZipRedemptionQueue` (item 9): a standalone, non-sweepable
 ///         custody contract holding the originator's xALPHA first-loss bond per lien. It is NOT a Zodiac
 ///         module, NOT a Baal shaman, NOT a `ReceiverTemplate`. Build phase (2026-06-09, §17): a single
-///         **Timelock admin** can re-point the four wiring slots (xAlpha/coordinator/capitalSink/sidecar) so a
+///         **Timelock admin** can re-point the four wiring slots (xAlpha/coordinator/treasurySafe/sidecar) so a
 ///         redeployed oracle/safe/coordinator does not force a redeploy cascade; re-freezing these to immutable
 ///         (which restores destination-integrity theft-immunity) is DEFERRED to the pre-production lock-down.
 ///         `claude-zipcode.md` §4.6 / §11 / §2 / §6.4.
@@ -20,7 +20,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///
 ///         SLASH HALF (built + mock-tested now, M2-live with the `DefaultCoordinator` driver): on a default,
 ///         the bond is held through the freeze and applied at resolution in TWO ordered jobs —
-///         (1) `slashXAlphaToCapital` routes xALPHA → the `capitalSink` (the off-chain recovery/bridge account
+///         (1) `slashXAlphaToCapital` routes xALPHA → the `treasurySafe` (the off-chain recovery/bridge account
 ///         that liquidates alpha → TAO → USDC on Bittensor, §11) to cover a REALIZED capital hole, up to the
 ///         shortfall the coordinator computed off-chain; (2) the remainder is the in-kind Duration-Bond premium,
 ///         `slashXAlphaToCohort`, routed to the `sidecar` Safe — NAV does the socialized cohort
@@ -34,7 +34,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///
 ///         SECURITY THESIS (destination integrity, NOT authorization correctness): no state-changer takes a
 ///         recipient parameter; xALPHA can only ever flow to three destinations — the recorded `bondOriginator`
-///         (captured at lock from the coordinator's arg), the `capitalSink`, the `sidecar`. So a compromised
+///         (captured at lock from the coordinator's arg), the `treasurySafe`, the `sidecar`. So a compromised
 ///         `coordinator` cannot redirect a bond to an attacker — it can only GRIEF (premature release / slash a
 ///         healthy bond), the coordinator's §13 trust boundary. (BUILD PHASE, §17: the sinks are Timelock-set, so
 ///         the theft-immunity holds against everyone EXCEPT the Timelock owner, who can re-point them — a
@@ -58,8 +58,9 @@ contract LienXAlphaEscrow is ReentrancyGuard, Ownable {
     /// @notice The SOLE authorized caller of all four state-changers (the loss-side orchestrator that posts
     ///         launch bonds and, in M2, the `DefaultCoordinator` that drives slash).
     address public coordinator;
-    /// @notice The ONLY destination of `slashXAlphaToCapital` (the off-chain recovery/bridge account, §11).
-    address public capitalSink;
+    /// @notice The ONLY destination of `slashXAlphaToCapital` — the protocol treasury Safe: the recovery custody
+    ///         whose off-chain process bridges xALPHA → TAO → USDC on Bittensor to cover a realized capital hole, §11.
+    address public treasurySafe;
     /// @notice The ONLY destination of `slashXAlphaToCohort` (the non-ragequittable sidecar Safe; NAV does the
     ///         cohort pro-rata, §6.4).
     address public sidecar;
@@ -86,7 +87,7 @@ contract LienXAlphaEscrow is ReentrancyGuard, Ownable {
     event Locked(bytes32 indexed lienId, address indexed originator, uint256 amount);
     /// @notice The full bond was returned to the recorded originator on repayment.
     event Released(bytes32 indexed lienId, address indexed originator, uint256 amount);
-    /// @notice `amount` xALPHA was routed to the `capitalSink` to cover a realized capital hole.
+    /// @notice `amount` xALPHA was routed to the `treasurySafe` to cover a realized capital hole.
     event SlashedToCapital(bytes32 indexed lienId, uint256 amount);
     /// @notice The remaining bond (the in-kind premium) was routed to the `sidecar`. Emits the REMAINING amount.
     event SlashedToCohort(bytes32 indexed lienId, uint256 amount);
@@ -101,16 +102,16 @@ contract LienXAlphaEscrow is ReentrancyGuard, Ownable {
 
     /// @param xAlpha_      The bond asset (bridged xALPHA / 8x-01 `SzAlphaMirror`; a generic ERC-20 in M1 tests).
     /// @param coordinator_ The sole authorized caller of all four state-changers.
-    /// @param capitalSink_ The only destination of `slashXAlphaToCapital` (alpha→TAO→USDC bridge account, §11).
+    /// @param treasurySafe_ The only destination of `slashXAlphaToCapital` (alpha→TAO→USDC bridge account, §11).
     /// @param sidecar_     The only destination of `slashXAlphaToCohort` (the non-ragequittable sidecar Safe, §6.4).
-    constructor(address xAlpha_, address coordinator_, address capitalSink_, address sidecar_) Ownable(msg.sender) {
-        if (xAlpha_ == address(0) || coordinator_ == address(0) || capitalSink_ == address(0) || sidecar_ == address(0))
+    constructor(address xAlpha_, address coordinator_, address treasurySafe_, address sidecar_) Ownable(msg.sender) {
+        if (xAlpha_ == address(0) || coordinator_ == address(0) || treasurySafe_ == address(0) || sidecar_ == address(0))
         {
             revert ZeroAddress();
         }
         xAlpha = IERC20(xAlpha_);
         coordinator = coordinator_;
-        capitalSink = capitalSink_;
+        treasurySafe = treasurySafe_;
         sidecar = sidecar_;
     }
 
@@ -130,10 +131,10 @@ contract LienXAlphaEscrow is ReentrancyGuard, Ownable {
     }
 
     /// @notice Re-point the capital-slash destination. `onlyOwner` (the Timelock).
-    function setCapitalSink(address capitalSink_) external onlyOwner {
-        if (capitalSink_ == address(0)) revert ZeroWiring();
-        capitalSink = capitalSink_;
-        emit WiringSet("capitalSink", capitalSink_);
+    function setTreasurySafe(address treasurySafe_) external onlyOwner {
+        if (treasurySafe_ == address(0)) revert ZeroWiring();
+        treasurySafe = treasurySafe_;
+        emit WiringSet("treasurySafe", treasurySafe_);
     }
 
     /// @notice Re-point the cohort-premium destination (sidecar Safe). `onlyOwner` (the Timelock).
@@ -181,7 +182,7 @@ contract LienXAlphaEscrow is ReentrancyGuard, Ownable {
 
     // --------------------------------------------------------------------- slash → capital (resolution job 1, M2-live)
     /// @notice Route `amount` xALPHA (up to the bond, the shortfall the coordinator computed off-chain) to the
-    ///         `capitalSink` to cover a REALIZED capital hole — last resort for a realized loss. Partial allowed:
+    ///         `treasurySafe` to cover a REALIZED capital hole — last resort for a realized loss. Partial allowed:
     ///         the lien STAYS OPEN with the remainder for the cohort (`bondOriginator` untouched — mid-resolution).
     ///         `amount == bondAmount` is the exact-equality boundary that PASSES and drives the bond to 0. The
     ///         alpha → TAO → USDC liquidation happens off-chain on Bittensor (§11); this only routes (no swap).
@@ -191,7 +192,7 @@ contract LienXAlphaEscrow is ReentrancyGuard, Ownable {
 
         bondAmount[lienId] -= amount; // effects first; bondOriginator untouched (lien still mid-resolution)
 
-        xAlpha.safeTransfer(capitalSink, amount);
+        xAlpha.safeTransfer(treasurySafe, amount);
 
         emit SlashedToCapital(lienId, amount);
     }

@@ -31,7 +31,7 @@ contract DeployLocal is DeployZipcode {
     address internal constant ANVIL_2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; // creOperator
     address internal constant ANVIL_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906; // workflowAuthor
     address internal constant ANVIL_4 = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65; // erebor
-    address internal constant ANVIL_5 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc; // capitalSink
+    address internal constant ANVIL_5 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc; // treasurySafe
 
     // The matched live ICHI vault + its Hydrex ALM gauge (POL stand-ins for the module fork tests). The vault is the
     // live WETH/USDC ICHI ALM (pool 0x82dbe1834). The gauge MUST be the vault-keyed ALM gauge `Voter.gauges(vault)`
@@ -69,7 +69,7 @@ contract DeployLocal is DeployZipcode {
         i.creOperator = ANVIL_2;
         i.workflowAuthor = ANVIL_3;
         i.erebor = ANVIL_4;
-        i.capitalSink = ANVIL_5;
+        i.treasurySafe = ANVIL_5;
         i.saltNonce = 1;
         i.workflowId = bytes32(uint256(1)); // non-zero (identity pre-gate)
 

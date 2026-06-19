@@ -42,7 +42,7 @@ reverts — the script connects documented pins, it does not rediscover them.
 
 ## Inputs (env / stand-ins)
 ~30 env keys via `_loadInputs()`: principals (`TEAM_MULTISIG`, `GOD_OWNER`, `CRE_OPERATOR`, `WORKFLOW_AUTHOR`,
-`WORKFLOW_ID`, `EREBOR`, `CAPITAL_SINK`, `SUMMON_SALT_NONCE`), live-infra stand-ins (`IRM`, `XALPHA_MIRROR`,
+`WORKFLOW_ID`, `EREBOR`, `TREASURY_SAFE`, `SUMMON_SALT_NONCE`), live-infra stand-ins (`IRM`, `XALPHA_MIRROR`,
 `POL_ICHI_VAULT`, `POL_GAUGE`, `EE_POOL`, `BASE_USDC_MARKET`), and numeric knobs (NAV window/maxAge/deviation,
 TVL cap, recovery floor, borrow cap, LTVs, buy-burn discount/cap, rate staleness/window/cap). Mirrors
 `contracts/.env.example`.

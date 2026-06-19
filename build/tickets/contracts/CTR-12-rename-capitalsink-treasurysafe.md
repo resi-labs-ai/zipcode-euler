@@ -1,5 +1,26 @@
 # CTR-12 — Rename `capitalSink` → `treasurySafe` (loss-side recovery destination)
 
+> **DONE 2026-06-19.** Pure rename, zero behavior change. **Surface was STALER than the draft enumerated:** the
+> draft listed `LienXAlphaEscrow`/`DefaultCoordinator`/3 deploy scripts/2 tests, but CTR-06b/06c (built earlier
+> THIS session) added `capitalSink` to `script/SiloDeployer.s.sol` + `script/JuniorTrancheDeployer.s.sol` (Params
+> struct field + ctor pass-through) and `test/{SiloDeployer,JuniorTrancheDeployer,DefaultCoordinator}.t.sol` — all
+> swept in to satisfy Key-req #2 (zero `capitalSink` left). Triage = **ticket gap** (re-grepped the live tree, did
+> not cite the draft's stale set blind). Renamed across 3 case variants: slot/var/field/getter `capitalSink`→
+> `treasurySafe`, setter `setCapitalSink`→`setTreasurySafe`, env `CAPITAL_SINK`→`TREASURY_SAFE`, `WiringSet` slot
+> label `"capitalSink"`→`"treasurySafe"`, test name `test_ctor_zero_capitalSink_reverts`→`..._treasurySafe_reverts`.
+> Natspec/comments polished to name it "the protocol treasury Safe — the recovery custody (§11)". `slashXAlphaToCapital`
+> / `SlashedToCapital` / RecycleModule "capital hole" prose UNTOUCHED (Do-NOT honored). **Gate green (full-suite,
+> not just touched paths — per the CTR-08 process lesson, since the public getter `capitalSink()→treasurySafe()` is
+> an ABI change):** `forge build` exit 0 + `forge test` = **920 passed / 0 failed / 3 skipped (56 suites)** —
+> byte-identical to the CTR-10b baseline, proving the rename is behavior-neutral. `grep -rni capitalsink|capital_sink`
+> over `src`/`script`/`test`/`docs` = NONE. Cold-build N/A (mechanical rename; no zero-guess builder needed — the
+> risk was surface completeness, discharged by grepping the live tree). **Doc-sync:** backward wires
+> `docs/wires/8-Bx-LienXAlphaEscrow.md` (slot/setter/WiringSet-label/4-arg-ctor/destination prose), `DefaultCoordinator.md`,
+> `DeployZipcode.md` (`TREASURY_SAFE` env), `8-B10-RecycleModule.md` (the `treasurySafe` USDC-output reference);
+> `docs/loss.md` was already on "treasury Safe". No `COVERAGE.md` change (no new file). No `claude-zipcode.md` edit
+> (§11/§17 unchanged — the slot was never spec-named; the rename invents nothing). PROGRESS-433 "designate the real
+> safe" closed at the NAMING level; the actual Safe creation + bridge process stays an M2 ops deliverable.
+
 > Contract-track change (EXPANSION) — **loss-side, NOT part of the CTR-02..10 scaling workstream.** A naming +
 > designation change: the slashed-bond capital-hole destination becomes the protocol **treasury Safe**, not an
 > abstract "capital sink." This also resolves the PROGRESS-433 operational item (the destination was only a deploy

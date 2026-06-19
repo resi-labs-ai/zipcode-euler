@@ -193,7 +193,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
     address internal creOperator = makeAddr("creOperator");
     address internal warehouseSafe = makeAddr("warehouseSafe");
     address internal curator = makeAddr("curator");
-    address internal capitalSink = makeAddr("capitalSink");
+    address internal treasurySafe = makeAddr("treasurySafe");
     address internal workflowAuthor = makeAddr("workflowAuthor");
     address internal rateOracle = makeAddr("rateOracle"); // a shared hub input (never owned/transferred here)
     bytes32 internal workflowId = keccak256("zipcode.cre.workflow.junior");
@@ -290,7 +290,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
             oHydx: address(ohydx),
             polIchiVault: address(lp),
             polGauge: address(gauge),
-            capitalSink: capitalSink,
+            treasurySafe: treasurySafe,
             W: 4 hours,
             maxAge: 1 hours,
             maxDeviationBps: 1000,

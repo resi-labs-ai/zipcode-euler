@@ -61,7 +61,7 @@ contract DeployMainnet is DeployZipcode {
         i.creOperator = vm.envAddress("CRE_OPERATOR");
         i.workflowAuthor = vm.envAddress("WORKFLOW_AUTHOR");
         i.erebor = vm.envAddress("EREBOR");
-        i.capitalSink = vm.envAddress("CAPITAL_SINK");
+        i.treasurySafe = vm.envAddress("TREASURY_SAFE");
         i.saltNonce = vm.envUint("SUMMON_SALT_NONCE");
         i.workflowId = vm.envBytes32("WORKFLOW_ID");
 

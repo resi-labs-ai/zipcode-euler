@@ -100,7 +100,7 @@ capital-vs-premium split (`capitalSlashAmount`) is the CRE's off-chain arg — t
   `oracle.setDefaultCoordinator(coordinator)` (`SzipNavOracle.sol:202`, `onlyOwner`/Timelock). This contract is the
   only `writeProvision` caller in the system.
 - **Bond destinations are escrow-side immutables-in-spirit** (Timelock-set in the build phase): `bondOriginator`
-  (captured at lock from the coordinator's `originator` arg — the RELEASE recipient), `capitalSink` (the
+  (captured at lock from the coordinator's `originator` arg — the RELEASE recipient), `treasurySafe` (the
   `slashXAlphaToCapital` destination, alpha→TAO→USDC recovery account), `sidecar` (the `slashXAlphaToCohort`
   destination, the non-ragequittable cohort Safe; NAV does the socialized pro-rata). The coordinator can route a bond
   only to these three — **no attacker-chosen destination** except the CRE-named `originator` leg.
@@ -118,7 +118,7 @@ needs the escrow. The item-10 sequence (ticket KR-15 + the created obligation):
 1. Deploy `SzipNavOracle` first (no circularity — the coordinator takes it as a ctor arg).
 2. Deploy `DefaultCoordinator(forwarder, navOracle, xAlpha, recoveryFloor)` — `recoveryFloor` is the governed value set
    at the ctor; `escrow` unset.
-3. Deploy `LienXAlphaEscrow(xAlpha, coordinator=this, capitalSink, sidecar)`.
+3. Deploy `LienXAlphaEscrow(xAlpha, coordinator=this, treasurySafe, sidecar)`.
 4. `coordinator.setEscrow(escrow)` (sets `escrow` + `forceApprove(escrow, max)`).
 5. `oracle.setDefaultCoordinator(coordinator)`.
 6. `coordinator.setExpectedWorkflowId(id)` — a **distinct** Forwarder identity/workflowId from the
