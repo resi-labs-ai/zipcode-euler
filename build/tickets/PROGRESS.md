@@ -146,6 +146,11 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   Ticket: `build/tickets/contracts/CTR-12-rename-capitalsink-treasurysafe.md`. **Process note:** a draft ticket's
   "Binds to (verified)" grep set goes STALE when sibling tickets land between authoring and build — always re-grep the
   live tree at build time, never trust the enumerated set.
+  **DEPLOY OBLIGATION (CTR-12):** set `TREASURY_SAFE` to a **real Gnosis Safe** at deploy. The `LienXAlphaEscrow`
+  ctor only reverts on `address(0)` (doesn't enforce Safe-ness), but the live deploy must wire a real Safe — it is
+  the custody that holds slashed xALPHA and runs the off-chain xALPHA→TAO→USDC bridge. Today it's a placeholder
+  (`ANVIL_5` locally / the `TREASURY_SAFE` env var on mainnet). The slot is dormant in M1 (only `slashXAlphaToCapital`
+  touches it; the slash path isn't active until the `DefaultCoordinator` drives it).
 
 ---
 
