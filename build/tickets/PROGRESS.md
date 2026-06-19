@@ -24,13 +24,13 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
-- **CTR-04** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` + CTR-03
-  controller siloId routing are DONE** (2026-06-18, below). NEXT of that workstream = **CTR-04** (`closeLine`
-  withdraw-queue reclaim, leaf, finding 1): CTR-02/03's concurrent slot accounting is only fully SOUND once this
-  lands — CTR-03's `decrementLineCount` corrects the registry counter, but `closeLine` still doesn't free the
-  binding withdraw-queue slot, so a pool's true ceiling is ~28 *lifetime* opens until CTR-04. After CTR-04:
-  **CTR-05** (`SeniorNavAggregator`, dep CTR-02) / **CTR-06** (`SiloDeployer`, dep 02/03/05). See "Credit-warehouse
-  scaling + federation" below.
+- **CTR-05 / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
+  CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim are DONE** (2026-06-18, below).
+  CTR-02/03's concurrent slot accounting is now fully SOUND (CTR-04 physically frees the binding withdraw-queue slot
+  on close, matching CTR-03's `decrementLineCount`; a pool churns 28 *concurrent* lines). Next of that workstream =
+  **CTR-05** (`SeniorNavAggregator`, donation-immune Σ, dep CTR-02) or **CTR-07** (slot-2 reservoir fund/defund,
+  independent) — reviewer picks. Then **CTR-06** (`SiloDeployer`, dep 02/03/05). See "Credit-warehouse scaling +
+  federation" below.
 
 ---
 
@@ -59,9 +59,11 @@ lines (structure 1, the safe HELOC-warehouse standard) and insurance-underwritte
   **B** fix `closeLine` to reclaim the binding slot (chosen) (CTR-04); **C** ship CTR-02..09 first, CTR-10 later.
 
 **Verified findings (obligations — discharge in the tickets):**
-1. `closeLine` reclaims only the SUPPLY queue; the **binding withdraw-queue slot is never freed**
-   (`EulerVenueAdapter.sol:415-423`; removal needs cap→0 + `submitMarketRemoval` + timelock, `EulerEarn.sol:362`)
-   → a pool bricks after ~28 *lifetime* opens. **→ CTR-04.**
+1. **RESOLVED 2026-06-18 (CTR-04, below).** `closeLine` reclaimed only the SUPPLY queue; the **binding
+   withdraw-queue slot was never freed** (`EulerVenueAdapter.sol:415-423`) → a pool bricked after ~28 *lifetime*
+   opens. CTR-04 added the inline withdraw-queue reclaim (`submitCap(0)` + `updateWithdrawQueue`); a pool now churns
+   28 *concurrent* lines. Removal of the (defunded) empty market is timelock-independent, so no `submitMarketRemoval`/
+   reap step was needed — the `EulerEarn.sol:362` two-step path is dead code for an empty market.
 2. The **0.1%-per-revolution fee is unimplemented** on-chain (grep `contracts/src`: only EE yield fee, buy-burn
    discount, oracle bands). **→ CTR-09.**
 3. Slot-2 revolving is half-wired: the reservoir borrow/repay cycles, but no `reallocate` funds it from resting or
@@ -79,10 +81,10 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 **Ledger (build order):**
 - **CTR-02** `SiloRegistry` — silo set + admission gate + slot accounting. **DONE 2026-06-18** (below). *(leaf)*
 - **CTR-03** `ZipcodeController` siloId routing over the registry. **DONE 2026-06-18** (below). *(dep CTR-02)*
-- **CTR-04** `closeLine` withdraw-queue reclaim (finding 1). **NEXT.** *(independent; pairs with CTR-03 decrement —
-  elevated: CTR-02/03 concurrent slot-accounting soundness depends on it — CTR-03's `decrementLineCount` corrects
-  the registry counter but does NOT free the binding withdraw-queue slot until this lands, see CTR-03 DONE note)*
-- **CTR-05** `SeniorNavAggregator` (donation-immune Σ). *(dep CTR-02)*
+- **CTR-04** `closeLine` withdraw-queue reclaim (finding 1). **DONE 2026-06-18** (below). *(independent; paired with
+  CTR-03's decrement — the binding withdraw-queue slot is now physically freed on close, so the registry counter and
+  the actual queue length stay consistent; concurrent slot-accounting is now SOUND)*
+- **CTR-05** `SeniorNavAggregator` (donation-immune Σ). **NEXT** *(or CTR-07, independent — reviewer picks)*. *(dep CTR-02)*
 - **CTR-06** `SiloDeployer` (stamp + register a silo; opens the 29th concurrent line across two silos). *(dep 02/03/05)*
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
@@ -93,6 +95,40 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-04 — `closeLine` reclaims the binding withdraw-queue slot — DONE 2026-06-18.** Third contract of the
+> scaling/federation workstream; discharges **finding 1**. Modified `contracts/src/venue/EulerVenueAdapter.sol`
+> (`closeLine`) + `contracts/test/EulerVenueAdapter.t.sol` (no new files). `closeLine` previously pruned only the
+> SUPPLY queue (SEC-06) and left the line's EE cap at `type(uint136).max`, so the **binding WITHDRAW-queue slot was
+> never freed** — the hard `MAX_QUEUE_LENGTH=30` cap fires on the withdraw queue inside `_setCap` when `acceptCap`
+> first enables a market (`EulerEarn.sol:783-785`), so a pool bricked after ~28 *lifetime* opens. Added, AFTER the
+> existing defund + supply-prune, a single **inline** withdraw-queue reclaim: `submitCap(IOZERC4626(lineRef), 0)`
+> (cap DECREASE applies immediately, no timelock, `:298-299`; removal guard `:362` requires `cap==0`) → build
+> `keepIndexes` = every withdraw-queue index whose market `!= lineRef` (by address, two-pass, via
+> `withdrawQueueLength()`/`withdrawQueue(i)`) → `updateWithdrawQueue(keepIndexes)`. **Harness loop ran:** 4 critics
+> (junior-dev/spec-fidelity/reference-verifier/contract-binding) CONVERGED on ONE load-bearing design fix applied to
+> the ticket BEFORE cold-build: the draft's two-path design (`submitMarketRemoval` + a deferred `reapLine` keeper
+> step + an `eulerEarn.timelock()` branch for non-zero-timelock pools) is **dead code** — removal of an EMPTY market
+> never engages the EE timelock, because `updateWithdrawQueue`'s `removableAt`/timelock guard (`:366-370`) sits
+> inside `if (expectedSupplyAssets(id) != 0)` (`:365`) and `closeLine` mandatorily defunds the line to zero first
+> (`previewRedeem(0)==0`, `expectedSupplyAssets == _eeSupplyAssets`). So removal is inline + timelock-independent for
+> ANY pool (even if the external EE owner raised the timelock mid-life), and `submitMarketRemoval` is never needed.
+> Cut the two-path → single inline path. Also resolved the ticket's open hedges: `withdrawQueueLength()` confirmed to
+> exist (`:482`); `IOZERC4626` is the adapter's OZ-`IERC4626` alias (`:13`); `submitCap(0)` is always a valid
+> `max→0` (the EE config cap is invariably max from openLine — `setLineLimits` touches only the EVK vault's own caps);
+> CTR-04 adds NO registry call (`decrementLineCount` lives in the CONTROLLER, CTR-03 — CTR-04 makes the *physical*
+> slot reclaim match the existing counter decrement). **The real test work was extending `MockEulerEarn`** (it
+> modeled only the supply queue + hardcoded `cap=max`): added per-market cap tracking, a `_withdrawQueue` pushed on
+> first market-enable enforcing the `:785` cap, `withdrawQueue`/`withdrawQueueLength` getters, and a faithful
+> `updateWithdrawQueue` with the `:362-371` removal guards. Gate green: `forge build` exit 0 + `forge test
+> --match-path test/EulerVenueAdapter.t.sol` = **39 passed / 0 failed** (33 pre-existing incl. SEC-06/07/08/11 all
+> still green + 6 new CTR-04: reclaims-slot, removed-market-cap-zero-and-empty, leaves-other-slots,
+> brick-without-close (31st open reverts `MaxQueueLengthExceeded`), no-brick-across-churn-past-cap, concurrent-reuse
+> (fill→close→fresh-open-succeeds)). Cold-build returned ZERO load-bearing guesses. Ticket:
+> `build/tickets/contracts/CTR-04-closeline-withdrawqueue-reclaim.md`. **Doc-sync:** modified contract → backward wire
+> `docs/wires/WOOF-04.md` updated (`closeLine` now reclaims BOTH queues; the allocator-role note gains
+> `updateWithdrawQueue`; the `MockEulerEarn` note records the withdraw-queue extension). No new contract → no
+> `COVERAGE.md` row change. No `claude-zipcode.md` edit (§4.7/§4.5 already correct).
 
 > **CTR-03 — `ZipcodeController` siloId routing over the registry — DONE 2026-06-18.** Second contract of the
 > scaling/federation workstream; makes the controller multi-pool. Modified `contracts/src/ZipcodeController.sol` +
@@ -372,8 +408,9 @@ track on it.
   across multiple EE pools (option a) — it keeps per-line EVK isolation and makes senior NAV a Σ of audited EE
   share values; the shared-vault topology (option b) was rejected (it sacrifices isolation). Note the original
   "~29 concurrent" was imprecise on two counts: (i) two non-line markets per pool → **28**, not 29; (ii) `closeLine`
-  reclaims only the SUPPLY queue, so closed lines do NOT free the binding withdraw-queue slot → ~28 *lifetime*, not
-  concurrent, until CTR-04 fixes it. See the workstream ledger for the full decomposition.
+  reclaimed only the SUPPLY queue, so closed lines did NOT free the binding withdraw-queue slot → ~28 *lifetime*, not
+  concurrent — **fixed by CTR-04 (DONE 2026-06-18); a pool now churns 28 *concurrent* lines.** See the workstream
+  ledger for the full decomposition.
 
 - **RESOLVED (2026-06-13/16) — `DurationFreezeModule` rework.** The 2026-06-12 "incomplete" concerns (premise
   obviated; can't act on staked LP; `ichiVault` placeholder) are SUPERSEDED in the built code: it is now a

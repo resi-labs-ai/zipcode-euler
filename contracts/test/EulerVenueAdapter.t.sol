@@ -52,6 +52,14 @@ contract MockEulerEarn {
     error InconsistentReallocation();
     /// @dev Mirrors EulerEarn.reallocate's per-market gate (reference EulerEarn.sol:390).
     error MarketNotEnabled(address id);
+    /// @dev Mirrors EulerEarn.updateWithdrawQueue's removal guard (reference EulerEarn.sol:362): a market whose cap is
+    ///      not yet zeroed cannot be removed from the withdraw queue. CTR-04's closeLine zeroes the cap (submitCap 0)
+    ///      BEFORE the prune, so it never trips; a removal without the cap-zero would.
+    error InvalidMarketRemovalNonZeroCap(address id);
+    /// @dev Mirrors EulerEarn.updateWithdrawQueue's removal guard (reference EulerEarn.sol:366): a non-empty market
+    ///      can only be removed after its removableAt timelock elapses. closeLine defunds to zero first, so the
+    ///      removed market is empty and this never bites; modeled for faithfulness.
+    error InvalidMarketRemovalNonZeroSupply(address id);
 
     /// @notice The pool asset (USDC) the mock moves between markets during a faithful reallocate.
     address public immutable asset;
@@ -65,6 +73,11 @@ contract MockEulerEarn {
     // breaks the zero-sum check. This mock mirrors that: `cfgBalance` is bumped only inside `reallocate`/`seedConfig`.
     mapping(address => uint112) public cfgBalance; // EE-tracked share balance per market
     mapping(address => bool) public cfgEnabled; // a market is reallocate-eligible once its cap is accepted
+    // CTR-04: per-market cap (reference _setCap :801 sets `marketConfig.cap = supplyCap`). openLine submits
+    // type(uint136).max so a line's cap is max until closeLine's submitCap(0). A cap DECREASE (incl. ->0) applies
+    // immediately (reference :298-299 / _setCap decrease branch). The withdraw-queue removal guard (reference :362)
+    // requires this to be 0 before a market drops. NOT the hardcoded max the old config() returned.
+    mapping(address => uint136) public cfgCap;
 
     /// @notice The EE pool timelock (SEC-08). Default 0 (immediate cap config); a test raises it as the EE owner.
     uint256 public timelock;
@@ -74,6 +87,10 @@ contract MockEulerEarn {
     address[] public submittedCaps;
     address[] public acceptedCaps;
     IOZERC4626[] internal _queue;
+    // CTR-04: the WITHDRAW queue — the array whose hard MAX_QUEUE_LENGTH cap (reference _setCap :785) actually
+    // bricks origination. Independent of the supply queue (`_queue`). Pushed once on a market's first enable, and
+    // pruned by updateWithdrawQueue on closeLine.
+    IOZERC4626[] internal _withdrawQueue;
 
     // last-reallocate recording
     address[] public lastReallocIds;
@@ -84,22 +101,39 @@ contract MockEulerEarn {
         asset = asset_;
     }
 
-    function submitCap(IOZERC4626 id, uint256) external {
+    function submitCap(IOZERC4626 id, uint256 cap) external {
         submittedCaps.push(address(id));
+        // CTR-04: record the per-market cap. A decrease (incl. ->0, closeLine's revoke) is IMMEDIATE — matching
+        // _setCap's decrease branch (reference :298-299,801), no timelock. openLine submits type(uint136).max so a
+        // line's cap reads max until close. The withdraw-queue removal guard reads this (must be 0 to remove).
+        cfgCap[address(id)] = uint136(cap);
     }
 
     function acceptCap(IOZERC4626 id) external {
         if (timelock != 0) revert TimelockNotElapsed(); // faithful afterTimelock: same-tx accept fails while > 0
         acceptedCaps.push(address(id));
-        cfgEnabled[address(id)] = true; // faithful: accepting a cap enables the market for reallocate/withdraw
+        _enableMarket(address(id)); // faithful: accepting a cap enables the market + pushes the withdraw-queue slot
+    }
+
+    /// @dev CTR-04: faithful first-enable path (reference _setCap :782-794). Called by BOTH acceptCap (the line
+    ///      onboarding path) and the base/reservoir seedConfig enable path. On a market's FIRST enable it pushes the
+    ///      market onto the WITHDRAW queue and enforces the hard MAX_QUEUE_LENGTH (30) cap (reference :783-785) — the
+    ///      BINDING cap that bricks the ~29th lifetime openLine absent CTR-04's reclaim. Guarded against double-push
+    ///      (an already-enabled market re-onboarded does not re-push), like _setCap's `if (!marketConfig.enabled)`.
+    function _enableMarket(address id) internal {
+        if (cfgEnabled[id]) return; // already enabled -> no re-push (reference _setCap :782 guard)
+        _withdrawQueue.push(IOZERC4626(id));
+        if (_withdrawQueue.length > MAX_QUEUE_LENGTH) revert MaxQueueLengthExceeded(); // reference :785
+        cfgEnabled[id] = true;
     }
 
     /// @dev The EE-tracked config getter the L9/SEC-11 `_eeSupplyAssets` helper reads. ABI-identical to the real
-    ///      `IEulerEarn.config(IERC4626)` (struct `MarketConfig memory` — encodes the same as this 4-tuple). `cap`
-    ///      is reported as max (the line cap openLine leaves unrevoked) and `removableAt` as 0; only `.balance`
-    ///      (the tracked share count) and `.enabled` are load-bearing for the adapter/this mock.
+    ///      `IEulerEarn.config(IERC4626)` (struct `MarketConfig memory` — encodes the same as this 4-tuple).
+    ///      CTR-04: `cap` now reports the TRACKED per-market cap (max for an open line, 0 after closeLine's
+    ///      submitCap(0)) rather than a hardcoded max — the withdraw-queue removal guard reads it. `removableAt`
+    ///      stays 0 (no per-market timelock in the mock); `.balance`/`.enabled` remain load-bearing as before.
     function config(IOZERC4626 id) external view returns (uint112 balance, uint136 cap, bool enabled, uint64 removableAt) {
-        return (cfgBalance[address(id)], type(uint136).max, cfgEnabled[address(id)], 0);
+        return (cfgBalance[address(id)], cfgCap[address(id)], cfgEnabled[address(id)], 0);
     }
 
     /// @dev Test helper: seed the EE-tracked position for a market the test funded DIRECTLY (bypassing reallocate,
@@ -108,7 +142,10 @@ contract MockEulerEarn {
     ///      `balanceOf(EE) > cfgBalance`, which is exactly the L9 skew.
     function seedConfig(address market, uint256 shares) external {
         cfgBalance[market] += uint112(shares);
-        cfgEnabled[market] = true;
+        // CTR-04: the base/reservoir enable path also takes a withdraw-queue slot on first enable (faithful to
+        // _setCap's first-enable push), via the SAME guarded helper acceptCap uses — so re-seeding an already-enabled
+        // market does not re-push, and a freshly-seeded base market occupies one slot exactly like the real EE.
+        _enableMarket(market);
     }
 
     /// @dev SEC-08 test hook: the external EE owner raises the timelock post-deploy.
@@ -145,6 +182,69 @@ contract MockEulerEarn {
 
     function supplyQueue(uint256 i) external view returns (IOZERC4626) {
         return _queue[i];
+    }
+
+    // ----- CTR-04: withdraw-queue surface (the BINDING queue) -----
+
+    function withdrawQueueLength() external view returns (uint256) {
+        return _withdrawQueue.length;
+    }
+
+    function withdrawQueue(uint256 i) external view returns (IOZERC4626) {
+        return _withdrawQueue[i];
+    }
+
+    /// @dev test helper: is `market` present in the current withdraw queue?
+    function withdrawQueueContains(address market) external view returns (bool) {
+        for (uint256 i; i < _withdrawQueue.length; ++i) {
+            if (address(_withdrawQueue[i]) == market) return true;
+        }
+        return false;
+    }
+
+    /// @dev Faithful to EulerEarn.updateWithdrawQueue (reference EulerEarn.sol:340-380): KEEP-indexes semantics — the
+    ///      caller passes the indexes to retain; every current index NOT listed is removed. For each removed market the
+    ///      removal guards (reference :362-371) run: cap must be 0 (else InvalidMarketRemovalNonZeroCap), and a NON-empty
+    ///      market needs its removableAt timelock elapsed (the mock has no per-market removableAt, so a non-empty
+    ///      removal reverts InvalidMarketRemovalNonZeroSupply — closeLine defunds first, so the removed line is empty
+    ///      and removes freely). Removed markets have their config cleared (`delete config[id]` :373); the queue is
+    ///      rebuilt from the kept indexes. closeLine passes the surviving indexes by ADDRESS, dropping only lineRef.
+    function updateWithdrawQueue(uint256[] calldata indexes) external {
+        uint256 currLength = _withdrawQueue.length;
+        bool[] memory seen = new bool[](currLength);
+        IOZERC4626[] memory newQueue = new IOZERC4626[](indexes.length);
+
+        for (uint256 i; i < indexes.length; ++i) {
+            uint256 prevIndex = indexes[i]; // out-of-bounds reverts natively, like the reference
+            newQueue[i] = _withdrawQueue[prevIndex];
+            seen[prevIndex] = true;
+        }
+
+        for (uint256 i; i < currLength; ++i) {
+            if (!seen[i]) {
+                address id = address(_withdrawQueue[i]);
+                // reference :362 — a non-zeroed cap blocks removal (closeLine's submitCap(0) clears this).
+                if (cfgCap[id] != 0) revert InvalidMarketRemovalNonZeroCap(id);
+                // reference :365-366 — a non-empty market can only drop after its (here-absent) removableAt; closeLine
+                // defunds to zero first, so expectedSupplyAssets(id) == previewRedeem(0) == 0 and this is skipped.
+                if (expectedSupplyAssets(IOZERC4626(id)) != 0) revert InvalidMarketRemovalNonZeroSupply(id);
+                // reference :373 — clear the removed market's config.
+                cfgEnabled[id] = false;
+                cfgCap[id] = 0;
+                cfgBalance[id] = 0;
+            }
+        }
+
+        delete _withdrawQueue;
+        for (uint256 i; i < newQueue.length; ++i) {
+            _withdrawQueue.push(newQueue[i]);
+        }
+    }
+
+    /// @dev reference EulerEarn.sol:492 — expectedSupplyAssets(id) = previewRedeem(config.balance). Identical to the
+    ///      adapter's `_eeSupplyAssets`; the withdraw-queue removal guard sizes the empty-market check off it.
+    function expectedSupplyAssets(IOZERC4626 id) public view returns (uint256) {
+        return IEVault(address(id)).previewRedeem(cfgBalance[address(id)]);
     }
 
     /// @dev Faithful to EulerEarn.reallocate (reference EulerEarn.sol:383-442): ABSOLUTE-target, zero-sum, sized off
@@ -1090,5 +1190,136 @@ contract EulerVenueAdapterTest is ForkConfig {
             );
         }
         assertTrue(reverted, "probe must revert when the EE perspective rejects the line vault");
+    }
+
+    // ============================================================
+    // (Q) CTR-04 — closeLine reclaims the BINDING withdraw-queue slot
+    // ============================================================
+
+    /// @dev openLine consumes a withdraw-queue slot (submitCap max + acceptCap -> first-enable push), and closeLine
+    ///      reclaims it: the line's market is added to the withdraw queue on open and removed on close (length back
+    ///      to its pre-open value). This is the BINDING queue (the supply-queue analog is SEC-06).
+    function test_CTR04_CloseLine_ReclaimsWithdrawQueueSlot() public {
+        uint256 wqBefore = ee.withdrawQueueLength();
+        (address lineRef,) = _openA();
+        assertEq(ee.withdrawQueueLength(), wqBefore + 1, "withdraw queue grew by 1 on open");
+        assertTrue(ee.withdrawQueueContains(lineRef), "line in withdraw queue after open");
+
+        adapter.closeLine(lineRef);
+
+        assertEq(ee.withdrawQueueLength(), wqBefore, "withdraw-queue slot reclaimed on close");
+        assertFalse(ee.withdrawQueueContains(lineRef), "closed line removed from withdraw queue");
+    }
+
+    /// @dev Removal guards respected (reference EulerEarn.sol:362-371): the removed line had its cap zeroed
+    ///      (submitCap 0) and carried zero EE balance (the defund emptied it) — so updateWithdrawQueue's cap-zero and
+    ///      empty-market guards both pass and the slot frees in the same tx, no timelock.
+    function test_CTR04_CloseLine_RemovedMarketCapZeroAndEmpty() public {
+        _fundBaseMarket(1_000_000e6);
+        (address lineRef,) = _openA();
+        adapter.fund(lineRef, 300_000e6); // give the line a real EE position to be defunded
+
+        // Before close: the line's cap is the max openLine left, and it holds a tracked balance.
+        (uint112 balBefore, uint136 capBefore,,) = ee.config(IOZERC4626(lineRef));
+        assertEq(capBefore, type(uint136).max, "line cap is max while open");
+        assertGt(balBefore, 0, "line holds an EE balance while funded");
+
+        adapter.closeLine(lineRef);
+
+        // After close: cap zeroed + balance emptied (the removal-guard preconditions), config cleared.
+        (uint112 balAfter, uint136 capAfter, bool enabledAfter,) = ee.config(IOZERC4626(lineRef));
+        assertEq(capAfter, 0, "line cap zeroed (submitCap 0) before removal");
+        assertEq(balAfter, 0, "line EE balance defunded to zero before removal");
+        assertFalse(enabledAfter, "line market config cleared on withdraw-queue removal");
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(lineRef)), 0, "removed market is empty");
+    }
+
+    /// @dev Closing one of several open lines reclaims ONLY that line's withdraw slot; the base market and the other
+    ///      open line stay in the withdraw queue (matched by ADDRESS, not position).
+    function test_CTR04_CloseLine_LeavesOtherWithdrawSlots() public {
+        _fundBaseMarket(1_000_000e6); // enables base -> base takes a withdraw slot
+        (address lineA,) = _openA();
+        (address lineB,) = _openB();
+        assertEq(ee.withdrawQueueLength(), 3, "withdraw queue = [base, A, B]");
+
+        adapter.closeLine(lineA);
+
+        assertEq(ee.withdrawQueueLength(), 2, "withdraw queue = [base, B] after closing A");
+        assertFalse(ee.withdrawQueueContains(lineA), "A's withdraw slot reclaimed");
+        assertTrue(ee.withdrawQueueContains(lineB), "B's withdraw slot retained");
+        assertTrue(ee.withdrawQueueContains(baseUsdcMarket), "base withdraw slot retained");
+    }
+
+    /// @dev Brick-WITHOUT-reclaim is real: the withdraw queue grows by one per open and is hard-capped at
+    ///      MAX_QUEUE_LENGTH (30) inside acceptCap's first-enable push (reference _setCap :785). Fill it to the cap
+    ///      with open (never-closed) lines and the 31st open reverts MaxQueueLengthExceeded — the exact brick CTR-04's
+    ///      reclaim prevents. To isolate the WITHDRAW queue as the binding limiter we clear the base from the SUPPLY
+    ///      queue first (otherwise the independent supply-queue cap, SEC-06, would tie at the same count); both queues
+    ///      then grow in lockstep, but the regression that matters — that closing reclaims the slot — is proven by the
+    ///      churn test below, where supply IS pruned each cycle yet (pre-CTR-04) the withdraw queue still grew unbounded.
+    function test_CTR04_WithdrawQueueBricks_WithoutClose() public {
+        // Clear base from the supply queue so the supply-queue cap does not pre-occupy a slot / confound the count.
+        IOZERC4626[] memory empty = new IOZERC4626[](0);
+        ee.setSupplyQueue(empty);
+
+        // Fill the withdraw queue exactly to the cap with open (never-closed) lines.
+        for (uint256 i; i < 30; ++i) {
+            bytes32 lienId = keccak256(abi.encode("CTR04-brick", i));
+            // Each concurrent (never-closed) open custodies its own 1e18 lien; top the controller's balance back up
+            // so the next open has a lien to deposit (the standing setUp approval covers the pull).
+            deal(address(LIEN_A), controller, 1e18);
+            adapter.openLine(lienId, address(LIEN_A), 1e18);
+        }
+        assertEq(ee.withdrawQueueLength(), 30, "withdraw queue filled to MAX_QUEUE_LENGTH with un-closed lines");
+
+        // The 31st open's acceptCap first-enable push exceeds the cap -> MaxQueueLengthExceeded (the brick).
+        deal(address(LIEN_A), controller, 1e18);
+        vm.expectRevert(MockEulerEarn.MaxQueueLengthExceeded.selector);
+        adapter.openLine(keccak256(abi.encode("CTR04-brick", uint256(30))), address(LIEN_A), 1e18);
+    }
+
+    /// @dev No brick across churn (the regression proving the reclaim): recycle the single 1e18 LIEN_A through more
+    ///      than MAX_QUEUE_LENGTH (30) open->close cycles. With the withdraw-slot reclaim the queue stays bounded at
+    ///      one slot per open and never reaches the cap; pre-CTR-04 it would brick on the ~31st open's acceptCap. The
+    ///      withdraw-queue analog of test_SEC06_NoBrickAcrossChurnPastQueueCap.
+    function test_CTR04_NoBrickAcrossChurnPastWithdrawQueueCap() public {
+        uint256 n = 33; // comfortably past MAX_QUEUE_LENGTH (30)
+        for (uint256 i; i < n; ++i) {
+            bytes32 lienId = keccak256(abi.encode("CTR04-churn", i));
+            (address lineRef,) = adapter.openLine(lienId, address(LIEN_A), 1e18);
+            assertEq(ee.withdrawQueueLength(), 1, "withdraw queue bounded at one slot per concurrent open");
+            adapter.closeLine(lineRef);
+            assertEq(ee.withdrawQueueLength(), 0, "withdraw slot reclaimed every close");
+            assertEq(LIEN_A.balanceOf(controller), 1e18, "lien recycled to controller after close");
+        }
+    }
+
+    /// @dev Concurrent reuse: fill the withdraw queue with open lines up to the cap, close one to free a slot, then a
+    ///      fresh open succeeds where it would otherwise revert MaxQueueLengthExceeded — proving the reclaim restores
+    ///      true 28-concurrent (here cap-bounded) reuse per pool, not merely 28-lifetime.
+    function test_CTR04_ConcurrentReuse_CloseFreesSlotForNewOpen() public {
+        // Clear base from the supply queue so the supply-queue cap (SEC-06) does not pre-occupy a slot; this isolates
+        // the withdraw-queue cap as the binding limiter the reclaim must relieve.
+        IOZERC4626[] memory empty = new IOZERC4626[](0);
+        ee.setSupplyQueue(empty);
+
+        address[] memory open = new address[](30);
+        for (uint256 i; i < 30; ++i) {
+            bytes32 lienId = keccak256(abi.encode("CTR04-reuse", i));
+            deal(address(LIEN_A), controller, 1e18); // replenish the lien for the next concurrent open
+            (address lineRef,) = adapter.openLine(lienId, address(LIEN_A), 1e18);
+            open[i] = lineRef;
+        }
+        assertEq(ee.withdrawQueueLength(), 30, "withdraw queue at the cap with 30 concurrent lines");
+
+        // At the cap, a new open would brick (proven by test_CTR04_WithdrawQueueBricks_WithoutClose). Close one first.
+        adapter.closeLine(open[0]);
+        assertEq(ee.withdrawQueueLength(), 29, "one withdraw slot freed by the close");
+
+        // The freed slot admits a fresh open that would have reverted at the cap.
+        deal(address(LIEN_A), controller, 1e18);
+        (address fresh,) = adapter.openLine(keccak256(abi.encode("CTR04-reuse-fresh")), address(LIEN_A), 1e18);
+        assertEq(ee.withdrawQueueLength(), 30, "fresh open re-fills the freed slot (no brick)");
+        assertTrue(ee.withdrawQueueContains(fresh), "fresh line occupies the reclaimed slot");
     }
 }

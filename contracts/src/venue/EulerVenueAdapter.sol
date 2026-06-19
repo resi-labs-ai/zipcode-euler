@@ -422,6 +422,40 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         }
         eulerEarn.setSupplyQueue(newQueue);
 
+        // Reclaim the line's BINDING withdraw-queue slot (CTR-04). The supply-queue prune above frees the
+        // NON-binding queue (SEC-06); the hard MAX_QUEUE_LENGTH (30) cap that actually bricks origination fires on
+        // the WITHDRAW queue inside _setCap when a market is first enabled (EulerEarn.sol:783-785). `openLine`
+        // enables the line's market (submitCap max + acceptCap, :235-236) and so consumes a withdraw-queue slot;
+        // without removing it on close the slot stays consumed FOREVER and the ~29th LIFETIME openLine's acceptCap
+        // reverts MaxQueueLengthExceeded — even though most lines are long closed. Inline, single-tx, no keeper /
+        // submitMarketRemoval / timelock branch: the defund above emptied the market, so removal of an EMPTY market
+        // never engages the EE timelock (updateWithdrawQueue's removableAt guard EulerEarn.sol:366-370 sits inside
+        // `if (expectedSupplyAssets(id) != 0)` :365, and previewRedeem(0) == 0). Sequence mirrors _setCap's removal
+        // guards (EulerEarn.sol:362-371):
+        //   1. Zero the line's EE cap. A cap DECREASE applies IMMEDIATELY via _setCap with no timelock
+        //      (EulerEarn.sol:298-299); the removal guard :362 requires cap == 0. openLine left the cap at
+        //      type(uint136).max (:235) and setLineLimits touches only the EVK vault's OWN caps, so this is always a
+        //      valid max->0 decrease.
+        eulerEarn.submitCap(IOZERC4626(lineRef), 0);
+        //   2. Build keepIndexes = every current withdraw-queue index whose market != lineRef, by ADDRESS (do NOT
+        //      assume the line is the last entry — interleaved opens/closes move it, like the supply-prune above).
+        //      Keep the base USDC market (and any reservoir/resting market); only lineRef drops.
+        uint256 wqlen = eulerEarn.withdrawQueueLength();
+        uint256 keepCount;
+        for (uint256 i; i < wqlen; ++i) {
+            if (address(eulerEarn.withdrawQueue(i)) != lineRef) ++keepCount;
+        }
+        uint256[] memory keepIndexes = new uint256[](keepCount);
+        uint256 k;
+        for (uint256 i; i < wqlen; ++i) {
+            if (address(eulerEarn.withdrawQueue(i)) != lineRef) keepIndexes[k++] = i;
+        }
+        //   3. updateWithdrawQueue takes the indexes to KEEP; any current index NOT listed is removed
+        //      (EulerEarn.sol:340-380). lineRef passes the removal guards (:362-371): cap == 0 (step 1), no pending
+        //      cap, and expectedSupplyAssets == previewRedeem(0) == 0 (the defund above) -> the removableAt/timelock
+        //      sub-block is skipped entirely and delete config[lineRef] runs.
+        eulerEarn.updateWithdrawQueue(keepIndexes);
+
         L.open = false; // keep the record readable so post-close observeDebt == 0 stays queryable
         emit LineClosed(lineRef);
     }
