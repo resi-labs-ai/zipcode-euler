@@ -15,7 +15,8 @@ import {ILienXAlphaEscrow} from "../interfaces/loss/ILienXAlphaEscrow.sol";
 ///         Timelock at deploy (NOT renounced — the same admin that owns the engine Zodiac modules' CRE flows,
 ///         user-directed 2026-06-09): the owner governs `recoveryFloor` (`setRecoveryFloor`) and may redirect the
 ///         CRE Forwarder/workflow identity in an emergency, but holds no theft / NAV-inflation power. It custodies
-///         the protocol's launch xALPHA reserve; non-sweepable; one set-once `setEscrow`.
+///         the protocol's launch xALPHA reserve; non-sweepable; the escrow is wired via a Timelock-re-pointable
+///         `setEscrow` (§17 build phase — NOT set-once; see `setEscrow` below).
 ///         `claude-zipcode.md` §4.6 / §11 / §7 / §8.4 / §17.
 ///
 /// @dev RESIDUAL-TRUST BOUNDARY (§13 — stated plainly so it is never mistaken for a solvency guard):
