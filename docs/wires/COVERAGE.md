@@ -7,15 +7,18 @@ added `SzAlphaLockReleasePool.sol`; deploy-track sweep added `DeployLocal.s.sol`
 `IchiAlgebraFairReserves.sol` + `AlgebraIchiFairLpOracle.sol` + `IAlgebraOraclePlugin.sol` +
 `AlgebraIchiFairLpOracle.t.sol`), updated 2026-06-16 (CTR-01 added `CloneReportReceiver.sol` — the reusable
 clone-safe CRE report socket), updated 2026-06-18 (CTR-02 added `SiloRegistry.sol` — the multi-pool/federation
-silo catalog + admission gate, the first contract of the scaling/federation workstream): **38 product contracts +
-8 scripts + 31 interface shims + 31 test/helper files**, plus a **demo/fork-only addendum** (section E): **2
+silo catalog + admission gate, the first contract of the scaling/federation workstream), updated 2026-06-18 (CTR-05
+added `SeniorNavAggregator.sol` — the donation-immune Σ senior par-backing view across silos, fourth contract of the
+scaling/federation workstream): **39 product contracts +
+8 scripts + 31 interface shims + 32 test/helper files**, plus a **demo/fork-only addendum** (section E): **2
 showcase contracts + 1 demo interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody
 forgotten.
 
-## A. Product contracts (`src/`, non-interface) — 38 files
+## A. Product contracts (`src/`, non-interface) — 39 files
 | File | Doc |
 |---|---|
 | `src/SiloRegistry.sol` | `CTR-02-SiloRegistry.md` |
+| `src/SeniorNavAggregator.sol` | `CTR-05-SeniorNavAggregator.md` |
 | `src/libraries/ConcentratedLiquidity.sol` | `FairLpOracle.md` |
 | `src/supply/lib/IchiAlgebraFairReserves.sol` | `FairLpOracle.md` |
 | `src/supply/AlgebraIchiFairLpOracle.sol` | `FairLpOracle.md` |
@@ -103,12 +106,13 @@ Each file is cataloged file-by-file inside its `interfaces-<folder>.md`.
 | `src/interfaces/zodiac/IModuleProxyFactory.sol` | `interfaces-zodiac.md` |
 | `src/interfaces/zodiac/IRoles.sol` | `interfaces-zodiac.md` |
 
-## D. Tests & helpers (`test/`) — 31 files (verification, covered by their component doc)
+## D. Tests & helpers (`test/`) — 32 files (verification, covered by their component doc)
 Tests are the verification artifact for a component, not a separate component — each is covered by the
 component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" are what the test proves).
 | Test/helper file | Component doc |
 |---|---|
 | `test/SiloRegistry.t.sol` | `CTR-02-SiloRegistry.md` |
+| `test/SeniorNavAggregator.t.sol` | `CTR-05-SeniorNavAggregator.md` |
 | `test/DeployZipcode.t.sol` | `DeployZipcode.md` |
 | `test/ForkConfig.sol` | `WOOF-00.md` (the fork helper) |
 | `test/mocks/MockEulerEarn.sol` | `WOOF-00.md` / `interfaces-euler.md` (EulerEarn is mocked, 0.8.26) |

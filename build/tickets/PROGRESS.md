@@ -24,13 +24,13 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
-- **CTR-05 / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
-  CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim are DONE** (2026-06-18, below).
-  CTR-02/03's concurrent slot accounting is now fully SOUND (CTR-04 physically frees the binding withdraw-queue slot
-  on close, matching CTR-03's `decrementLineCount`; a pool churns 28 *concurrent* lines). Next of that workstream =
-  **CTR-05** (`SeniorNavAggregator`, donation-immune Σ, dep CTR-02) or **CTR-07** (slot-2 reservoir fund/defund,
-  independent) — reviewer picks. Then **CTR-06** (`SiloDeployer`, dep 02/03/05). See "Credit-warehouse scaling +
-  federation" below.
+- **CTR-06 / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
+  CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` are
+  DONE** (2026-06-18, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
+  binding withdraw-queue slot on close; a pool churns 28 *concurrent* lines). With CTR-05's senior par-backing Σ now
+  available, the next of that workstream = **CTR-06** (`SiloDeployer`, dep 02/03/05 — all now satisfied; stamps +
+  registers a silo, opens the 29th concurrent line across two silos) or **CTR-07** (slot-2 reservoir fund/defund,
+  independent) — reviewer picks. See "Credit-warehouse scaling + federation" below.
 
 ---
 
@@ -84,8 +84,9 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 - **CTR-04** `closeLine` withdraw-queue reclaim (finding 1). **DONE 2026-06-18** (below). *(independent; paired with
   CTR-03's decrement — the binding withdraw-queue slot is now physically freed on close, so the registry counter and
   the actual queue length stay consistent; concurrent slot-accounting is now SOUND)*
-- **CTR-05** `SeniorNavAggregator` (donation-immune Σ). **NEXT** *(or CTR-07, independent — reviewer picks)*. *(dep CTR-02)*
-- **CTR-06** `SiloDeployer` (stamp + register a silo; opens the 29th concurrent line across two silos). *(dep 02/03/05)*
+- **CTR-05** `SeniorNavAggregator` (donation-immune Σ). **DONE 2026-06-18** (below). *(dep CTR-02)*
+- **CTR-06** `SiloDeployer` (stamp + register a silo; opens the 29th concurrent line across two silos). **NEXT**
+  *(or CTR-07, independent — reviewer picks; deps 02/03/05 now ALL satisfied)*. *(dep 02/03/05)*
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). *(dep 03; composes 08)*
@@ -95,6 +96,42 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-05 — `SeniorNavAggregator` (donation-immune Σ senior par-backing across silos) — DONE 2026-06-18.** Fourth
+> contract of the scaling/federation workstream; the cross-silo solvency telemetry + circuit-breaker input. Added
+> `contracts/src/SeniorNavAggregator.sol` + `contracts/test/SeniorNavAggregator.t.sol` (no existing contract changed).
+> A pure OZ `Ownable` (Timelock) view that loops `SiloRegistry.allSiloIds()` and sums each silo's §8.2 donation-immune
+> senior read (`convertToAssets(balanceOf(warehouseSafe)) * 1e12`, NEVER `balanceOf(eePool)`), replicating the
+> `DurationFreezeModule:295-302` guards VERBATIM. Surface: `seniorBacking()` (Σ ALL silos), `activeSeniorBacking()`
+> (active-only), `illiquidSeniorValue()` (Σ lent-out), `collateralization(supply)` (zero-supply→`type(uint256).max`),
+> `systemCollateralization()` (wired zipUSD `totalSupply`), per-silo getters (unknown→0), Timelock `setRegistry`/
+> `setZipUsd`+`WiringSet`. **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/reference-verifier/contract-
+> binding) converged on THREE load-bearing fixes applied to the ticket BEFORE cold-build: (1) **the draft excluded
+> inactive silos from the live backing sum — WRONG for the §12 solvency numerator.** `retireSilo` only stops new
+> routing ("existing lines close normally"), so a retired silo still backs the zipUSD its open lines minted; zipUSD is
+> fungible at the hub, so excluding it understates backing and could falsely trip a breaker during wind-down. Fixed:
+> `seniorBacking()`/`illiquidSeniorValue()` sum ALL silos (drained ones self-zero via `balanceOf→0`); `active` filters
+> ONLY the separate `activeSeniorBacking()`. (Ticket gap, not a spec change — §12 already says system-wide.) (2)
+> **§12-NAV mislabel:** the Σ is senior **par** backing (idle + loan principal at par), NOT full §12 NAV (which marks
+> impaired loans to recovery, net of the junior provision); they coincide only pre-impairment, impairment lands in the
+> junior `SzipNavOracle` per §11. Reframed to "senior par-backing coverage" throughout — the correct senior-solvency
+> signal. (3) **registry-read framing self-contradictory** (an inline iface naming `SiloRegistry.Silo` still needs the
+> import) → `import {SiloRegistry}` outright; no struct-read precedent exists in CTR-03. Plus precision nail-downs:
+> `WiringSet` slot labels `"registry"`/`"zipUsd"`, ctor accepts zero for both (deploy-order) with fail-closed
+> `RegistryUnset`/`ZipUsdUnset` guards, per-silo getters return 0 on unknown/empty, zipUSD 18-dp VERIFIED
+> (`DeployZipcode.s.sol:260` `new ESynth(...)`, no decimals override). **The test mock was the precision work:** the
+> shared `test/mocks/MockEulerEarn.sol` has no `maxWithdraw` and can't model `free<sa` — used the settable-backing
+> mock per `DurationFreezeModule.t.sol:107-130` (per-account `balanceOf`, settable `convertToAssets`/`maxWithdraw`, a
+> `donateShares` path that does NOT move warehouse backing, mirroring the donation test at `:455-461`); `SiloRegistry`
+> is the REAL contract with self-consistent topology stubs. Gate green: `forge build` exit 0 + `forge test
+> --match-path test/SeniorNavAggregator.t.sol` = **18 passed / 0 failed** (N=1 identity, two-silo Σ, donation no-op,
+> retired-still-counted-but-dropped-from-active, drained→0, illiquid verbatim-formula incl. `free>=sa`/`sa==0`→0,
+> collateralization math + zero-supply→max, systemCollateralization wired vs `ZipUsdUnset`, per-silo getters +
+> unknown→0, `RegistryUnset` on all aggregate reads, ctor-zero-both, setter owner-gating + zero-reject + `WiringSet`).
+> Cold-build returned ZERO load-bearing guesses. Ticket: `build/tickets/contracts/CTR-05-senior-nav-aggregator.md`.
+> **Doc-sync:** NEW contract → new wire `docs/wires/CTR-05-SeniorNavAggregator.md` + `COVERAGE.md` rows (38→39 product,
+> +1 test → 32); CTR-02 wire's CTR-05 cross-ref marked BUILT. No `claude-zipcode.md` edit owed (§12 NAV semantics
+> intact — CTR-05 is a senior-par-coverage telemetry view consistent with §11/§12, recorded in the wire).
 
 > **CTR-04 — `closeLine` reclaims the binding withdraw-queue slot — DONE 2026-06-18.** Third contract of the
 > scaling/federation workstream; discharges **finding 1**. Modified `contracts/src/venue/EulerVenueAdapter.sol`
