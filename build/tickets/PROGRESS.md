@@ -40,9 +40,15 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   (06a+06b+06c). **CTR-07 landed 2026-06-19** (note below) — the slot-2 reservoir fund/defund is now revolving;
   finding 3 RESOLVED. **CTR-08 landed 2026-06-19** (note below) — structure-2 revolving lines proved as an operating
   MODE over the as-built stack with ZERO contract change (test + doc only). **CTR-09 landed 2026-06-19** (note below)
-  — the 0.1%-per-revolution draw fee; finding 2 RESOLVED. So the only remaining item of that workstream =
-  **CTR-10** (federation `ISeniorPool` + non-Euler adapter; LATER / P5; dep 02..09). See "Credit-warehouse scaling +
-  federation" below. (CTR-11/CTR-12 are independent loss-side tickets, separate from the scaling ledger.)
+  — the 0.1%-per-revolution draw fee; finding 2 RESOLVED. **CTR-10 was RE-SCOPED 2026-06-19** (a 4-critic fan-out
+  found it can't cold-build as one ticket — same pattern as CTR-06): **CTR-10a** (`ISeniorPool` extract + no-op
+  re-type) **landed 2026-06-19** (note below) — the structural §4.7 senior-read generalization; **CTR-10b** (the
+  reference non-Euler adapter + wrapper + `addSilo` hardening + fork test) is **BACK-PRESSURE / DEFERRED (P5)** —
+  blocked on a concrete venue choice + a real bindable non-Euler senior surface (none deployed on the Base fork)
+  + an undecided `Silo.seniorRead`-field plumbing decision (4 obligations logged in
+  `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). So the scaling/federation contract workstream has
+  NO near-term cold-buildable item left (CTR-10b waits on a 2nd venue actually being wanted). (CTR-11/CTR-12/CTR-13
+  are independent loss-side / IRM tickets, separate from the scaling ledger.)
 
 - **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
   needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
@@ -186,12 +192,43 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
   *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). **DONE 2026-06-19** (note below). *(dep 03; composes 08)*
-- **CTR-10** federation generalization — `ISeniorPool` + a non-Euler adapter. *(LATER / P5; dep 02..09)*
+- **CTR-10** federation generalization — **RE-SCOPED 2026-06-19 into a 2-way split** (4-critic fan-out: can't
+  cold-build as one ticket). Children:
+  - **CTR-10a** `ISeniorPool` extract + no-op re-type of the senior read (`SeniorNavAggregator` +
+    `DurationFreezeModule`). **DONE 2026-06-19** (note below). *(dep CTR-05)* — the structural §4.7 generalization.
+  - **CTR-10b** reference non-Euler venue adapter + `ISeniorPool` wrapper + `addSilo` per-venue-type hardening +
+    fork test. **BACK-PRESSURE / DEFERRED (P5)** — no bindable non-Euler senior surface on the Base fork, venue
+    unchosen, `Silo.seniorRead`-field plumbing undecided (4 obligations in
+    `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). *(dep CTR-10a; LATER / P5)*
 
 **Spec sync (forward, NOT a precondition):** each ticket is the complete, self-sufficient build instruction (it
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-10a — `ISeniorPool` extract: the venue-neutral senior-read generalization — DONE 2026-06-19.** The
+> buildable, zero-guess half of the re-scoped CTR-10 (the §4.7 structural generalization). A pure interface
+> extract + no-op re-type. Added `contracts/src/interfaces/supply/ISeniorPool.sol` (the three donation-immune
+> views `{maxWithdraw, convertToAssets, balanceOf}` — the exact selector set of the deleted `IEulerEarnUtil`,
+> now named for the federation seam so ANY venue's senior surface can satisfy it); re-typed the only two `src`
+> readers `SeniorNavAggregator._seniorValue`/`_illiquidValue` and `DurationFreezeModule.utilization`/
+> `illiquidSeniorValue` from `IEulerEarnUtil(...)` → `ISeniorPool(...)`; DELETED the orphaned
+> `src/interfaces/euler/IEulerEarnUtil.sol`. **The `DurationFreezeModule.eulerEarn` storage slot name is RETAINED**
+> (renaming ripples into `SiloRegistry`'s `IFreeze(freeze).eulerEarn()` topology assert — that is CTR-10b scope);
+> only the read interface is generic. **Harness loop ran on the parent CTR-10:** the same 4-critic fan-out
+> (junior-dev/spec-fidelity/reference-verifier/contract-binding) that produced the re-scope verified this half is a
+> genuine no-op — `ISeniorPool` is the exact selector-subset of `IEulerEarnUtil`, so the cast change emits
+> byte-identical calldata for the Euler silo (contract-binding critic = SOUND; reference-verifier confirmed both
+> readers + the deleted file's 3 views). spec-fidelity = FAITHFUL (no invention; the federation §-sync stays
+> forward-deferred; §17 honored). Gate green (verified by my own full-suite re-run, not just a targeted match):
+> `forge build` exit 0 + `forge test` = **919 passed / 0 failed / 3 skipped (56 suites)** — the no-op proof; the
+> `SeniorNavAggregator.t.sol` (18/18) and DurationFreeze suites pass unchanged. Cold-build returned ZERO
+> load-bearing guesses (a verified-equivalent re-type). Ticket: `build/tickets/contracts/CTR-10a-iseniorpool-extract.md`.
+> **Doc-sync:** the catalog row moved euler→supply (`COVERAGE.md`, count stays 31); `interfaces-euler.md`
+> (`IEulerEarnUtil.sol` marked REMOVED + folder now 2 files), `interfaces-supply.md` (new `ISeniorPool` section),
+> `CTR-05-SeniorNavAggregator.md` + `DurationFreezeModule.md` (read now via `ISeniorPool`). No `claude-zipcode.md`
+> edit (invisible at the spec level — no mechanism change). **Unblocks CTR-10b** (a non-Euler venue's senior
+> surface now reads/wraps to `ISeniorPool`).
 
 > **CTR-07 — Slot-2 reservoir fund/defund: the revolving junior yield facility — DONE 2026-06-19.** Discharges
 > **finding 3**. Modified `contracts/src/venue/EulerVenueAdapter.sol` + `contracts/test/ReservoirLoopModule.t.sol`

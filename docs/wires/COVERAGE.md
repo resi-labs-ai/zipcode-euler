@@ -96,7 +96,6 @@ Each file is cataloged file-by-file inside its `interfaces-<folder>.md`.
 | `src/interfaces/bridge/IXAlphaRate.sol` | `interfaces-bridge.md` |
 | `src/interfaces/cow/IGPv2Settlement.sol` | `interfaces-cow.md` |
 | `src/interfaces/euler/IEulerEarn.sol` | `interfaces-euler.md` |
-| `src/interfaces/euler/IEulerEarnUtil.sol` | `interfaces-euler.md` |
 | `src/interfaces/euler/IZipUSD.sol` | `interfaces-euler.md` |
 | `src/interfaces/hydrex/IGauge.sol` | `interfaces-hydrex.md` |
 | `src/interfaces/hydrex/IOptionToken.sol` | `interfaces-hydrex.md` |
@@ -110,6 +109,7 @@ Each file is cataloged file-by-file inside its `interfaces-<folder>.md`.
 | `src/interfaces/loss/ISzipNavOracle.sol` | `interfaces-loss.md` |
 | `src/interfaces/safe/ISafe.sol` | `interfaces-safe.md` |
 | `src/interfaces/safe/ISafeProxyFactory.sol` | `interfaces-safe.md` |
+| `src/interfaces/supply/ISeniorPool.sol` | `interfaces-supply.md` |
 | `src/interfaces/supply/ISzipNavBasket.sol` | `interfaces-supply.md` |
 | `src/interfaces/zodiac/IModuleProxyFactory.sol` | `interfaces-zodiac.md` |
 | `src/interfaces/zodiac/IRoles.sol` | `interfaces-zodiac.md` |

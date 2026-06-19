@@ -2,14 +2,16 @@
 
 > Source of truth = the kept code under `contracts/src/interfaces/euler/`. Reads the three files as
 > their final form and records what each shims, the exact declared surface, who consumes it, and the
-> seam gotchas. Folder consists of three files: `IEulerEarn.sol`, `IEulerEarnUtil.sol`, `IZipUSD.sol`.
+> seam gotchas. Folder consists of two files: `IEulerEarn.sol`, `IZipUSD.sol`. (`IEulerEarnUtil.sol` was
+> REMOVED by CTR-10a — its 3-view senior-read face was generalized venue-neutral into
+> `src/interfaces/supply/ISeniorPool.sol`; see `interfaces-supply.md`.)
 
 ## Role
 The WOOF-00 `[EXT]` house posture in concrete form: minimal LOCAL declarations (only the methods we
 call) pinned to solc **0.8.24**, so the 0.8.24 engine build never imports the OZ-5.x Euler tree
 (`EulerEarn` source pins exact 0.8.26 → mocked in tests, never compiled — WOOF-00 §"compiled vs
-interfaced"). Two of the three are **external shims** onto the live/forked Base EulerEarn senior pool;
-one is an **internal seam** onto our own zipUSD `ESynth`. SPDX `GPL-2.0-or-later` on all three.
+interfaced"). One (`IEulerEarn.sol`) is an **external shim** onto the live/forked Base EulerEarn senior
+pool; one (`IZipUSD.sol`) is an **internal seam** onto our own zipUSD `ESynth`. SPDX `GPL-2.0-or-later` on both.
 
 ## Catalog
 
@@ -39,20 +41,12 @@ NOT consumers of this file (each declares its OWN `IEulerEarn`, not the folder s
 - `contracts/src/venue/EulerVenueAdapter.sol` — imports the REAL remapped
   `euler-earn/interfaces/IEulerEarn.sol` (+ `MarketAllocation`), not the shim (venue tier is compiled).
 
-### IEulerEarnUtil.sol — EXTERNAL shim (utilization read face)
-The 3-view read-only face onto the same EulerEarn senior pool — ONLY what the DurationFreezeModule needs
-to compute the donation-immune utilization `U` (§8.2/§11-B). Source same `EulerEarn.sol` (0.8.26, never
-compiled). `maxWithdraw` accounts for live strategy liquidity (`_maxWithdraw` → `_simulateWithdrawStrategy`);
-`convertToAssets`/`balanceOf` inherited from OZ `ERC4626`/`ERC20`.
-```
-function maxWithdraw(address owner) external view returns (uint256);      // assets owner's shares can withdraw RIGHT NOW (strategy-liquidity bounded)
-function convertToAssets(uint256 shares) external view returns (uint256); // total backing assets `shares` represent (Σ expectedSupplyAssets)
-function balanceOf(address account) external view returns (uint256);      // EulerEarn share balance (warehouse Safe holding the senior position)
-```
-Consumed by:
-- `contracts/src/supply/szipUSD/DurationFreezeModule.sol` — `import {IEulerEarnUtil}` (:10), field
-  `eulerEarn` documented as the donation-immune U source (:54), bound `IEulerEarnUtil e =
-  IEulerEarnUtil(eulerEarn)` (:234). Computes `U = 1 − maxWithdraw(warehouse)/convertToAssets(balanceOf(warehouse))`.
+### IEulerEarnUtil.sol — REMOVED (CTR-10a)
+The 3-view read-only face onto the EulerEarn senior pool (`maxWithdraw`/`convertToAssets`/`balanceOf`) was
+**generalized venue-neutral** into `src/interfaces/supply/ISeniorPool.sol` — the same three selectors, but
+named for the federation seam (§4.7) so a non-Euler venue's senior surface can satisfy the same
+donation-immune read. The two consumers (`SeniorNavAggregator`, `DurationFreezeModule`) now read
+`ISeniorPool`; EulerEarn satisfies it directly. See `interfaces-supply.md` for the surface + consumers.
 
 ### IZipUSD.sol — INTERNAL seam (zipUSD ESynth burn)
 Shims OUR OWN zipUSD = Euler `ESynth` (18-dp) — the burn seam for the senior par-exit queue. NOTE: the

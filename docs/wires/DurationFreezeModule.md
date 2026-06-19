@@ -1,7 +1,7 @@
 # DurationFreezeModule — Duration-Bond trigger B / structural sidecar freeze (wiring map)
 
 > Source of truth = the kept code at `contracts/src/supply/szipUSD/DurationFreezeModule.sol` +
-> `contracts/src/interfaces/{euler/IEulerEarnUtil,supply/ISzipNavBasket}.sol`. Ticket
+> `contracts/src/interfaces/supply/{ISeniorPool,ISzipNavBasket}.sol`. Ticket
 > `tickets/sodo/DurationFreezeModule.md` + report `reports/DurationFreezeModule-report.md` are intent —
 > the code is final. (PROGRESS `DurationFreezeModule` row + row 320; spec §11-B / §6.4 / §8.2.)
 
@@ -49,7 +49,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 | Contract / interface | What it does |
 |---|---|
 | `DurationFreezeModule` (`is Module, ReentrancyGuard`) | The actuator. `setUp` initializer (clone-safe set-once storage, NOT immutable); `commit`/`release` rotations; the floor + coverage math (`illiquidSeniorValue`, `requiredCommittedValue`, `committedValue`, `grossBasketValue`, `freeValue`, `pathLockedLpEquity`, `coverageValue`, `covered`, `lpBurnKeepsCovered`; `utilization`/`requiredFraction` retained as §12 metric); the 5-leg `onlyValued` whitelist (LP NOT movable — fenced in place); 11 onlyOwner (Timelock) setters (the 6 wired addrs + 5 legs — NO coverage knobs; the floor is structural). |
-| `IEulerEarnUtil` (`interfaces/euler/`) | Minimal local interface for the §8.2 EulerEarn senior pool — exactly the three views the donation-immune `U`/`illiquidSeniorValue` read needs: `maxWithdraw(owner)`, `convertToAssets(shares)`, `balanceOf(account)`. Source `reference/euler-earn/src/EulerEarn.sol` (0.8.26) — never compiled, fork-only. |
+| `ISeniorPool` (`interfaces/supply/`) | Venue-neutral local interface for the §8.2 senior pool (CTR-10a — the generalization of the removed `IEulerEarnUtil`) — exactly the three views the donation-immune `U`/`illiquidSeniorValue` read needs: `maxWithdraw(owner)`, `convertToAssets(shares)`, `balanceOf(account)`. EulerEarn satisfies it directly (source `reference/euler-earn/src/EulerEarn.sol`, 0.8.26 — never compiled, fork-only). The `eulerEarn` storage slot name is retained (Euler is config one); only the read interface is generic. |
 | `ISzipNavBasket` (`interfaces/supply/`) | Minimal local interface for the `SzipNavOracle` seam: `grossBasketValue()` / `committedValue()` / `freeValue()` / `pathLockedLpEquity()` / `lpShareValue(uint256)` (18-dp USD) for the floor + coverage, plus the five movable plain-leg getters `zipUSD()/usdc()/xAlpha()/hydx()/oHydx()` (read LIVE at `setUp` to form the whitelist). The GPL oracle is not imported. |
 
 ## Wiring — internal

@@ -25,20 +25,20 @@ the correct senior-solvency signal (senior stays par; junior eats first loss).
 |---|---|
 | `SeniorNavAggregator` (`is Ownable`) | The Σ view. Aggregate reads (`seniorBacking`/`activeSeniorBacking`/`illiquidSeniorValue`), ratio reads (`collateralization(supply)`/`systemCollateralization`), per-silo getters (`seniorBackingOf`/`illiquidSeniorValueOf`), Timelock-settable `registry`/`zipUsd` wiring (`setRegistry`/`setZipUsd` + `WiringSet`). Plain OZ `Ownable` v5, Timelock owner — same build-phase idiom as `SiloRegistry`. |
 | `SiloRegistry` (CTR-02, imported) | The catalog looped: `allSiloIds()` → `getSilo(id).{eePool, warehouseSafe, active}`. Imported directly (the `Silo` struct return requires it; no inline-interface shortcut exists). |
-| `IEulerEarnUtil` (`contracts/src/interfaces/euler/IEulerEarnUtil.sol`, reused) | The 3 donation-immune views per silo: `balanceOf`/`convertToAssets`/`maxWithdraw`. |
+| `ISeniorPool` (`contracts/src/interfaces/supply/ISeniorPool.sol`, reused) | The 3 donation-immune views per silo: `balanceOf`/`convertToAssets`/`maxWithdraw`. Venue-neutral seam (CTR-10a) — the generalization of the removed `IEulerEarnUtil`; EulerEarn satisfies it directly. |
 | `IERC20` (`forge-std/interfaces/IERC20.sol`) | `zipUsd.totalSupply()` for `systemCollateralization` (the `ZipcodeOracleRegistry.sol:7` idiom). |
 
 ## The per-silo senior read (donation-immune, §8.2) — replicated VERBATIM from DurationFreezeModule:295-302
 Per silo, keyed on `(eePool, warehouseSafe)`, NEVER `balanceOf(eePool)`:
 ```
-sa   = IEulerEarnUtil(eePool).convertToAssets(IEulerEarnUtil(eePool).balanceOf(warehouseSafe))   // USDC 6-dp
+sa   = ISeniorPool(eePool).convertToAssets(ISeniorPool(eePool).balanceOf(warehouseSafe))   // USDC 6-dp
 seniorValue   = (sa == 0) ? 0 : sa * 1e12                          // 6→18dp; a drained silo → 0
-free = IEulerEarnUtil(eePool).maxWithdraw(warehouseSafe)           // only read when sa != 0
+free = ISeniorPool(eePool).maxWithdraw(warehouseSafe)              // only read when sa != 0
 illiquidValue = (sa == 0 || free >= sa) ? 0 : (sa - free) * 1e12   // matches DurationFreezeModule:295-302
 ```
 Donation-immune because real EulerEarn's `convertToAssets` reads `totalAssets() = Σ expectedSupplyAssets(strategy)`
 (the controller-gated borrow side) and `balanceOf(warehouseSafe)` is the warehouse's shares — a stray-USDC donation
-to the pool address moves neither term (§8.2 CRITICAL; `IEulerEarnUtil.sol:6-11` NatSpec). `*1e12` is the 6→18dp scale
+to the pool address moves neither term (§8.2 CRITICAL; `ISeniorPool.sol` NatSpec). `*1e12` is the 6→18dp scale
 from `DurationFreezeModule.sol:301`.
 
 ## Functions (the surface)
@@ -78,7 +78,7 @@ contributes 0. `activeSeniorBacking()` is the separate, honest "active routable 
 
 ## Wiring — cross-component (who points at whom)
 - **→ `SiloRegistry`** (CTR-02): read-only, every aggregate call. `allSiloIds()` + `getSilo(id)`; no write path.
-- **→ each silo's `eePool`** (read-only): `convertToAssets`/`balanceOf`/`maxWithdraw` via `IEulerEarnUtil`. Reads the
+- **→ each silo's `eePool`** (read-only): `convertToAssets`/`balanceOf`/`maxWithdraw` via `ISeniorPool` (CTR-10a). Reads the
   warehouse Safe's position, never the pool's own balance.
 - **→ `zipUsd`** (the hub ESynth, 18-dp): `totalSupply()` for `systemCollateralization`.
 - **← FE federation solvency dashboard / the mint kill-switch / circuit-breaker** (future consumers).

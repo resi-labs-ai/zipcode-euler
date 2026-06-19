@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {ISafe} from "../../interfaces/safe/ISafe.sol";
 import {ISzipNavBasket} from "../../interfaces/supply/ISzipNavBasket.sol";
-import {IEulerEarnUtil} from "../../interfaces/euler/IEulerEarnUtil.sol";
+import {ISeniorPool} from "../../interfaces/supply/ISeniorPool.sol";
 
 /// @title DurationFreezeModule
 /// @notice The §11-B / §6.4 / §8.2 duration-squeeze freeze actuator: the seventh engine Zodiac `Module`, and the
@@ -52,7 +52,8 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     address public operator;
     /// @notice The `SzipNavOracle` (read via `ISzipNavBasket`): the sole valuation authority for the floor.
     address public navOracle;
-    /// @notice The EulerEarn senior pool (read via `IEulerEarnUtil`): the donation-immune `U` source (§8.2).
+    /// @notice The EulerEarn senior pool (read via the venue-neutral `ISeniorPool`): the donation-immune `U` source
+    ///         (§8.2). Slot name retained as `eulerEarn` (Euler is config one); the read interface is now generic.
     address public eulerEarn;
     /// @notice The CreditWarehouse Safe holding the EulerEarn senior shares (the `owner` arg of the `U` read).
     address public warehouse;
@@ -241,7 +242,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///         reads `balanceOf(eulerEarn)` (donatable AND ≈0 for a pure-allocator pool). `sa == 0` → 0;
     ///         `free >= sa` → 0.
     function utilization() public view returns (uint256 u) {
-        IEulerEarnUtil e = IEulerEarnUtil(eulerEarn);
+        ISeniorPool e = ISeniorPool(eulerEarn);
         uint256 sa = e.convertToAssets(e.balanceOf(warehouse));
         if (sa == 0) return 0;
         uint256 free = e.maxWithdraw(warehouse);
@@ -293,7 +294,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///         does NOT divide by `sa`, so shrinking the junior basket cannot move it — that is what makes the floor
     ///         un-drainable. `sa == 0` → 0; `free >= sa` → 0.
     function illiquidSeniorValue() public view returns (uint256) {
-        IEulerEarnUtil e = IEulerEarnUtil(eulerEarn);
+        ISeniorPool e = ISeniorPool(eulerEarn);
         uint256 sa = e.convertToAssets(e.balanceOf(warehouse));
         if (sa == 0) return 0;
         uint256 free = e.maxWithdraw(warehouse);

@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {IEulerEarnUtil} from "./interfaces/euler/IEulerEarnUtil.sol";
+import {ISeniorPool} from "./interfaces/supply/ISeniorPool.sol";
 import {SiloRegistry} from "./SiloRegistry.sol";
 
 /// @title SeniorNavAggregator
@@ -50,7 +50,7 @@ contract SeniorNavAggregator is Ownable {
     /// @dev The §8.2 donation-immune senior value of one silo, 18-dp USD. Guards VERBATIM from
     ///      `DurationFreezeModule:295-302`: `sa == 0` → 0 (a drained/empty silo). Never reads `balanceOf(eePool)`.
     function _seniorValue(address eePool, address warehouseSafe) internal view returns (uint256) {
-        IEulerEarnUtil e = IEulerEarnUtil(eePool);
+        ISeniorPool e = ISeniorPool(eePool);
         uint256 sa = e.convertToAssets(e.balanceOf(warehouseSafe));
         if (sa == 0) return 0;
         return sa * 1e12; // USDC 6-dp -> 18-dp USD
@@ -59,7 +59,7 @@ contract SeniorNavAggregator is Ownable {
     /// @dev The lent-out (illiquid) senior dollars of one silo, 18-dp USD. Guards VERBATIM from
     ///      `DurationFreezeModule:295-302`: `sa == 0` → 0; `free >= sa` → 0. `free` only read when `sa != 0`.
     function _illiquidValue(address eePool, address warehouseSafe) internal view returns (uint256) {
-        IEulerEarnUtil e = IEulerEarnUtil(eePool);
+        ISeniorPool e = ISeniorPool(eePool);
         uint256 sa = e.convertToAssets(e.balanceOf(warehouseSafe));
         if (sa == 0) return 0;
         uint256 free = e.maxWithdraw(warehouseSafe);

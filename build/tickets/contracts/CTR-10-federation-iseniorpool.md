@@ -1,10 +1,47 @@
-# CTR-10 — Federation generalization: ISeniorPool + a non-Euler venue (LATER / P5)
+# CTR-10 — Federation generalization: ISeniorPool + a non-Euler venue (RE-SCOPED 2026-06-19)
 
+> **RE-SCOPE NOTE (2026-06-19).** A 4-critic fan-out (junior-dev / spec-fidelity / reference-verifier /
+> contract-binding) found CTR-10 CANNOT cold-build to zero guesses as one ticket — same outcome pattern as
+> CTR-06. It splits cleanly:
+> - **CTR-10a — `ISeniorPool` extract + no-op re-type. DONE 2026-06-19.** The buildable, zero-guess half:
+>   the structural senior-read generalization. Ticket: `CTR-10a-iseniorpool-extract.md`. (Full 919-test suite
+>   green, byte-identical for the Euler silo.) This IS the §4.7 generalization CTR-10 set out to make.
+> - **CTR-10b — the reference non-Euler venue adapter + wrapper + `addSilo` hardening + fork test. BACK-PRESSURE
+>   / DEFERRED (this file below).** Blocked on a concrete venue choice + a real bindable senior surface that
+>   does not exist on the Base fork today; plus an undecided struct-plumbing decision. Stays P5/LATER.
+>
 > Contract-track change (EXPANSION, deferred). The last step that turns multi-pool sharding into a true federation:
-> generalize the senior read behind an interface so non-Euler venues (Aave v4, MetaMorpho, an orderbook matcher)
-> can be silos under the same zipUSD. Build only after CTR-02..09 land and a second venue is actually wanted.
-> Spec: `claude-zipcode.md` §4.7 (venue-agnostic; "a second venue can be added behind the adapter"). **Spec
-> extension owed**: the federation §.
+> a non-Euler venue (Aave v4, MetaMorpho, an orderbook matcher) as a silo under the same zipUSD, reading its
+> senior surface through the now-extracted `ISeniorPool` (CTR-10a). Build only when a second venue is actually
+> wanted. Spec: `claude-zipcode.md` §4.7. **Spec extension owed**: the federation §.
+
+## BACK-PRESSURE (verified 2026-06-19 — the obligations that block CTR-10b)
+1. **No bindable non-Euler senior surface on the Base fork (block 47096000).** `BaseAddresses.sol` has zero
+   Aave/Morpho/MetaMorpho/Centrifuge addresses. Reference clones are un-deployed (`moneymarket-contracts` USD3
+   is 4626 source but no Base deployment), async (`centrifuge`/`erc7540-reference` — request/claim, not a
+   synchronous `maxWithdraw`), or non-4626 id-keyed (`moneymarket` Morpho.sol). Binding a real adapter means
+   first deploying a reference vault into the fork OR guessing an address — both fail the zero-guess gate. The
+   ticket's own Do-NOT (a venue that can't be bound is back-pressure, not an interface change) applies.
+2. **The venue is unchosen.** The Deliverable lists "e.g. AaveVenueAdapter OR MetaMorphoVenueAdapter OR an
+   orderbook" — three mutually-exclusive integrations (Aave v4 isn't live; MetaMorpho is 4626; an orderbook is
+   neither). Picking one is itself a load-bearing decision the ticket defers (P5: "build only after a second
+   venue is actually wanted").
+3. **Senior-surface plumbing decision unresolved (load-bearing).** A non-4626 venue needs a wrapper at a
+   DIFFERENT address than its real pool, but `SiloRegistry.Silo`/`SiloConfig` has only ONE senior slot
+   (`eePool`), and `addSilo`'s assert hardcodes `IAdapter(adapter).eulerEarn() == eePool` (`SiloRegistry.sol:164`,
+   + `IFreeze(freeze).eulerEarn()` at `:160`). Two incompatible options (wrapper occupies `eePool` slot vs. add a
+   new `seniorRead` field + a second assert clause + a new adapter `seniorPool()` getter on a new local interface
+   — NOT on `IZipcodeVenue`, which must not change). CTR-10b must pick option B (new field) and spell out the
+   getter + clause; that ripples into the CTR-02 struct, the `addSilo` writer, the `ZeroAddress` check, and the
+   six aggregator call sites.
+4. **Donation-immunity is a property of the real venue, not the interface.** Key-req #1 ("tested per venue")
+   cannot be proven by a mock (a mock hardcodes immunity, proving nothing about the real venue's
+   `convertToAssets`/`maxWithdraw` skewability). The Done-when "fork test" therefore genuinely needs a chosen,
+   deployed venue — which contradicts the Starting state ("no non-Euler adapter exists") until #2 is resolved.
+
+The §11 non-commingling deploy assert (`repaySink != juniorSafe`, `warehouseSafe != juniorSafe`) must be carried
+into CTR-10b's admission gate explicitly (it is inherited via `SiloRegistry.addSilo` but should be named in
+Done-when so a non-4626-wrapper silo cannot drop it).
 
 ## Why (the seam)
 The venue seam (`IZipcodeVenue`) is already venue-agnostic, so a non-Euler adapter is "just another implementation."
@@ -13,11 +50,11 @@ read `IEulerEarnUtil` directly. To host a non-4626 senior venue, that read must 
 senior surface satisfies.
 
 ## Deliverable
-1. A new `contracts/src/interfaces/supply/ISeniorPool.sol` — `{balanceOf(address), convertToAssets(uint256),
-   maxWithdraw(address)}` (the exact three views the donation-immune senior read needs), generalizing
-   `contracts/src/interfaces/euler/IEulerEarnUtil.sol`.
-2. Point `SeniorNavAggregator` (CTR-05) at each silo's `ISeniorPool` (EulerEarn satisfies it directly; a non-4626
-   venue gets a thin wrapper). `DurationFreezeModule`'s read MAY also migrate behind it (optional, larger blast).
+1. ~~A new `contracts/src/interfaces/supply/ISeniorPool.sol`~~ — **DONE in CTR-10a** (interface created;
+   `IEulerEarnUtil` deleted).
+2. ~~Point `SeniorNavAggregator` + `DurationFreezeModule` at `ISeniorPool`~~ — **DONE in CTR-10a** (both re-typed;
+   no-op for the Euler silo). The REMAINING half of #2 is CTR-10b: a non-4626 venue's thin wrapper + WHERE its
+   address is stored (see BACK-PRESSURE #3 — needs a new `Silo.seniorRead` field, not the `eePool` slot).
 3. A reference non-Euler adapter implementing `IZipcodeVenue` (e.g. `AaveVenueAdapter` or `MetaMorphoVenueAdapter`)
    + its `ISeniorPool` wrapper if not natively 4626 — registered under a new `siloId` via `SiloRegistry.addSilo`.
 4. Admission/underwriting gate hardening: the registry's `addSilo` topology assert extended to the venue-type's
