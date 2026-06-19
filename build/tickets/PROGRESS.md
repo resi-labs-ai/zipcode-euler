@@ -696,17 +696,18 @@ track on it.
   (`feeRecipient != 0`, default OFF). Not a contract change owed; a CRE-01 producer constraint. Truth:
   `docs/wires/WOOF-04.md` (`draw` entry).
 
-- **TODO (raised 2026-06-19, CTR-09 calibration) — the line APR is `ZeroIRM` (0%); a real warehouse rate is an
-  unbuilt Timelock IRM-swap.** The per-line borrow vaults install `i.irm`, which `DeployMainnet.s.sol:101-106`
+- **TICKETED 2026-06-19 as CTR-13 (raised, CTR-09 calibration) — the line APR is `ZeroIRM` (0%); a real warehouse
+  rate is an unbuilt Timelock IRM-swap.** The per-line borrow vaults install `i.irm`, which `DeployMainnet.s.sol:101-106`
   provisions as a **`ZeroIRM` (0%-rate model)** by default ("swap a real IRM in later via the Timelock if desired").
   So today lines accrue **no interest** — only the CTR-09 draw fee is live revenue. The economics the reviewer
   settled this session assume a **time-based APR ≈ 7.5%** (SOFR ~3.63% + ~3.9% spread; anchored to bank warehouse
   lines SOFR+2.25–3.25% and ≤ the consumer HELOC ~7.5–8.5% so the originator's gain-on-sale margin survives). Turning
-  that on is **not coded** — it requires deploying/configuring a real IRM (a LinearKink or fixed-rate model) at the
-  chosen rate and `setInterestRateModel` via the Timelock (§17, governor RETAINED on the borrow vaults per CTR-06a).
-  The protocol's cut of that interest routes via the EulerEarn perf-fee `f` (§5). **Scope when ticketed:** pick/author
-  the IRM, set the rate, wire it per silo, decide `f`. Separate from CTR-09 (the fee shipped; the rate did not). Not
-  owed before any current work; a revenue-completeness obligation. Truth: `docs/wires/WOOF-04.md` (`draw` entry, APR note).
+  it on is **not coded** — `build/tickets/contracts/CTR-13-line-irm-apr.md` (deploy EVK `IRMLinearKink` flat at
+  ~7.5%, `adapter.setIrm` for new lines, reservoir stays zero/internal-POL, existing lines roll off within a quarter,
+  set perf-fee `f`). NO new `src/` contract (reuses `IRMLinearKink` + the existing `setIrm`/`setInterestRateModel`
+  surfaces). Separate from CTR-09 (the fee shipped; the rate did not). Not owed before any current work; a
+  revenue-completeness item. Truth: `docs/wires/WOOF-04.md` (`draw` entry, APR note); discharge marks this DONE when
+  CTR-13 lands.
 
 - **RESOLVED INTO A WORKSTREAM (2026-06-18) — concurrent-line ceiling.** This TODO (raised 2026-06-15 ticketing
   SEC-06) is now the **Credit-warehouse scaling + federation** workstream above (CTR-02..CTR-10). Decision: shard
