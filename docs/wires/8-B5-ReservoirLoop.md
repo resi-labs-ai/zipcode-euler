@@ -133,7 +133,11 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
    borrowLTV, liqLTV, 0)` (1e4 scale, ramp 0 — accepts the escrow as collateral).
 4. **Birth-time wire-check (W3)** `_assertWired` — `resolveOracle(1e18, escrowVault, usdc)` must resolve
    `rBase == lpToken && rOracle == lpOracle`, else `WireMismatch`.
-5. **`transferGovernance(governor)`** — hands the router governance to the Timelock, RETAINED.
+5. **Hand governance to the Timelock — both vaults (CTR-06a).** `IEVault(borrowVault).setGovernorAdmin(governor)`
+   (the borrow vault is created via `createProxy(address(0), …)` so its governor defaults to the throwaway deployer
+   instance — it MUST be re-pointed, else LTV/caps/IRM strand; done AFTER all governor-gated config above) +
+   `EulerRouter(router).transferGovernance(governor)`. Both RETAINED at the Timelock, NOT renounced. The escrow
+   stays renounced (step 1) by design.
 
 ## Wiring — cross-component (who points at whom)
 - **`borrowVault` = the warehouse USDC resting vault.** The deployer creates the borrow vault; in production the

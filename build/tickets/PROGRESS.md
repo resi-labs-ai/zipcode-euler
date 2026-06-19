@@ -24,13 +24,21 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
-- **CTR-06 / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
-  CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` are
-  DONE** (2026-06-18, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
-  binding withdraw-queue slot on close; a pool churns 28 *concurrent* lines). With CTR-05's senior par-backing Σ now
-  available, the next of that workstream = **CTR-06** (`SiloDeployer`, dep 02/03/05 — all now satisfied; stamps +
-  registers a silo, opens the 29th concurrent line across two silos) or **CTR-07** (slot-2 reservoir fund/defund,
-  independent) — reviewer picks. See "Credit-warehouse scaling + federation" below.
+- **CTR-06b / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
+  CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` +
+  CTR-06a reservoir borrow-vault governor handoff are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
+  binding withdraw-queue slot on close; a pool churns 28 *concurrent* lines). **CTR-06 was RE-SCOPED 2026-06-18** — a
+  4-critic fan-out found the single-ticket `SiloDeployer` can't cold-build to zero guesses (the junior stack is ~30
+  deployments collapsed into 5 nouns with no reusable junior deployer; the hub/silo boundary + shared-queue reach were
+  undefined; the "29 real concurrent line" fork gate is infeasible — EE can't compile, no fork test ever stood up a
+  real EE pool). Split into **CTR-06a** (`ReservoirMarketDeployer` borrow-vault `setGovernorAdmin` fix — discharges
+  FE-07 Finding A; tiny, independent, the only near-term cold-buildable piece), **CTR-06b** (`JuniorTrancheDeployer` —
+  the missing reusable artifact; needs D1+D5 ratified), **CTR-06c** (`SiloDeployer` orchestrator + feasible mock-EE
+  test; needs 06a+06b). Index + pinned hub/silo decomposition + open decisions D1–D5:
+  `build/tickets/contracts/CTR-06-silo-deployer.md`. **CTR-06a landed 2026-06-19** (note below), so the next of that
+  workstream = **CTR-06b** (`JuniorTrancheDeployer` — the missing reusable artifact; needs D1+D5 ratified in the index
+  before it can cold-build) or **CTR-07** (slot-2 reservoir fund/defund, fully independent — recommended for a clean
+  forge gate now) — reviewer picks. See "Credit-warehouse scaling + federation" below.
 
 ---
 
@@ -85,8 +93,14 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
   CTR-03's decrement — the binding withdraw-queue slot is now physically freed on close, so the registry counter and
   the actual queue length stay consistent; concurrent slot-accounting is now SOUND)*
 - **CTR-05** `SeniorNavAggregator` (donation-immune Σ). **DONE 2026-06-18** (below). *(dep CTR-02)*
-- **CTR-06** `SiloDeployer` (stamp + register a silo; opens the 29th concurrent line across two silos). **NEXT**
-  *(or CTR-07, independent — reviewer picks; deps 02/03/05 now ALL satisfied)*. *(dep 02/03/05)*
+- **CTR-06** `SiloDeployer` — **RE-SCOPED 2026-06-18 into a 3-way split** (could not cold-build to zero guesses as one
+  ticket; see the re-scope note in NEXT + the index `CTR-06-silo-deployer.md` with the pinned hub/silo decomposition +
+  open decisions D1–D5). Children:
+  - **CTR-06a** `ReservoirMarketDeployer` borrow-vault `setGovernorAdmin` fix (discharges FE-07 Finding A).
+    **DONE 2026-06-19** (note below). *(was independent)*
+  - **CTR-06b** `JuniorTrancheDeployer` (the missing reusable per-junior artifact, analogue of
+    `CreditWarehouseDeployer`; excludes `OffRampModule` per D5). *(dep CTR-06a; needs D1+D5 ratified)*
+  - **CTR-06c** `SiloDeployer` orchestrator + feasible mock-EE two-silo routing test (D3/D4). *(dep CTR-06a + CTR-06b)*
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). *(dep 03; composes 08)*
@@ -96,6 +110,32 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-06a — `ReservoirMarketDeployer` hands the borrow-vault governor to the Timelock — DONE 2026-06-19.** First
+> child of the re-scoped CTR-06; discharges **FE-07 Finding A**. One-line source fix + one post-assert (no new files).
+> `ReservoirMarketDeployer.deploy` (`contracts/script/ReservoirMarketDeployer.sol`) handed ONLY the **router**
+> governance to `p.governor` (`:88`); the USDC **borrow vault** is created via `factory.createProxy(address(0), …)`
+> (`:77`) so its `governorAdmin` defaulted to the throwaway deployer INSTANCE and was never re-pointed — directly
+> contradicting the contract header (`:13-14`) + `:75` ("Governor RETAINED … the Timelock can tune LTV/caps") and §17.
+> Added `IEVault(borrowVault).setGovernorAdmin(p.governor)` as step 6, alongside the router transfer — AFTER all
+> governor-gated config (`setInterestRateModel`/`setHookConfig`/`setLTV`), so the deployer can still configure first.
+> Escrow renounce (`:61`, intentional holding box) + router transfer untouched. **Binding verified, not cited blind:**
+> `IEVault.setGovernorAdmin(address)` @ `reference/euler-vault-kit/src/EVault/IEVault.sol:481`, `governorAdmin()` @
+> `:370` — both real. Test home = the existing fork section `test_deployer_governor_RETAINED`
+> (`test/ReservoirLoopModule.t.sol`), next to the router-retained + escrow-renounced asserts: added
+> `assertEq(IEVault(bv).governorAdmin(), owner, "borrow vault governor RETAINED")`. **Proven load-bearing** — reverting
+> the source line fails the assert (`governorAdmin()` = the deployer instance `0x5991…` ≠ owner `0xf744…`), confirming
+> it tests the EFFECT not "didn't revert". Gate green: `forge build` exit 0 + `forge test` on the two deployer-touching
+> suites = `ReservoirLoopModule.t.sol` **35 passed / 0 failed** + `AlgebraIchiFairLpOracle.t.sol` **5 passed / 0
+> failed**; no pre-existing test regressed (escrow `governorAdmin()==address(0)` still holds). Cold-build returned ZERO
+> load-bearing guesses (the ticket was already 4-critic-vetted in the CTR-06 split; binding + seam re-verified against
+> live source this window). Ticket: `build/tickets/contracts/CTR-06a-reservoir-governoradmin-fix.md`. **Doc-sync:**
+> modified script contract → backward wire `docs/wires/8-B5-ReservoirLoop.md` step-5 sequence rewritten to enumerate
+> the borrow-vault `setGovernorAdmin` handoff (the prose claim at `:25`/`:150` was already "retained on both" — the
+> SEQUENCE list was the stale part). No new contract/test file → no `COVERAGE.md` row change. No `claude-zipcode.md`
+> edit (§17 already correct — the fix makes the code MATCH §17). **Live-fork caveat:** fixes future deploys only; the
+> already-deployed anvil borrow vault keeps its stranded governor until a redeploy (FE-07 `entities.json` re-read note
+> stands).
 
 > **CTR-05 — `SeniorNavAggregator` (donation-immune Σ senior par-backing across silos) — DONE 2026-06-18.** Fourth
 > contract of the scaling/federation workstream; the cross-silo solvency telemetry + circuit-breaker input. Added
@@ -508,8 +548,14 @@ track on it.
       not a positional tuple — the ticket wording was corrected.
     - **New FE seam:** `useZipTx.sendRawZipTx({to,abi,functionName,args})` writes to a **runtime/non-registry address**
       (per-line vaults) reusing the shared 1.3× buffer — the spine for any dynamically-discovered-contract write.
-- **FE-07 Finding A — contract obligation owed to the contract track (NOT FE / NOT a frontend back-pressure)**
-  (logged 2026-06-11). The reservoir **borrow vault's `governorAdmin` is never transferred to the Timelock** — it stays
+- **FE-07 Finding A — DISCHARGED 2026-06-19 by CTR-06a.** `ReservoirMarketDeployer.deploy` now hands the borrow-vault
+  governor to the Timelock (`IEVault(borrowVault).setGovernorAdmin(p.governor)`, step 6, alongside the router transfer);
+  `test_deployer_governor_RETAINED` asserts `governorAdmin() == governor` (proven load-bearing: the assert fails without
+  the fix, where the governor is the throwaway deployer instance). **Live-fork caveat retained:** this fixes all FUTURE
+  deploys; the ALREADY-DEPLOYED anvil borrow vault keeps its stranded governor until a redeploy — FE-07's `entities.json`
+  must still re-read `governorAdmin()` after any redeploy (that row already says so). Original finding kept below for
+  context:
+  - The reservoir **borrow vault's `governorAdmin` is never transferred to the Timelock** — it stays
   the throwaway `ReservoirMarketDeployer` instance (`0x77C2Cb207Ee27F8fB5Fc1586da3Bfef40Fba3ffa` on the current fork).
   `ReservoirMarketDeployer.deploy` (`contracts/script/ReservoirMarketDeployer.sol`) transfers only the **router**
   governance (`EulerRouter(router).transferGovernance(p.governor)`, `:88`); the borrow vault is created via
@@ -520,7 +566,9 @@ track on it.
   Timelock-settable-not-frozen). Once fixed, the live `governorAdmin` becomes `0x89ae…` (already in FE-07's
   `entities.json`) and the deployer entry can be dropped. **FE interim (shipped):** FE-07 declares the live deployer
   address so the reservoir market verifies in the UI today; `0x77C2Cb…` is nonce-derived, so re-read `governorAdmin()`
-  and update `entities.json` after any redeploy that moves it.
+  and update `entities.json` after any redeploy that moves it. **TICKETED 2026-06-18 as CTR-06a**
+  (`build/tickets/contracts/CTR-06a-reservoir-governoradmin-fix.md`) — add `IEVault(borrowVault).setGovernorAdmin(p.governor)`
+  + a post-assert; mark this obligation DISCHARGED when CTR-06a lands.
 - **DEPLOY OBLIGATION (raised 2026-06-18, CTR-03) — wire the controller↔SiloRegistry pair before the first
   origination.** The `ZipcodeController` now resolves venue + slot-accounting through `SiloRegistry`. The deploy
   MUST: (a) `controller.setRegistry(siloRegistry)`; (b) `siloRegistry.setController(controller)` (its

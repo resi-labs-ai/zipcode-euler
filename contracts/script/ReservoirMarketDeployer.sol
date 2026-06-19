@@ -84,7 +84,13 @@ contract ReservoirMarketDeployer {
         // step 5: birth-time wire-check (W3): prove ESCROW -> lpToken -> lpOracle resolves.
         _assertWired(router, escrowVault, p.lpToken, p.usdc, p.lpOracle);
 
-        // step 6: hand the router governance to the Timelock — RETAINED (LTV/caps/oracle stay tunable), NOT renounced.
+        // step 6: hand governance to the Timelock — RETAINED (LTV/caps/oracle/IRM stay tunable), NOT renounced. Both
+        //          the router AND the borrow vault: the borrow vault was created with `createProxy(address(0), …)`
+        //          (`:77`), so its governor defaults to THIS throwaway deployer instance — it MUST be re-pointed to the
+        //          Timelock (§17 standing-tunable facility), else LTV/caps/IRM strand. Done AFTER all governor-gated
+        //          config above (setInterestRateModel/setHookConfig/setLTV). The escrow stays renounced by design
+        //          (`:61`, a no-governance holding box).
+        IEVault(borrowVault).setGovernorAdmin(p.governor);
         EulerRouter(router).transferGovernance(p.governor);
     }
 

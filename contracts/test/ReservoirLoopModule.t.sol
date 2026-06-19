@@ -650,6 +650,10 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(IEVault(ev).convertToAssets(1e18), 1e18, "escrow 1:1 shares<->assets");
         assertEq(IEVault(ev).governorAdmin(), address(0), "escrow governance renounced");
 
+        // borrow vault governor RETAINED at the Timelock (CTR-06a): the §17 standing-tunable facility — the deployer
+        // instance no longer governs it (it was created via createProxy(address(0), …)).
+        assertEq(IEVault(bv).governorAdmin(), owner, "borrow vault governor RETAINED at the Timelock");
+
         // borrow vault oracle == the router; guard installed at OP_BORROW.
         assertEq(IEVault(bv).oracle(), router, "borrow vault oracle == router");
         (address hookTarget, uint32 hookedOps) = IEVault(bv).hookConfig();
