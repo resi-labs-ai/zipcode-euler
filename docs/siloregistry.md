@@ -8,13 +8,13 @@ The catalog that lets the protocol run many credit pools under one shared senior
 * Loss stays local to a silo's own junior; the senior is shared, so only the leftover after a junior is exhausted ever reaches zipUSD.
 * Admission is the underwriting gate. A curator earns senior backing only by registering a silo whose parts all point at each other and not at a neighbor's.
 
-* The controller routing (CTR-03), the close-line slot reclaim (CTR-04), and the senior NAV aggregator (CTR-05) are now built. What remains of the core workstream is the deployer that stamps and registers a silo (CTR-06), the split-slot reservoir fund/defund (CTR-07), and the structure-2 / fee / federation work (CTR-08..10).
-* TODO — Not wired into any deploy yet. Nothing registers a silo until the deployer (CTR-06) exists.
+* The scaling workstream is now built out: controller routing (CTR-03), close-line slot reclaim (CTR-04), the senior NAV aggregator (CTR-05), the silo deployer that stamps and registers a silo (CTR-06a/b/c), the split-slot reservoir fund/defund (CTR-07), structure-2 revolving lines (CTR-08), the per-revolution draw fee (CTR-09), and the federation generalization (CTR-10a/b). The one piece left is a reference adapter for an actual non-Euler venue (CTR-10c) — deferred until a second venue is chosen and exists on-chain.
+* The admission gate is now venue-agnostic (CTR-10b). It no longer assumes the venue is Euler: it asks each adapter for its senior pool through a venue-neutral getter, so a future non-Euler venue (Aave, Morpho, an orderbook) can be admitted with no change to the registry — only the new adapter has to be built.
 
 ==================================================================================
 The registry does three jobs, and nothing else. It never touches a silo's internals.
 
-It admits silos. Only the Timelock can register one, and only if the silo is self-consistent. Before admitting, the registry asks the silo's freeze module, escrow, loss coordinator, and venue adapter who they point at, and rejects the silo unless they all point at its own pool, Safe, and oracle. A mis-wired silo is turned away, so it can never drain or distort a sibling. The caller hands in only the addresses; the registry sets the live-line count to zero and marks the silo active itself.
+It admits silos. Only the Timelock can register one, and only if the silo is self-consistent. Before admitting, the registry asks the silo's freeze module, escrow, loss coordinator, and venue adapter who they point at, and rejects the silo unless they all point at its own senior pool, Safe, and oracle. The adapter is asked through a venue-neutral getter (its "senior pool"), so the same check works whether the venue is Euler or something else (CTR-10b). A mis-wired silo is turned away, so it can never drain or distort a sibling. The caller hands in only the addresses; the registry sets the live-line count to zero and marks the silo active itself.
 
 It counts open lines. Each silo has a running count of how many credit lines are open, and a new line is refused once a silo hits 28. Only the controller can move the count, and it bumps the count as its very last step after a line opens, so a failed origination leaves no phantom line.
 
@@ -36,6 +36,6 @@ References:
 The registry is read by the rest of the credit-warehouse scaling workstream, and it checks each silo against the components that stack already ships.
 
 - The controller routes new loans to the current silo and moves the line count — [contracts/src/ZipcodeController.sol] (the siloId routing is CTR-03, built; [wires/WOOF-05.md]).
-- The senior NAV aggregator sums every silo's senior par-backing into one solvency number — [contracts/src/SeniorNavAggregator.sol] (CTR-05, built; [wires/CTR-05-SeniorNavAggregator.md]). It reads only the registry's catalog and each silo's EulerEarn position; nothing points back at it.
-- The deployer stamps a fresh silo and registers it here — CTR-06, not yet built.
-- At admission the registry asks these for their wiring: the venue adapter [contracts/src/venue/EulerVenueAdapter.sol], the freeze module [contracts/src/supply/szipUSD/DurationFreezeModule.sol], the bond escrow [contracts/src/loss/LienXAlphaEscrow.sol], and the loss coordinator [contracts/src/loss/DefaultCoordinator.sol].
+- The senior NAV aggregator sums every silo's senior par-backing into one solvency number — [contracts/src/SeniorNavAggregator.sol] (CTR-05, built; [wires/CTR-05-SeniorNavAggregator.md]). It reads only the registry's catalog and each silo's senior pool — through the venue-neutral ISeniorPool read (CTR-10a), so it does not care what venue backs the silo; nothing points back at it.
+- The deployer stamps a fresh silo and registers it here — [contracts/script/SiloDeployer.s.sol] (CTR-06c, built; [wires/CTR-06c-SiloDeployer.md]), composing the per-piece sub-deployers (CTR-06a/b) into one complete silo the Timelock then admits.
+- At admission the registry asks these for their wiring: the venue adapter via its venue-neutral seniorPool() getter [contracts/src/venue/EulerVenueAdapter.sol], the freeze module [contracts/src/supply/szipUSD/DurationFreezeModule.sol], the bond escrow [contracts/src/loss/LienXAlphaEscrow.sol], and the loss coordinator [contracts/src/loss/DefaultCoordinator.sol].
