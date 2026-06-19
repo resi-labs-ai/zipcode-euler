@@ -76,6 +76,11 @@ pool, `juniorBasket`=the junior Baal `mainSafe` (routing/label only — NOT topo
 
 ## Open decisions to RATIFY before 06b/06c cold-build
 
+> **D1 + D5 RATIFIED 2026-06-19** (reviewer, at CTR-06b release) as the recommendations below: D1 = SHARED pool
+> address passed as deploy inputs (per-silo staked position); D5 = the senior off-ramp is HUB-LEVEL — CTR-06b's junior
+> tranche EXCLUDES `OffRampModule` + `queue.setRedeemController` (8 engine modules, not 9). D2/D3/D4 stand as written
+> (confirmed in the CTR-06c ticket). **CTR-06b is DONE 2026-06-19** (PROGRESS note + `docs/wires/CTR-06b-JuniorTrancheDeployer.md`).
+
 - **D1 (POL sharing).** Is the protocol-owned-liquidity zipUSD/xALPHA ICHI vault + Hydrex gauge **shared** across
   silos (one pool) or **per-silo**? Recommend SHARED pool address (there is one zipUSD), with each silo's `mainSafe`
   holding its OWN staked LP position and its own reservoir escrow vault whose `asset() == the shared polIchiVault`.
@@ -119,7 +124,9 @@ pool, `juniorBasket`=the junior Baal `mainSafe` (routing/label only — NOT topo
 - **CTR-06b — `JuniorTrancheDeployer`** — the MISSING reusable artifact: a callable that stands up one self-consistent
   junior tranche (Baal substrate + NAV oracle + ExitGate/SzipUSD + deposit module + the **8** yield/freeze/buy-burn
   engine modules + loss side), analogous to `CreditWarehouseDeployer`. Excludes `OffRampModule` (senior off-ramp →
-  D5). Large but bounded. **Depends on D1 + D5 ratified.** Ticket: `CTR-06b-junior-tranche-deployer.md`.
+  D5). **DONE 2026-06-19** (`contracts/script/JuniorTrancheDeployer.s.sol` + fork test; `forge test` 4/4 green; wire
+  `docs/wires/CTR-06b-JuniorTrancheDeployer.md`). The owner/signer model (self-summon transient owner → `swapOwner`
+  both Safes to `team`) was the load-bearing fix the 4-critic fan-out surfaced. Ticket: `CTR-06b-junior-tranche-deployer.md`.
 - **CTR-06c — `SiloDeployer` orchestrator + feasible test** — composes EE-pool creation (D3 virtual seam) +
   `CreditWarehouseDeployer` + `ReservoirMarketDeployer` (06a-fixed) + `JuniorTrancheDeployer` (06b) + `addSilo`, hands
   ownership to the Timelock, and documents the D2 hub-grant runbook. Gate = the D3/D4 mock-EE two-silo routing test.

@@ -9,8 +9,9 @@ added `SzAlphaLockReleasePool.sol`; deploy-track sweep added `DeployLocal.s.sol`
 clone-safe CRE report socket), updated 2026-06-18 (CTR-02 added `SiloRegistry.sol` — the multi-pool/federation
 silo catalog + admission gate, the first contract of the scaling/federation workstream), updated 2026-06-18 (CTR-05
 added `SeniorNavAggregator.sol` — the donation-immune Σ senior par-backing view across silos, fourth contract of the
-scaling/federation workstream): **39 product contracts +
-8 scripts + 31 interface shims + 32 test/helper files**, plus a **demo/fork-only addendum** (section E): **2
+scaling/federation workstream), updated 2026-06-19 (CTR-06b added `script/JuniorTrancheDeployer.s.sol` — the reusable
+per-junior tranche deployer, the per-silo analogue of `CreditWarehouseDeployer`, + its fork test): **39 product
+contracts + 10 scripts + 31 interface shims + 33 test/helper files**, plus a **demo/fork-only addendum** (section E): **2
 showcase contracts + 1 demo interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody
 forgotten.
 
@@ -57,10 +58,11 @@ forgotten.
 | `src/bridge/SzAlphaLockReleasePool.sol` | `8x-01-szALPHA-bridge.md` |
 | `src/bridge/SzAlphaRateOracle.sol` | `8x-02-SzAlphaRateOracle.md` |
 
-## B. Deploy/helper scripts (`script/`) — 9 files
+## B. Deploy/helper scripts (`script/`) — 10 files
 | File | Doc |
 |---|---|
 | `script/DeployZipcode.s.sol` | `DeployZipcode.md` |
+| `script/JuniorTrancheDeployer.s.sol` | `CTR-06b-JuniorTrancheDeployer.md` |
 | `script/SzipPerspectiveProbe.sol` | `WOOF-04.md` (SEC-08 deploy-time line-vault perspective probe) |
 | `script/DeployLocal.s.sol` | `DeployZipcode.md` (anvil-fork wrapper of the orchestrator) |
 | `script/DeployMainnet.s.sol` | `DeployZipcode.md` + `script/RUNBOOK-mainnet-deploy.md` (live-network wrapper) |
@@ -106,12 +108,13 @@ Each file is cataloged file-by-file inside its `interfaces-<folder>.md`.
 | `src/interfaces/zodiac/IModuleProxyFactory.sol` | `interfaces-zodiac.md` |
 | `src/interfaces/zodiac/IRoles.sol` | `interfaces-zodiac.md` |
 
-## D. Tests & helpers (`test/`) — 32 files (verification, covered by their component doc)
+## D. Tests & helpers (`test/`) — 33 files (verification, covered by their component doc)
 Tests are the verification artifact for a component, not a separate component — each is covered by the
 component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" are what the test proves).
 | Test/helper file | Component doc |
 |---|---|
 | `test/SiloRegistry.t.sol` | `CTR-02-SiloRegistry.md` |
+| `test/JuniorTrancheDeployer.t.sol` | `CTR-06b-JuniorTrancheDeployer.md` |
 | `test/SeniorNavAggregator.t.sol` | `CTR-05-SeniorNavAggregator.md` |
 | `test/DeployZipcode.t.sol` | `DeployZipcode.md` |
 | `test/ForkConfig.sol` | `WOOF-00.md` (the fork helper) |

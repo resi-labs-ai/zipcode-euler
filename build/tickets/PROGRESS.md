@@ -24,21 +24,22 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
-- **CTR-06b / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
+- **CTR-06c / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
   CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` +
-  CTR-06a reservoir borrow-vault governor handoff are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
+  CTR-06a reservoir borrow-vault governor handoff + CTR-06b `JuniorTrancheDeployer` are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
   binding withdraw-queue slot on close; a pool churns 28 *concurrent* lines). **CTR-06 was RE-SCOPED 2026-06-18** — a
   4-critic fan-out found the single-ticket `SiloDeployer` can't cold-build to zero guesses (the junior stack is ~30
   deployments collapsed into 5 nouns with no reusable junior deployer; the hub/silo boundary + shared-queue reach were
   undefined; the "29 real concurrent line" fork gate is infeasible — EE can't compile, no fork test ever stood up a
   real EE pool). Split into **CTR-06a** (`ReservoirMarketDeployer` borrow-vault `setGovernorAdmin` fix — discharges
-  FE-07 Finding A; tiny, independent, the only near-term cold-buildable piece), **CTR-06b** (`JuniorTrancheDeployer` —
-  the missing reusable artifact; needs D1+D5 ratified), **CTR-06c** (`SiloDeployer` orchestrator + feasible mock-EE
-  test; needs 06a+06b). Index + pinned hub/silo decomposition + open decisions D1–D5:
-  `build/tickets/contracts/CTR-06-silo-deployer.md`. **CTR-06a landed 2026-06-19** (note below), so the next of that
-  workstream = **CTR-06b** (`JuniorTrancheDeployer` — the missing reusable artifact; needs D1+D5 ratified in the index
-  before it can cold-build) or **CTR-07** (slot-2 reservoir fund/defund, fully independent — recommended for a clean
-  forge gate now) — reviewer picks. See "Credit-warehouse scaling + federation" below.
+  FE-07 Finding A; tiny, independent, the only near-term cold-buildable piece — DONE), **CTR-06b** (`JuniorTrancheDeployer` —
+  the missing reusable artifact; D1+D5 ratified — DONE 2026-06-19), **CTR-06c** (`SiloDeployer` orchestrator + feasible mock-EE
+  test; deps 06a+06b both DONE — now unblocked). Index + pinned hub/silo decomposition + open decisions D1–D5:
+  `build/tickets/contracts/CTR-06-silo-deployer.md`. **CTR-06a + CTR-06b both landed 2026-06-19** (notes below; D1+D5
+  ratified by the reviewer), so the next of that workstream = **CTR-06c** (`SiloDeployer` orchestrator + the feasible
+  mock-EE two-silo routing test — now unblocked, both deps DONE; D2/D3/D4 already ratified in the index) or **CTR-07**
+  (slot-2 reservoir fund/defund, fully independent — recommended for a clean forge gate now) — reviewer picks. See
+  "Credit-warehouse scaling + federation" below.
 
 ---
 
@@ -99,8 +100,8 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
   - **CTR-06a** `ReservoirMarketDeployer` borrow-vault `setGovernorAdmin` fix (discharges FE-07 Finding A).
     **DONE 2026-06-19** (note below). *(was independent)*
   - **CTR-06b** `JuniorTrancheDeployer` (the missing reusable per-junior artifact, analogue of
-    `CreditWarehouseDeployer`; excludes `OffRampModule` per D5). *(dep CTR-06a; needs D1+D5 ratified)*
-  - **CTR-06c** `SiloDeployer` orchestrator + feasible mock-EE two-silo routing test (D3/D4). *(dep CTR-06a + CTR-06b)*
+    `CreditWarehouseDeployer`; excludes `OffRampModule` per D5). **DONE 2026-06-19** (note below; D1+D5 ratified). *(was dep CTR-06a)*
+  - **CTR-06c** `SiloDeployer` orchestrator + feasible mock-EE two-silo routing test (D3/D4). *(dep CTR-06a + CTR-06b, both DONE — now unblocked)*
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). *(dep 03; composes 08)*
@@ -110,6 +111,40 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-06b — `JuniorTrancheDeployer` (the reusable per-junior tranche deployer) — DONE 2026-06-19.** Second built
+> child of the re-scoped CTR-06; the missing per-silo analogue of `CreditWarehouseDeployer`. Added
+> `contracts/script/JuniorTrancheDeployer.s.sol` + `contracts/test/JuniorTrancheDeployer.t.sol` (NEW files only — no
+> existing contract changed, so no regression possible). `deploy(JuniorParams)` is a faithful EXTRACTION of
+> `DeployZipcode`'s inline junior stack (phases P3/P6/P7/P8/P9, ~30 deployments + 15 seam asserts) into one callable,
+> parameterized to point at THIS silo's `eePool`/`warehouseSafe`/reservoir handles + the SHARED hub `zipUSD`/
+> `rateOracle`. Stands up: Baal two-Safe substrate + `SzipNavOracle` + `ExitGate`/`SzipUSD` + `ZipDepositModule` + the
+> **8** yield/freeze/buy-burn engine modules + the loss side (`LienXAlphaEscrow`+`DefaultCoordinator`); reproduces every
+> seam assert; hands OZ-ownable → Timelock, engine modules already Timelock-owned from setUp, BOTH Baal Safes → the
+> persistent `team` (§4.5 two-tier model). **Reviewer ratified D1 + D5 (2026-06-19):** D1 = `polIchiVault`/`polGauge`
+> are shared deploy INPUTS (one pool, per-silo staked position); D5 = EXCLUDES `OffRampModule` + `queue.setRedeem
+> Controller` (8 modules not 9; senior off-ramp is hub-level). **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/
+> reference-verifier/contract-binding) CONVERGED on the **owner/signer model** as the single most-blocking gap — the
+> original draft said "the broadcaster MUST be `team`" while CTR-06c calls `new JuniorTrancheDeployer().deploy(...)`
+> (mutually exclusive: a `new`'d contract's internal Safe-drives run with `msg.sender == the deployer instance`, never
+> the broadcaster, so `_summon(team,…)` reverts on the sidecar owner-add). **Ticket fixed BEFORE cold-build** to the
+> transient-owner pattern (self-summon `_summon(address(this),…)` à la `CreditWarehouseDeployer`; reimplement the 4
+> `i.*`-bound helpers parameterized; step-17 `swapOwner` both Safes to the real `team`; Safes → `team` NOT Timelock —
+> the preamble's "every owner to the Timelock" was wrong for the Safes). Plus: the full `JuniorParams` struct defined,
+> the **NAV leg tokens made injectable params** (the freeze `setUp` reads `zipUSD/usdc/xAlpha/hydx/oHydx` live off the
+> oracle; the fork fixture feeds mocks — verified directly against `DurationFreezeModule.t.sol:1286-1295`),
+> `workflowAuthor`/`workflowId` added for the identity seal, `rateOracle` excluded from the handoff, `is SummonSubstrate`
+> (→ `is Script`, `.s.sol`), and the `setLpTwapWindow`/CREATE2/non-commingling minor flags. Gate green (verified by my
+> own re-run, not just the cold-build's): `forge build` exit 0 + `forge test --match-path test/JuniorTrancheDeployer.t.sol`
+> = **4 passed / 0 failed** — `test_deploy_seams_hold`, `test_ownership_handoff` (OZ→Timelock, 8 modules→Timelock, both
+> Safes→team & NOT the deployer, rate-oracle wired-not-owned), `test_addSilo_topology_clauses_1_to_5` (a REAL
+> `SiloRegistry.addSilo` from a pranked Timelock — reverts `SiloMiswired` on any clause failure; non-vacuous), and
+> `test_non_commingling`; the reservoir leg is built via the REAL `ReservoirMarketDeployer` over the live EVK + a mock
+> LP. Cold-build returned ZERO load-bearing guesses. Ticket: `build/tickets/contracts/CTR-06b-junior-tranche-deployer.md`.
+> **Doc-sync:** NEW script → new wire `docs/wires/CTR-06b-JuniorTrancheDeployer.md` + `COVERAGE.md` rows (scripts 9→10,
+> tests 32→33). No existing contract changed → no backward wire edit owed. No `claude-zipcode.md` edit (the federation
+> §-sync is forward, not a precondition; the deployer invents no mechanism — it extracts `DeployZipcode`'s existing one).
+> **Unblocks CTR-06c** (the `SiloDeployer` orchestrator calls this once per silo).
 
 > **CTR-06a — `ReservoirMarketDeployer` hands the borrow-vault governor to the Timelock — DONE 2026-06-19.** First
 > child of the re-scoped CTR-06; discharges **FE-07 Finding A**. One-line source fix + one post-assert (no new files).
