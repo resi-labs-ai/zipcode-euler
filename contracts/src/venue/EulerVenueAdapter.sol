@@ -71,6 +71,23 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     ///         `NotReservoirAllocator`.
     address public reservoirAllocator;
 
+    // ----- per-revolution protocol fee (CTR-09, §5/§17) -----
+    /// @notice The protocol-fee recipient. DEFAULTS to `address(0)` = fee OFF until the Timelock wires it via
+    ///         `setFeeRecipient`. When non-zero and the computed fee is non-dust, `draw` appends a fourth EVC borrow
+    ///         leg crediting `fee` USDC here (financed by the line: line debt becomes `amount + fee`).
+    address public feeRecipient;
+    /// @notice The per-draw fee in basis points. INLINE-initialized to 50 (= 0.50%) — NOT a constructor arg (a ctor arg
+    ///         would break `MisWiringAdapter`'s super-call). Timelock-settable via `setFeeBps`, capped at `MAX_FEE_BPS`.
+    ///         CALIBRATION (CTR-09, dartboard 2026-06-19): 50 bps reads as a market-standard per-origination fee
+    ///         (Maple 0.5% parity; low end of warehouse upfront) — and since each revolution is a fresh origination
+    ///         (warehouse → secondary take-out → redraw), it is charged per draw. At a HELOC ≤quarterly revolution
+    ///         (≤4 turns/yr) that is ≤~2%/yr of drawn volume. Re-address with observed velocity/originator demand. The
+    ///         time-based APR is the borrow vault's IRM (currently `ZeroIRM`; a real rate is a Timelock IRM-swap), NOT
+    ///         this fee.
+    uint16 public feeBps = 50;
+    /// @notice The hard ceiling on `feeBps` (5%). `setFeeBps` reverts `FeeTooHigh` above this.
+    uint16 internal constant MAX_FEE_BPS = 500;
+
     /// @notice Per-line record. `lineRef` = the borrow vault address.
     struct Line {
         address collateralVault;
@@ -102,10 +119,17 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     /// @notice `setReservoirVault` rejected a vault whose hook would block the EE reallocate legs (deposit/withdraw),
     ///         which would brick `fundReservoir`/`defundReservoir` (CTR-07 fail-fast).
     error ReservoirHookBlocksReallocate();
+    /// @notice `setFeeBps` rejected a bps value above `MAX_FEE_BPS` (CTR-09).
+    error FeeTooHigh();
 
     // ----- events -----
     /// @notice Emitted when an owner (Timelock) re-points a wiring slot (build phase, §17).
     event WiringSet(bytes32 indexed slot, address value);
+    /// @notice Emitted when the owner (Timelock) sets `feeBps` (CTR-09). `WiringSet` cannot carry it — its 2nd param
+    ///         is `address`; the fee bps is a uint16.
+    event FeeSet(uint16 feeBps);
+    /// @notice Emitted ONLY when the per-draw fee leg is appended (live recipient + non-dust fee) — never with `fee == 0`.
+    event FeeLevied(address indexed lineRef, uint256 fee);
 
     modifier onlyController() {
         if (msg.sender != controller) revert NotController();
@@ -237,6 +261,21 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         if (reservoirAllocator_ == address(0)) revert ZeroAddress();
         reservoirAllocator = reservoirAllocator_;
         emit WiringSet("reservoirAllocator", reservoirAllocator_);
+    }
+
+    /// @notice Set the per-draw fee recipient (CTR-09, §17). onlyOwner (Timelock). UNLIKE the other wiring setters this
+    ///         DELIBERATELY omits the `ZeroAddress` guard: `address(0)` is the legal "fee disabled" sentinel (a draw with
+    ///         `feeRecipient == address(0)` appends no fee leg), so wiring it to zero is how the Timelock turns the fee OFF.
+    function setFeeRecipient(address feeRecipient_) external onlyOwner {
+        feeRecipient = feeRecipient_;
+        emit WiringSet("feeRecipient", feeRecipient_);
+    }
+
+    /// @notice Set the per-draw fee in basis points (CTR-09, §17). onlyOwner (Timelock). Capped at `MAX_FEE_BPS` (5%).
+    function setFeeBps(uint16 feeBps_) external onlyOwner {
+        if (feeBps_ > MAX_FEE_BPS) revert FeeTooHigh();
+        feeBps = feeBps_;
+        emit FeeSet(feeBps_);
     }
 
     /// @notice Struct getter (a public mapping of a struct returns a tuple, not the struct).
@@ -382,7 +421,13 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
 
         address borrowAccount = L.borrowAccount;
 
-        IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
+        // Per-revolution protocol fee (CTR-09, §5/§17). Round-DOWN (Solidity integer div). `feeBps == 0` => `fee == 0`,
+        // so `levyFee` also covers a zeroed bps; `feeRecipient == address(0)` is the disabled sentinel; a dust draw
+        // (`fee == 0`) appends NO leg (never a `borrow(0, ..)` leg, never `FeeLevied(.., 0)`).
+        uint256 fee = amount * feeBps / 10_000;
+        bool levyFee = feeRecipient != address(0) && fee != 0;
+
+        IEVC.BatchItem[] memory items = new IEVC.BatchItem[](levyFee ? 4 : 3);
         // (1) enable controller — EVC self-call (account in calldata, onBehalfOf == 0, value == 0).
         items[0] = IEVC.BatchItem({
             targetContract: address(evc),
@@ -404,11 +449,25 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
             value: 0,
             data: abi.encodeCall(IBorrowing.borrow, (amount, erebor))
         });
+        // (4, optional) the fee leg — a SECOND borrow on the SAME borrowAccount, crediting `fee` to `feeRecipient`. The
+        // line's debt becomes `amount + fee` (financed by the line, repaid with it). The principal leg above keeps the
+        // hardcoded `erebor` receiver (F2 preserved); only this leg's receiver differs. Both borrows on one
+        // borrowAccount in one batch are mechanically valid — the deferred account-status check runs once at batch end
+        // against the final `amount + fee` debt.
+        if (levyFee) {
+            items[3] = IEVC.BatchItem({
+                targetContract: lineRef,
+                onBehalfOfAccount: borrowAccount,
+                value: 0,
+                data: abi.encodeCall(IBorrowing.borrow, (fee, feeRecipient))
+            });
+        }
 
         // The adapter is the batch msg.sender and the granted operator of borrowAccount (granted at openLine). EVK
         // appends borrowAccount as the hook caller -> the §4.3 hook's isAccountOperatorAuthorized passes.
         evc.batch(items);
 
+        if (levyFee) emit FeeLevied(lineRef, fee);
         emit LineDrawn(lineRef, amount, receiver);
     }
 

@@ -1322,4 +1322,168 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(ee.withdrawQueueLength(), 30, "fresh open re-fills the freed slot (no brick)");
         assertTrue(ee.withdrawQueueContains(fresh), "fresh line occupies the reclaimed slot");
     }
+
+    // ============================================================
+    // (R) CTR-09 — the 0.1%-per-revolution protocol draw fee
+    // ============================================================
+    // The fee defaults OFF (`feeRecipient == address(0)`), so every PRE-EXISTING draw test above asserts
+    // `debtOf == drawAmount` unchanged. These tests wire `feeRecipient` LOCALLY (never in setUp) to exercise the
+    // fee-on path. The adapter's owner is this test contract (Ownable(msg.sender) at deploy), so it calls the
+    // onlyOwner setters directly.
+
+    event FeeLevied(address indexed lineRef, uint256 fee);
+    event FeeSet(uint16 feeBps);
+    event WiringSet(bytes32 indexed slot, address value);
+
+    address internal feeSink = makeAddr("feeSink");
+
+    /// @dev Open A, set limits, supply cash. Returns the line + its borrow account. Shared by the fee tests.
+    function _openAndFundA() internal returns (address lineRef, address borrowAccount) {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(lineRef, 1_000_000e6);
+        borrowAccount = adapter.getLine(lineRef).borrowAccount;
+    }
+
+    /// @dev fee-on: wire the recipient, draw `amount`, assert financed-fee semantics — debt is `amount + fee`,
+    ///      `feeRecipient` got `fee` USDC, `erebor` got exactly `amount`, and `FeeLevied(lineRef, fee)` emitted.
+    function test_CTR09_FeeOn_FinancesAndRoutesFee() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        assertEq(adapter.feeBps(), 50, "default feeBps is the CTR-09 calibration (50 bps)");
+        adapter.setFeeRecipient(feeSink); // fee fires at the non-zero default feeBps
+
+        uint256 amount = 100_000e6; // 0.7 * $300k headroom easily covers amount + fee
+        uint256 fee = amount * adapter.feeBps() / 10_000; // default-robust (50 bps => 500e6)
+        assertGt(fee, 0, "fee non-dust at this size");
+
+        uint256 erBefore = IERC20(usdc).balanceOf(erebor);
+        uint256 sinkBefore = IERC20(usdc).balanceOf(feeSink);
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit FeeLevied(lineRef, fee);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount + fee, "line debt = amount + fee (financed)");
+        assertEq(IERC20(usdc).balanceOf(feeSink) - sinkBefore, fee, "feeRecipient received the fee");
+        assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, amount, "erebor received exactly the principal (F2)");
+    }
+
+    /// @dev per-revolution: a second draw on the SAME line levies AGAIN — debt grows by `amount2 + fee2` (a revolving
+    ///      line that draws N times pays N×, not once per line).
+    function test_CTR09_FeeIsPerRevolution() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        adapter.setFeeRecipient(feeSink);
+
+        uint256 amount1 = 100_000e6;
+        uint256 fee1 = amount1 * adapter.feeBps() / 10_000;
+        adapter.draw(lineRef, amount1, erebor);
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount1 + fee1, "first revolution debt");
+
+        uint256 sinkAfter1 = IERC20(usdc).balanceOf(feeSink);
+
+        uint256 amount2 = 50_000e6;
+        uint256 fee2 = amount2 * adapter.feeBps() / 10_000;
+        adapter.draw(lineRef, amount2, erebor);
+
+        assertEq(
+            IEVault(lineRef).debtOf(borrowAccount),
+            amount1 + fee1 + amount2 + fee2,
+            "second revolution adds amount2 + fee2 (per-revolution, not per-line)"
+        );
+        assertEq(IERC20(usdc).balanceOf(feeSink) - sinkAfter1, fee2, "second fee levied again");
+    }
+
+    /// @dev no-op via recipient: with `feeRecipient == address(0)` (the default disable sentinel) NO fee leg is
+    ///      appended — debt == amount, and no FeeLevied is emitted.
+    function test_CTR09_NoOp_WhenRecipientUnset() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        // feeRecipient unset (address(0)); feeBps is the non-zero default.
+        assertEq(adapter.feeRecipient(), address(0), "recipient unset by default");
+
+        uint256 amount = 100_000e6;
+        uint256 erBefore = IERC20(usdc).balanceOf(erebor);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount, "debt == amount, no fee leg");
+        assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, amount, "erebor received exactly amount");
+    }
+
+    /// @dev no-op via bps: recipient wired but `feeBps == 0` => fee == 0 => no leg, debt == amount.
+    function test_CTR09_NoOp_WhenFeeBpsZero() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        adapter.setFeeRecipient(feeSink);
+        adapter.setFeeBps(0);
+
+        uint256 amount = 100_000e6;
+        uint256 sinkBefore = IERC20(usdc).balanceOf(feeSink);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount, "debt == amount when feeBps == 0");
+        assertEq(IERC20(usdc).balanceOf(feeSink), sinkBefore, "no fee routed when feeBps == 0");
+    }
+
+    /// @dev dust: a draw small enough that `amount * feeBps / 10_000 == 0` (round-down) appends no fee leg.
+    ///      The dust threshold is computed from the live feeBps (default-robust): any amount < 10_000/feeBps rounds to 0.
+    function test_CTR09_DustDraw_NoFeeLeg() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        adapter.setFeeRecipient(feeSink);
+
+        uint256 amount = 10_000 / adapter.feeBps() - 1; // largest draw whose fee rounds to 0 (199 wei at 50 bps)
+        assertEq(amount * adapter.feeBps() / 10_000, 0, "fee rounds down to zero (dust)");
+
+        uint256 sinkBefore = IERC20(usdc).balanceOf(feeSink);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount, "debt == amount on dust draw, no fee leg");
+        assertEq(IERC20(usdc).balanceOf(feeSink), sinkBefore, "no fee routed on dust draw");
+    }
+
+    /// @dev setters gating + cap + events: onlyOwner enforcement, the MAX_FEE_BPS cap, the disable sentinel, and event
+    ///      emission for both setters.
+    function test_CTR09_Setters_GatingCapAndEvents() public {
+        address bad = makeAddr("notOwner");
+
+        // onlyOwner: a non-owner cannot call either setter (Ownable reverts OwnableUnauthorizedAccount).
+        vm.prank(bad);
+        vm.expectRevert();
+        adapter.setFeeRecipient(feeSink);
+        vm.prank(bad);
+        vm.expectRevert();
+        adapter.setFeeBps(20);
+
+        // setFeeBps cap: MAX_FEE_BPS is 500; 501 reverts FeeTooHigh.
+        vm.expectRevert(EulerVenueAdapter.FeeTooHigh.selector);
+        adapter.setFeeBps(501);
+
+        // setFeeBps at the cap succeeds + emits FeeSet.
+        vm.expectEmit(false, false, false, true, address(adapter));
+        emit FeeSet(500);
+        adapter.setFeeBps(500);
+        assertEq(adapter.feeBps(), 500, "feeBps set to the cap");
+
+        // setFeeRecipient succeeds + emits WiringSet("feeRecipient", ..).
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("feeRecipient", feeSink);
+        adapter.setFeeRecipient(feeSink);
+        assertEq(adapter.feeRecipient(), feeSink, "recipient set");
+
+        // setFeeRecipient(address(0)) succeeds (the disable sentinel — NO ZeroAddress guard).
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("feeRecipient", address(0));
+        adapter.setFeeRecipient(address(0));
+        assertEq(adapter.feeRecipient(), address(0), "recipient disabled back to address(0)");
+    }
+
+    /// @dev F2 intact: even with the fee live, the PRINCIPAL leg still sends `amount` to `erebor`, and a draw with
+    ///      `receiver != erebor` still reverts BadReceiver (the fee leg's distinct receiver does not relax the pin).
+    function test_CTR09_F2_PinIntactWithFeeOn() public {
+        (address lineRef,) = _openAndFundA();
+        adapter.setFeeRecipient(feeSink);
+
+        // Principal still goes to erebor (asserted in test_CTR09_FeeOn_FinancesAndRoutesFee); here prove the pin still
+        // rejects a non-erebor receiver while the fee is live.
+        vm.expectRevert(EulerVenueAdapter.BadReceiver.selector);
+        adapter.draw(lineRef, 100_000e6, makeAddr("notErebor"));
+    }
 }

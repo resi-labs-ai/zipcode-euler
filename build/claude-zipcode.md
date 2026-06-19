@@ -231,6 +231,20 @@ set the depositor's return (that is the **xALPHA subsidy**); it sizes how much o
 protocol captures versus leaves as the over-collateralization cushion above the zipUSD supply. Calibrate `f`
 against the treasury's xALPHA-buyback budget, not against a junior APR.
 
+**Per-revolution draw fee (BUILT — CTR-09; distinct from the perf-fee above).** Separate from the EulerEarn
+NAV-yield perf-fee, the protocol levies a **volume-based origination fee on every draw**: `EulerVenueAdapter.draw`
+appends a fourth EVC borrow leg `borrow(fee, feeRecipient)` where `fee = amount * feeBps / 10_000`
+(`feeBps` defaults 0.50% = 50 bps — a market-standard per-origination fee, dartboard-calibrated against bank
+warehouse lines (SOFR+2.25–3.25%) and Maple's 0.5%; Timelock-settable, capped at 5%). It is the only on-chain-enforceable levy point —
+the controller holds no USDC and drawn USDC crosses to the off-chain Erebor rail immediately. The fee is **financed
+by the line** (debt becomes `amount + fee`, repaid with the principal) and credits a Timelock-set `feeRecipient`
+(the protocol treasury). Because it re-fires on **every** draw, a revolving structure-2 line (CTR-08) pays it per
+revolution — this is the per-revolution revenue the model assumes. **Default OFF** (`feeRecipient == address(0)`)
+until wired at deploy. Draw-only (close is a full repay → burn, no draw leg to levy on). **The time-based APR is
+separate** — it is the borrow vault's IRM (today `ZeroIRM` = 0%; a real ~7.5% warehouse rate = SOFR + ~3.9% is a
+deferred Timelock IRM-swap), and the protocol's cut of that interest routes via the EulerEarn perf-fee `f` above.
+Borrower all-in per revolution ≈ `APR × (sit/12) + feeBps`. Truth: `docs/wires/WOOF-04.md`.
+
 ---
 
 ## 6. Redemption & exit (senior vs junior)

@@ -39,8 +39,10 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   ratified by the reviewer). **CTR-06c landed 2026-06-19** (note below) — the re-scoped CTR-06 is now COMPLETE
   (06a+06b+06c). **CTR-07 landed 2026-06-19** (note below) — the slot-2 reservoir fund/defund is now revolving;
   finding 3 RESOLVED. **CTR-08 landed 2026-06-19** (note below) — structure-2 revolving lines proved as an operating
-  MODE over the as-built stack with ZERO contract change (test + doc only). So the next of that workstream =
-  **CTR-09** (0.1%-per-revolution fee; dep 03, composes 08). See "Credit-warehouse scaling + federation" below.
+  MODE over the as-built stack with ZERO contract change (test + doc only). **CTR-09 landed 2026-06-19** (note below)
+  — the 0.1%-per-revolution draw fee; finding 2 RESOLVED. So the only remaining item of that workstream =
+  **CTR-10** (federation `ISeniorPool` + non-Euler adapter; LATER / P5; dep 02..09). See "Credit-warehouse scaling +
+  federation" below. (CTR-11/CTR-12 are independent loss-side tickets, separate from the scaling ledger.)
 
 - **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
   needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
@@ -60,6 +62,59 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   homegrown mock stale + RED uncaught (CTR-04 verified `EulerVenueAdapter.t.sol`, not the controller suite). When a
   `src/` contract gains a new external-call surface, grep ALL suites with a homegrown mock of the called contract and
   re-run them, not just the touched suite.
+
+- **CTR-09 note (2026-06-19) — the 0.1%-per-revolution protocol draw fee.** Resolves **finding 2**. Modified
+  `contracts/src/venue/EulerVenueAdapter.sol` + `contracts/test/EulerVenueAdapter.t.sol` (no new files → no
+  `COVERAGE.md` row change). The fee is levied in the **adapter's borrow path** (NOT the controller — it holds no
+  USDC; drawn USDC crosses to the off-chain Erebor rail the moment it's borrowed, so the borrow point is the ONLY
+  on-chain-enforceable levy site). `draw` now appends a **fourth EVC borrow leg** `IBorrowing.borrow(fee,
+  feeRecipient)` on the SAME `borrowAccount` as the principal, where `fee = amount * feeBps / 10_000` (round-DOWN),
+  ONLY when `feeRecipient != address(0) && fee != 0`. **Financed-fee model:** line debt = `amount + fee`, the
+  borrower repays both; the principal leg keeps the hardcoded `erebor` receiver (F2 intact), only the fee leg's
+  receiver differs. New slots `feeRecipient` (default `address(0)` = OFF) + `feeBps` (inline `= 50` = 0.50%, NOT a ctor arg —
+  a ctor arg would break `MisWiringAdapter`'s super-call) + `MAX_FEE_BPS = 500`; Timelock setters `setFeeRecipient`
+  (accepts `address(0)`, the disable sentinel, so it omits the `ZeroAddress` guard) / `setFeeBps` (reverts
+  `FeeTooHigh` above the cap); new error `FeeTooHigh`, new events `FeeSet(uint16)` (bps can't reuse `WiringSet`, whose
+  2nd param is `address`) + `FeeLevied(lineRef, fee)` (emitted ONLY when the leg fires). **Harness loop ran:** 4
+  critics (junior-dev/spec-fidelity/reference-verifier/contract-binding). **spec-fidelity = FAITHFUL** (the fee is a
+  PROGRESS-workstream EXPANSION, not spec-invention; draw-only is correct — close is a full repay→burn, no borrow leg
+  to levy on; the spec has zero symmetric-fee language; §17 + F2 honored). **contract-binding = ZERO back-pressure**
+  (the `CREGatingHook` is op-agnostic/stateless/account-keyed → the fee leg passes the hook exactly as the principal;
+  F2 pins the FUNCTION ARG, not the per-leg receiver, so the fee leg's distinct `feeRecipient` trips nothing; the
+  LTV-ceiling-revert-once-fee-added is intended financed-fee semantics = a CRE draw-sizing constraint, not a gap).
+  **reference-verifier** confirmed all bindings resolve (`IBorrowing.borrow(uint256,address) returns (uint256)` @
+  `IEVault.sol:234`; `IEVC.BatchItem`+`batch` @ `IEthereumVaultConnector.sol:12-23,355`; two borrows on one account in
+  one batch are valid — the deferred status check set-dedups to ONE end-of-batch check on `amount+fee`,
+  `EthereumVaultConnector.sol:696-702,916-920`; and that `feeBps`-as-uint **cannot** reuse `WiringSet(bytes32,address)`
+  → forced the `FeeSet` event). **junior-dev** found the load-bearing TICKET gaps — ALL fixed in the ticket BEFORE
+  cold-build: (1) the most-blocking — whether `feeRecipient`/`feeBps` are wired in `setUp` (would flip the existing
+  `debtOf == drawAmount` assertions to `+ fee` and break the green suite) or local-only → **pinned default-OFF +
+  local-per-test wiring**; (2) names/events/error pinned (not invented); (3) the `fee == 0` dust case → guard on
+  `fee != 0` (never a `borrow(0,..)` leg); (4) `feeBps` seeding via inline initializer (ctor-arg blast radius on
+  `MisWiringAdapter`); (5) close-fee conditional resolved to draw-only; (6) stale line numbers refreshed in "Binds to".
+  Gate green (verified by my own re-run, not just the cold-build's): `forge build` exit 0 + `forge test --match-path
+  test/EulerVenueAdapter.t.sol` = **46 passed / 0 failed** (40 pre-existing all still green — proves default-OFF — + 6
+  new: fee-on (debt==amount+fee, recipient credited, erebor gets exactly amount, `FeeLevied` emitted), per-revolution
+  (second draw levies again), no-op (feeBps==0/recipient unset → 3-item batch), dust (fee rounds to 0 → no leg),
+  setter gating/cap/sentinel/events, F2-intact-with-fee-on). **Cross-suite re-run (CTR-08 process lesson — every suite
+  that drives the adapter `draw`):** `ZipcodeController.t.sol` **39/39** (the CTR-08 revolving draws, default-OFF →
+  byte-identical) + `ReservoirLoopModule.t.sol` **41/41** — no regression. Cold-build returned ZERO load-bearing
+  guesses. Ticket: `build/tickets/contracts/CTR-09-per-revolution-fee.md`. **Doc-sync:** modified contract → backward
+  wire `docs/wires/WOOF-04.md` (`draw` entry now enumerates the optional 4th fee leg + the financed-fee/F2/hook/
+  default-OFF semantics + the fee setters/events). Forward spec `claude-zipcode.md` §5 gains a "Per-revolution draw
+  fee (BUILT — CTR-09)" note (distinct from the EulerEarn perf-fee). No `COVERAGE.md` row change (no new file).
+  **Unblocks protocol revenue → treasury `feeRecipient`** (the deploy must `setFeeRecipient(treasurySafe)` to turn it
+  on — default OFF ships safe).
+  **Fee calibration (dartboard 2026-06-19, reviewer-driven):** default `feeBps` set to **50 bps (0.50%)** — NOT the
+  original 0.1%. Anchored to market comps researched this session: bank warehouse lines SOFR+2.25–3.25% (~6–7%),
+  one-time origination 0.5–1.0% (Maple 0.5–1%), consumer HELOC ~7.5–8.5% (Bankrate June 2026), securitized HELOC pool
+  WAC ~10.9% (Angel Oak). Since each revolution is a fresh origination (warehouse → secondary take-out → redraw) the
+  origination-scale fee is charged per draw; ~6mo secondary-market seasoning bounds velocity to ≤4 turns/yr
+  (≤quarterly), so 50 bps ≈ ≤2%/yr of drawn volume. Re-address with observed velocity. **The time-based APR is
+  separate and NOT coded** — borrow vaults run `ZeroIRM` (0%, `DeployMainnet.s.sol:101-106`); a real ~7.5% warehouse
+  rate (SOFR + ~3.9%) is a deferred Timelock IRM-swap (logged as an obligation below). Tests made default-robust
+  (read `adapter.feeBps()`; dust amount = `10_000/feeBps - 1`) + a `feeBps == 50` default assertion; gate re-run green
+  (adapter 46/46, controller 39/39, reservoir 41/41).
 
 ---
 
@@ -93,8 +148,11 @@ lines (structure 1, the safe HELOC-warehouse standard) and insurance-underwritte
    opens. CTR-04 added the inline withdraw-queue reclaim (`submitCap(0)` + `updateWithdrawQueue`); a pool now churns
    28 *concurrent* lines. Removal of the (defunded) empty market is timelock-independent, so no `submitMarketRemoval`/
    reap step was needed — the `EulerEarn.sol:362` two-step path is dead code for an empty market.
-2. The **0.1%-per-revolution fee is unimplemented** on-chain (grep `contracts/src`: only EE yield fee, buy-burn
-   discount, oracle bands). **→ CTR-09.**
+2. **RESOLVED 2026-06-19 (CTR-09, below).** The 0.1%-per-revolution fee was unimplemented on-chain (only EE yield
+   fee, buy-burn discount, oracle bands). CTR-09 added it as a fourth EVC borrow leg in `EulerVenueAdapter.draw`
+   (`borrow(fee, feeRecipient)`, `fee = amount*feeBps/10_000`, default 50 bps = 0.50%, Timelock-settable, capped 5%) —
+   the only on-chain-enforceable levy point (controller holds no USDC; drawn USDC crosses to Erebor immediately).
+   Financed-fee (debt = `amount + fee`), default OFF until `feeRecipient` wired. Re-fires per draw → per-revolution.
 3. **RESOLVED 2026-06-19 (CTR-07, below).** Slot-2 revolving was half-wired: the reservoir borrow/repay cycled, but
    no `reallocate` funded it from resting or re-absorbed after repay. CTR-07 added `fundReservoir`/`defundReservoir`
    (`onlyReservoirAllocator`) — the per-line `fund`/`closeLine` reallocate pattern generalized to the reservoir.
@@ -127,7 +185,7 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). **DONE 2026-06-19** (note below).
   *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
-- **CTR-09** 0.1%-per-revolution fee (finding 2). *(dep 03; composes 08)*
+- **CTR-09** 0.1%-per-revolution fee (finding 2). **DONE 2026-06-19** (note below). *(dep 03; composes 08)*
 - **CTR-10** federation generalization — `ISeniorPool` + a non-Euler adapter. *(LATER / P5; dep 02..09)*
 
 **Spec sync (forward, NOT a precondition):** each ticket is the complete, self-sufficient build instruction (it
@@ -625,6 +683,30 @@ track on it.
   (origination/draw are separate Keystone reports in separate blocks), but **CRE-01 must ensure same-lien seeds are not
   co-located in one block** (defer the second one block, or — future hardening — give the seed path a real ts instead
   of `block.timestamp`). Not a contract change owed; an operational constraint on the CRE producer.
+
+- **TODO (raised 2026-06-19, CTR-09) — CRE-01 must size `cap` and `drawAmount` for `amount + fee`, not `amount`.**
+  CTR-09's draw fee is **financed** (`EulerVenueAdapter.draw` borrows `amount` to `erebor` AND `fee = amount *
+  feeBps / 10_000` to `feeRecipient` on the same `borrowAccount`), so the line's debt becomes `amount + fee` (a
+  $50,000 draw at the default 50 bps → **$50,250** of debt; the originator still receives the full $50,000 at
+  `erebor`). Both per-draw gates must clear `amount + fee`: (a) the **per-line borrow cap** — the RT_ORIGINATION
+  `cap` field (§8.1) flows to `setLineLimits` → `setCaps(0, cap)`; a `cap == amount` exactly reverts the fee leg
+  on the borrow cap; (b) the **LTV × mark** collateral headroom (end-of-batch `E_AccountLiquidity`). So the
+  origination/draw producer must set `cap ≥ amount + fee` and size the draw so `amount + fee` fits the LTV. The
+  contract deliberately does NOT auto-inflate the cap — the producer owns sizing. Only bites when the fee is ON
+  (`feeRecipient != 0`, default OFF). Not a contract change owed; a CRE-01 producer constraint. Truth:
+  `docs/wires/WOOF-04.md` (`draw` entry).
+
+- **TODO (raised 2026-06-19, CTR-09 calibration) — the line APR is `ZeroIRM` (0%); a real warehouse rate is an
+  unbuilt Timelock IRM-swap.** The per-line borrow vaults install `i.irm`, which `DeployMainnet.s.sol:101-106`
+  provisions as a **`ZeroIRM` (0%-rate model)** by default ("swap a real IRM in later via the Timelock if desired").
+  So today lines accrue **no interest** — only the CTR-09 draw fee is live revenue. The economics the reviewer
+  settled this session assume a **time-based APR ≈ 7.5%** (SOFR ~3.63% + ~3.9% spread; anchored to bank warehouse
+  lines SOFR+2.25–3.25% and ≤ the consumer HELOC ~7.5–8.5% so the originator's gain-on-sale margin survives). Turning
+  that on is **not coded** — it requires deploying/configuring a real IRM (a LinearKink or fixed-rate model) at the
+  chosen rate and `setInterestRateModel` via the Timelock (§17, governor RETAINED on the borrow vaults per CTR-06a).
+  The protocol's cut of that interest routes via the EulerEarn perf-fee `f` (§5). **Scope when ticketed:** pick/author
+  the IRM, set the rate, wire it per silo, decide `f`. Separate from CTR-09 (the fee shipped; the rate did not). Not
+  owed before any current work; a revenue-completeness obligation. Truth: `docs/wires/WOOF-04.md` (`draw` entry, APR note).
 
 - **RESOLVED INTO A WORKSTREAM (2026-06-18) — concurrent-line ceiling.** This TODO (raised 2026-06-15 ticketing
   SEC-06) is now the **Credit-warehouse scaling + federation** workstream above (CTR-02..CTR-10). Decision: shard
