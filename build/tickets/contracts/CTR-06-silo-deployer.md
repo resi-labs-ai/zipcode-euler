@@ -43,7 +43,9 @@ unspecified; no salt-nonce scheme for silo #2.
   granted `setCapacity` by the Timelock — D2).
 - `ZipcodeController` + `ZipcodeOracleRegistry` — the controller routes `openLine` by `siloId` (CTR-03); the registry
   hosts every lien's oracle mark. One controller, one oracle registry, all silos.
-- `LienTokenFactory`, `CREGatingHook` — shared venue infra.
+- `LienTokenFactory` — shared venue infra. **(CORRECTION 2026-06-19, CTR-06c: `CREGatingHook` is NOT shared — it is
+  PER-SILO. Its `borrowDriver` is a single settable address gating exactly ONE adapter (`CREGatingHook.sol:35,94,110-
+  113`); N silos = N adapters = N hooks. `SiloDeployer` builds a fresh hook per silo. See `docs/wires/CTR-06c-SiloDeployer.md`.)**
 - `SiloRegistry` (CTR-02), `SeniorNavAggregator` (CTR-05).
 - `ZipRedemptionQueue` — the **ONE** senior zipUSD→USDC exit. Every silo's warehouse `repaySink` points HERE
   (fungible senior; redemption drains any warehouse). Never per-silo.
@@ -127,10 +129,14 @@ pool, `juniorBasket`=the junior Baal `mainSafe` (routing/label only — NOT topo
   D5). **DONE 2026-06-19** (`contracts/script/JuniorTrancheDeployer.s.sol` + fork test; `forge test` 4/4 green; wire
   `docs/wires/CTR-06b-JuniorTrancheDeployer.md`). The owner/signer model (self-summon transient owner → `swapOwner`
   both Safes to `team`) was the load-bearing fix the 4-critic fan-out surfaced. Ticket: `CTR-06b-junior-tranche-deployer.md`.
-- **CTR-06c — `SiloDeployer` orchestrator + feasible test** — composes EE-pool creation (D3 virtual seam) +
-  `CreditWarehouseDeployer` + `ReservoirMarketDeployer` (06a-fixed) + `JuniorTrancheDeployer` (06b) + `addSilo`, hands
-  ownership to the Timelock, and documents the D2 hub-grant runbook. Gate = the D3/D4 mock-EE two-silo routing test.
-  **Depends on CTR-06a + CTR-06b.** Ticket: `CTR-06c-silo-deployer-orchestrator.md`.
+- **CTR-06c — `SiloDeployer` orchestrator + feasible test — DONE 2026-06-19.** Composes EE-pool creation (D3 virtual
+  seam) + the per-silo venue front (`CREGatingHook` + `EulerVenueAdapter` + resting `baseUsdcMarket`) +
+  `ReservoirMarketDeployer` (06a-fixed) + `CreditWarehouseDeployer` + `JuniorTrancheDeployer` (06b) + the returned
+  `addSilo` handle, hands per-silo ownership to the Timelock, documents the D2 hub-grant runbook. The reservoir↔junior
+  circular dependency (reservoir `engineSafe` = the junior `mainSafe`, but the junior self-summons internally) is broken
+  by precomputing `JuniorTrancheDeployer.computeMainSafe(saltNonce)` (saltNonce-only) — no CTR-06b change. Gate green:
+  `contracts/script/SiloDeployer.s.sol` + `contracts/test/SiloDeployer.t.sol`, `forge test` 5/5. Wire:
+  `docs/wires/CTR-06c-SiloDeployer.md`. **Depends on CTR-06a + CTR-06b (both DONE).** Ticket: `CTR-06c-silo-deployer-orchestrator.md`.
 
 ## Depends on / unblocks
 - **Depends on:** CTR-02, CTR-03, CTR-05 (all DONE). CTR-06b adds D1; CTR-06c adds CTR-06a+CTR-06b.

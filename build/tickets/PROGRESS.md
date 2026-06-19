@@ -36,10 +36,11 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   the missing reusable artifact; D1+D5 ratified — DONE 2026-06-19), **CTR-06c** (`SiloDeployer` orchestrator + feasible mock-EE
   test; deps 06a+06b both DONE — now unblocked). Index + pinned hub/silo decomposition + open decisions D1–D5:
   `build/tickets/contracts/CTR-06-silo-deployer.md`. **CTR-06a + CTR-06b both landed 2026-06-19** (notes below; D1+D5
-  ratified by the reviewer), so the next of that workstream = **CTR-06c** (`SiloDeployer` orchestrator + the feasible
-  mock-EE two-silo routing test — now unblocked, both deps DONE; D2/D3/D4 already ratified in the index) or **CTR-07**
-  (slot-2 reservoir fund/defund, fully independent — recommended for a clean forge gate now) — reviewer picks. See
-  "Credit-warehouse scaling + federation" below.
+  ratified by the reviewer). **CTR-06c landed 2026-06-19** (note below) — the re-scoped CTR-06 is now COMPLETE
+  (06a+06b+06c). So the next of that workstream = **CTR-07** (slot-2 reservoir fund/defund, fully independent —
+  recommended for a clean forge gate now) or **CTR-08** (structure-2 revolving line; dep 02/03, composes 07/09) or
+  **CTR-09** (0.1%-per-revolution fee; dep 03, composes 08) — reviewer picks. See "Credit-warehouse scaling +
+  federation" below.
 
 ---
 
@@ -101,7 +102,8 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
     **DONE 2026-06-19** (note below). *(was independent)*
   - **CTR-06b** `JuniorTrancheDeployer` (the missing reusable per-junior artifact, analogue of
     `CreditWarehouseDeployer`; excludes `OffRampModule` per D5). **DONE 2026-06-19** (note below; D1+D5 ratified). *(was dep CTR-06a)*
-  - **CTR-06c** `SiloDeployer` orchestrator + feasible mock-EE two-silo routing test (D3/D4). *(dep CTR-06a + CTR-06b, both DONE — now unblocked)*
+  - **CTR-06c** `SiloDeployer` orchestrator + feasible mock-EE two-silo routing test (D3/D4). **DONE 2026-06-19** (note
+    below). *(dep CTR-06a + CTR-06b, both DONE)* — the re-scoped CTR-06 is now COMPLETE (06a+06b+06c all landed).
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). *(dep 03; composes 08)*
@@ -111,6 +113,48 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-06c — `SiloDeployer` (the silo orchestrator) — DONE 2026-06-19.** Third + FINAL built child of the re-scoped
+> CTR-06; the re-scoped CTR-06 is now COMPLETE (06a+06b+06c). Added `contracts/script/SiloDeployer.s.sol` +
+> `contracts/test/SiloDeployer.t.sol` (NEW files only — no existing contract changed, so no regression possible).
+> `deploy(SiloParams)` composes the four sub-deployers + the per-silo venue front into ONE complete silo and returns
+> the `Silo` handle the Timelock registers via `addSilo`: (0) precompute the junior `mainSafe`; (1) EE pool via a
+> `virtual _createEePool` (live-factory `.call`; mock in the test); (2) resting `baseUsdcMarket` (bare EVK proxy);
+> (3) `ReservoirMarketDeployer` (CTR-06a); (4) EE admin config via low-level `_eeCall`; (5) per-silo `CREGatingHook` +
+> `EulerVenueAdapter`; (6) `CreditWarehouseDeployer` (repaySink = the SHARED queue); (7) `JuniorTrancheDeployer`
+> (CTR-06b); (8) fail-closed post-asserts; (9) return. **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/
+> reference-verifier/contract-binding) CONVERGED on ~9 load-bearing gaps in the first draft, ALL in-tree fixable (ZERO
+> back-pressure), fixed in the ticket BEFORE cold-build: (1) the **reservoir↔junior circular dependency** — the reservoir
+> `engineSafe` must be the junior `mainSafe`, but `JuniorTrancheDeployer.deploy` self-summons its Baal internally AND
+> consumes the reservoir vaults as inputs; resolved by precomputing `jr.computeMainSafe(p.saltNonce)` (verified
+> saltNonce-only, caller-independent — `SummonSubstrate.s.sol:110-118`; CTR-06b's `MainSafeMismatch` guarantees the
+> precompute == the eventual summon), NOT the draft's infeasible "two-phase junior build"; (2) **`CREGatingHook` is
+> PER-SILO, not shared** — its `borrowDriver` is a single settable address gating one adapter (`:35,94,110-113`), so the
+> CTR-06 index's "shared hub infra" classification was wrong and is corrected (the deployer builds a fresh hook per
+> silo); (3) the **combined test mock** — NEITHER existing `MockEulerEarn` had both the EE-admin surface AND the
+> donation-immune NAV reads (`convertToAssets`/`balanceOf`/`maxWithdraw`) the aggregator needs, so the test defines a
+> small combined mock (de-scoping D4 to no-opens makes the rich queue mock unnecessary); (4) the full **`SiloParams`
+> struct** specified; (5) `lpOracle` is a built-and-SEEDED INPUT (the LP_MARK is a CRE/forwarder push the deployer
+> can't make, and `setLTV`'s `getQuote` needs it); (6) `baseUsdcMarket` is CREATED by the deployer; (7) the
+> `SzipPerspectiveProbe` is EXCLUDED (mock-incompatible; fork-runbook advisory only); (8) `_createEePool` arity pinned;
+> (9) **D4 de-scoped** — the controller routing/rollover is already exhaustively proven by `ZipcodeController.t.sol`
+> (CTR-03), so CTR-06c proves it at the REGISTRY level (pranked `incrementLineCount` to the `MAX_LINES_PER_SILO=28` cap
+> → `SiloFull` → `setCurrentSilo` rollover) + `SeniorNavAggregator.seniorBacking()` summing both warehouses, with NO
+> real controller/opens (the stale "29th origination" off-by-one fixed — cap is 28). Gate green (verified by my own
+> re-run, not just the cold-build's): `forge build` exit 0 + `forge test --match-path test/SiloDeployer.t.sol` = **5
+> passed / 0 failed** — `test_deploy_silo_seams_hold`, `test_ownership_handoff` (hook→TL, junior OZ-ownables/8 modules→TL,
+> reservoir borrow-vault governor→TL, warehouse Safe/Roles→godOwner + admin adapter→receiverAdmin, both Baal Safes→team
+> & NOT the deployer), `test_addSilo_first_try` (a REAL `SiloRegistry.addSilo` from a pranked Timelock passes on the
+> first try — non-vacuous, reverts `SiloMiswired` on any clause failure), `test_D4_two_silo_routing_rollover_and_aggregate`,
+> `test_D2_runbook` (`setCapacity`/`addSilo`/`setCurrentSilo` via `vm.prank(timelock)`). Cold-build returned ZERO
+> load-bearing mechanism guesses (only test-fixture value choices + ticket-sanctioned options). Ticket:
+> `build/tickets/contracts/CTR-06c-silo-deployer-orchestrator.md`. **Doc-sync:** NEW script + test → new wire
+> `docs/wires/CTR-06c-SiloDeployer.md` + `COVERAGE.md` rows (scripts 10→11, tests 33→34); CTR-06 index marked 06c DONE
+> + the per-silo-hook correction. No existing contract changed → no backward wire edit owed. No `claude-zipcode.md`
+> edit (the federation §-sync is forward, not a precondition; the deployer invents no mechanism — it composes the
+> existing ones). **Discharges the PROGRESS "DEPLOY OBLIGATION (CTR-03)"** as the per-silo D2 runbook (the hub half —
+> `setRegistry`/`setController` + silo #0 — is already done by CTR-03/`DeployZipcode`). **Unblocks horizontal scaling
+> (N pools) + the federation migration path.**
 
 > **CTR-06b — `JuniorTrancheDeployer` (the reusable per-junior tranche deployer) — DONE 2026-06-19.** Second built
 > child of the re-scoped CTR-06; the missing per-silo analogue of `CreditWarehouseDeployer`. Added
@@ -611,7 +655,11 @@ track on it.
   equals the controller's ctor `venue` seed; (d) assert `siloRegistry.controller() == address(controller)`
   post-deploy. Until (a)+(b), every origination reverts `RegistryUnset`/`NotController` (and every close at the
   decrement). Symmetric to the existing `oracleRegistry.setController` step (WOOF-05 item-10 S6). Folds into the
-  CTR-06 `SiloDeployer` runbook. Not a contract change owed; a deploy-wiring step.
+  CTR-06 `SiloDeployer` runbook. Not a contract change owed; a deploy-wiring step. **DISCHARGED-as-runbook 2026-06-19
+  by CTR-06c** — the D2 hub-grant runbook (`docs/wires/CTR-06c-SiloDeployer.md` + the `SiloDeployer` NatSpec) documents
+  + prank-tests the per-silo `addSilo`/`setCurrentSilo` + the `zipUSD.setCapacity` grant; the one-time hub half
+  (`controller.setRegistry`/`siloRegistry.setController` + silo #0 registration) is CTR-03/`DeployZipcode`, already
+  done. Remains an operational deploy step (no contract change), now fully specified.
 - **CRE report ABI seam.** Every CRE report payload must `abi.decode` to the §4.4 layout the filed
   `ZipcodeController` / `ZipcodeOracleRegistry` expect (reportTypes 1/2/4/5/6 → controller, 3 → registry).
 - **Subgraph blocked** until item-10 freezes the §9 event signatures.
