@@ -46,20 +46,20 @@ contract SummonSubstrateTest is ForkConfig, SummonSubstrate {
         Substrate memory s = _summonCore(team, SALT);
 
         assertTrue(s.baal != address(0), "baal=0");
-        assertTrue(s.mainSafe != address(0), "mainSafe=0");
-        assertTrue(s.sidecar != address(0), "sidecar=0");
+        assertTrue(s.juniorTrancheSafe != address(0), "juniorTrancheSafe=0");
+        assertTrue(s.juniorTrancheSidecar != address(0), "juniorTrancheSidecar=0");
         assertTrue(s.loot != address(0), "loot=0");
         assertTrue(s.shares != address(0), "shares=0");
-        assertTrue(s.mainSafe != s.sidecar, "main==sidecar");
+        assertTrue(s.juniorTrancheSafe != s.juniorTrancheSidecar, "main==juniorTrancheSidecar");
 
-        assertEq(IBaal(s.baal).avatar(), s.mainSafe, "avatar!=main");
-        assertEq(IBaal(s.baal).target(), s.mainSafe, "target!=main");
+        assertEq(IBaal(s.baal).avatar(), s.juniorTrancheSafe, "avatar!=main");
+        assertEq(IBaal(s.baal).target(), s.juniorTrancheSafe, "target!=main");
         assertEq(IBaal(s.baal).lootToken(), s.loot, "loot getter");
         assertEq(IBaal(s.baal).sharesToken(), s.shares, "shares getter");
 
         // Compute is load-bearing + salt-sensitive (not a constant/coincidence).
-        assertEq(computeMainSafe(SALT), s.mainSafe, "compute!=main");
-        assertTrue(computeMainSafe(SALT2) != s.mainSafe, "compute not salt-sensitive");
+        assertEq(computeMainSafe(SALT), s.juniorTrancheSafe, "compute!=main");
+        assertTrue(computeMainSafe(SALT2) != s.juniorTrancheSafe, "compute not salt-sensitive");
     }
 
     // --- token state: Loot soulbound, Shares=0 ---------------------------------------------------------
@@ -98,29 +98,29 @@ contract SummonSubstrateTest is ForkConfig, SummonSubstrate {
     // --- Safe wiring + the admin injection on BOTH Safes ----------------------------------------------
 
     function test_safeWiring_baalModule_teamOwner_bothSafes() public {
-        // _summonCore adds team to the MAIN safe only; the sidecar must be Baal-only until the owner-add.
+        // _summonCore adds team to the MAIN safe only; the juniorTrancheSidecar must be Baal-only until the owner-add.
         Substrate memory s = _summonCore(team, SALT);
 
-        assertTrue(ISafe(s.mainSafe).isModuleEnabled(s.baal), "baal not module on main");
-        assertTrue(ISafe(s.sidecar).isModuleEnabled(s.baal), "baal not module on sidecar");
-        assertEq(ISafe(s.mainSafe).getThreshold(), 1, "main threshold");
-        assertEq(ISafe(s.sidecar).getThreshold(), 1, "sidecar threshold");
-        assertTrue(ISafe(s.mainSafe).isOwner(s.baal), "baal not owner main");
-        assertTrue(ISafe(s.sidecar).isOwner(s.baal), "baal not owner sidecar");
+        assertTrue(ISafe(s.juniorTrancheSafe).isModuleEnabled(s.baal), "baal not module on main");
+        assertTrue(ISafe(s.juniorTrancheSidecar).isModuleEnabled(s.baal), "baal not module on juniorTrancheSidecar");
+        assertEq(ISafe(s.juniorTrancheSafe).getThreshold(), 1, "main threshold");
+        assertEq(ISafe(s.juniorTrancheSidecar).getThreshold(), 1, "juniorTrancheSidecar threshold");
+        assertTrue(ISafe(s.juniorTrancheSafe).isOwner(s.baal), "baal not owner main");
+        assertTrue(ISafe(s.juniorTrancheSidecar).isOwner(s.baal), "baal not owner juniorTrancheSidecar");
 
-        // Admin injection: team on MAIN (from the init action), NOT yet on the sidecar.
-        assertTrue(ISafe(s.mainSafe).isOwner(team), "team not owner main");
-        assertFalse(ISafe(s.sidecar).isOwner(team), "team unexpectedly owner of sidecar pre-add");
+        // Admin injection: team on MAIN (from the init action), NOT yet on the juniorTrancheSidecar.
+        assertTrue(ISafe(s.juniorTrancheSafe).isOwner(team), "team not owner main");
+        assertFalse(ISafe(s.juniorTrancheSidecar).isOwner(team), "team unexpectedly owner of juniorTrancheSidecar pre-add");
 
-        // The owner-add closes the sidecar window (effect asserted, not just "didn't revert").
+        // The owner-add closes the juniorTrancheSidecar window (effect asserted, not just "didn't revert").
         vm.prank(team);
-        _addOwnerToSidecar(s.baal, s.mainSafe, s.sidecar, team);
-        assertTrue(ISafe(s.sidecar).isOwner(team), "team not owner sidecar post-add");
+        _addOwnerToJuniorTrancheSidecar(s.baal, s.juniorTrancheSafe, s.juniorTrancheSidecar, team);
+        assertTrue(ISafe(s.juniorTrancheSidecar).isOwner(team), "team not owner juniorTrancheSidecar post-add");
     }
 
-    // --- sidecar registered in the summoner's vault registry -------------------------------------------
+    // --- juniorTrancheSidecar registered in the summoner's vault registry -------------------------------------------
 
-    function test_sidecarRegistered() public {
+    function test_juniorTrancheSidecarRegistered() public {
         Substrate memory s = _summonCore(team, SALT);
         IBaalAndVaultSummoner summoner = IBaalAndVaultSummoner(BaseAddresses.BAAL_AND_VAULT_SUMMONER);
         uint256 idx = summoner.vaultIdx();
@@ -128,7 +128,7 @@ contract SummonSubstrateTest is ForkConfig, SummonSubstrate {
         assertEq(id, idx, "vault id");
         assertTrue(active, "vault inactive");
         assertEq(dao, s.baal, "vault dao");
-        assertEq(vault, s.sidecar, "vault sidecar");
+        assertEq(vault, s.juniorTrancheSidecar, "vault juniorTrancheSidecar");
     }
 
     // --- WIREABILITY: the substrate is driveable by the team-admin OWNER path, with zero Shares ---------
@@ -140,17 +140,17 @@ contract SummonSubstrateTest is ForkConfig, SummonSubstrate {
 
         assertEq(IBaal(s.baal).totalShares(), 0, "shares must stay 0");
 
-        // (a) Grant the (mock) Exit Gate manager(2) via team -> mainSafe.execTransaction -> Baal.setShamans.
+        // (a) Grant the (mock) Exit Gate manager(2) via team -> juniorTrancheSafe.execTransaction -> Baal.setShamans.
         assertEq(IBaal(s.baal).shamans(mockGate), 0, "gate pre-shaman");
-        _ownerExec(s.mainSafe, s.baal, abi.encodeWithSelector(IBaal.setShamans.selector, _one(mockGate), _one2(2)));
+        _ownerExec(s.juniorTrancheSafe, s.baal, abi.encodeWithSelector(IBaal.setShamans.selector, _one(mockGate), _one2(2)));
         assertEq(IBaal(s.baal).shamans(mockGate), 2, "gate not manager");
 
         // (b) Enable a (mock) module on BOTH Safes via the team-owner self-call path.
         bytes memory enableMod = abi.encodeWithSelector(ISafe.enableModule.selector, mockModule);
-        _ownerExec(s.mainSafe, s.mainSafe, enableMod); // main self-call
-        _ownerExec(s.sidecar, s.sidecar, enableMod); // sidecar self-call (team is now a sidecar owner)
-        assertTrue(ISafe(s.mainSafe).isModuleEnabled(mockModule), "module not on main");
-        assertTrue(ISafe(s.sidecar).isModuleEnabled(mockModule), "module not on sidecar");
+        _ownerExec(s.juniorTrancheSafe, s.juniorTrancheSafe, enableMod); // main self-call
+        _ownerExec(s.juniorTrancheSidecar, s.juniorTrancheSidecar, enableMod); // juniorTrancheSidecar self-call (team is now a juniorTrancheSidecar owner)
+        assertTrue(ISafe(s.juniorTrancheSafe).isModuleEnabled(mockModule), "module not on main");
+        assertTrue(ISafe(s.juniorTrancheSidecar).isModuleEnabled(mockModule), "module not on juniorTrancheSidecar");
     }
 
     // --- NEGATIVE: governance is a genuine dead-end; setShamans is avatar-only -------------------------
@@ -183,8 +183,8 @@ contract SummonSubstrateTest is ForkConfig, SummonSubstrate {
         // A different salt produces a fully distinct, independent substrate.
         Substrate memory s2 = _summonCore(team, SALT2);
         assertTrue(s2.baal != s.baal, "baal collision");
-        assertTrue(s2.mainSafe != s.mainSafe, "mainSafe collision");
-        assertTrue(s2.sidecar != s.sidecar, "sidecar collision");
+        assertTrue(s2.juniorTrancheSafe != s.juniorTrancheSafe, "juniorTrancheSafe collision");
+        assertTrue(s2.juniorTrancheSidecar != s.juniorTrancheSidecar, "juniorTrancheSidecar collision");
     }
 
     // -- tiny array helpers ----------------------------------------------------------------------------

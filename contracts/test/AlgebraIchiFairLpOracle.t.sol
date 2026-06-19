@@ -141,7 +141,7 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
                 usdc: USDC,
                 lpOracle: address(oracle), // the fair oracle — the lpTwapWindow != 0 P5 path
                 irm: address(new ZeroIRM()),
-                engineSafe: makeAddr("engine"),
+                juniorTrancheEngine: makeAddr("engine"),
                 borrowLTV: 8000,
                 liqLTV: 9000
             })

@@ -39,7 +39,7 @@ interface IZipExitGate {
 ///
 ///         This contract adds NO economic decision — all NAV/pricing lives in the Gate + `SzipNavOracle`. It holds no
 ///         per-user state and custodies no assets: zipUSD is minted to the user (or, in the zap, minted transiently
-///         and immediately handed to the Gate), USDC is deposited to the warehouse Safe, and szipUSD is minted to the
+///         and immediately handed to the Gate), USDC is deposited to the warehouseSafe Safe, and szipUSD is minted to the
 ///         user by the Gate. It has no owner/admin/pause/upgrade surface — the lone privileged action is the set-once
 ///         `setGate` (deployer-gated). `claude-zipcode.md` §4.5/§6.4; `baal-spec.md` §4/§5/§11. WOOF-06.
 contract ZipDepositModule is ReentrancyGuard {
@@ -50,10 +50,10 @@ contract ZipDepositModule is ReentrancyGuard {
     address public immutable zipUSD;
     /// @notice USDC — the deposit asset (6-dp).
     address public immutable usdc;
-    /// @notice The venue pool (`EulerEarn` over USDC); the USDC sink, shares go to the warehouse.
+    /// @notice The venue pool (`EulerEarn` over USDC); the USDC sink, shares go to the warehouseSafe.
     address public immutable eePool;
     /// @notice The `CreditWarehouse` Safe (8-Bw) — the EE-share `receiver`; the module never holds shares.
-    address public immutable warehouse;
+    address public immutable warehouseSafe;
     /// @notice `10 ** (zipDecimals - usdcDecimals)` — the value-1:1 mint scale, DERIVED in the ctor from the tokens'
     ///         own `decimals()` (NOT a hard-coded literal). For 18-dp zipUSD over 6-dp USDC it equals `1e12`.
     uint256 public immutable scaleUp;
@@ -80,9 +80,9 @@ contract ZipDepositModule is ReentrancyGuard {
     event GateWired(address indexed gate);
 
     /// @param zipUSD_    The zipUSD `ESynth` (18-dp). @param usdc_ USDC (6-dp). @param eePool_ the `EulerEarn` pool.
-    /// @param warehouse_ The `CreditWarehouse` Safe — the EE-share `receiver`.
-    constructor(address zipUSD_, address usdc_, address eePool_, address warehouse_) {
-        if (zipUSD_ == address(0) || usdc_ == address(0) || eePool_ == address(0) || warehouse_ == address(0)) {
+    /// @param warehouseSafe_ The `CreditWarehouse` Safe — the EE-share `receiver`.
+    constructor(address zipUSD_, address usdc_, address eePool_, address warehouseSafe_) {
+        if (zipUSD_ == address(0) || usdc_ == address(0) || eePool_ == address(0) || warehouseSafe_ == address(0)) {
             revert ZeroAddress();
         }
         uint8 zipDec = IERC20Metadata(zipUSD_).decimals();
@@ -91,7 +91,7 @@ contract ZipDepositModule is ReentrancyGuard {
         zipUSD = zipUSD_;
         usdc = usdc_;
         eePool = eePool_;
-        warehouse = warehouse_;
+        warehouseSafe = warehouseSafe_;
         scaleUp = 10 ** (uint256(zipDec) - uint256(usdcDec));
         deployer = msg.sender;
     }
@@ -109,7 +109,7 @@ contract ZipDepositModule is ReentrancyGuard {
 
     // --------------------------------------------------------------------- entrypoints
     /// @notice Plain mint: pull `usdcIn` USDC, mint `usdcIn * scaleUp` zipUSD to the depositor, park the USDC in the
-    ///         venue pool with the warehouse Safe as the share `receiver`. The user walks away holding zipUSD; the
+    ///         venue pool with the warehouseSafe Safe as the share `receiver`. The user walks away holding zipUSD; the
     ///         module holds nothing. The secondary path (protocols/contracts wanting the $1 utility token).
     /// @return zipMinted The zipUSD minted to the depositor.
     function deposit(uint256 usdcIn) external nonReentrant returns (uint256 zipMinted) {
@@ -122,13 +122,13 @@ contract ZipDepositModule is ReentrancyGuard {
         // `eePool` is set-once/re-pointed only by the Timelock (not an arbitrary spender). See `zap` for the
         // contrast with the zipUSD->gate approval, which DOES reset because the gate is freely re-settable wiring.
         IERC20(usdc).forceApprove(eePool, usdcIn);
-        IEulerEarn(eePool).deposit(usdcIn, warehouse); // shares -> warehouse Safe; the module never holds shares
+        IEulerEarn(eePool).deposit(usdcIn, warehouseSafe); // shares -> warehouseSafe Safe; the module never holds shares
         emit Deposited(msg.sender, usdcIn, zipMinted);
     }
 
     /// @notice THE default UX: deposit → mint zipUSD (transient, to the module) → on-behalf szipUSD mint via the Exit
     ///         Gate, atomic. The supplier ends up holding only the transferable szipUSD share (NAV-proportional),
-    ///         never zipUSD or Loot; the warehouse Safe custodies the EE shares; the module holds nothing.
+    ///         never zipUSD or Loot; the warehouseSafe Safe custodies the EE shares; the module holds nothing.
     /// @return shares The szipUSD minted to the caller by the Gate (== the Gate's return).
     function zap(uint256 usdcIn) external nonReentrant returns (uint256 shares) {
         if (usdcIn == 0) revert ZeroAmount();
@@ -149,7 +149,7 @@ contract ZipDepositModule is ReentrancyGuard {
         // the Timelock (not an arbitrary spender). The zipUSD->gate path below DOES reset because the gate is freely
         // re-settable wiring. (An optional symmetric reset here would be behavioral.)
         IERC20(usdc).forceApprove(eePool, usdcIn);
-        IEulerEarn(eePool).deposit(usdcIn, warehouse); // USDC -> venue pool, warehouse custodies the shares
+        IEulerEarn(eePool).deposit(usdcIn, warehouseSafe); // USDC -> venue pool, warehouseSafe custodies the shares
 
         IERC20(zipUSD).forceApprove(gate, zipAmount); // exact-amount per-zap allowance (D1)
         shares = IZipExitGate(gate).depositFor(zipUSD, zipAmount, msg.sender); // Gate pulls zipUSD, mints szipUSD to the user

@@ -294,14 +294,14 @@ contract RecycleModuleUnitTest is Test {
     function test_setUp_wires_storage() public view {
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
-        assertEq(m.engineSafe(), address(safe));
+        assertEq(m.juniorTrancheEngine(), address(safe));
         assertEq(m.avatar(), address(safe));
         assertEq(m.target(), address(safe));
         assertEq(m.zipDepositModule(), zdm);
         assertEq(m.usdc(), address(usdc));
         assertEq(m.navOracle(), NAVO);
         assertEq(m.eePool(), EEP);
-        assertEq(m.warehouse(), WH);
+        assertEq(m.warehouseSafe(), WH);
         assertEq(m.freeValueAccrued(), 0);
     }
 
@@ -355,7 +355,7 @@ contract RecycleModuleUnitTest is Test {
 
     function test_setUp_abi_length_mismatch_reverts() public {
         RecycleModule x = _cloneRecycleModule();
-        // only 7 addresses encoded (warehouse missing) -> abi.decode reverts (the decode needs 8)
+        // only 7 addresses encoded (warehouseSafe missing) -> abi.decode reverts (the decode needs 8)
         vm.expectRevert();
         x.setUp(abi.encode(owner, address(safe), operator, zdm, address(usdc), NAVO, EEP));
     }
@@ -372,12 +372,12 @@ contract RecycleModuleUnitTest is Test {
     function test_mastercopy_inert() public {
         RecycleModule mc = _cloneRecycleModule();
         assertEq(mc.operator(), address(0));
-        assertEq(mc.engineSafe(), address(0));
+        assertEq(mc.juniorTrancheEngine(), address(0));
         assertEq(mc.zipDepositModule(), address(0));
         assertEq(mc.usdc(), address(0));
         assertEq(mc.navOracle(), address(0));
         assertEq(mc.eePool(), address(0));
-        assertEq(mc.warehouse(), address(0));
+        assertEq(mc.warehouseSafe(), address(0));
         vm.prank(operator);
         vm.expectRevert(RecycleModule.NotOperator.selector);
         mc.creditFreeValue(1e6);
@@ -393,7 +393,7 @@ contract RecycleModuleUnitTest is Test {
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando));
         m.setEePool(address(0xB02));
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando));
-        m.setWarehouse(address(0xB03));
+        m.setWarehouseSafe(address(0xB03));
         vm.stopPrank();
 
         // zero reverts ZeroAddress
@@ -403,7 +403,7 @@ contract RecycleModuleUnitTest is Test {
         vm.expectRevert(RecycleModule.ZeroAddress.selector);
         m.setEePool(address(0));
         vm.expectRevert(RecycleModule.ZeroAddress.selector);
-        m.setWarehouse(address(0));
+        m.setWarehouseSafe(address(0));
 
         // owner re-points, each emits WiringSet with the correct slot label
         vm.expectEmit(true, false, false, true, address(m));
@@ -413,13 +413,13 @@ contract RecycleModuleUnitTest is Test {
         emit WiringSet("eePool", address(0xB02));
         m.setEePool(address(0xB02));
         vm.expectEmit(true, false, false, true, address(m));
-        emit WiringSet("warehouse", address(0xB03));
-        m.setWarehouse(address(0xB03));
+        emit WiringSet("warehouseSafe", address(0xB03));
+        m.setWarehouseSafe(address(0xB03));
         vm.stopPrank();
 
         assertEq(m.navOracle(), address(0xB01));
         assertEq(m.eePool(), address(0xB02));
-        assertEq(m.warehouse(), address(0xB03));
+        assertEq(m.warehouseSafe(), address(0xB03));
     }
 
     // ----------------------------------------------------------------- authority on the action legs
@@ -561,7 +561,7 @@ contract RecycleModuleIntegratedTest is Test {
     address internal constant WAREHOUSE = address(0xBEEF);
     address internal owner = makeAddr("timelockOwner");
     address internal operator = makeAddr("creOperator");
-    address internal constant NAVO = address(0xA01); // recycle-only: nav/eePool/warehouse unused on the recycle path
+    address internal constant NAVO = address(0xA01); // recycle-only: nav/eePool/warehouseSafe unused on the recycle path
 
     function setUp() public {
         evc = new EthereumVaultConnector();
@@ -590,7 +590,7 @@ contract RecycleModuleIntegratedTest is Test {
         assertEq(zip.balanceOf(address(safe)), 1_000e6 * 1e12, "backed zipUSD minted to the Safe");
         assertEq(usdc.balanceOf(address(safe)), 0, "USDC left the Safe");
         assertEq(usdc.balanceOf(address(ee)), 1_000e6, "USDC parked as senior backing");
-        assertEq(ee.balanceOf(WAREHOUSE), 1_000e6, "EE shares -> warehouse");
+        assertEq(ee.balanceOf(WAREHOUSE), 1_000e6, "EE shares -> warehouseSafe");
         assertEq(m.freeValueAccrued(), 0, "free value debited exactly");
         assertEq(usdc.allowance(address(safe), address(zdmReal)), 0, "approval reset");
     }
@@ -641,26 +641,26 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
         zip.setCapacity(address(zdmReal), type(uint128).max);
     }
 
-    function _summonAndEnable(RecycleModule m) internal returns (address mainSafe) {
+    function _summonAndEnable(RecycleModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
-        mainSafe = s.mainSafe;
+        juniorTrancheSafe = s.juniorTrancheSafe;
         bytes memory enableMod = abi.encodeWithSelector(ISafe.enableModule.selector, address(m));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(mainSafe).execTransaction(mainSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(juniorTrancheSafe).execTransaction(juniorTrancheSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
-    function _deploy() internal returns (RecycleModule m, address engineSafe) {
+    function _deploy() internal returns (RecycleModule m, address juniorTrancheEngine) {
         m = _cloneRecycleModule();
-        engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, address(zdmReal), address(usdc), address(nav), address(ee), WAREHOUSE));
+        juniorTrancheEngine = _summonAndEnable(m);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(zdmReal), address(usdc), address(nav), address(ee), WAREHOUSE));
     }
 
     function test_fork_recycle_against_real_safe() public {
-        (RecycleModule m, address engineSafe) = _deploy();
-        usdc.mint(engineSafe, 1_000e6);
+        (RecycleModule m, address juniorTrancheEngine) = _deploy();
+        usdc.mint(juniorTrancheEngine, 1_000e6);
         vm.prank(operator);
         m.creditFreeValue(1_000e6);
 
@@ -668,16 +668,16 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
         uint256 zipMinted = m.recycle(1_000e6);
 
         assertEq(zipMinted, 1_000e6 * 1e12, "zipMinted exact");
-        assertEq(zip.balanceOf(engineSafe), 1_000e6 * 1e12, "backed zipUSD minted to the REAL Safe");
-        assertEq(usdc.balanceOf(engineSafe), 0, "USDC left the Safe");
+        assertEq(zip.balanceOf(juniorTrancheEngine), 1_000e6 * 1e12, "backed zipUSD minted to the REAL Safe");
+        assertEq(usdc.balanceOf(juniorTrancheEngine), 0, "USDC left the Safe");
         assertEq(m.freeValueAccrued(), 0, "debited");
-        assertEq(usdc.allowance(engineSafe, address(zdmReal)), 0, "approval reset");
+        assertEq(usdc.allowance(juniorTrancheEngine, address(zdmReal)), 0, "approval reset");
     }
 
     // Stream 2 (`divert`) over a REAL summoned Gnosis Safe — proves the Zodiac exec path for the new leg.
     function test_fork_divert_against_real_safe() public {
-        (RecycleModule m, address engineSafe) = _deploy();
-        usdc.mint(engineSafe, 1_000e6);
+        (RecycleModule m, address juniorTrancheEngine) = _deploy();
+        usdc.mint(juniorTrancheEngine, 1_000e6);
         vm.prank(operator);
         m.creditFreeValue(1_000e6);
         nav.setProvision(2_000e6 * 1e12); // hole large enough for the full divert
@@ -686,12 +686,12 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
         uint256 sent = m.divert(1_000e6);
 
         assertEq(sent, 1_000e6, "sent == usdcAmount");
-        assertEq(usdc.balanceOf(engineSafe), 0, "USDC left the REAL Safe into EE");
+        assertEq(usdc.balanceOf(juniorTrancheEngine), 0, "USDC left the REAL Safe into EE");
         assertEq(usdc.balanceOf(address(ee)), 1_000e6, "USDC parked in EE (raw, no zipUSD mint)");
-        assertEq(ee.balanceOf(WAREHOUSE), 1_000e6, "EE shares credited to the warehouse");
-        assertEq(zip.balanceOf(engineSafe), 0, "NO zipUSD minted (the whole point of Stream 2)");
+        assertEq(ee.balanceOf(WAREHOUSE), 1_000e6, "EE shares credited to the warehouseSafe");
+        assertEq(zip.balanceOf(juniorTrancheEngine), 0, "NO zipUSD minted (the whole point of Stream 2)");
         assertEq(m.freeValueAccrued(), 0, "ledger debited exactly");
-        assertEq(usdc.allowance(engineSafe, address(ee)), 0, "approval reset");
+        assertEq(usdc.allowance(juniorTrancheEngine, address(ee)), 0, "approval reset");
     }
 }
 
@@ -714,7 +714,7 @@ contract RecycleModuleDivertTest is Test {
     uint256 internal constant BIG_HOLE = 2_000_000e6 * 1e12;
 
     event FreeValueSpent(uint256 amount, uint256 newAccrued);
-    event Filled(uint256 usdcAmount, address indexed warehouse, uint256 provisionAfter);
+    event Filled(uint256 usdcAmount, address indexed warehouseSafe, uint256 provisionAfter);
 
     function setUp() public {
         usdc = new MockERC20(6);
@@ -761,10 +761,10 @@ contract RecycleModuleDivertTest is Test {
         _assertCall(safe, 0, address(usdc), abi.encodeWithSelector(IERC20.approve.selector, address(ee), amt));
         _assertCall(safe, 1, address(ee), abi.encodeCall(IEulerEarn.deposit, (amt, WAREHOUSE)));
         _assertCall(safe, 2, address(usdc), abi.encodeWithSelector(IERC20.approve.selector, address(ee), uint256(0)));
-        // value flow: USDC left the Safe into EE crediting the warehouse, NO zipUSD, ledger debited, allowance reset.
+        // value flow: USDC left the Safe into EE crediting the warehouseSafe, NO zipUSD, ledger debited, allowance reset.
         assertEq(usdc.balanceOf(address(safe)), SEED - amt, "Safe USDC fell by amt");
         assertEq(usdc.balanceOf(address(ee)), amt, "USDC parked in EE (raw)");
-        assertEq(ee.balanceOf(WAREHOUSE), amt, "EE shares credited to the warehouse");
+        assertEq(ee.balanceOf(WAREHOUSE), amt, "EE shares credited to the warehouseSafe");
         assertEq(m.freeValueAccrued(), SEED - amt, "ledger debited by amt");
         assertEq(usdc.allowance(address(safe), address(ee)), 0, "approval reset");
     }

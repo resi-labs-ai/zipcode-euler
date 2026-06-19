@@ -1,4 +1,4 @@
-# DurationFreezeModule — Duration-Bond trigger B / structural sidecar freeze (wiring map)
+# DurationFreezeModule — Duration-Bond trigger B / structural juniorTrancheSidecar freeze (wiring map)
 
 > Source of truth = the kept code at `contracts/src/supply/szipUSD/DurationFreezeModule.sol` +
 > `contracts/src/interfaces/supply/{ISeniorPool,ISzipNavBasket}.sol`. Ticket
@@ -8,7 +8,7 @@
 ## Role
 The §11-B / §6.4 / §8.2 duration-squeeze freeze actuator: a zodiac-core `Module` (`is Module,
 ReentrancyGuard`) and the **first engine module enabled on BOTH Safes** — the free-equity (ragequit-target)
-**main** Safe and the non-ragequittable **sidecar** Safe — because the freeze moves value across them. It is
+**main** Safe and the non-ragequittable **juniorTrancheSidecar** Safe — because the freeze moves value across them. It is
 the Duration-Bond **trigger B**, a pure LIQUIDITY squeeze: no realized loss, no xALPHA premium/slash, no
 markdown, no Exit-Gate/DefaultCoordinator coupling.
 
@@ -16,7 +16,7 @@ Two operator-gated rotations, no recipient parameter (source/dest are the litera
 - **`commit(asset, amount)`** — MAIN→SIDECAR, **ungated by value**. Raising the freeze is always peg-safe, so
   an unbounded commit can freeze 100% (the intended squeeze). Over-commit is operator grief, not theft (the
   §12 metric-4 alarm watches it).
-- **`release(asset, amount)`** — SIDECAR→MAIN, **autonomously floor-gated**: reverts unless the sidecar still
+- **`release(asset, amount)`** — SIDECAR→MAIN, **autonomously floor-gated**: reverts unless the juniorTrancheSidecar still
   holds at least `requiredCommittedValue()`. This is the `DefaultCoordinator`
   "bounds-not-validates" pattern — the operator chooses which/how-much; the contract bounds the release value
   on-chain so even a compromised operator cannot open the run hatch while debt is outstanding.
@@ -35,7 +35,7 @@ mark already reacts to xALPHA price moves so a static over-collateralization buf
 **COVERAGE NUMERATOR = `committedValue() + pathLockedLpEquity()` (2026-06-13).** The
 floor is checked against `coverageValue() = committedValue() + pathLockedLpEquity()`, NOT `committedValue()`
 alone — the fenced ICHI LP (most of the basket) backs the floor IN PLACE, read from the oracle's
-`pathLockedLpEquity()`, so it need not be physically hoarded in the sidecar (this RESOLVES the former line-74
+`pathLockedLpEquity()`, so it need not be physically hoarded in the juniorTrancheSidecar (this RESOLVES the former line-74
 LP gotcha — see Gotchas). `release` reads `coverageValue()` post-move; `covered() = coverageValue() >=
 requiredCommittedValue()` is the outflow predicate; `lpBurnKeepsCovered(lpShares)` is the dissolution-gate
 helper. Both outflow gates are BUILT + armed at deploy: `SzipBuyBurnModule.postBid` reverts while
@@ -55,23 +55,23 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 ## Wiring — internal
 - **`setUp(bytes initParams)`** (one-shot via zodiac-core `initializer`; ALL wired fields are plain set-once
   storage, NOT `immutable` — a `ModuleProxyFactory` clone shares the mastercopy runtime so `immutable` can't
-  carry per-clone config). Decodes seven addresses `(owner_, mainSafe_, sidecar_, operator_,
+  carry per-clone config). Decodes seven addresses `(owner_, juniorTrancheSafe_, juniorTrancheSidecar_, operator_,
   navOracle_, eulerEarn_, warehouse_)`. Guards: every address non-zero
   (`ZeroAddress`); `owner_ != operator_` (`OwnerIsOperator` — Timelock owner must not equal the hot operator
-  key); `mainSafe_ != sidecar_` (`BadParams` — equal Safes make a rotation a self-transfer that trivially
+  key); `juniorTrancheSafe_ != juniorTrancheSidecar_` (`BadParams` — equal Safes make a rotation a self-transfer that trivially
   passes the floor). Sets
-  `avatar = target = mainSafe_` (the inherited single-avatar exec is **inert** — rotations use explicit
+  `avatar = target = juniorTrancheSafe_` (the inherited single-avatar exec is **inert** — rotations use explicit
   `ISafe(src)` calls, not the avatar-bound path), writes the six wired addresses, then reads the five movable
   legs LIVE off `ISzipNavBasket(navOracle_)` (`zipUSD/usdc/xAlpha/hydx/oHydx`), and finally
   `_transferOwnership(owner_)` (Timelock). Reading the legs from the oracle makes the whitelist == exactly
   what the oracle prices — no drift, five fewer setUp args.
 - **`commit(asset, amount)`** — `nonReentrant onlyValued(asset)`; `msg.sender == operator` (`NotOperator`);
-  `amount != 0` (`ZeroAmount`). Snapshots `IERC20(asset).balanceOf(sidecar)`, calls
-  `ISafe(mainSafe).execTransactionFromModule(asset, 0, transfer(sidecar, amount), 0)` (Call, `value==0`),
-  reverts `ExecFailed` if false, asserts the sidecar delta `== amount` (`TransferShortfall` — the
+  `amount != 0` (`ZeroAmount`). Snapshots `IERC20(asset).balanceOf(juniorTrancheSidecar)`, calls
+  `ISafe(juniorTrancheSafe).execTransactionFromModule(asset, 0, transfer(juniorTrancheSidecar, amount), 0)` (Call, `value==0`),
+  reverts `ExecFailed` if false, asserts the juniorTrancheSidecar delta `== amount` (`TransferShortfall` — the
   FoT/false-return defense), emits `Committed(asset, amount, committedValue())`. NO value floor/ceiling.
-- **`release(asset, amount)`** — same gates; transfers `ISafe(sidecar).execTransactionFromModule(asset, 0,
-  transfer(mainSafe, amount), 0)`, asserts the main delta `== amount`. THEN **THE FLOOR**, read AFTER the
+- **`release(asset, amount)`** — same gates; transfers `ISafe(juniorTrancheSidecar).execTransactionFromModule(asset, 0,
+  transfer(juniorTrancheSafe, amount), 0)`, asserts the main delta `== amount`. THEN **THE FLOOR**, read AFTER the
   move (the revert atomically rolls the transfer back): `floor = requiredCommittedValue()`,
   `c = coverageValue()` (= `committedValue() + pathLockedLpEquity()` — the fenced LP backs the floor in place);
   `if (c < floor) revert FreezeFloorBreach(c, floor)`. Emits `Released(asset, amount, c, floor)`.
@@ -86,11 +86,11 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   `min`/`max`, no escalation.
 - **The 5-leg oracle whitelist** — `onlyValued(asset)` reverts `UnvaluedAsset` unless `asset ∈
   {zipUSD, usdc, xAlpha, hydx, oHydx}`. Load-bearing fix for the non-basket-asset leak (security #6): a
-  `release` of an oracle-unvalued asset would drain the sidecar **without** moving `committedValue()`, so the
+  `release` of an oracle-unvalued asset would drain the juniorTrancheSidecar **without** moving `committedValue()`, so the
   floor would pass while real value exits the freeze. Whitelisting to exactly the priced legs also closes the
   rebasing/FoT concern.
-- **The `SzipNavOracle` views it relies on** — `committedValue() = _grossValueOf(sidecar)`,
-  `freeValue() = _grossValueOf(mainSafe)`, and `pathLockedLpEquity()` (the fenced LP across all states net
+- **The `SzipNavOracle` views it relies on** — `committedValue() = _grossValueOf(juniorTrancheSidecar)`,
+  `freeValue() = _grossValueOf(juniorTrancheSafe)`, and `pathLockedLpEquity()` (the fenced LP across all states net
   reservoir debt). `grossBasketValue`/`_grossValueOf` now COUNT the escrow-collateralized LP + SUBTRACT the
   reservoir strike debt (LP path-lock, 2026-06-13) — so they are no longer "unchanged", but the module still
   never moves the LP, so `grossBasketValue` stays rotation-invariant under a `commit`/`release` (which only
@@ -100,7 +100,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   (a `gross == 0` basket floors to 0 — any release allowed). `lpBurnKeepsCovered(lpShares) =
   (coverageValue − lpShareValue(lpShares)) >= requiredCommittedValue` is the LP-dissolution gate's predicate.
 - **Timelock-settable wiring (build phase, §17)** — eleven `onlyOwner` wiring setters, one per wired field
-  (`setMainSafe`/`setSidecar`/`setOperator`/`setNavOracle`/`setEulerEarn`/`setWarehouse` + the five legs
+  (`setJuniorTrancheSafe`/`setJuniorTrancheSidecar`/`setOperator`/`setNavOracle`/`setEulerEarn`/`setWarehouseSafe` + the five legs
   `setZipUSD`/`setUsdc`/`setXAlpha`/`setHydx`/`setOHydx`), each zero-guarded and emitting
   `WiringSet(slot, value)`. There are NO coverage-param setters — the floor is structural
   (`min(illiquidSeniorValue, grossBasketValue)`); the `setCoverageBps`/`setDollarBuffer` knobs + the
@@ -109,39 +109,39 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   SEC-15) so a re-point cannot collapse the Timelock owner and the CRE operator into one key. The CRE operator (hot
   key) cannot call them — only the Timelock owner. Inherited
   `setAvatar`/`setTarget` are onlyOwner and INERT for rotation (rotation uses the explicit set-once
-  `ISafe(mainSafe)`/`ISafe(sidecar)` calls, not the avatar-bound exec); they are not hard-locked (that would
+  `ISafe(juniorTrancheSafe)`/`ISafe(juniorTrancheSidecar)` calls, not the avatar-bound exec); they are not hard-locked (that would
   require marking vendored zodiac-core setters `virtual`).
 
 ## Wiring — cross-component (who points at whom)
 - **→ `SzipNavOracle`** (`navOracle`). The module reads `grossBasketValue()` (the rotation-invariant
-  denominator), `committedValue()` (the sidecar floor target), and the five movable-leg addresses (at
-  `setUp`). The oracle already reads BOTH Safes' balances, so `committedValue()` = the sidecar's holdings and
-  the sidecar xALPHA leg (grown by the 8-Bx `slashXAlphaToCohort` in-kind premium) accretes the frozen
+  denominator), `committedValue()` (the juniorTrancheSidecar floor target), and the five movable-leg addresses (at
+  `setUp`). The oracle already reads BOTH Safes' balances, so `committedValue()` = the juniorTrancheSidecar's holdings and
+  the juniorTrancheSidecar xALPHA leg (grown by the 8-Bx `slashXAlphaToCohort` in-kind premium) accretes the frozen
   cohort's NAV pari-passu (the §4.6 / PROGRESS row 368 obligation).
-- **→ EulerEarn senior pool + CreditWarehouse** (`eulerEarn`, `warehouse`). `utilization()` reads
-  `eulerEarn`'s ERC4626 views with `warehouse` (the Safe holding the senior EulerEarn shares) as the
+- **→ EulerEarn senior pool + CreditWarehouse** (`eulerEarn`, `warehouseSafe`). `utilization()` reads
+  `eulerEarn`'s ERC4626 views with `warehouseSafe` (the Safe holding the senior EulerEarn shares) as the
   `owner`/account arg — the donation-immune illiquid-fraction read off the controller-gated borrow side.
-- **Rotates value main Safe ↔ sidecar Safe.** `commit` calls `execTransactionFromModule` on `mainSafe`
-  (source) to push to `sidecar`; `release` calls it on `sidecar` (source) to push back to `mainSafe`. The
+- **Rotates value main Safe ↔ juniorTrancheSidecar Safe.** `commit` calls `execTransactionFromModule` on `juniorTrancheSafe`
+  (source) to push to `juniorTrancheSidecar`; `release` calls it on `juniorTrancheSidecar` (source) to push back to `juniorTrancheSafe`. The
   module holds no custody — the Safes hold the tokens — and both Safes must have this module enabled for the
   respective rotation to succeed.
 - **Gates the Exit Gate structurally.** No call into `ExitGate`; the coupling is purely "the committed slice
-  lives in the non-RQ sidecar," so the Gate's window exit reaches only the free main equity. At steady-state
+  lives in the non-RQ juniorTrancheSidecar," so the Gate's window exit reaches only the free main equity. At steady-state
   high utilization (~80%) a windowed ragequit pays only the unfrozen slice (windowed RQ is wind-down-only;
   the impatient steady-state exit is CoW).
 - **Sidecar must have `isOwner(team) == true` before funding** (8-B1 F6.2 discharge / PROGRESS row 320).
-  `commit` is the only sidecar-funding path and **fails closed**: `execTransactionFromModule` on the sidecar
-  reverts until the module is enabled on the team-owned sidecar. Item-10 enables on the sidecar only after
-  `isOwner(team)` (8-B1's `_addOwnerToSidecar` lands it; the sidecar ships Baal-only until then).
+  `commit` is the only juniorTrancheSidecar-funding path and **fails closed**: `execTransactionFromModule` on the juniorTrancheSidecar
+  reverts until the module is enabled on the team-owned juniorTrancheSidecar. Item-10 enables on the juniorTrancheSidecar only after
+  `isOwner(team)` (8-B1's `_addOwnerToSidecar` lands it; the juniorTrancheSidecar ships Baal-only until then).
 
 ## Item-10 deploy facts
-- **PROGRESS row 320 (F6.2) DISCHARGED.** Do NOT route value into the sidecar until `isOwner(team) == true`
-  on it. `commit` is the only sidecar-funding path and fails closed (sidecar `execTransactionFromModule`
-  reverts) until the module is enabled on the team-owned sidecar; the fork test proves the enable-on-both
+- **PROGRESS row 320 (F6.2) DISCHARGED.** Do NOT route value into the juniorTrancheSidecar until `isOwner(team) == true`
+  on it. `commit` is the only juniorTrancheSidecar-funding path and fails closed (juniorTrancheSidecar `execTransactionFromModule`
+  reverts) until the module is enabled on the team-owned juniorTrancheSidecar; the fork test proves the enable-on-both
   path. (The "item 9" in that row is baal-spec §8's internal numbering for THIS freeze/rotation module — NOT
-  the PROGRESS-backlog item 9 `ZipRedemptionQueue`, which touches no sidecar.)
-- **Enable on BOTH Safes.** Enable the module on the main Safe; enable on the sidecar **only after**
-  `isOwner(team)` on the sidecar (so the team has proven it can drive the sidecar). Both enables are required
+  the PROGRESS-backlog item 9 `ZipRedemptionQueue`, which touches no juniorTrancheSidecar.)
+- **Enable on BOTH Safes.** Enable the module on the main Safe; enable on the juniorTrancheSidecar **only after**
+  `isOwner(team)` on the juniorTrancheSidecar (so the team has proven it can drive the juniorTrancheSidecar). Both enables are required
   before any `commit`/`release` round-trip.
 - **CREATE2-clone + `setUp`.** The mastercopy is locked AUTOMATICALLY by its constructor (`MastercopyInitLock`,
   SEC-14) the instant it is deployed — NO separate deploy-time lock step, and `setUp` on the mastercopy reverts
@@ -166,7 +166,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   `idle = IERC20(usdc).balanceOf(eulerEarn)`, `U = (totalAssets − idle)/totalAssets` — both **broken**
   (EulerEarn `totalAssets = Σ expectedSupplyAssets` excludes idle, which is ≈0 → `U ≈ 1e18` permanently →
   `release` bricked forever) and **donatable** (anyone transfers USDC to the pool → inflate idle → lower
-  `U` → lower the floor → over-release that drains the sidecar and opens the run hatch, defeating §11-B
+  `U` → lower the floor → over-release that drains the juniorTrancheSidecar and opens the run hatch, defeating §11-B
   "not outsider-manipulable"). Fixed to the donation-immune `U = 1 −
   maxWithdraw(warehouse)/convertToAssets(balanceOf(warehouse))` read; spec **§8.2 / §11-B** corrected (the
   "U = borrowed/totalAssets … idle" framing was the spec's own root error).
@@ -174,7 +174,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   2026-06-09 (oracles are replaceable). The DefaultCoordinator set-once thesis must be reconciled before
   item-10.
 - The whole security shape is the SECURITY BOUNDARY: the operator supplies ONLY `(asset, amount)`; the module
-  builds all calldata, source/dest are the literal set-once `mainSafe`/`sidecar` (no recipient param, no
+  builds all calldata, source/dest are the literal set-once `juniorTrancheSafe`/`juniorTrancheSidecar` (no recipient param, no
   generic exec/delegatecall, `value == 0`). A compromised operator can grief (over-commit, delaying exits)
   but cannot steal and cannot under-freeze.
 - The release floor is read AFTER the transfer; the `FreezeFloorBreach` revert atomically rolls the move back
@@ -194,6 +194,6 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
      CRE to keep zipUSD un-LP'd). Instead: the LP stays fenced in place (NOT movable) and is COUNTED toward
      the floor via the oracle's `pathLockedLpEquity()` (LP across loose+gauge+escrow states, net reservoir
      debt). The coverage numerator is `coverageValue() = committedValue() + pathLockedLpEquity()`, so the
-     floor is satisfiable from the productive LP without hoarding it idle in the sidecar. The LP's only
+     floor is satisfiable from the productive LP without hoarding it idle in the juniorTrancheSidecar. The LP's only
      dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated to the excess, so it can't be
      liquefied below the floor. This supersedes the former "movable whitelist (LP excluded)" framing entirely.

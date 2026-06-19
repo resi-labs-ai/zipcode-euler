@@ -11,12 +11,12 @@ import {SeniorNavAggregator} from "../src/SeniorNavAggregator.sol";
 /// @dev Topology stubs mirroring `SiloRegistry.t.sol` so the REAL admission topology assert passes.
 contract MockFreeze {
     address public eulerEarn;
-    address public warehouse;
+    address public warehouseSafe;
     address public navOracle;
 
     constructor(address eePool_, address warehouseSafe_, address navOracle_) {
         eulerEarn = eePool_;
-        warehouse = warehouseSafe_;
+        warehouseSafe = warehouseSafe_;
         navOracle = navOracle_;
     }
 }
@@ -48,7 +48,7 @@ contract MockAdapter {
 /// @dev Settable-backing EulerEarn stand-in (the §8.2 senior pool), modeled on
 ///      `DurationFreezeModule.t.sol:107-130`. PER-ACCOUNT `balanceOf` so `balanceOf(warehouseSafe)` differs from a
 ///      donation minted to the `eePool` address. `convertToAssets` HONORS its share argument (donation-immune: a
-///      donation that bumps a DIFFERENT account's shares does not change the warehouse's `convertToAssets` input).
+///      donation that bumps a DIFFERENT account's shares does not change the warehouseSafe's `convertToAssets` input).
 ///      `setBacking(account, shares, totalBacking, free)` drives any U.
 contract MockEulerEarn {
     mapping(address => uint256) public sharesOf;
@@ -68,10 +68,10 @@ contract MockEulerEarn {
     }
 
     /// @dev shares==0 -> 0; else resolve the account whose share balance equals `shares` and return its backing.
-    ///      In these tests warehouse share balances are distinct, so the lookup is unambiguous.
+    ///      In these tests warehouseSafe share balances are distinct, so the lookup is unambiguous.
     function convertToAssets(uint256 shares) external view returns (uint256) {
         if (shares == 0) return 0;
-        // The aggregator calls convertToAssets(balanceOf(warehouse)); map shares back to the configured backing.
+        // The aggregator calls convertToAssets(balanceOf(warehouseSafe)); map shares back to the configured backing.
         return _backingForShares(shares);
     }
 
@@ -95,8 +95,8 @@ contract MockEulerEarn {
         _sharesToBacking[shares] = totalBacking;
     }
 
-    /// @dev A donation: mint shares to the POOL address (or any account) WITHOUT touching the warehouse's position.
-    ///      Mirrors `DurationFreezeModule.t.sol:455-461` — the warehouse's convertToAssets/maxWithdraw are unchanged.
+    /// @dev A donation: mint shares to the POOL address (or any account) WITHOUT touching the warehouseSafe's position.
+    ///      Mirrors `DurationFreezeModule.t.sol:455-461` — the warehouseSafe's convertToAssets/maxWithdraw are unchanged.
     function donateShares(address to, uint256 shares) external {
         sharesOf[to] += shares;
     }
@@ -126,10 +126,10 @@ contract SeniorNavAggregatorTest is Test {
         address warehouseSafe;
     }
 
-    /// @dev Admit a self-consistent silo with a fresh MockEulerEarn pool + a fresh warehouse address.
+    /// @dev Admit a self-consistent silo with a fresh MockEulerEarn pool + a fresh warehouseSafe address.
     function _addSilo(string memory label) internal returns (Silo memory out) {
         MockEulerEarn ee = new MockEulerEarn();
-        address warehouseSafe = makeAddr(string.concat(label, "-warehouse"));
+        address warehouseSafe = makeAddr(string.concat(label, "-warehouseSafe"));
         address navOracle = makeAddr(string.concat(label, "-oracle"));
         address juniorBasket = makeAddr(string.concat(label, "-junior"));
         address curator = makeAddr(string.concat(label, "-curator"));
@@ -187,7 +187,7 @@ contract SeniorNavAggregatorTest is Test {
         uint256 before = agg.seniorBacking();
         uint256 illiqBefore = agg.illiquidSeniorValue();
 
-        // Donate shares to the POOL address itself (and to a stranger) — warehouse position untouched.
+        // Donate shares to the POOL address itself (and to a stranger) — warehouseSafe position untouched.
         a.ee.donateShares(address(a.ee), 1_000_000);
         a.ee.donateShares(stranger, 999);
 

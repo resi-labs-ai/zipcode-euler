@@ -30,7 +30,7 @@ not this bytecode** (the user-ratified "no bespoke privileged contract" decision
 ## Contracts involved (what each does)
 | Contract | What it does |
 |---|---|
-| `WarehouseAdminModule` (`is ReceiverTemplate`) | The CRE adapter / role member. Inherits the Forwarder gate (`onReport`) — **Timelock-settable, not immutable** (`ReceiverTemplate is Ownable`, `setForwarderAddress`/identity are `onlyOwner`, §17; as-built correction); overrides `_processReport` to decode `(uint8 opType, bytes payload)` → one of four `abi.encodeWithSelector` calls → `roles.execTransactionWithRole(...)`. Six wiring slots (`roles`/`roleKey`/`safe`/`eePool`/`usdc`/`repaySink`), all Timelock-settable. No custody, no Safe authority. **PARITY:** the injected `safe` and the Roles modifier's `avatar` are independent slots — `setSafe` MUST be paired with the Roles `setAvatar` (post-check `roles.avatar() == safe`) or SUPPLY/REDEEM brick (fail-closed). |
+| `WarehouseAdminModule` (`is ReceiverTemplate`) | The CRE adapter / role member. Inherits the Forwarder gate (`onReport`) — **Timelock-settable, not immutable** (`ReceiverTemplate is Ownable`, `setForwarderAddress`/identity are `onlyOwner`, §17; as-built correction); overrides `_processReport` to decode `(uint8 opType, bytes payload)` → one of four `abi.encodeWithSelector` calls → `roles.execTransactionWithRole(...)`. Six wiring slots (`roles`/`roleKey`/`warehouseSafe`/`eePool`/`usdc`/`redemptionBox`), all Timelock-settable. No custody, no Safe authority. **PARITY:** the injected `warehouseSafe` and the Roles modifier's `avatar` are independent slots — `setWarehouseSafe` MUST be paired with the Roles `setAvatar` (post-check `roles.avatar() == safe`) or SUPPLY/REDEEM brick (fail-closed). |
 | `CreditWarehouseDeployer` (`contracts/script/`) | The callable deploy/wire library (fork-driven). Stands up the Safe + Roles proxy + scope + adapter against LIVE Base infra, as the **transient** owner of both, then hands ownership to `godOwner`. Asserts every proxy init state before scoping. Does NOT renounce / does NOT seal identity (item-10's job). |
 | Zodiac Roles Modifier v2 (deployed external) | The audited access engine. A proxy of mastercopy `ZODIAC_ROLES_MASTERCOPY 0x9646…D337` cloned via `ZODIAC_MODULE_PROXY_FACTORY 0x0000…a236`; `setUp(abi.encode(owner, avatar, target))` = `(deployer→godOwner, safe, safe)`. `enableModule`'d on the Safe; holds the scope (trees A–D) + the role membership. The wildcarded `allowFunction` is deliberately NOT used. |
 | The warehouse Gnosis Safe (deployed external) | Owner = `godOwner` (threshold 1, no fallbackHandler); the Roles `avatar`/`target`; the EE-share + USDC custodian. Proxy of `SAFE_L2_SINGLETON_1_4_1` via `SAFE_PROXY_FACTORY_1_3_0`. |
@@ -40,11 +40,11 @@ not this bytecode** (the user-ratified "no bespoke privileged contract" decision
 
 ### Constructor + the wiring slots
 `constructor(address forwarder, address roles_, bytes32 roleKey_, address safe_, address eePool_, address usdc_,
-address repaySink_) ReceiverTemplate(forwarder)`. The base ctor reverts on a zero `forwarder`; the body reverts
-`ZeroAddress()` if any of `roles_`/`safe_`/`eePool_`/`usdc_`/`repaySink_` is zero, and `ZeroRoleKey()` if
+address redemptionBox_) ReceiverTemplate(forwarder)`. The base ctor reverts on a zero `forwarder`; the body reverts
+`ZeroAddress()` if any of `roles_`/`safe_`/`eePool_`/`usdc_`/`redemptionBox_` is zero, and `ZeroRoleKey()` if
 `roleKey_ == bytes32(0)` (a zero key is the Roles `NoMembership` sentinel — every forward would revert). The six
 fields are stored as **mutable state** (not `immutable`), each with an `onlyOwner` setter (`setRoles`/`setRoleKey`/
-`setSafe`/`setEePool`/`setUsdc`/`setRepaySink`, emitting `WiringSet`/`RoleKeySet`) — the §17 build-phase
+`setWarehouseSafe`/`setEePool`/`setUsdc`/`setRedemptionBox`, emitting `WiringSet`/`RoleKeySet`) — the §17 build-phase
 Timelock-re-point seam. The setters re-assert non-zero (and `setRoleKey` re-asserts non-zero key).
 
 ### The §8.5 envelope decode (`_processReport`, `internal override`)
@@ -56,7 +56,7 @@ Timelock-re-point seam. The setters re-assert non-zero (and `setRoleKey` re-asse
 | `SUPPLY = 1` | `(uint256 amount)` | `to = eePool`; `IEulerEarn.deposit(amount, safe)` | `receiver = safe` injected |
 | `APPROVE = 2` | `(uint256 amount)` | `to = usdc`; `IERC20.approve(eePool, amount)` | `spender = eePool` injected |
 | `REDEEM = 3` | `(uint256 shares)` | `to = eePool`; `IEulerEarn.redeem(shares, safe, safe)` | `receiver = owner = safe` injected (owner is the **3rd** arg, `EulerEarn.sol:596`) |
-| `REPAY = 4` | `(address dest, uint256 amount)` | `to = usdc`; `IERC20.transfer(repaySink, amount)` | `dest` asserted `== repaySink` (`revert WrongRepaySink(dest)`), then `repaySink` injected — self-enforced AND scope-pinned `EqualTo(repaySink)` |
+| `REPAY = 4` | `(address dest, uint256 amount)` | `to = usdc`; `IERC20.transfer(redemptionBox, amount)` | `dest` asserted `== redemptionBox` (`revert WrongRedemptionBox(dest)`), then `redemptionBox` injected — self-enforced AND scope-pinned `EqualTo(redemptionBox)` |
 
 Then `emit WarehouseOp(opType, to, data)` and `bool ok = roles.execTransactionWithRole(to, 0, data, OP_CALL,
 roleKey, true); if (!ok) revert RoleExecFailed();`. The three trailing args are **hardcoded literals, never
@@ -78,13 +78,13 @@ root at index 0 = `{parent:0, Calldata(5), Matches(5), ""}`):
 - **A — `deposit(assets, receiver)`:** `[root, {Static,Pass} assets, {Static,EqualToAvatar} receiver]`.
 - **B — `redeem(shares, receiver, owner)`:** `[root, {Static,Pass} shares, {Static,EqualToAvatar} receiver, {Static,EqualToAvatar} owner]`.
 - **C — `approve(spender, amount)`:** `[root, {Static,EqualTo abi.encode(eePool)} spender, {Static,Pass} amount]`.
-- **D — `transfer(to, amount)`:** `[root, {Static,EqualTo abi.encode(repaySink)} to, {Static,Pass} amount]`.
+- **D — `transfer(to, amount)`:** `[root, {Static,EqualTo abi.encode(redemptionBox)} to, {Static,Pass} amount]`.
 
 `EqualToAvatar` (op 15) children carry **empty** `compValue` (the modifier substitutes
 `keccak256(abi.encode(avatar))` at scope-load, `PermissionLoader.sol:67-72`). `EqualTo` (op 16) carries the
 32-byte `abi.encode(address)`. **APPROVE/REPAY amounts are `Pass` (scope-free)** — they vary per op; the CRE
-sizes them, the policy pins only identities. **Tree D's `to` is `EqualTo(repaySink)`, never `Pass`** — a `Pass`
-would let a compromised CRE `transfer` to any address (full drain). The adapter injecting `safe`/`eePool` is
+sizes them, the policy pins only identities. **Tree D's `to` is `EqualTo(redemptionBox)`, never `Pass`** — a `Pass`
+would let a compromised CRE `transfer` to any address (full drain). The adapter injecting `warehouseSafe`/`eePool` is
 belt-and-suspenders **with** these pins, not a substitute for them (the qa scope-is-load-bearing tests —
 `contracts/test/WarehouseAdminModule.t.sol` section (6), `test_Scope_PinsParams_*` — drive a **second** role
 member (`MockMember`) through `Roles.execTransactionWithRole` directly with redirected params →
@@ -93,7 +93,7 @@ member (`MockMember`) through `Roles.execTransactionWithRole` directly with redi
 ### Compromised-CRE blast radius (the consolidated threat model)
 A fully compromised CRE (or a stolen workflow identity) controls **amounts and timing only**. Every destination
 is pinned by the scope: SUPPLY/REDEEM receiver/owner are `EqualToAvatar` (the Safe), APPROVE's spender is
-`EqualTo(eePool)`, REPAY's `to` is `EqualTo(repaySink)` (the non-sweepable queue), and the Safe itself is never
+`EqualTo(eePool)`, REPAY's `to` is `EqualTo(redemptionBox)` (the non-sweepable queue), and the Safe itself is never
 a scoped target (no `enableModule` / owner-rotation escalation through the role). The worst cases are therefore
 **griefing, not extraction**: refusing to fund redemptions (the senior exit stalls), shuffling float between the
 Safe and the pool at bad times, or over-filling the queue (USDC parks in the non-sweepable sink, claimable only
@@ -106,7 +106,7 @@ entire float into the queue — which is exactly what the deferred item-10 drain
   (`USDC → mint zipUSD → szipUSD`) and the senior SUPPLY path deposit `EulerEarn` shares with the **warehouse
   Safe as the `receiver`** (§4.5 :537-545); SUPPLY's `deposit(amount, safe)` pins `receiver == avatar`, so shares
   always land in the Safe, never in the adapter or Roles.
-- **`repaySink == ZipRedemptionQueue` (item 9).** REPAY (`usdc.transfer(repaySink, amount)`) funds the senior
+- **`redemptionBox == ZipRedemptionQueue` (item 9).** REPAY (`usdc.transfer(redemptionBox, amount)`) funds the senior
   exit queue. The flow is **REDEEM → REPAY**: REDEEM lands USDC in the Safe (`receiver == owner == avatar`), then
   REPAY distributes to the queue. The queue **never calls `EulerEarn` directly** — it settles against its own
   USDC balance (item 9 DISCHARGED this obligation: `grep eulerearn` on the queue matches only a doc comment).
@@ -123,7 +123,7 @@ entire float into the queue — which is exactly what the deferred item-10 drain
   warehouse adapter uses a **distinct workflowId** from the controller/registry/oracle receivers (CRE-04, §8.5).
 
 ## Item-10 deploy facts (the seal `CreditWarehouseDeployer` deliberately omits)
-`CreditWarehouseDeployer.deploy(godOwner, eePool, usdc, forwarder, repaySink, saltNonce)` stands up the Safe (1),
+`CreditWarehouseDeployer.deploy(godOwner, eePool, usdc, forwarder, redemptionBox, saltNonce)` stands up the Safe (1),
 Roles proxy (2), `enableModule` (3, asserts `isModuleEnabled`), the scope (4), the adapter (5), `assignRoles` (6),
 and the owner handoff (7, asserts final owners == `godOwner` on both). It asserts every proxy init state
 (`getOwners`/`getThreshold`; Roles `avatar`/`target`/`owner`) **before** scoping — never trusting a CREATE2 address
@@ -134,13 +134,13 @@ blindly (a front-run with different init params resolves to a different address;
   NOT renounce). **Do NOT fund the warehouse before identity is set** — while `expectedWorkflowId == 0` the
   per-workflow gate is OFF and any Forwarder-relayed workflow could drive ops. Use a distinct Forwarder
   identity/workflowId.
-- **`repaySink` wiring (row 364b):** point it at the item-9 `ZipRedemptionQueue`, which MUST be
+- **`redemptionBox` wiring (row 364b):** point it at the item-9 `ZipRedemptionQueue`, which MUST be
   **immutable/non-sweepable** (the residual chokepoint a compromised CRE could REDEEM→REPAY into).
 - **Drain-defense (row 364c, ELEVATED optional→recommended):** a Roles `WithinAllowance` rate-limit and/or a
   **Delay Modifier** (owner-cancellable cooldown) on the drain-capable REDEEM/REPAY ops.
 - **APPROVE discipline (row 364d):** the CRE issues **exact-amount APPROVE per SUPPLY** (never a standing
   infinite); verify at item-10 whether the live EulerEarn is upgradeable / curator-controlled.
-- **Non-commingling asserts (row 364f, §11):** assert `repaySink != juniorBaalSafe` **and** `safe !=
+- **Non-commingling asserts (row 364f, §11):** assert `redemptionBox != juniorBaalSafe` **and** `safe !=
   juniorBaalSafe` at deploy.
 - **EE supply-queue allocation (row 333):** point EulerEarn's supply queue at the 8-B5 **reservoir borrow vault**
   (`ReservoirMarketDeployer.deploy`'s vault, the "resting vault") so idle depositor USDC IS the warehouse

@@ -18,7 +18,7 @@ interface IZipRedemptionQueue {
 
 /// @title OffRampModule (credit-union.md C1)
 /// @notice The treasury's zipUSD → USDC par off-ramp driver: a CRE-operator-gated Zodiac Module enabled on the
-///         main/Baal/rq Safe (`avatar == target == rqSafe`). It turns the basket's idle zipUSD into USDC by driving
+///         main/Baal/rq Safe (`avatar == target == juniorTrancheSafe`). It turns the basket's idle zipUSD into USDC by driving
 ///         the BUILT `ZipRedemptionQueue` (item 9) — sourcing the USDC the treasury bids exits with from un-lent
 ///         EulerEarn cash — with NO new redemption logic. Pure driver: par + the 30-day epoch + pro-rata partial
 ///         fills are the queue's job (it is `onlyController`-settled by the CRE after the warehouse REDEEM/REPAY).
@@ -31,18 +31,18 @@ interface IZipRedemptionQueue {
 ///      dangling approval). All per-clone wired addresses are plain set-once storage written in `setUp`, NOT
 ///      `immutable` (the §18.6 clone fact: a `ModuleProxyFactory` clone shares the mastercopy bytecode).
 ///
-/// @dev TRUST/SCOPE: the redeemed USDC sink is the wired `rqSafe` ONLY (destination integrity — `requester` is never
+/// @dev TRUST/SCOPE: the redeemed USDC sink is the wired `juniorTrancheSafe` ONLY (destination integrity — `requester` is never
 ///      operator-supplied). The off-ramp NEVER touches the warehouse Safe (the CRE drives REDEEM/REPAY through the
 ///      `WarehouseAdminModule`); it NEVER sells xALPHA or any other basket leg. `requestRedeem`/`claim` are
 ///      operator-gated, sized by the operator each period (not autonomic). The rq Safe authorizes this driver at the
 ///      queue via its `redeemController` (C4) — because the module `exec`s THROUGH the Safe, the queue sees the Safe
-///      as `msg.sender`, so `requester == owner == rqSafe` satisfies the queue's `owner == msg.sender` check AND the
+///      as `msg.sender`, so `requester == owner == juniorTrancheSafe` satisfies the queue's `owner == msg.sender` check AND the
 ///      USDC claim accrues to the rq Safe.
 contract OffRampModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
-    /// @notice The rq Safe (`avatar == target == rqSafe` = `Baal.avatar()`); the zipUSD source + the USDC sink + the
+    /// @notice The rq Safe (`avatar == target == juniorTrancheSafe` = `Baal.avatar()`); the zipUSD source + the USDC sink + the
     ///         queue's authorized `redeemController` (C4) + the per-request `requester`/`owner`.
-    address public rqSafe;
+    address public juniorTrancheSafe;
     /// @notice The single CRE operator (gates `requestRedeem`/`claim`).
     address public operator;
     /// @notice zipUSD (18-dp) — the basket leg redeemed at par for USDC.
@@ -67,26 +67,26 @@ contract OffRampModule is MastercopyInitLock {
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). Decodes 5 addresses
-    ///         `(owner, rqSafe, operator, zipUSD, queue)`. ORDER is load-bearing: validate ALL decoded addresses
-    ///         nonzero FIRST + `owner != operator`, set `avatar = target = rqSafe`, store the wiring, THEN
+    ///         `(owner, juniorTrancheSafe, operator, zipUSD, queue)`. ORDER is load-bearing: validate ALL decoded addresses
+    ///         nonzero FIRST + `owner != operator`, set `avatar = target = juniorTrancheSafe`, store the wiring, THEN
     ///         `_transferOwnership(owner)`. No live-read / staticcall in `setUp`.
     function setUp(bytes memory initParams) public override initializer {
-        (address owner_, address rqSafe_, address operator_, address zipUSD_, address queue_) =
+        (address owner_, address juniorTrancheSafe_, address operator_, address zipUSD_, address queue_) =
             abi.decode(initParams, (address, address, address, address, address));
 
         if (
-            owner_ == address(0) || rqSafe_ == address(0) || operator_ == address(0) || zipUSD_ == address(0)
+            owner_ == address(0) || juniorTrancheSafe_ == address(0) || operator_ == address(0) || zipUSD_ == address(0)
                 || queue_ == address(0)
         ) {
             revert ZeroAddress();
         }
         if (owner_ == operator_) revert OwnerIsOperator();
 
-        // The module is enabled ON the rq Safe and only ever mutates it: avatar == target == rqSafe.
-        avatar = rqSafe_;
-        target = rqSafe_;
+        // The module is enabled ON the rq Safe and only ever mutates it: avatar == target == juniorTrancheSafe.
+        avatar = juniorTrancheSafe_;
+        target = juniorTrancheSafe_;
 
-        rqSafe = rqSafe_;
+        juniorTrancheSafe = juniorTrancheSafe_;
         operator = operator_;
         zipUSD = zipUSD_;
         queue = queue_;
@@ -104,13 +104,13 @@ contract OffRampModule is MastercopyInitLock {
     //      (`owner`) can move them, never the CRE `operator`. Not hard-locked (would dirty the vendored setters).
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
-    /// @notice Re-point `rqSafe` (also re-points avatar/target — kept in lock-step). onlyOwner (Timelock).
-    function setRqSafe(address rqSafe_) external onlyOwner {
-        if (rqSafe_ == address(0)) revert ZeroAddress();
-        rqSafe = rqSafe_;
-        avatar = rqSafe_;
-        target = rqSafe_;
-        emit WiringSet("rqSafe", rqSafe_);
+    /// @notice Re-point `juniorTrancheSafe` (also re-points avatar/target — kept in lock-step). onlyOwner (Timelock).
+    function setJuniorTrancheSafe(address juniorTrancheSafe_) external onlyOwner {
+        if (juniorTrancheSafe_ == address(0)) revert ZeroAddress();
+        juniorTrancheSafe = juniorTrancheSafe_;
+        avatar = juniorTrancheSafe_;
+        target = juniorTrancheSafe_;
+        emit WiringSet("juniorTrancheSafe", juniorTrancheSafe_);
     }
 
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
@@ -138,7 +138,7 @@ contract OffRampModule is MastercopyInitLock {
     // --------------------------------------------------------------------- the off-ramp (zipUSD -> escrow)
     /// @notice Escrow `zipAmount` of the rq Safe's basket zipUSD into the queue for par redemption. Operator-only.
     ///         Drives the rq Safe (bubbling `_exec`): (a) `zipUSD.approve(queue, zipAmount)`; (b)
-    ///         `queue.requestRedeem(zipAmount, rqSafe, rqSafe)` — so `requester == owner == rqSafe`; (c)
+    ///         `queue.requestRedeem(zipAmount, juniorTrancheSafe, juniorTrancheSafe)` — so `requester == owner == juniorTrancheSafe`; (c)
     ///         `approve(queue, 0)` reset. `zipAmount` MUST be `> 0` and a whole multiple of the queue's LIVE
     ///         `scaleUp()` (re-derived on `setTokens` — never hard-code `1e12`).
     function requestRedeem(uint256 zipAmount) external onlyOperator {
@@ -146,7 +146,7 @@ contract OffRampModule is MastercopyInitLock {
         if (zipAmount % IZipRedemptionQueue(queue).scaleUp() != 0) revert NotWholeUnit();
 
         address q = queue;
-        address rq = rqSafe;
+        address rq = juniorTrancheSafe;
         _exec(zipUSD, abi.encodeWithSelector(IERC20.approve.selector, q, zipAmount));
         _exec(q, abi.encodeCall(IZipRedemptionQueue.requestRedeem, (zipAmount, rq, rq)));
         _exec(zipUSD, abi.encodeWithSelector(IERC20.approve.selector, q, uint256(0)));
@@ -157,10 +157,10 @@ contract OffRampModule is MastercopyInitLock {
     // --------------------------------------------------------------------- the claim (escrow -> USDC into the basket)
     /// @notice Claim `assets` USDC (par) of the rq Safe's realized fill back into the rq Safe (the basket), where the
     ///         buyback spends it — no cross-Safe routing. Operator-only. Drives the rq Safe (bubbling `_exec`) to
-    ///         call `queue.withdraw(assets, rqSafe, rqSafe)` = `(assets, receiver, requester)`.
+    ///         call `queue.withdraw(assets, juniorTrancheSafe, juniorTrancheSafe)` = `(assets, receiver, requester)`.
     function claim(uint256 assets) external onlyOperator {
         if (assets == 0) revert ZeroAmount();
-        address rq = rqSafe;
+        address rq = juniorTrancheSafe;
         _exec(queue, abi.encodeCall(IZipRedemptionQueue.withdraw, (assets, rq, rq)));
         emit Claimed(assets, rq);
     }

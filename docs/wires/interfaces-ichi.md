@@ -47,8 +47,8 @@ a live HYDX ICHI vault `0x07e72E46C319a6d5aCA28Ad52f5C41a7821989Ad` (`allVaults(
 
 **Consumed by.**
 - `contracts/src/supply/szipUSD/LpStrategyModule.sol` — reads `token0()`/`token1()`, executes
-  `IICHIVault.deposit(deposit0, deposit1, engineSafe)` (`addLiquidity`), reads `balanceOf(engineSafe)`.
-- `contracts/src/supply/SzipNavOracle.sol` — values held LP: `balanceOf(mainSafe)+balanceOf(sidecar)`
+  `IICHIVault.deposit(deposit0, deposit1, juniorTrancheEngine)` (`addLiquidity`), reads `balanceOf(juniorTrancheEngine)`.
+- `contracts/src/supply/SzipNavOracle.sol` — values held LP: `balanceOf(juniorTrancheSafe)+balanceOf(juniorTrancheSidecar)`
   (and gauge balance) over `totalSupply()`, pro-rated against `getTotalAmounts()` priced per
   `token0()`/`token1()`.
 - `contracts/src/supply/AlgebraIchiFairLpOracle.sol` + `contracts/src/supply/lib/IchiAlgebraFairReserves.sol`

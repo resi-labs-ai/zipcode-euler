@@ -290,7 +290,7 @@ contract LpStrategyModuleUnitTest is Test {
     function test_setUp_wires_storage() public view {
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
-        assertEq(m.engineSafe(), address(safe));
+        assertEq(m.juniorTrancheEngine(), address(safe));
         assertEq(m.avatar(), address(safe));
         assertEq(m.target(), address(safe));
         assertEq(m.ichiVault(), address(vault));
@@ -323,7 +323,7 @@ contract LpStrategyModuleUnitTest is Test {
         x.setUp(abi.encode(owner, address(safe), operator, address(0), address(gauge), address(0)));
     }
 
-    function test_setUp_rejects_zero_engineSafe() public {
+    function test_setUp_rejects_zero_juniorTrancheEngine() public {
         LpStrategyModule x = _cloneLpStrategyModule();
         vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
         x.setUp(abi.encode(owner, address(0), operator, address(vault), address(gauge), address(0)));
@@ -349,7 +349,7 @@ contract LpStrategyModuleUnitTest is Test {
     function test_mastercopy_inert() public {
         LpStrategyModule mc = _cloneLpStrategyModule();
         assertEq(mc.operator(), address(0));
-        assertEq(mc.engineSafe(), address(0));
+        assertEq(mc.juniorTrancheEngine(), address(0));
         assertEq(mc.ichiVault(), address(0));
         assertEq(mc.gauge(), address(0));
         assertEq(mc.token0(), address(0));
@@ -458,7 +458,7 @@ contract LpStrategyModuleUnitTest is Test {
         // the deposit `to` arg is the engine Safe (regression guard).
         (, , bytes memory data, ) = safe.getCall(1);
         ( , , address to) = abi.decode(_slice(data, 4), (uint256, uint256, address));
-        assertEq(to, address(safe), "deposit to == engineSafe");
+        assertEq(to, address(safe), "deposit to == juniorTrancheEngine");
     }
 
     /// @dev The both-legs exec shape (vault-agnostic passthrough — 5 execs). NOT a supported product flow; pins the
@@ -594,9 +594,9 @@ contract LpStrategyModuleUnitTest is Test {
         _assertCall(base + 0, address(vault), abi.encodeCall(IICHIVault.withdraw, (shares, address(safe))));
     }
 
-    // ----------------------------------------------------------------- views read engineSafe (not address(this))
+    // ----------------------------------------------------------------- views read juniorTrancheEngine (not address(this))
 
-    function test_views_read_engineSafe() public {
+    function test_views_read_juniorTrancheEngine() public {
         safe.setLive(true);
         // stranger LP doesn't show up.
         MockICHIVault(address(vault));
@@ -725,46 +725,46 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
 
     /// @dev Summon a real substrate + enable the module on its main Safe (team-owner drives the enable). Model
     ///      `ReservoirLoopModule.t.sol _summonAndEnable`.
-    function _summonAndEnable(LpStrategyModule m) internal returns (address mainSafe) {
+    function _summonAndEnable(LpStrategyModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
-        mainSafe = s.mainSafe;
+        juniorTrancheSafe = s.juniorTrancheSafe;
         bytes memory enableMod = abi.encodeWithSelector(ISafe.enableModule.selector, address(m));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(mainSafe).execTransaction(mainSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(juniorTrancheSafe).execTransaction(juniorTrancheSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
     // ----------------------------------------------------------------- real ICHI vault single-sided deposit
 
     function test_fork_real_vault_single_sided_deposit() public {
         LpStrategyModule m = _cloneLpStrategyModule();
-        address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
+        address juniorTrancheEngine = _summonAndEnable(m);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
         // the module read token0/token1 live off the real vault.
         assertEq(m.token0(), WETH, "token0 == WETH (live read)");
         assertEq(m.token1(), BaseAddresses.USDC, "token1 == USDC (live read)");
 
         uint256 amt = 1e18; // 1 WETH, well within deposit0Max (4000 WETH)
-        deal(WETH, engineSafe, amt);
+        deal(WETH, juniorTrancheEngine, amt);
 
         vm.prank(operator);
         uint256 shares = m.addLiquidity(amt, 0, 1);
         assertGt(shares, 0, "real ICHI deposit minted LP shares");
-        assertEq(IICHIVault(LIVE_ICHI_VAULT).balanceOf(engineSafe), shares, "shares landed in the Safe");
+        assertEq(IICHIVault(LIVE_ICHI_VAULT).balanceOf(juniorTrancheEngine), shares, "shares landed in the Safe");
         assertEq(m.lpBalance(), shares, "lpBalance() reads the real vault");
-        assertEq(IERC20(WETH).allowance(engineSafe, LIVE_ICHI_VAULT), 0, "no standing WETH allowance");
+        assertEq(IERC20(WETH).allowance(juniorTrancheEngine, LIVE_ICHI_VAULT), 0, "no standing WETH allowance");
     }
 
     function test_fork_slippage_floor_snapshot_guarded() public {
         LpStrategyModule m = _cloneLpStrategyModule();
-        address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
+        address juniorTrancheEngine = _summonAndEnable(m);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
         uint256 amt = 1e18;
-        deal(WETH, engineSafe, amt);
+        deal(WETH, juniorTrancheEngine, amt);
 
         // probe the achievable shares, then revert so the probe's deposit doesn't grow the pool.
         // NOTE: `snapshot()`/`revertTo()` are deprecated aliases in this forge-std pin (the repo's other fork tests
@@ -775,7 +775,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         vm.revertTo(snap);
 
         // re-run with minShares one above the achievable floor -> Slippage.
-        deal(WETH, engineSafe, amt);
+        deal(WETH, juniorTrancheEngine, amt);
         vm.prank(operator);
         vm.expectRevert(LpStrategyModule.Slippage.selector);
         m.addLiquidity(amt, 0, probed + 1);
@@ -787,10 +787,10 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         assertFalse(IICHIVault(LIVE_ICHI_VAULT).allowToken1(), "live vault is token0-only");
 
         LpStrategyModule m = _cloneLpStrategyModule();
-        address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
+        address juniorTrancheEngine = _summonAndEnable(m);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
 
-        deal(BaseAddresses.USDC, engineSafe, 1_000e6);
+        deal(BaseAddresses.USDC, juniorTrancheEngine, 1_000e6);
         vm.prank(operator);
         vm.expectRevert(); // bubbled from the real ICHI vault
         m.addLiquidity(0, 1_000e6, 1);
@@ -819,11 +819,11 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         MockGauge gauge = new MockGauge(address(vault), address(0xBEEF));
 
         LpStrategyModule m = _cloneLpStrategyModule();
-        address engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, address(vault), address(gauge), address(0)));
+        address juniorTrancheEngine = _summonAndEnable(m);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(vault), address(gauge), address(0)));
 
         // fund the Safe with zipUSD (the single-sided deposit leg).
-        z.mint(engineSafe, 1000e18);
+        z.mint(juniorTrancheEngine, 1000e18);
 
         // build LP (single-sided zipUSD — the production shape; the xALPHA leg accrues from pool flow, not a deposit).
         vm.prank(operator);

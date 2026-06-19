@@ -485,7 +485,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- helpers
     /// @dev Deploy + setUp a module over an arbitrary engine Safe + market (recording-mock unit context).
     function _deployModule(
-        address engineSafe_,
+        address juniorTrancheEngine_,
         address borrowVault_,
         address escrowVault_,
         uint256 cap_
@@ -493,7 +493,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m = _cloneReservoirLoopModule();
         m.setUp(
             abi.encode(
-                owner, engineSafe_, operator, address(evc), borrowVault_, escrowVault_, address(lp), USDC, cap_
+                owner, juniorTrancheEngine_, operator, address(evc), borrowVault_, escrowVault_, address(lp), USDC, cap_
             )
         );
     }
@@ -511,8 +511,8 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         o.onReport("", report);
     }
 
-    /// @dev Stand up the reservoir market through the deployer for `engineSafe_`/`oracle`.
-    function _deployMarket(address engineSafe_, address oracle_, uint16 borrowLTV, uint16 liqLTV)
+    /// @dev Stand up the reservoir market through the deployer for `juniorTrancheEngine_`/`oracle`.
+    function _deployMarket(address juniorTrancheEngine_, address oracle_, uint16 borrowLTV, uint16 liqLTV)
         internal
         returns (address escrowVault, address borrowVault, address router)
     {
@@ -526,7 +526,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
                 usdc: USDC,
                 lpOracle: oracle_,
                 irm: address(irm),
-                engineSafe: engineSafe_,
+                juniorTrancheEngine: juniorTrancheEngine_,
                 borrowLTV: borrowLTV,
                 liqLTV: liqLTV
             })
@@ -543,15 +543,15 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     /// @dev Summon a real substrate + enable the module on its main Safe (team-owner drives the enable).
-    function _summonAndEnable(ReservoirLoopModule m) internal returns (address mainSafe) {
+    function _summonAndEnable(ReservoirLoopModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
-        mainSafe = s.mainSafe;
+        juniorTrancheSafe = s.juniorTrancheSafe;
         bytes memory enableMod = abi.encodeWithSelector(ISafe.enableModule.selector, address(m));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(mainSafe).execTransaction(mainSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(juniorTrancheSafe).execTransaction(juniorTrancheSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
     // =================================================================== setUp / authority / locks (unit)
@@ -560,7 +560,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
-        assertEq(m.engineSafe(), address(0xBEEF));
+        assertEq(m.juniorTrancheEngine(), address(0xBEEF));
         assertEq(m.avatar(), address(0xBEEF));
         assertEq(m.target(), address(0xBEEF));
         assertEq(m.evc(), address(evc));
@@ -619,7 +619,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m.setUp(abi.encode(owner, address(0xBEEF), operator, address(0), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
     }
 
-    function test_setUp_rejects_zero_address_engineSafe() public {
+    function test_setUp_rejects_zero_address_juniorTrancheEngine() public {
         ReservoirLoopModule m = _cloneReservoirLoopModule();
         vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
         m.setUp(abi.encode(owner, address(0), operator, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
@@ -638,7 +638,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     function test_mastercopy_inert() public {
         ReservoirLoopModule mc = _cloneReservoirLoopModule();
         assertEq(mc.operator(), address(0));
-        assertEq(mc.engineSafe(), address(0));
+        assertEq(mc.juniorTrancheEngine(), address(0));
         vm.prank(operator);
         vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
         mc.postCollateral(1e18);
@@ -698,7 +698,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
     /// @dev THE security-boundary test (exhaustive): exact callCount per entrypoint, every call Operation.Call +
     ///      value==0 targeting only the wired addresses, and the inner IEVC.call calldata decoded to prove the
-    ///      onBehalfOfAccount + innermost receiver/owner == engineSafe.
+    ///      onBehalfOfAccount + innermost receiver/owner == juniorTrancheEngine.
     function test_exec_discipline_full() public {
         RecordingSafe safe = new RecordingSafe();
         address bv = address(0xB0B0);
@@ -726,7 +726,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m2.borrow(79e6);
         assertEq(safe2.callCount(), 2);
         _assertCall(safe2, 0, address(evc), abi.encodeCall(IEVC.enableController, (es2, address(stub))));
-        // call 1: EVC.call(borrowVault, engineSafe, 0, borrow(79e6, engineSafe))
+        // call 1: EVC.call(borrowVault, juniorTrancheEngine, 0, borrow(79e6, juniorTrancheEngine))
         _assertEvcCall(safe2, 1, address(stub), es2, abi.encodeCall(IBorrowing.borrow, (uint256(79e6), es2)));
 
         // ---- repay: exactly 3 ----
@@ -772,9 +772,9 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         (address target, address onBehalf, uint256 innerValue, bytes memory inner) =
             abi.decode(args, (address, address, uint256, bytes));
         assertEq(target, expTarget, "EVC.call target");
-        assertEq(onBehalf, expOnBehalf, "EVC.call onBehalfOfAccount == engineSafe");
+        assertEq(onBehalf, expOnBehalf, "EVC.call onBehalfOfAccount == juniorTrancheEngine");
         assertEq(innerValue, 0, "inner value 0");
-        assertEq(keccak256(inner), keccak256(expInner), "innermost calldata (receiver/owner == engineSafe)");
+        assertEq(keccak256(inner), keccak256(expInner), "innermost calldata (receiver/owner == juniorTrancheEngine)");
     }
 
     function _slice(bytes memory b, uint256 from) internal pure returns (bytes memory out) {
@@ -946,7 +946,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(IEVault(bv).oracle(), router, "borrow vault oracle == router");
         (address hookTarget, uint32 hookedOps) = IEVault(bv).hookConfig();
         assertEq(hookedOps, uint32(1 << 6), "OP_BORROW only");
-        assertEq(ReservoirBorrowGuard(hookTarget).engineSafe(), address(0xBEEF), "guard pins the engine Safe");
+        assertEq(ReservoirBorrowGuard(hookTarget).juniorTrancheEngine(), address(0xBEEF), "guard pins the engine Safe");
 
         // The retained governor can still re-point the router (re-pointable).
         SzipReservoirLpOracle o2 = _deployOracle(address(lp));
@@ -969,7 +969,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
                 usdc: USDC,
                 lpOracle: address(o),
                 irm: address(irm),
-                engineSafe: address(0xBEEF),
+                juniorTrancheEngine: address(0xBEEF),
                 borrowLTV: 0.7e4,
                 liqLTV: 0.8e4
             })
@@ -981,17 +981,17 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     function test_full_loop_revolves_twice() public {
         ReservoirLoopModule m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
-        address engineSafe = _summonAndEnable(m);
+        address juniorTrancheEngine = _summonAndEnable(m);
 
         // push a fresh LP mark ($1/share) before the deployer's setLTV (which reads getQuote).
         _pushMark(o, 1e6);
-        (address ev, address bv, address router) = _deployMarket(engineSafe, address(o), 0.7e4, 0.8e4);
-        m.setUp(abi.encode(owner, engineSafe, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
+        (address ev, address bv, address router) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
         router; // silence
 
         // seed the borrow vault with USDC; deal LP to the Safe.
         _seedBorrowVault(bv, 500_000e6);
-        lp.mint(engineSafe, 1000e18);
+        lp.mint(juniorTrancheEngine, 1000e18);
 
         uint256 slice = 100e18; // $100 collateral
         uint256 strike = 50e6; // $50 borrow, well inside 0.7 * $100
@@ -1001,40 +1001,40 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
             vm.prank(operator);
             m.postCollateral(slice);
             assertEq(m.postedCollateral(), slice, "posted == slice");
-            assertEq(evc.getCollaterals(engineSafe).length, 1, "collateral enabled (no dup)");
+            assertEq(evc.getCollaterals(juniorTrancheEngine).length, 1, "collateral enabled (no dup)");
 
             // borrow
-            uint256 usdcBefore = IERC20(USDC).balanceOf(engineSafe);
+            uint256 usdcBefore = IERC20(USDC).balanceOf(juniorTrancheEngine);
             vm.prank(operator);
             m.borrow(strike);
-            assertEq(IERC20(USDC).balanceOf(engineSafe) - usdcBefore, strike, "Safe received strike");
+            assertEq(IERC20(USDC).balanceOf(juniorTrancheEngine) - usdcBefore, strike, "Safe received strike");
             assertEq(m.outstandingDebt(), strike, "outstandingDebt == strike");
-            assertEq(m.outstandingDebt(), IBorrowing(bv).debtOf(engineSafe), "view reads the vault live");
-            assertEq(evc.getControllers(engineSafe).length, 1, "controller enabled (no dup)");
+            assertEq(m.outstandingDebt(), IBorrowing(bv).debtOf(juniorTrancheEngine), "view reads the vault live");
+            assertEq(evc.getControllers(juniorTrancheEngine).length, 1, "controller enabled (no dup)");
 
             // repay (give the Safe the USDC to repay — in production from 8-B9 sale proceeds)
-            deal(USDC, engineSafe, strike);
+            deal(USDC, juniorTrancheEngine, strike);
             vm.prank(operator);
             m.repay(strike);
             assertEq(m.outstandingDebt(), 0, "debt cleared");
-            assertEq(IERC20(USDC).allowance(engineSafe, bv), 0, "no standing approval");
+            assertEq(IERC20(USDC).allowance(juniorTrancheEngine, bv), 0, "no standing approval");
 
             // withdraw
             vm.prank(operator);
             m.withdrawCollateral(slice);
             assertEq(m.postedCollateral(), 0, "collateral withdrawn");
-            assertEq(lp.balanceOf(engineSafe), 1000e18, "LP back to the Safe");
+            assertEq(lp.balanceOf(juniorTrancheEngine), 1000e18, "LP back to the Safe");
         }
 
         // after 2 loops: no duplicate enables.
-        assertEq(evc.getCollaterals(engineSafe).length, 1, "no dup collateral after revolve");
-        assertEq(evc.getControllers(engineSafe).length, 1, "controller stays enabled, no dup");
+        assertEq(evc.getCollaterals(juniorTrancheEngine).length, 1, "no dup collateral after revolve");
+        assertEq(evc.getControllers(juniorTrancheEngine).length, 1, "controller stays enabled, no dup");
     }
 
     // =================================================================== over-LTV / cap / stale / guard (fork)
 
     function test_over_LTV_reverts_AccountLiquidity() public {
-        (ReservoirLoopModule m, address engineSafe, address ev, address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        (ReservoirLoopModule m, address juniorTrancheEngine, address ev, address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
 
         // post $100 collateral.
         vm.prank(operator);
@@ -1063,8 +1063,8 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
     function test_aggregate_cap_boundary_and_killswitch() public {
         // cap == strike exactly: borrow(cap) succeeds, +1 reverts CapExceeded.
-        (ReservoirLoopModule m, address engineSafe,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
-        engineSafe;
+        (ReservoirLoopModule m, address juniorTrancheEngine,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        juniorTrancheEngine;
         // need cap small; redeploy module with cap = 60e6 against the same market.
         // (the _liveLoopSetup module has cap BORROW_CAP; just test boundary on a fresh small-cap module.)
         vm.prank(operator);
@@ -1092,12 +1092,12 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         // Stand up with a live mark (the deployer's setLTV needs one); then test the two fail-closed borrow paths.
         ReservoirLoopModule m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
-        address engineSafe = _summonAndEnable(m);
+        address juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6);
-        (address ev, address bv, address router) = _deployMarket(engineSafe, address(o), 0.7e4, 0.8e4);
-        m.setUp(abi.encode(owner, engineSafe, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
+        (address ev, address bv, address router) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
         _seedBorrowVault(bv, 500_000e6);
-        lp.mint(engineSafe, 1000e18);
+        lp.mint(juniorTrancheEngine, 1000e18);
 
         vm.prank(operator);
         m.postCollateral(100e18);
@@ -1134,38 +1134,38 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         // outstanding debt — a literal over-amount reverts `E_RepayTooMuch` (only `type(uint256).max` means "all").
         // So the loop repays the EXACT debt: an exact repay clears it + resets the residual approval; an over-repay
         // reverts (the operator never over-pays — it repays the strike it borrowed). See the build report.
-        (ReservoirLoopModule m, address engineSafe, , address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        (ReservoirLoopModule m, address juniorTrancheEngine, , address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
         vm.prank(operator);
         m.postCollateral(100e18);
         vm.prank(operator);
         m.borrow(40e6);
 
         // an over-repay (> outstanding debt) reverts E_RepayTooMuch (EVK does not cap a literal amount).
-        deal(USDC, engineSafe, 100e6);
+        deal(USDC, juniorTrancheEngine, 100e6);
         vm.prank(operator);
         vm.expectRevert(EvkErrors.E_RepayTooMuch.selector);
         m.repay(60e6);
         assertEq(m.outstandingDebt(), 40e6, "over-repay reverted, debt unchanged");
 
         // an EXACT repay clears the debt and resets the residual approval to 0 (security F13).
-        uint256 before = IERC20(USDC).balanceOf(engineSafe);
+        uint256 before = IERC20(USDC).balanceOf(juniorTrancheEngine);
         vm.prank(operator);
         m.repay(40e6);
         assertEq(m.outstandingDebt(), 0, "debt cleared");
-        assertEq(before - IERC20(USDC).balanceOf(engineSafe), 40e6, "exactly the debt debited");
-        assertEq(IERC20(USDC).allowance(engineSafe, bv), 0, "allowance reset to 0");
+        assertEq(before - IERC20(USDC).balanceOf(juniorTrancheEngine), 40e6, "exactly the debt debited");
+        assertEq(IERC20(USDC).allowance(juniorTrancheEngine, bv), 0, "allowance reset to 0");
     }
 
     function test_third_party_borrow_blocked_by_guard() public {
         // The engine Safe's loop passes the guard; a third party that posts the escrow on its OWN account is blocked.
         ReservoirLoopModule m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
-        address engineSafe = _summonAndEnable(m);
+        address juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6);
-        (address ev, address bv,) = _deployMarket(engineSafe, address(o), 0.7e4, 0.8e4);
-        m.setUp(abi.encode(owner, engineSafe, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
+        (address ev, address bv,) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
         _seedBorrowVault(bv, 500_000e6);
-        lp.mint(engineSafe, 1000e18);
+        lp.mint(juniorTrancheEngine, 1000e18);
 
         // engine Safe loop borrows fine (passes the guard).
         vm.prank(operator);
@@ -1191,20 +1191,20 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     /// @dev Shared live-loop setup: summon Safe, enable module, stand up market, seed USDC, push mark, mint LP.
     function _liveLoopSetup(uint16 borrowLTV, uint16 liqLTV, uint256 mark)
         internal
-        returns (ReservoirLoopModule m, address engineSafe, address ev, address bv)
+        returns (ReservoirLoopModule m, address juniorTrancheEngine, address ev, address bv)
     {
         m = _cloneReservoirLoopModule();
         SzipReservoirLpOracle o = _deployOracle(address(lp));
-        engineSafe = _summonAndEnable(m);
+        juniorTrancheEngine = _summonAndEnable(m);
         // The mark must exist before the deployer's `setLTV` (which reads `getQuote` to validate the collateral
         // price at config time) — in production CRE pushes the mark at/before deploy.
         _pushMark(o, mark);
         address router;
-        (ev, bv, router) = _deployMarket(engineSafe, address(o), borrowLTV, liqLTV);
+        (ev, bv, router) = _deployMarket(juniorTrancheEngine, address(o), borrowLTV, liqLTV);
         router;
-        m.setUp(abi.encode(owner, engineSafe, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
         _seedBorrowVault(bv, 500_000e6);
-        lp.mint(engineSafe, 1000e18);
+        lp.mint(juniorTrancheEngine, 1000e18);
     }
 
     // =================================================================== CTR-07 reservoir fund/defund (fork)
@@ -1236,17 +1236,17 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     ///      holds ≈0 at rest), and wire the reservoir vault + allocator (allocatorKey ≠ operator).
     function _ee07Setup(uint256 baseUsdc)
         internal
-        returns (ReservoirLoopModule m, address engineSafe, address ev, address bv, SzipReservoirLpOracle o)
+        returns (ReservoirLoopModule m, address juniorTrancheEngine, address ev, address bv, SzipReservoirLpOracle o)
     {
         m = _cloneReservoirLoopModule();
         o = _deployOracle(address(lp));
-        engineSafe = _summonAndEnable(m);
+        juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6); // $1/share, before the deployer's setLTV reads getQuote
         address router;
-        (ev, bv, router) = _deployMarket(engineSafe, address(o), 0.7e4, 0.8e4);
+        (ev, bv, router) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
         router;
-        m.setUp(abi.encode(owner, engineSafe, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
-        lp.mint(engineSafe, 1000e18);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
+        lp.mint(juniorTrancheEngine, 1000e18);
 
         // EE side: a fresh faithful mock + a live base resting market (no-borrow holding vault).
         ee = new MockEulerEarn(USDC);
@@ -1287,7 +1287,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_ctr07_roundtrip_restores_resting() public {
-        (ReservoirLoopModule m, address engineSafe, , address bv, SzipReservoirLpOracle o) = _ee07Setup(1_000_000e6);
+        (ReservoirLoopModule m, address juniorTrancheEngine, , address bv, SzipReservoirLpOracle o) = _ee07Setup(1_000_000e6);
         uint256 X = 100e6; // $100 funded into the reservoir
         uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket));
 
@@ -1306,7 +1306,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m.borrow(strike);
         assertEq(m.outstandingDebt(), strike, "borrowed out of the reservoir");
         // repay (give the Safe the USDC, as production from sale proceeds).
-        deal(USDC, engineSafe, strike);
+        deal(USDC, juniorTrancheEngine, strike);
         vm.prank(operator);
         m.repay(strike);
         assertEq(m.outstandingDebt(), 0, "repaid in full");
@@ -1374,7 +1374,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_ctr07_reservoir_zero_at_rest() public {
-        (ReservoirLoopModule m, address engineSafe, , address bv,) = _ee07Setup(1_000_000e6);
+        (ReservoirLoopModule m, address juniorTrancheEngine, , address bv,) = _ee07Setup(1_000_000e6);
         uint256 X = 100e6;
         uint256 strike = 50e6;
 
@@ -1384,7 +1384,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m.postCollateral(100e18);
         vm.prank(operator);
         m.borrow(strike);
-        deal(USDC, engineSafe, strike);
+        deal(USDC, juniorTrancheEngine, strike);
         vm.prank(operator);
         m.repay(strike);
         vm.prank(allocatorKey);

@@ -80,7 +80,7 @@ contract WarehouseAdminModuleTest is ForkConfig {
     MockEulerEarn internal ee;
     address internal usdc;
     address internal forwarder = makeAddr("forwarder");
-    address internal repaySink = makeAddr("repaySink");
+    address internal redemptionBox = makeAddr("redemptionBox");
     address internal godOwner; // = this test contract (drives the 1/1 Safe owner sig)
     address internal attacker = makeAddr("attacker");
 
@@ -102,10 +102,10 @@ contract WarehouseAdminModuleTest is ForkConfig {
         ee = new MockEulerEarn(usdc);
 
         deployer = new CreditWarehouseDeployer();
-        w = deployer.deploy(godOwner, godOwner, address(ee), usdc, forwarder, repaySink, 1);
+        w = deployer.deploy(godOwner, godOwner, address(ee), usdc, forwarder, redemptionBox, 1);
 
         adapter = WarehouseAdminModule(w.adapter);
-        safe = w.safe;
+        safe = w.warehouseSafe;
         roles = w.roles;
         rk = w.roleKey;
     }
@@ -182,10 +182,10 @@ contract WarehouseAdminModuleTest is ForkConfig {
 
         // Adapter immutables.
         assertEq(address(adapter.roles()), roles, "adapter.roles");
-        assertEq(adapter.safe(), safe, "adapter.safe");
+        assertEq(adapter.warehouseSafe(), safe, "adapter.warehouseSafe");
         assertEq(adapter.eePool(), address(ee), "adapter.eePool");
         assertEq(adapter.usdc(), usdc, "adapter.usdc");
-        assertEq(adapter.repaySink(), repaySink, "adapter.repaySink");
+        assertEq(adapter.redemptionBox(), redemptionBox, "adapter.redemptionBox");
         assertEq(adapter.roleKey(), rk, "adapter.roleKey");
         assertTrue(rk != bytes32(0), "roleKey != 0");
         assertEq(adapter.getForwarderAddress(), forwarder, "forwarder");
@@ -198,19 +198,19 @@ contract WarehouseAdminModuleTest is ForkConfig {
 
     function test_Ctor_RevertsOnZeroAddress() public {
         vm.expectRevert(); // ReceiverTemplate.InvalidForwarderAddress
-        new WarehouseAdminModule(address(0), roles, rk, safe, address(ee), usdc, repaySink);
+        new WarehouseAdminModule(address(0), roles, rk, safe, address(ee), usdc, redemptionBox);
 
         vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
-        new WarehouseAdminModule(forwarder, address(0), rk, safe, address(ee), usdc, repaySink);
+        new WarehouseAdminModule(forwarder, address(0), rk, safe, address(ee), usdc, redemptionBox);
 
         vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
-        new WarehouseAdminModule(forwarder, roles, rk, address(0), address(ee), usdc, repaySink);
+        new WarehouseAdminModule(forwarder, roles, rk, address(0), address(ee), usdc, redemptionBox);
 
         vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
-        new WarehouseAdminModule(forwarder, roles, rk, safe, address(0), usdc, repaySink);
+        new WarehouseAdminModule(forwarder, roles, rk, safe, address(0), usdc, redemptionBox);
 
         vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
-        new WarehouseAdminModule(forwarder, roles, rk, safe, address(ee), address(0), repaySink);
+        new WarehouseAdminModule(forwarder, roles, rk, safe, address(ee), address(0), redemptionBox);
 
         vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
         new WarehouseAdminModule(forwarder, roles, rk, safe, address(ee), usdc, address(0));
@@ -218,7 +218,7 @@ contract WarehouseAdminModuleTest is ForkConfig {
 
     function test_Ctor_RevertsOnZeroRoleKey() public {
         vm.expectRevert(WarehouseAdminModule.ZeroRoleKey.selector);
-        new WarehouseAdminModule(forwarder, roles, bytes32(0), safe, address(ee), usdc, repaySink);
+        new WarehouseAdminModule(forwarder, roles, bytes32(0), safe, address(ee), usdc, redemptionBox);
     }
 
     // ============================================================
@@ -270,19 +270,19 @@ contract WarehouseAdminModuleTest is ForkConfig {
         uint256 amount = 250_000e6;
 
         vm.expectEmit(true, false, false, true, address(adapter));
-        emit WarehouseOp(REPAY, usdc, abi.encodeWithSelector(IERC20.transfer.selector, repaySink, amount));
-        _onReport(REPAY, abi.encode(repaySink, amount));
+        emit WarehouseOp(REPAY, usdc, abi.encodeWithSelector(IERC20.transfer.selector, redemptionBox, amount));
+        _onReport(REPAY, abi.encode(redemptionBox, amount));
 
-        assertEq(IERC20(usdc).balanceOf(repaySink), amount, "repaySink received USDC");
+        assertEq(IERC20(usdc).balanceOf(redemptionBox), amount, "redemptionBox received USDC");
         assertEq(IERC20(usdc).balanceOf(safe), SUPPLY_AMT - amount, "Safe drawn down");
     }
 
-    /// @notice Self-enforced sink: a REPAY payload with a `dest` other than `repaySink` reverts in the adapter
+    /// @notice Self-enforced sink: a REPAY payload with a `dest` other than `redemptionBox` reverts in the adapter
     ///         (belt-and-suspenders), not only at the Roles scope.
     function test_Repay_RevertsOnWrongSink() public {
         _fundSafe(SUPPLY_AMT);
         address attacker = makeAddr("attacker");
-        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.WrongRepaySink.selector, attacker));
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.WrongRedemptionBox.selector, attacker));
         _onReport(REPAY, abi.encode(attacker, uint256(250_000e6)));
     }
 
@@ -322,10 +322,10 @@ contract WarehouseAdminModuleTest is ForkConfig {
             m, usdc, 0, abi.encodeWithSelector(IERC20.transfer.selector, address(ee), amt), OP_CALL, ST_PARAMETER_NOT_ALLOWED
         );
 
-        // to == repaySink -> SUCCEEDS (proves the pin is exactly repaySink, not adapter hardcoding).
-        bool ok = m.exec(usdc, 0, abi.encodeWithSelector(IERC20.transfer.selector, repaySink, amt), OP_CALL, rk);
-        assertTrue(ok, "member transfer to repaySink succeeds");
-        assertEq(IERC20(usdc).balanceOf(repaySink), amt, "repaySink received the member transfer");
+        // to == redemptionBox -> SUCCEEDS (proves the pin is exactly redemptionBox, not adapter hardcoding).
+        bool ok = m.exec(usdc, 0, abi.encodeWithSelector(IERC20.transfer.selector, redemptionBox, amt), OP_CALL, rk);
+        assertTrue(ok, "member transfer to redemptionBox succeeds");
+        assertEq(IERC20(usdc).balanceOf(redemptionBox), amt, "redemptionBox received the member transfer");
     }
 
     // ============================================================
@@ -402,7 +402,7 @@ contract WarehouseAdminModuleTest is ForkConfig {
         );
         // un-scoped target (a random address) -> TargetAddressNotAllowed.
         _assertConditionViolation(
-            m, attacker, 0, abi.encodeWithSelector(IERC20.transfer.selector, repaySink, uint256(1)), OP_CALL, ST_TARGET_NOT_ALLOWED
+            m, attacker, 0, abi.encodeWithSelector(IERC20.transfer.selector, redemptionBox, uint256(1)), OP_CALL, ST_TARGET_NOT_ALLOWED
         );
         // un-scoped selector on a SCOPED target (eePool.withdraw via random selector) -> FunctionNotAllowed.
         _assertConditionViolation(
@@ -476,7 +476,7 @@ contract WarehouseAdminModuleTest is ForkConfig {
         // REPAY more USDC than the Safe holds -> transfer fails -> ModuleTransactionFailed.
         vm.prank(forwarder);
         vm.expectRevert(MODULE_TX_FAILED_SEL);
-        adapter.onReport("", abi.encode(REPAY, abi.encode(repaySink, SUPPLY_AMT + 1)));
+        adapter.onReport("", abi.encode(REPAY, abi.encode(redemptionBox, SUPPLY_AMT + 1)));
     }
 
     function test_Redeem_ZeroIsNoOpSuccess() public {
@@ -529,7 +529,7 @@ contract WarehouseAdminModuleTest is ForkConfig {
         // A failing REPAY (over-held) reverts; balances untouched.
         vm.prank(forwarder);
         vm.expectRevert(MODULE_TX_FAILED_SEL);
-        adapter.onReport("", abi.encode(REPAY, abi.encode(repaySink, SUPPLY_AMT + 1)));
+        adapter.onReport("", abi.encode(REPAY, abi.encode(redemptionBox, SUPPLY_AMT + 1)));
 
         // A malformed payload reverts; balances untouched.
         vm.prank(forwarder);

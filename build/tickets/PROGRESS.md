@@ -48,10 +48,11 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   with NO registry change; **CTR-10c** (the actual reference non-Euler adapter + wrapper + fork test) is
   **BACK-PRESSURE / DEFERRED (P5)** — still blocked on a concrete venue choice + a real bindable non-Euler senior
   surface (none deployed on the Base fork) + donation-immunity needing a real deployed venue (obligations #1/#2/#4
-  logged in `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). So the scaling/federation contract
+  preserved in the CTR-10c deferred-spec note below + `docs/venue.md`). So the scaling/federation contract
   workstream has NO near-term cold-buildable item left (CTR-10c waits on a 2nd venue actually being wanted; the
-  host is now READY for it). (**CTR-12 DONE 2026-06-19** — note below; **CTR-13 DONE**. **CTR-11** — cohort
-  slash-to-main-safe — is the remaining independent loss-side ticket, separate from the scaling ledger.)
+  host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
+  cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
+  CTR-10c second-venue integration.)
 
 - **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
   needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
@@ -112,7 +113,7 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   wire `docs/wires/WOOF-04.md` (`draw` entry now enumerates the optional 4th fee leg + the financed-fee/F2/hook/
   default-OFF semantics + the fee setters/events). Forward spec `claude-zipcode.md` §5 gains a "Per-revolution draw
   fee (BUILT — CTR-09)" note (distinct from the EulerEarn perf-fee). No `COVERAGE.md` row change (no new file).
-  **Unblocks protocol revenue → treasury `feeRecipient`** (the deploy must `setFeeRecipient(treasurySafe)` to turn it
+  **Unblocks protocol revenue → treasury `feeRecipient`** (the deploy must `setFeeRecipient(adminSafe)` to turn it
   on — default OFF ships safe).
   **Fee calibration (dartboard 2026-06-19, reviewer-driven):** default `feeBps` set to **50 bps (0.50%)** — NOT the
   original 0.1%. Anchored to market comps researched this session: bank warehouse lines SOFR+2.25–3.25% (~6–7%),
@@ -120,36 +121,36 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   WAC ~10.9% (Angel Oak). Since each revolution is a fresh origination (warehouse → secondary take-out → redraw) the
   origination-scale fee is charged per draw; ~6mo secondary-market seasoning bounds velocity to ≤4 turns/yr
   (≤quarterly), so 50 bps ≈ ≤2%/yr of drawn volume. Re-address with observed velocity. **The time-based APR is
-  separate and NOT coded** — borrow vaults run `ZeroIRM` (0%, `DeployMainnet.s.sol:101-106`); a real ~7.5% warehouse
-  rate (SOFR + ~3.9%) is a deferred Timelock IRM-swap (logged as an obligation below). Tests made default-robust
+  separate** — built later as CTR-13: the per-line vaults now run a real flat ~7.5% `IRMLinearKink` (the reservoir
+  stays `ZeroIRM`). See the CTR-13 DONE note below. Tests made default-robust
   (read `adapter.feeBps()`; dust amount = `10_000/feeBps - 1`) + a `feeBps == 50` default assertion; gate re-run green
   (adapter 46/46, controller 39/39, reservoir 41/41).
 
-- **CTR-12 note (2026-06-19) — rename `capitalSink` → `treasurySafe` (loss-side recovery destination).** Pure rename,
+- **CTR-12 note (2026-06-19) — rename `capitalSink` → `adminSafe` (loss-side recovery destination).** Pure rename,
   ZERO behavior change. The slashed-bond capital-hole destination is now explicitly named the protocol **treasury
   Safe** (the recovery custody bridging xALPHA → TAO → USDC, §11), closing the PROGRESS-433 "designate the real safe"
   item at the NAMING level (Safe creation + bridge process stays M2 ops). **The draft's enumerated surface was STALE**
   — CTR-06b/06c (built earlier this session) had added `capitalSink` to `script/SiloDeployer.s.sol` +
   `script/JuniorTrancheDeployer.s.sol` (Params field + ctor pass) and `test/{SiloDeployer,JuniorTrancheDeployer,
   DefaultCoordinator}.t.sol`; I re-grepped the LIVE tree (not the draft) and swept them all in to satisfy Key-req #2
-  (zero `capitalSink` left). Renamed 3 case variants: `capitalSink`→`treasurySafe` (slot/var/field/getter), `setCapitalSink`
-  →`setTreasurySafe`, `CAPITAL_SINK`→`TREASURY_SAFE` (env), `WiringSet` label `"capitalSink"`→`"treasurySafe"`, test
-  `test_ctor_zero_capitalSink_reverts`→`..._treasurySafe_reverts`; natspec/comments name it "the protocol treasury
+  (zero `capitalSink` left). Renamed 3 case variants: `capitalSink`→`adminSafe` (slot/var/field/getter), `setCapitalSink`
+  →`setAdminSafe`, `CAPITAL_SINK`→`ADMIN_SAFE` (env), `WiringSet` label `"capitalSink"`→`"adminSafe"`, test
+  `test_ctor_zero_capitalSink_reverts`→`..._adminSafe_reverts`; natspec/comments name it "the protocol treasury
   Safe". `slashXAlphaToCapital`/`SlashedToCapital`/RecycleModule "capital hole" prose UNTOUCHED (Do-NOT honored).
-  **Gate green — FULL suite** (not just touched paths: the public getter `capitalSink()→treasurySafe()` is an ABI
+  **Gate green — FULL suite** (not just touched paths: the public getter `capitalSink()→adminSafe()` is an ABI
   change, so per the CTR-08 process lesson I re-ran everything): `forge build` exit 0 + `forge test` = **920 passed /
   0 failed / 3 skipped (56 suites)** — byte-identical to the CTR-10b baseline, proving behavior-neutrality. `grep -rni
   capitalsink|capital_sink` over `src`/`script`/`test`/`docs` = NONE. **Doc-sync:** backward wires
   `docs/wires/8-Bx-LienXAlphaEscrow.md` (slot/setter/WiringSet-label/4-arg-ctor/destination prose), `DefaultCoordinator.md`,
-  `DeployZipcode.md` (`TREASURY_SAFE` env), `8-B10-RecycleModule.md`; `docs/loss.md` was already on "treasury Safe".
+  `DeployZipcode.md` (`ADMIN_SAFE` env), `8-B10-RecycleModule.md`; `docs/loss.md` was already on "treasury Safe".
   No `COVERAGE.md` change (no new file). No `claude-zipcode.md` edit (§11/§17 unchanged — the slot was never spec-named).
   Ticket: `build/tickets/contracts/CTR-12-rename-capitalsink-treasurysafe.md`. **Process note:** a draft ticket's
   "Binds to (verified)" grep set goes STALE when sibling tickets land between authoring and build — always re-grep the
   live tree at build time, never trust the enumerated set.
-  **DEPLOY OBLIGATION (CTR-12):** set `TREASURY_SAFE` to a **real Gnosis Safe** at deploy. The `LienXAlphaEscrow`
+  **DEPLOY OBLIGATION (CTR-12):** set `ADMIN_SAFE` to a **real Gnosis Safe** at deploy. The `LienXAlphaEscrow`
   ctor only reverts on `address(0)` (doesn't enforce Safe-ness), but the live deploy must wire a real Safe — it is
   the custody that holds slashed xALPHA and runs the off-chain xALPHA→TAO→USDC bridge. Today it's a placeholder
-  (`ANVIL_5` locally / the `TREASURY_SAFE` env var on mainnet). The slot is dormant in M1 (only `slashXAlphaToCapital`
+  (`ANVIL_5` locally / the `ADMIN_SAFE` env var on mainnet). The slot is dormant in M1 (only `slashXAlphaToCapital`
   touches it; the slash path isn't active until the `DefaultCoordinator` drives it).
 
 ---
@@ -192,15 +193,15 @@ lines (structure 1, the safe HELOC-warehouse standard) and insurance-underwritte
 3. **RESOLVED 2026-06-19 (CTR-07, below).** Slot-2 revolving was half-wired: the reservoir borrow/repay cycled, but
    no `reallocate` funded it from resting or re-absorbed after repay. CTR-07 added `fundReservoir`/`defundReservoir`
    (`onlyReservoirAllocator`) — the per-line `fund`/`closeLine` reallocate pattern generalized to the reservoir.
-4. Reservoir borrow is pinned to `engineSafe` (`ReservoirBorrowGuard.sol:91-92`) + capped (`borrowCap`, Timelock)
+4. Reservoir borrow is pinned to `juniorTrancheEngine` (`ReservoirBorrowGuard.sol:91-92`) + capped (`borrowCap`, Timelock)
    — not externally exploitable; residual is internal contention vs senior redemption liquidity (informs CTR-07).
 5. Structure-1's per-lien oracle is an n→∞ keyed cache; structure-2 keys the line to a borrower → one persistent
    key (`ZipcodeOracleRegistry` hosts both meanings unchanged). **→ CTR-08.**
 
 **Cross-ticket obligations:** CTR-03 depends on CTR-02; CTR-05 on CTR-02; CTR-06 on CTR-02/03/05 (+CTR-07 wiring);
 CTR-08/09 compose with CTR-03/07; CTR-10 on CTR-02..09. **Deploy-wiring:** every silo's
-`WarehouseAdminModule.repaySink` → the ONE shared `ZipRedemptionQueue` (fungible senior; redemption drains any
-warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != juniorSafe`, `warehouseSafe != juniorSafe`).
+`WarehouseAdminModule.redemptionBox` → the ONE shared `ZipRedemptionQueue` (fungible senior; redemption drains any
+warehouse). **§11 non-commingling assert** at silo deploy (`redemptionBox != juniorSafe`, `warehouseSafe != juniorSafe`).
 
 **Ledger (build order):**
 - **CTR-02** `SiloRegistry` — silo set + admission gate + slot accounting. **DONE 2026-06-18** (below). *(leaf)*
@@ -231,9 +232,26 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
     (note below). *(dep CTR-10a)* — RESOLVES obligation #3 (reuse `eePool`, no new field). A future venue adapter
     now plugs in with NO registry change.
   - **CTR-10c** the reference non-Euler adapter + `ISeniorPool` wrapper + fork test. **BACK-PRESSURE / DEFERRED
-    (P5)** — no bindable non-Euler senior surface on the Base fork, venue unchosen, donation-immunity needs a real
-    deployed venue (obligations #1/#2/#4 in `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). *(dep
-    CTR-10b; LATER / P5)*
+    (P5)** — build only when a second venue is actually wanted. Design recorded in `docs/venue.md` (the federation
+    section). Full deferred spec preserved here (the `CTR-10-federation-iseniorpool.md` ticket was DELETED 2026-06-19
+    after CTR-10a/b landed; git retains the original text):
+    - **Blocker #1 — no bindable non-Euler senior surface on the Base fork (block 47096000).** `BaseAddresses.sol`
+      has zero Aave/Morpho/MetaMorpho/Centrifuge addresses. Reference clones are un-deployed (`moneymarket-contracts`
+      USD3 is 4626 source but no Base deployment), async (`centrifuge`/`erc7540-reference` — request/claim, not a
+      synchronous `maxWithdraw`), or non-4626 id-keyed (`moneymarket` Morpho.sol). Binding a real adapter means
+      first deploying a reference vault into the fork OR guessing an address — both fail the zero-guess gate.
+    - **Blocker #2 — the venue is unchosen.** Aave v4 (not live) vs MetaMorpho (4626) vs an orderbook (neither) are
+      mutually-exclusive integrations; picking one is itself a load-bearing decision deferred to P5.
+    - **Blocker #4 — donation-immunity is a property of the real venue, not the interface.** A mock hardcodes
+      immunity and proves nothing about the real venue's `convertToAssets`/`maxWithdraw` skewability; the per-venue
+      fork test genuinely needs a chosen, deployed venue. (Obligation #3 — the senior-surface plumbing — was RESOLVED
+      by CTR-10b: reuse `eePool` as the generic `ISeniorPool` read, no new struct field.)
+    - **Done-when (gate):** `forge build` green; a fork test stands up a non-Euler silo, registers it via
+      `SiloRegistry.addSilo`, opens a line through it, shows `SeniorNavAggregator` aggregating it donation-immune,
+      and proves a default in it marks ONLY its own junior. Cold-build with ZERO load-bearing guesses.
+    - **Carry-over:** the §11 non-commingling deploy assert (`redemptionBox != juniorSafe`, `warehouseSafe != juniorSafe`)
+      must be NAMED in the admission gate's done-when so a non-4626-wrapper silo cannot silently drop it.
+    *(dep CTR-10b; LATER / P5)*
 
 **Spec sync (forward, NOT a precondition):** each ticket is the complete, self-sufficient build instruction (it
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
@@ -344,14 +362,14 @@ owed to the spec before CTR-02 can run.
 > CTR-06; the re-scoped CTR-06 is now COMPLETE (06a+06b+06c). Added `contracts/script/SiloDeployer.s.sol` +
 > `contracts/test/SiloDeployer.t.sol` (NEW files only — no existing contract changed, so no regression possible).
 > `deploy(SiloParams)` composes the four sub-deployers + the per-silo venue front into ONE complete silo and returns
-> the `Silo` handle the Timelock registers via `addSilo`: (0) precompute the junior `mainSafe`; (1) EE pool via a
+> the `Silo` handle the Timelock registers via `addSilo`: (0) precompute the junior `juniorTrancheSafe`; (1) EE pool via a
 > `virtual _createEePool` (live-factory `.call`; mock in the test); (2) resting `baseUsdcMarket` (bare EVK proxy);
 > (3) `ReservoirMarketDeployer` (CTR-06a); (4) EE admin config via low-level `_eeCall`; (5) per-silo `CREGatingHook` +
-> `EulerVenueAdapter`; (6) `CreditWarehouseDeployer` (repaySink = the SHARED queue); (7) `JuniorTrancheDeployer`
+> `EulerVenueAdapter`; (6) `CreditWarehouseDeployer` (redemptionBox = the SHARED queue); (7) `JuniorTrancheDeployer`
 > (CTR-06b); (8) fail-closed post-asserts; (9) return. **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/
 > reference-verifier/contract-binding) CONVERGED on ~9 load-bearing gaps in the first draft, ALL in-tree fixable (ZERO
 > back-pressure), fixed in the ticket BEFORE cold-build: (1) the **reservoir↔junior circular dependency** — the reservoir
-> `engineSafe` must be the junior `mainSafe`, but `JuniorTrancheDeployer.deploy` self-summons its Baal internally AND
+> `juniorTrancheEngine` must be the junior `juniorTrancheSafe`, but `JuniorTrancheDeployer.deploy` self-summons its Baal internally AND
 > consumes the reservoir vaults as inputs; resolved by precomputing `jr.computeMainSafe(p.saltNonce)` (verified
 > saltNonce-only, caller-independent — `SummonSubstrate.s.sol:110-118`; CTR-06b's `MainSafeMismatch` guarantees the
 > precompute == the eventual summon), NOT the draft's infeasible "two-phase junior build"; (2) **`CREGatingHook` is
@@ -397,7 +415,7 @@ owed to the spec before CTR-02 can run.
 > reference-verifier/contract-binding) CONVERGED on the **owner/signer model** as the single most-blocking gap — the
 > original draft said "the broadcaster MUST be `team`" while CTR-06c calls `new JuniorTrancheDeployer().deploy(...)`
 > (mutually exclusive: a `new`'d contract's internal Safe-drives run with `msg.sender == the deployer instance`, never
-> the broadcaster, so `_summon(team,…)` reverts on the sidecar owner-add). **Ticket fixed BEFORE cold-build** to the
+> the broadcaster, so `_summon(team,…)` reverts on the juniorTrancheSidecar owner-add). **Ticket fixed BEFORE cold-build** to the
 > transient-owner pattern (self-summon `_summon(address(this),…)` à la `CreditWarehouseDeployer`; reimplement the 4
 > `i.*`-bound helpers parameterized; step-17 `swapOwner` both Safes to the real `team`; Safes → `team` NOT Timelock —
 > the preamble's "every owner to the Timelock" was wrong for the Safes). Plus: the full `JuniorParams` struct defined,
@@ -575,7 +593,7 @@ owed to the spec before CTR-02 can run.
 > **KEEPER-01a — buy-burn fill-detect → `burnFor` job — DONE 2026-06-17.** The first live (K) write job + the burn
 > half of the hybrid buy-burn cycle (`CRE-OPS-ROUTING.md`): a CoW fill lands szipUSD in the engine Safe; `BurnJob`
 > retires it via `ExitGate.burnFor(amount)` (`onlyWindowController` = the keeper key). Added to `cre/keeper/`:
-> `internal/job/burn_job.go` (`BurnJob`: reads `shareToken()`/`engineSafe()`/`balanceOf` off the Gate each tick
+> `internal/job/burn_job.go` (`BurnJob`: reads `shareToken()`/`juniorTrancheEngine()`/`balanceOf` off the Gate each tick
 > §17-re-pointable, burns the **full** engine-Safe balance — `Loot(gate) ≥ that` always, the soulbound-Loot
 > invariant — above a config `MinBurnAmount` floor; no-op on zero/below-floor/unwired) · `internal/chain/encode.go`
 > (`PackUintCall` for one-uint256 write calldata) · `MinBurnAmount` config (env-only `*big.Int`; explicit 0 valid) ·
@@ -691,9 +709,9 @@ Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) 
 | CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call. *(2026-06-12: `settleEpoch` is now ON-DEMAND — the 30-day epoch gate was removed — so this can be event-driven off the queue's `RedemptionSettled` event rather than a fixed cron: settle → if backlog remains, sequence another REDEEM→REPAY. See `build/wires/9-ZipRedemptionQueue.md`.)* **Scope: `build/tickets/cre/CRE-02-redemption-settle.md`.** | §8.3 / §8.5 |
 | CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` — and the xALPHA-APR feed (the 8x-02 receiver is built; the Go producer remains) | §8.6 / §8.8 |
 | CRE-04 | Senior-warehouse **SUPPLY / APPROVE / REPAY** ops via the Roles adapter | §8.5 |
-| CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔sidecar rotation; regime/split/cap policy). **SPLIT — exit half = CRE-05a (DONE); harvest + rotation remainder = KEEPER-01b (POLICY-BLOCKED) + KEEPER-01c (DEFERRED). CRE-05 is NOT complete; there is no CRE-05b/05c — the remainder lives under the KEEPER prefix.** *(2026-06-12 design inputs: (a) the DurationFreeze main↔sidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth — the exit half SHIPPED as CRE-05a, `cre/buyburn-bid/`.)* **CLARIFICATION (2026-06-16): the freeze's physical lever (`commit`/`release`) is DORMANT by design.** `commit` is `onlyOperator` + discretionary (no auto-machinery), and the sidecar is empty in normal operation because the dominant asset (the staked ICHI LP) can't be moved into it — it is counted toward the floor IN PLACE via the oracle's `pathLockedLpEquity()` (`coverageValue = committedValue + pathLockedLpEquity`). So CRE-05 should drive `commit` ONLY on a coverage shortfall (a price-drift breach where in-place LP + sidecar < `requiredCommittedValue`), to top up with the movable plain legs (USDC/zipUSD preferred — stable backing). The live machinery is the **accounting + outflow gates** (`covered()` on `postBid`/`removeLiquidity`/`release`), not the physical rotation. | §8.7 |
+| CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔juniorTrancheSidecar rotation; regime/split/cap policy). **SPLIT — exit half = CRE-05a (DONE); harvest + rotation remainder = KEEPER-01b (POLICY-BLOCKED) + KEEPER-01c (DEFERRED). CRE-05 is NOT complete; there is no CRE-05b/05c — the remainder lives under the KEEPER prefix.** *(2026-06-12 design inputs: (a) the DurationFreeze main↔juniorTrancheSidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth — the exit half SHIPPED as CRE-05a, `cre/buyburn-bid/`.)* **CLARIFICATION (2026-06-16): the freeze's physical lever (`commit`/`release`) is DORMANT by design.** `commit` is `onlyOperator` + discretionary (no auto-machinery), and the juniorTrancheSidecar is empty in normal operation because the dominant asset (the staked ICHI LP) can't be moved into it — it is counted toward the floor IN PLACE via the oracle's `pathLockedLpEquity()` (`coverageValue = committedValue + pathLockedLpEquity`). So CRE-05 should drive `commit` ONLY on a coverage shortfall (a price-drift breach where in-place LP + juniorTrancheSidecar < `requiredCommittedValue`), to top up with the movable plain legs (USDC/zipUSD preferred — stable backing). The live machinery is the **accounting + outflow gates** (`covered()` on `postBid`/`removeLiquidity`/`release`), not the physical rotation. | §8.7 |
 | CRE-06 | **DISCHARGED-as-config by CRE-05a (2026-06-16).** The exit-vs-harvest split is now the `harvestReserve` + `safetyBuffer` Config params in the buy-burn bid sizing (`clamp(freeReservoir − harvestReserve − safetyBuffer, 0, buybackCap)`) — M1 constants; a dynamic utilization-aware policy is a later parameter swap, not a redesign. No standalone workflow. (Cross-cutting coupling now recorded in the CRE-05a ticket + `build/wires/DurationFreezeModule.md`.) | §8.5 / §8.7 |
-| CRE-05a | **DONE 2026-06-16 — buy-burn bid-loop** (the exit half of CRE-05; `cre/buyburn-bid/`). The single-resting-bid automation via the CTR-01 report path. Gate green (wasip1 build + 14 tests). The REST of CRE-05 (the harvest engine legs 8-B5…8-B10 + main↔sidecar rotation) remains — tracked as KEEPER-01b (harvest orchestrator, POLICY-BLOCKED) + KEEPER-01c (freeze commit, DEFERRED); there is no CRE-05b/05c. | §8.7 |
+| CRE-05a | **DONE 2026-06-16 — buy-burn bid-loop** (the exit half of CRE-05; `cre/buyburn-bid/`). The single-resting-bid automation via the CTR-01 report path. Gate green (wasip1 build + 14 tests). The REST of CRE-05 (the harvest engine legs 8-B5…8-B10 + main↔juniorTrancheSidecar rotation) remains — tracked as KEEPER-01b (harvest orchestrator, POLICY-BLOCKED) + KEEPER-01c (freeze commit, DEFERRED); there is no CRE-05b/05c. | §8.7 |
 
 ### Frontend ↔ anvil (Vue/viem, in the `zipcode-finance-euler` LAYER over a read-only `euler-lite` base)
 **Goal: make the team's skinned borrower/lender app interactive against the live local protocol — "fuck around
@@ -797,18 +815,27 @@ track on it.
   (`feeRecipient != 0`, default OFF). Not a contract change owed; a CRE-01 producer constraint. Truth:
   `docs/wires/WOOF-04.md` (`draw` entry).
 
-- **TICKETED 2026-06-19 as CTR-13 (raised, CTR-09 calibration) — the line APR is `ZeroIRM` (0%); a real warehouse
-  rate is an unbuilt Timelock IRM-swap.** The per-line borrow vaults install `i.irm`, which `DeployMainnet.s.sol:101-106`
-  provisions as a **`ZeroIRM` (0%-rate model)** by default ("swap a real IRM in later via the Timelock if desired").
-  So today lines accrue **no interest** — only the CTR-09 draw fee is live revenue. The economics the reviewer
-  settled this session assume a **time-based APR ≈ 7.5%** (SOFR ~3.63% + ~3.9% spread; anchored to bank warehouse
-  lines SOFR+2.25–3.25% and ≤ the consumer HELOC ~7.5–8.5% so the originator's gain-on-sale margin survives). Turning
-  it on is **not coded** — `build/tickets/contracts/CTR-13-line-irm-apr.md` (deploy EVK `IRMLinearKink` flat at
-  ~7.5%, `adapter.setIrm` for new lines, reservoir stays zero/internal-POL, existing lines roll off within a quarter,
-  set perf-fee `f`). NO new `src/` contract (reuses `IRMLinearKink` + the existing `setIrm`/`setInterestRateModel`
-  surfaces). Separate from CTR-09 (the fee shipped; the rate did not). Not owed before any current work; a
-  revenue-completeness item. Truth: `docs/wires/WOOF-04.md` (`draw` entry, APR note); discharge marks this DONE when
-  CTR-13 lands.
+- **CTR-13 DONE 2026-06-19 — the line APR is now a real flat ~7.5% IRM (was `ZeroIRM`); `f` left dormant; curator
+  fee added.** The per-line borrow vaults run a flat `IRMLinearKink` (`script/LineIrm.sol`,
+  `baseRate = 0.075·1e27 / SECONDS_PER_YEAR` per-second RAY, units VERIFIED against EVK `Cache` accrual; per-second
+  compounding ⇒ effective APY ~7.788%), wired into the adapter `irm` slot (`setIrm`; every `openLine` installs it at
+  `EulerVenueAdapter.sol:323`). The **reservoir** borrow vault stays on `ZeroIRM` (internal POL, §4.5.1) — the adapter
+  `irm` slot and the reservoir IRM are independent. NO new `src/` contract for the rate (reuses EVK `IRMLinearKink` +
+  the existing `setIrm`/`setInterestRateModel`). Fresh-deploy only (no live lines to roll off).
+  **EE perf-fee `f` left DORMANT at 0** (recipient pre-wired to the warehouse Safe): the warehouse Safe is the SOLE
+  senior EE-share custodian, so net line interest already accrues to it via share appreciation — a non-zero `f` would
+  mint fee-shares to the pool's own owner (a no-op until external senior LPs ever deposit, post-M1). This reverses the
+  ticket's "set `f`" step after the economics review.
+  **Curator fee added (claw-back from Euler).** New Timelock-settable `EulerVenueAdapter.curatorSafe` slot
+  (`setCuratorSafe`, `WiringSet`); every `openLine` sets it as the line vault's EVK `feeReceiver`, so the GOVERNOR
+  share of the line vault's default 10% `interestFee` (Euler capped at 50% ⇒ ~5% of gross line interest) routes to the
+  curator instead of forfeiting 100% to Euler. `address(0)` = off (forfeit). Wired in
+  `DeployZipcode`/`DeployLocal`/`DeployMainnet` (P1 step 8b; `CURATOR_SAFE` env / `ANVIL_6` local) AND `SiloDeployer`
+  (per-silo `SiloParams.curatorSafe`, for when the federation path goes live). Arrives as per-line-vault fee-shares
+  (claim via the vault's `convertFees()` → redeem to USDC).
+  Fork-tested: `EulerVenueAdapter.t.sol` `test_CTR13_*` (rate proof; a real line accrues ~7.5% while a `ZeroIRM` line
+  accrues 0 over a year; curator-fee split ≥ Euler's). Doc-sync: `claude-zipcode.md` §5 + `docs/wires/WOOF-04.md`.
+  Truth: `docs/wires/WOOF-04.md` (`draw` entry, APR note). **Uncommitted (working tree).**
 
 - **RESOLVED INTO A WORKSTREAM (2026-06-18) — concurrent-line ceiling.** This TODO (raised 2026-06-15 ticketing
   SEC-06) is now the **Credit-warehouse scaling + federation** workstream above (CTR-02..CTR-10). Decision: shard
@@ -852,7 +879,7 @@ track on it.
       on-chain queue, `ExitGate.sol:26-28`). The junior exit is an **off-chain CoW sell order**; the only on-chain user
       write is `szipUsd.approve(vaultRelayer)`. `ExitGate.burnFor` is `onlyWindowController` (CRE keeper), not the UI.
     - `ZipRedemptionQueue` is the **SENIOR zipUSD→USDC treasury off-ramp** (`requestRedeem` is `onlyRedeemController` =
-      the rq Safe driven by `OffRampModule`; `requester == owner == rqSafe`). A retail lender **cannot** enter it or
+      the rq Safe driven by `OffRampModule`; `requester == owner == juniorTrancheSafe`). A retail lender **cannot** enter it or
       claim from it. `ZipRedemptionQueue.sol:14-17` + `OffRampModule.sol:33-40`: *"NOT the junior Exit Gate… Never
       conflate."* The FE has **no senior-queue surface** and **no szipUSD cooldown** (the resting CoW order is the queue).
     - **No back-pressure obligation owed** — every surface the real (CoW) design needs EXISTS (`SzipBuyBurnModule` CoW
@@ -931,23 +958,31 @@ track on it.
   live in M2. The driver is **CRE-01's `rt8` default/recovery action family** (already in the CRE backlog above —
   not a new workflow) plus the off-chain capital-sink liquidation account (xALPHA→USDC on Bittensor). No contract
   code owed — it's CRE-01 sequencing + that operational account.
-- **LOSS — cohort-premium should route to the MAIN Safe + a CRE flow, not the sidecar in-kind (design decided 2026-06-18).**
-  As-built, `LienXAlphaEscrow.slashXAlphaToCohort` parks the premium xALPHA in the **sidecar** Safe and the natspec
+- **LOSS — cohort-premium routes to the MAIN Safe (CTR-11 DONE 2026-06-19; the CRE flow stays M2).** `LienXAlphaEscrow`
+  now sends `slashXAlphaToCohort` to a `juniorTrancheSafe` slot wired to the engine/main basket Safe (was the
+  inert `juniorTrancheSidecar`). The slot replaces the old `juniorTrancheSidecar` slot (distinct name — `juniorTrancheSidecar` is a freeze concept), with
+  `setJuniorTrancheSafe` (onlyOwner/Timelock/`WiringSet`/zero-guard); `slashXAlphaToCapital → adminSafe` is
+  unchanged; the three-destination integrity thesis holds (`{bondOriginator, adminSafe, juniorTrancheSafe}`).
+  Deploy wires it = `sub.juniorTrancheSafe` in `DeployZipcode` + `JuniorTrancheDeployer` (juniorTrancheSafe already asserted distinct
+  from the warehouse Safe). Tests + docs synced (`LienXAlphaEscrow.t.sol`/`DefaultCoordinator.t.sol`; `docs/loss.md`,
+  `wires/8-Bx-LienXAlphaEscrow.md`). 243 tests green. The slash-triggered CRE flow that processes it stays M2
+  (KEEPER-01b/CRE-01). **Original design note (2026-06-18) retained below for the rationale.**
+  As-built, `LienXAlphaEscrow.slashXAlphaToCohort` parks the premium xALPHA in the **juniorTrancheSidecar** Safe and the natspec
   treats it as in-kind ("never market-sold; NAV does the cohort pro-rata for free"). But the flywheel modules
-  (`SellModule`/`LpStrategyModule`/Gate) all operate on the **engine Safe (== `mainSafe`, DeployZipcode:384)**, so they
-  can't reach sidecar xALPHA — the premium just sits there. **Decision:** route the cohort slash to the **main Baal
+  (`SellModule`/`LpStrategyModule`/Gate) all operate on the **engine Safe (== `juniorTrancheSafe`, DeployZipcode:384)**, so they
+  can't reach juniorTrancheSidecar xALPHA — the premium just sits there. **Decision:** route the cohort slash to the **main Baal
   Safe** so the existing yield-flywheel modules can subsume it (xALPHA → zipUSD → LP backing), lifting shares the
   same way emissions do; and add a **slash-triggered CRE flow that REUSES the existing Zodiac flywheel modules —
   NO new modules** (`SellModule` already does the `zipUSD↔xALPHA` POL swap on the engine Safe; the slash flow IS
   the yield/harvest sequence, just triggered on a slash or subsumed by the normal harvest cadence). Fold into the
   harvest orchestrator KEEPER-01b / the CRE-01 loss leg. **The CONTRACT half (retarget the destination + natspec) is
   ticketed as CTR-11** (`build/tickets/contracts/CTR-11-cohort-slash-to-main-safe.md`) — safe to land independently
-  (rerouted xALPHA is swept by the normal harvest vs stranded in the sidecar today). The slash-triggered CRE flow
+  (rerouted xALPHA is swept by the normal harvest vs stranded in the juniorTrancheSidecar today). The slash-triggered CRE flow
   stays M2. Implications handled in CTR-11: (a) the destination + natspec change; (b) the premium then lands in FREE
-  value, not the committed sidecar bucket — confirmed intended for the freeze-floor accounting (a stayer bonus
+  value, not the committed juniorTrancheSidecar bucket — confirmed intended for the freeze-floor accounting (a stayer bonus
   should be liquid/sellable; gross NAV unchanged, xALPHA stays a movable leg).
 - **LOSS — designate the real treasury Safe for the capital-hole recovery (recorded 2026-06-18).** The
-  destination is renamed `capitalSink` → `treasurySafe` by **CTR-12** (contract rename) — naming it the protocol
+  destination is renamed `capitalSink` → `adminSafe` by **CTR-12** (contract rename) — naming it the protocol
   treasury Safe. `slashXAlphaToCapital` routes the slashed bond there; today it's only a deploy-config placeholder.
   The remaining OPERATIONAL half (M2): create + wire the real treasury Safe and stand up its off-chain process
   (receive slashed xALPHA → bridge to Bittensor → liquidate alpha → TAO → USDC → return USDC to cover the realized
@@ -956,7 +991,7 @@ track on it.
   deliberately-deferred, **protocol-wide** end-of-build step, not a loss-side task: every contract carries
   Timelock-settable wiring (each cross-component pointer is re-pointable — `harness.md` locked decision #6), and
   the immutability lock-down is deferred to pre-prod. The loss side is just one instance — `LienXAlphaEscrow`'s
-  four slots (`xAlpha`/`coordinator`/`capitalSink`/`sidecar`) + `DefaultCoordinator.setEscrow` (onlyOwner, NOT
+  four slots (`xAlpha`/`coordinator`/`capitalSink`/`juniorTrancheSidecar`) + `DefaultCoordinator.setEscrow` (onlyOwner, NOT
   set-once) — alongside `WarehouseAdminModule`, `EulerVenueAdapter`, `ZipcodeController`, `CREGatingHook`, the
   oracles, `DurationFreezeModule`, etc. Until the lock-down, the trusted Timelock owner can re-point any of them
   (grief/redirect, never drain — §13). When ticketed, it is ONE repo-wide "freeze wiring to immutable" pass.

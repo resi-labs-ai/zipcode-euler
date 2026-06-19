@@ -30,7 +30,7 @@ In both paths the USDC sinks into `EE_POOL` with the **`CreditWarehouse` Safe** 
 | `ZipDepositModule` (`is ReentrancyGuard`) | The zap. 4 immutables + derived `scaleUp` + the set-once `gate`. `deposit`/`zap` entrypoints, `previewDeposit`/`previewZap` views, deployer-gated `setGate`. Stateless, no custody. |
 | zipUSD (`ESynth`, interfaced as `IESynth`) | The $1 synth (18-dp). The module is a **capacity-granted minter** (`mint(account,amount)`; `mint(·,0)` is a silent no-op, covered by the `ZeroAmount` guard). Local interface only — `reference/euler-vault-kit/src/Synths/ESynth.sol`. |
 | `EE_POOL` (`EulerEarn` over USDC, interfaced as `IEulerEarn`) | The USDC sink / senior backing. `deposit(assets, receiver)` pulls USDC from the module, mints shares to `receiver` (= the warehouse). Local interface — `reference/euler-earn/src/EulerEarn.sol:560`. |
-| `CreditWarehouse` Safe (`warehouse`) | The EE-share custodian (8-Bw). Passed as the `deposit` `receiver`; holds all EE shares backing un-staked zipUSD. The module never receives shares. |
+| `CreditWarehouse` Safe (`warehouseSafe`) | The EE-share custodian (8-Bw). Passed as the `deposit` `receiver`; holds all EE shares backing un-staked zipUSD. The module never receives shares. |
 | Exit Gate (`ExitGate`, interfaced as `IZipExitGate`) | The NAV-proportional issuance core. `depositFor(asset,amount,receiver)→shares` pulls the asset into the junior basket, values it via `SzipNavOracle`, mints soulbound Loot to itself + transferable szipUSD to `receiver`. `previewDeposit(asset,amount)` is the read-only quote. `contracts/src/supply/szipUSD/ExitGate.sol`. |
 | USDC | The deposit asset (6-dp). Pulled via `SafeERC20.safeTransferFrom`; approved to `EE_POOL` via `forceApprove`. |
 
@@ -40,7 +40,7 @@ In both paths the USDC sinks into `EE_POOL` with the **`CreditWarehouse` Safe** 
 - Reverts `ZeroAddress()` if any arg is zero.
 - Reads `zipDec = IERC20Metadata(zipUSD_).decimals()` and `usdcDec = IERC20Metadata(usdc_).decimals()`;
   reverts **`DecimalsTooFew()`** if `zipDec < usdcDec` (value-1:1 needs zipUSD the finer unit).
-- Sets immutables `zipUSD`, `usdc`, `eePool`, `warehouse`; `deployer = msg.sender`.
+- Sets immutables `zipUSD`, `usdc`, `eePool`, `warehouseSafe`; `deployer = msg.sender`.
 - Derives `scaleUp = 10 ** (zipDec - usdcDec)` — **not a hard-coded literal**; for 18-dp zipUSD over 6-dp USDC
   it equals `1e12`.
 
@@ -73,7 +73,7 @@ In both paths the USDC sinks into `EE_POOL` with the **`CreditWarehouse` Safe** 
    venue pool, warehouse custodies the shares (same senior-backing park as `deposit`).
 5. `IERC20(zipUSD).forceApprove(gate, zipAmount);` — **exact-amount per-zap allowance** (D1).
 6. `shares = IZipExitGate(gate).depositFor(zipUSD, zipAmount, msg.sender);` — the Gate pulls the zipUSD by
-   `transferFrom` (in the real Gate, routed straight to `mainSafe`/the basket), values it via `SzipNavOracle`,
+   `transferFrom` (in the real Gate, routed straight to `juniorTrancheSafe`/the basket), values it via `SzipNavOracle`,
    mints Loot to itself + **transferable szipUSD to the caller**, returns `shares`.
 7. **Zero-residual / "holds nothing" enforcement (F1/F7) — never trust the Gate to leave the module clean:**
    - `if (shares == 0) revert ZeroShares();` — fail closed on a no-op/paused Gate.
@@ -115,7 +115,7 @@ pull, both mints, the EE deposit, AND the `forceApprove` together.
   hard; a deposit blocked by either reverts).
 - **Reciprocal one-bank assert with `RecycleModule` (PROGRESS rows 357/375, item-10 obligation, OPEN).** The
   `RecycleModule` (8-B10 recycle path + S1 `divert` path) routes USDC into the **same** senior backing. Item-10
-  must deploy-assert `RecycleModule.warehouse == ZipDepositModule.warehouse()` AND `RecycleModule.eePool ==
+  must deploy-assert `RecycleModule.warehouse == ZipDepositModule.warehouseSafe()` AND `RecycleModule.eePool ==
   ZipDepositModule.eePool()` — **one bank** — else diverted/recycled USDC supplies the wrong pool and never
   fills the warehouse hole (revert the deploy on mismatch). `RecycleModule.recycle` itself mints backed zipUSD
   **only through `ZipDepositModule.deposit`** (USDC parked as senior backing before the mint ⇒ backed 1:1 by
@@ -138,7 +138,7 @@ pull, both mints, the EE deposit, AND the `forceApprove` together.
   NOT immutable/set-once (memory `oracle-replaceable-timelock-wiring`); re-freezing is deferred to pre-prod. The
   module's `deployer` (the `setGate` gate) carries no other power; ownership re-pointing is via the Timelock on
   the cross-component contracts, not on the module (the module has no owner).
-- **Pre-capacity sanity:** verify `warehouse` (8-Bw Safe) and the Gate exist before granting capacity (a
+- **Pre-capacity sanity:** verify `warehouseSafe` (8-Bw Safe) and the Gate exist before granting capacity (a
   re-authored carryover of the original WOOF-06 deploy obligation).
 
 ## Gotchas
@@ -154,7 +154,7 @@ pull, both mints, the EE deposit, AND the `forceApprove` together.
   0` before any mint.
 - **The zap fails closed.** `ZeroShares` (Gate returned 0 / paused), `ResidualBalance` (Gate under-pulled —
   module still holds zipUSD), `NotWired` (Gate un-wired) all revert the whole atomic tx. The real Gate routes
-  the pulled zipUSD to `mainSafe` (basket equity immediately), so the module's post-state is zero zipUSD either
+  the pulled zipUSD to `juniorTrancheSafe` (basket equity immediately), so the module's post-state is zero zipUSD either
   way — the `ResidualBalance` check is the invariant, not where the zipUSD lands.
 - **`0.8.24` pin.** Guards use `if (!cond) revert CustomError()` (not the `0.8.26+` `require(cond, Err())`
   form).

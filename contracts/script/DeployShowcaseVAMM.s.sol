@@ -14,7 +14,7 @@ import {BaseAddresses} from "./BaseAddresses.sol";
 ///         the auto-compounder showcase on the **already-deployed** engine Safe, using an EXISTING live venue (the
 ///         vAMM HYDX/USDC pair + its gauge) so it can run on mainnet BEFORE our real zipUSD/xALPHA ICHI pool exists:
 ///           1. deploy `SzipNavOracleDemoVAMM` (prices the vAMM LP — the prod oracle reverts `UnknownLpToken` on it),
-///              wire it (shareToken + engineSafe + LP position + CRE identity);
+///              wire it (shareToken + juniorTrancheEngine + LP position + CRE identity);
 ///           2. deploy + clone `LpStrategyModuleDemoVAMM` and **enable it on the existing engine (main) Safe** via the
 ///              same team-owner `execTransaction` path the main deploy uses for every engine module.
 ///         No new Safe, no new system: the demo modules sit alongside the prod ones on the SAME Safe. Retire by
@@ -46,7 +46,7 @@ contract DeployShowcaseVAMM is Script {
     address internal constant VAMM_PAIR = 0x605abD1873737CA9a9Ec1CFa52CDfc8ef62c2E1d;
     address internal constant VAMM_GAUGE = 0x2dA5744C7205ae9CacBB1AB8a72A2fA3896d39F8;
 
-    // --- the deployed SzAlphaRateOracle (so the demo oracle can value the sidecar's xALPHA leg; else grossBasketValue
+    // --- the deployed SzAlphaRateOracle (so the demo oracle can value the juniorTrancheSidecar's xALPHA leg; else grossBasketValue
     //     reverts on the mock mirror, which has no exchangeRate()) ---
     address internal constant SZALPHA_RATE_ORACLE = 0x7251A305FE860099CdC842fcFbde8aB6002Afe72;
 
@@ -71,7 +71,7 @@ contract DeployShowcaseVAMM is Script {
             MAX_DEV_BPS
         );
         oracle.setShareToken(SZIPUSD); // supply denominator for spotNavPerShare
-        oracle.setEngineSafe(MAIN_SAFE); // the buy-burn denominator-excluded address (mirrors prod)
+        oracle.setJuniorTrancheEngine(MAIN_SAFE); // the buy-burn denominator-excluded address (mirrors prod)
         oracle.setLpPosition(VAMM_PAIR, VAMM_GAUGE); // <-- prices/staked-reads the vAMM HYDX/USDC LP
         oracle.setXAlphaRateOracle(SZALPHA_RATE_ORACLE); // value the xALPHA leg (else grossBasketValue reverts on the mock mirror)
         oracle.setExpectedAuthor(WORKFLOW_AUTHOR); // CRE identity (reportType-7 legs feed it)
@@ -80,7 +80,7 @@ contract DeployShowcaseVAMM is Script {
         // 2. demo LP-manager module — clone (mastercopy + setUp) and enable on the EXISTING engine Safe.
         address lpStrategy = _cloneModule(
             address(new LpStrategyModuleDemoVAMM()),
-            abi.encode(TEAM, MAIN_SAFE, OPERATOR, VAMM_PAIR, VAMM_GAUGE), // (owner, engineSafe, operator, pair, gauge)
+            abi.encode(TEAM, MAIN_SAFE, OPERATOR, VAMM_PAIR, VAMM_GAUGE), // (owner, juniorTrancheEngine, operator, pair, gauge)
             MAIN_SAFE
         );
 

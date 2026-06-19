@@ -26,9 +26,9 @@ holds **no fund-extraction path** — there is no sweep/rescue/skim/pause). Two 
   behalf at launch, §2/§4.6), `releaseXAlpha` returns the full bond on repayment.
 - **SLASH (built + mock-tested now, M2-live with the `DefaultCoordinator` driver):** on a default the
   bond is held through the freeze and applied at resolution in **two ordered jobs** —
-  `slashXAlphaToCapital` (xALPHA → `treasurySafe`, off-chain alpha→TAO→USDC, covers a realized capital
-  hole) then `slashXAlphaToCohort` (remainder = the in-kind Duration-Bond premium → `sidecar`; NAV does
-  the socialized cohort pro-rata for free).
+  `slashXAlphaToCapital` (xALPHA → `adminSafe`, off-chain alpha→TAO→USDC, covers a realized capital
+  hole) then `slashXAlphaToCohort` (remainder = the Duration-Bond premium → `juniorTrancheSafe`, the engine/main
+  basket Safe — CTR-11; the yield flywheel subsumes it and NAV does the socialized cohort pro-rata for free).
 
 The escrow adds **no** on-chain solvency / default gating — the capital-vs-premium split and the timing
 are the coordinator's job (§4.6, the §13 trust boundary). It is a dumb router with one structural
@@ -37,7 +37,7 @@ guarantee: destination integrity.
 ## Contracts involved (what each does)
 | Contract | What it does |
 |---|---|
-| `LienXAlphaEscrow` (`is ReentrancyGuard, Ownable`) | Holds the per-lien xALPHA bond. Four `onlyCoordinator nonReentrant` state-changers (`lockXAlpha`/`releaseXAlpha`/`slashXAlphaToCapital`/`slashXAlphaToCohort`); four `onlyOwner` wiring setters (`setXAlpha`/`setCoordinator`/`setTreasurySafe`/`setSidecar`); per-lien book `bondAmount[lienId]` + `bondOriginator[lienId]`. No recipient param on any transfer. Custody-models `reference/.../InsuranceFund.sol:bring(:33)` (single-authorized-caller + gated `safeTransfer`), replicated clean-room over OZ `IERC20`+`SafeERC20` (not imported). |
+| `LienXAlphaEscrow` (`is ReentrancyGuard, Ownable`) | Holds the per-lien xALPHA bond. Four `onlyCoordinator nonReentrant` state-changers (`lockXAlpha`/`releaseXAlpha`/`slashXAlphaToCapital`/`slashXAlphaToCohort`); four `onlyOwner` wiring setters (`setXAlpha`/`setCoordinator`/`setAdminSafe`/`setJuniorTrancheSafe`); per-lien book `bondAmount[lienId]` + `bondOriginator[lienId]`. No recipient param on any transfer. Custody-models `reference/.../InsuranceFund.sol:bring(:33)` (single-authorized-caller + gated `safeTransfer`), replicated clean-room over OZ `IERC20`+`SafeERC20` (not imported). |
 | `ILienXAlphaEscrow` | The seam the `DefaultCoordinator` drives: the four state-changers + the two views (`bondAmount`, `bondOriginator`) it reads to route a slash. Interface-not-import (loose coupling, project pattern). |
 
 ## Wiring — internal
@@ -49,13 +49,13 @@ All four are public storage, set in the constructor (`:106-115`, ctor reverts `Z
   generic ERC-20 stand-in in M1 tests). Setter `setXAlpha` (`:119`).
 - **`address public coordinator`** (`:60`) — the **SOLE** authorized caller of all four state-changers
   (`onlyCoordinator`, `:97-100`, reverts `NotCoordinator`). Setter `setCoordinator` (`:126`).
-- **`address public treasurySafe`** (`:62`) — the **ONLY** destination of `slashXAlphaToCapital`. Setter
-  `setTreasurySafe` (`:133`).
-- **`address public sidecar`** (`:65`) — the **ONLY** destination of `slashXAlphaToCohort`. Setter
-  `setSidecar` (`:140`).
+- **`address public adminSafe`** (`:62`) — the **ONLY** destination of `slashXAlphaToCapital`. Setter
+  `setAdminSafe` (`:133`).
+- **`address public juniorTrancheSafe`** (`:65`) — the **ONLY** destination of `slashXAlphaToCohort` (the
+  engine/main basket Safe, CTR-11 — the yield flywheel subsumes the premium there). Setter `setJuniorTrancheSafe` (`:140`).
 
 Each setter is `onlyOwner`, rejects `address(0)` (`ZeroWiring`), and emits
-`WiringSet(bytes32 slot, address value)` (slot = `"xAlpha"`/`"coordinator"`/`"treasurySafe"`/`"sidecar"`).
+`WiringSet(bytes32 slot, address value)` (slot = `"xAlpha"`/`"coordinator"`/`"adminSafe"`/`"juniorTrancheSafe"`).
 
 ### Per-lien bond book
 - **`bondAmount[bytes32 lienId] → uint256`** (`:69`) — current escrowed xALPHA for the lien. `lienId` is
@@ -75,17 +75,17 @@ Each setter is `onlyOwner`, rejects `address(0)` (`ZeroWiring`), and emits
   Reverts `NoBond` if `bondAmount == 0`. CEI: both mappings zeroed before `safeTransfer(originator, amount)`.
   Emits `Released`. (No `amount` param — it is structurally the whole bond.)
 - **`slashXAlphaToCapital(bytes32 lienId, uint256 amount)`** (`:188`) — route `amount` (≤ bond) xALPHA to
-  `treasurySafe`. Guards: `amount != 0` (`ZeroAmount`), `amount <= bondAmount[lienId]` (`ExceedsBond`;
+  `adminSafe`. Guards: `amount != 0` (`ZeroAmount`), `amount <= bondAmount[lienId]` (`ExceedsBond`;
   `amount == bondAmount` is the exact-equality boundary that **passes** and drives the bond to 0). Partial
   allowed: `bondAmount -= amount` (effects first), `bondOriginator` **untouched** (lien still
   mid-resolution). No swap here — alpha→TAO→USDC happens off-chain (§11). Emits `SlashedToCapital`.
-- **`slashXAlphaToCohort(bytes32 lienId)`** (`:206`) — route the **ENTIRE remaining** bond (the in-kind
-  premium) to `sidecar`. Reverts `NoBond` if `remaining == 0` (so the coordinator **skips** this when a
+- **`slashXAlphaToCohort(bytes32 lienId)`** (`:206`) — route the **ENTIRE remaining** bond (the Duration-Bond
+  premium) to `juniorTrancheSafe` (the engine/main basket Safe, CTR-11 — lands as free, liquid value the flywheel folds in). Reverts `NoBond` if `remaining == 0` (so the coordinator **skips** this when a
   full-bond capital slash already cleared the bond). CEI: both mappings zeroed before
-  `safeTransfer(sidecar, remaining)`. Emits `SlashedToCohort` (the REMAINING amount).
+  `safeTransfer(juniorTrancheSafe, remaining)`. Emits `SlashedToCohort` (the REMAINING amount).
 
 **No entrypoint takes a recipient parameter.** xALPHA can only flow to `bondOriginator[lienId]` (release),
-`treasurySafe` (capital slash), or `sidecar` (cohort slash). The destinations are structurally fixed (per
+`adminSafe` (capital slash), or `juniorTrancheSafe` (cohort slash). The destinations are structurally fixed (per
 call) — see the security thesis.
 
 ## Wiring — cross-component (who points at whom)
@@ -99,24 +99,24 @@ call) — see the security thesis.
 - **`xAlpha` = the bridged `SzAlphaMirror`** (8x-01) — a **generic ERC-20 stand-in until the CCIP lane is
   live**; item-10 / 8x-01 wiring (PROGRESS row 373(f)) repoints `LienXAlphaEscrow.xAlpha` to the deployed
   `SzAlpha`/mirror, replacing the stand-in.
-- **`treasurySafe` = the protocol treasury Safe — the recovery custody** (§11) — receives `slashXAlphaToCapital`;
+- **`adminSafe` = the protocol treasury Safe — the recovery custody** (§11) — receives `slashXAlphaToCapital`;
   its off-chain process liquidates alpha → TAO → USDC on Bittensor and supplies that USDC to the warehouse to
   fill the realized hole. The escrow only **routes** xALPHA to it (no swap on-chain).
-- **`sidecar` = the 8-B1 substrate sidecar Safe** (§6.4) — the non-ragequittable Safe whose xALPHA balance
-  **accretes the frozen cohort's NAV pro-rata**. `SzipNavOracle` values the sidecar's xALPHA leg (PROGRESS
-  row 368), so routing the premium into the sidecar grows every frozen holder's `navPerShare` equally — the
+- **`juniorTrancheSafe` = the 8-B1 substrate juniorTrancheSafe Safe** (§6.4) — the non-ragequittable Safe whose xALPHA balance
+  **accretes the frozen cohort's NAV pro-rata**. `SzipNavOracle` values the juniorTrancheSafe's xALPHA leg (PROGRESS
+  row 368), so routing the premium into the juniorTrancheSafe grows every frozen holder's `navPerShare` equally — the
   socialized pro-rata is automatic via NAV (**no snapshot / per-holder index / RewardsDistributor / SBT** —
   the §4.6 spec fix this window; `HaircutLockAccountant`/`RecoveryClaimSBT` are NOT built).
 - **`Ownable(msg.sender)` → Timelock** — item-10 `transferOwnership(timelock)`; the Timelock is the sole
   re-point authority for the four slots (and holds no fund path).
 
 ## Item-10 deploy facts (PROGRESS row 366)
-- Construct with the **four wiring args** `(xAlpha, coordinator, treasurySafe, sidecar)`; ctor reverts
+- Construct with the **four wiring args** `(xAlpha, coordinator, adminSafe, juniorTrancheSafe)`; ctor reverts
   `ZeroAddress` on any zero. `Ownable(msg.sender)` sets the deployer as owner → `transferOwnership(timelock)`.
 - Wire: `xAlpha`→ the bridged xALPHA (8x-01 `SzAlphaMirror`, stand-in until the lane is live);
   `coordinator`→ the loss-side orchestrator that posts launch bonds (the `DefaultCoordinator`);
-  `treasurySafe`→ the protocol treasury Safe / recovery custody (alpha→TAO→USDC); `sidecar`→ the 8-B1 substrate
-  sidecar Safe.
+  `adminSafe`→ the protocol treasury Safe / recovery custody (alpha→TAO→USDC); `juniorTrancheSafe`→ the 8-B1 substrate
+  juniorTrancheSafe Safe.
 - **Assert** all four slots wired correctly **AND** the coordinator has **approved** the escrow over the
   protocol's launch xALPHA **before any `lockXAlpha`** (else the `safeTransferFrom` pull reverts) **AND**
   the wired `xAlpha` is **non-fee-on-transfer / non-rebasing** (load-bearing — the contract has **no
@@ -130,7 +130,7 @@ call) — see the security thesis.
 
 ## Gotchas
 - **Destination integrity (the security thesis).** No state-changer takes a recipient parameter; xALPHA can
-  only ever reach `{recorded bondOriginator, treasurySafe, sidecar}`. So a **compromised `coordinator`
+  only ever reach `{recorded bondOriginator, adminSafe, juniorTrancheSafe}`. So a **compromised `coordinator`
   cannot redirect a bond to an attacker** — it can only **GRIEF** (premature release / slash a healthy
   bond), which is the coordinator's §13 trust boundary. Proven by a 128k-call stateful invariant
   (fork-of-funds: xALPHA never lands outside that set, never on `address(this)`). **Build-phase caveat:**

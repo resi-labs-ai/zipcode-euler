@@ -10,7 +10,7 @@ import {ISwapRouter} from "../../interfaces/algebra/ISwapRouter.sol";
 /// @title SellModule
 /// @notice The on-chain swap seam of the 8-B9 market-sell leg (§4.5.1): the sixth engine Zodiac Module (after the
 ///         8-B14 buy-and-burn, the 8-B5 reservoir loop, the 8-B6 LP strategy, the 8-B7 harvest/vote, and the 8-B8
-///         exercise), CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target == engineSafe`). It
+///         exercise), CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target == juniorTrancheEngine`). It
 ///         owns the SWAP leg of the auto-compounder: per harvest the CRE robot (8-B11) market-sells the exercised HYDX
 ///         (from 8-B8) → USDC immediately so it can then repay the 8-B5 strike-borrow (`debtOf(safe)→0`), and it also
 ///         runs the zipUSD→xALPHA on-our-POL swap that the 8-B10/8-B13 recycle/compound Modes B/C consume.
@@ -22,7 +22,7 @@ import {ISwapRouter} from "../../interfaces/algebra/ISwapRouter.sol";
 /// @dev SECURITY BOUNDARY (§10.1, the module's whole reason for shape): the operator supplies ONLY scalars (`amountIn`,
 ///      `minOut`, `deadline`). The module builds ALL calldata to the set-once wired targets (`swapRouter`, the token
 ///      pair), `deployer` is hard-pinned to address(0) (the HYDX/USDC + POL pools are base-factory pools, verified),
-///      `recipient` is hard-pinned to the literal set-once `engineSafe` (the output token can only ever land in the
+///      `recipient` is hard-pinned to the literal set-once `juniorTrancheEngine` (the output token can only ever land in the
 ///      basket, never the operator or a third party), and `tokenIn`/`tokenOut` are hard-pinned per entrypoint. NO
 ///      generic call/exec passthrough, NO arbitrary token pair, NO delegatecall, `value == 0` on every `exec`. `minOut`
 ///      is the SLIPPAGE GUARD: the Algebra router enforces `amountOut >= amountOutMinimum` and reverts otherwise (the
@@ -37,8 +37,8 @@ import {ISwapRouter} from "../../interfaces/algebra/ISwapRouter.sol";
 ///      mastercopy is init-locked in its constructor (see {MastercopyInitLock}).
 contract SellModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
-    /// @notice The engine Safe (`avatar == target == engineSafe`); the swap `recipient` + the `tokenIn` holder.
-    address public engineSafe;
+    /// @notice The engine Safe (`avatar == target == juniorTrancheEngine`); the swap `recipient` + the `tokenIn` holder.
+    address public juniorTrancheEngine;
     /// @notice The single CRE operator (gates both swap entrypoints).
     address public operator;
     /// @notice The Algebra Integral `SwapRouter` (the swap target + the approve spender).
@@ -80,16 +80,16 @@ contract SellModule is MastercopyInitLock {
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
     ///         `initializer`. Decodes the 8 addresses
-    ///         `(owner, engineSafe, operator, swapRouter, hydx, usdc, zipUSD, xAlpha)` + the `uint256 maxSellHydx`
+    ///         `(owner, juniorTrancheEngine, operator, swapRouter, hydx, usdc, zipUSD, xAlpha)` + the `uint256 maxSellHydx`
     ///         per-call HYDX size ceiling. ORDER is load-bearing: validate all eight decoded addresses nonzero FIRST +
     ///         `owner != operator` (so a zero address reverts `ZeroAddress` deterministically before any use), assert
-    ///         `maxSellHydx > 0` (`ZeroAmount` — a zero cap would brick `sellHydx`), set `avatar = target = engineSafe`,
+    ///         `maxSellHydx > 0` (`ZeroAmount` — a zero cap would brick `sellHydx`), set `avatar = target = juniorTrancheEngine`,
     ///         store the wiring + the cap, THEN `_transferOwnership(owner)`. NO live-read / staticcall in `setUp` — all
     ///         tokens are wired directly.
     function setUp(bytes memory initParams) public override initializer {
         (
             address owner_,
-            address engineSafe_,
+            address juniorTrancheEngine_,
             address operator_,
             address swapRouter_,
             address hydx_,
@@ -102,7 +102,7 @@ contract SellModule is MastercopyInitLock {
         );
 
         if (
-            owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || swapRouter_ == address(0)
+            owner_ == address(0) || juniorTrancheEngine_ == address(0) || operator_ == address(0) || swapRouter_ == address(0)
                 || hydx_ == address(0) || usdc_ == address(0) || zipUSD_ == address(0) || xAlpha_ == address(0)
         ) {
             revert ZeroAddress();
@@ -110,11 +110,11 @@ contract SellModule is MastercopyInitLock {
         if (owner_ == operator_) revert OwnerIsOperator();
         if (maxSellHydx_ == 0) revert ZeroAmount();
 
-        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
-        avatar = engineSafe_;
-        target = engineSafe_;
+        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == juniorTrancheEngine.
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
 
-        engineSafe = engineSafe_;
+        juniorTrancheEngine = juniorTrancheEngine_;
         operator = operator_;
         swapRouter = swapRouter_;
         hydx = hydx_;
@@ -141,14 +141,14 @@ contract SellModule is MastercopyInitLock {
     // operator) so every redirect is a deliberate timelocked act. Numeric/format params (e.g. `maxSellHydx`) are NOT
     // here — only address wiring. Each rejects address(0) and emits `WiringSet`.
 
-    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in sync since the
-    ///         module is enabled ON the engine Safe and only ever mutates it (`avatar == target == engineSafe`).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        avatar = engineSafe_;
-        target = engineSafe_;
-        emit WiringSet("engineSafe", engineSafe_);
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in sync since the
+    ///         module is enabled ON the engine Safe and only ever mutates it (`avatar == target == juniorTrancheEngine`).
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
+        emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
@@ -278,7 +278,7 @@ contract SellModule is MastercopyInitLock {
     ///      (1) `tokenIn.approve(swapRouter, amountIn)` — the swap allowance from the Safe;
     ///      (2) `swapRouter.exactInputSingle(params)` — pulls `amountIn` tokenIn from the Safe, sends `amountOut`
     ///          tokenOut to the Safe (`amountOut >= minOut` or it reverts), returns `amountOut`. `deployer` pinned to
-    ///          address(0) (base-factory pool), `recipient` pinned to `engineSafe`, `limitSqrtPrice` pinned to 0.
+    ///          address(0) (base-factory pool), `recipient` pinned to `juniorTrancheEngine`, `limitSqrtPrice` pinned to 0.
     ///          TYPED `encodeCall`, NOT `encodeWithSelector` — a struct-field-order regression fails to compile;
     ///      (3) `tokenIn.approve(swapRouter, 0)` — reset the residual allowance (no standing approval).
     ///      Only the 2nd `_exec` return is decoded (`amountOut`); the two `approve` returns are ignored.
@@ -299,7 +299,7 @@ contract SellModule is MastercopyInitLock {
                         tokenIn: tokenIn,
                         tokenOut: tokenOut,
                         deployer: address(0),
-                        recipient: engineSafe,
+                        recipient: juniorTrancheEngine,
                         deadline: deadline,
                         amountIn: amountIn,
                         amountOutMinimum: minOut,

@@ -16,12 +16,12 @@ and resets the approval. 8-B9 then market-sells the HYDX to repay the borrow.
 This is **DISTINCT from 8-B7's FREE `exerciseVe` permalock** — it is the *paid* `oHYDX.exercise` (a different
 oHYDX function, with a USDC strike). The module has **NO EVC leg** (the borrow that funds the strike is 8-B5's
 job), **NO oracle, NO LP, NO veNFT** — it is pure exercise mechanism. It is enabled ON the engine Safe and only
-ever mutates it (`avatar == target == engineSafe`).
+ever mutates it (`avatar == target == juniorTrancheEngine`).
 
 ## Contracts involved (what each does)
 | Contract | What it does |
 |---|---|
-| `ExerciseModule` (`is Module`, zodiac-core) | The module. Four set-once storage pins (`engineSafe`/`operator`/`oHYDX`/`paymentToken` — **not immutable**, written in `setUp` because clones share mastercopy bytecode). One `onlyOperator` mutator `exercise(amount, maxPayment, deadline)` driving the Safe via inherited `execAndReturnData(to, 0, data, Operation.Call)` through a private `_exec`-that-bubbles. One `quoteStrike(amount)` view. Owner-only Timelock re-wiring setters. |
+| `ExerciseModule` (`is Module`, zodiac-core) | The module. Four set-once storage pins (`juniorTrancheEngine`/`operator`/`oHYDX`/`paymentToken` — **not immutable**, written in `setUp` because clones share mastercopy bytecode). One `onlyOperator` mutator `exercise(amount, maxPayment, deadline)` driving the Safe via inherited `execAndReturnData(to, 0, data, Operation.Call)` through a private `_exec`-that-bubbles. One `quoteStrike(amount)` view. Owner-only Timelock re-wiring setters. |
 | `IOptionToken` (`src/interfaces/hydrex/IOptionToken.sol`) | Minimal local interface for **oHYDX** (`OptionTokenV4` @ Base `0xA113…cB78`, non-proxy). Calls used: `exercise(uint256,uint256,address,uint256)` (4-arg deadline overload, returns `paymentAmount`), `paymentToken()` (live-read → USDC), `getDiscountedPrice(uint256)` + `getMinPaymentAmount()` (the `quoteStrike` view). |
 | `Module` / `Operation` (`@gnosis-guild/zodiac-core/core/…`) | Base. Provides `setUp`-under-`initializer`, `avatar`/`target`, `execAndReturnData`, `_transferOwnership`, and the inherited `onlyOwner` `setAvatar`/`setTarget`. |
 | `IERC20` (OZ `token/ERC20/IERC20.sol`) | The `approve` selector encoded onto `paymentToken` (the strike allowance + the reset). |
@@ -31,17 +31,17 @@ ever mutates it (`avatar == target == engineSafe`).
   storage written in `setUp`** under the zodiac-core `initializer` (CLONE FACT, §18.6: `immutable` lives in the
   shared mastercopy runtime and cannot carry per-clone config). The mastercopy is init-locked in its constructor
   (see `MastercopyInitLock`, SEC-14).
-- **`setUp(bytes initParams)`** decodes **4 addresses** `(owner, engineSafe, operator, oHYDX)`. ORDER is
+- **`setUp(bytes initParams)`** decodes **4 addresses** `(owner, juniorTrancheEngine, operator, oHYDX)`. ORDER is
   load-bearing: (1) validate all four decoded addresses nonzero **and** `owner != operator` FIRST (so a zero
-  `oHYDX` reverts `ZeroAddress`, not a confusing staticcall-to-zero); (2) set `avatar = target = engineSafe`
-  (enabled ON, only ever mutates, the engine Safe); (3) store `engineSafe`/`operator`/`oHYDX`; (4) **read
+  `oHYDX` reverts `ZeroAddress`, not a confusing staticcall-to-zero); (2) set `avatar = target = juniorTrancheEngine`
+  (enabled ON, only ever mutates, the engine Safe); (3) store `juniorTrancheEngine`/`operator`/`oHYDX`; (4) **read
   `paymentToken` LIVE off `IOptionToken(oHYDX).paymentToken()`** and assert it nonzero; (5)
   `_transferOwnership(owner)`. Errors: `ZeroAddress`, `OwnerIsOperator`.
 - **`exercise(uint256 amount, uint256 maxPayment, uint256 deadline) onlyOperator returns (uint256 paymentAmount)`**
   — the sole mutator. Guard: `amount == 0 || maxPayment == 0` reverts `ZeroAmount`. Then **exactly 3 `exec`s**:
   1. `paymentToken.approve(oHYDX, maxPayment)` — the strike allowance from the Safe (`abi.encodeWithSelector(IERC20.approve.selector, oHYDX, maxPayment)`).
-  2. `oHYDX.exercise(amount, maxPayment, engineSafe, deadline)` — the **4-arg deadline overload**, typed via
-     `abi.encodeCall(IOptionToken.exercise, …)`; **`recipient` hard-pinned to the set-once `engineSafe`** (HYDX
+  2. `oHYDX.exercise(amount, maxPayment, juniorTrancheEngine, deadline)` — the **4-arg deadline overload**, typed via
+     `abi.encodeCall(IOptionToken.exercise, …)`; **`recipient` hard-pinned to the set-once `juniorTrancheEngine`** (HYDX
      can only ever mint to the basket, never the operator/a third party). Burns the Safe's oHYDX, pulls
      `paymentAmount` (≤ `maxPayment`) USDC from the Safe, mints HYDX to the Safe, returns `paymentAmount`.
   3. `paymentToken.approve(oHYDX, 0)` — reset the residual allowance (no standing approval; security parity
@@ -66,7 +66,7 @@ ever mutates it (`avatar == target == engineSafe`).
 - **`quoteStrike(uint256 amount)` (view):** the USDC strike the contract will charge =
   `max(getDiscountedPrice(amount), getMinPaymentAmount())` (the flat $0.01 floor dominates for small `amount`).
   8-B5 sizes the borrow + 8-B11 sets the `maxPayment` cushion off this read.
-- **Re-wiring setters (build phase, §17), all `onlyOwner` (Timelock):** `setEngineSafe` (keeps
+- **Re-wiring setters (build phase, §17), all `onlyOwner` (Timelock):** `setJuniorTrancheEngine` (keeps
   `avatar`/`target` in sync), `setOperator`, `setOHYDX` (**re-reads `paymentToken` LIVE off the new option**,
   fail-closed, emits both `WiringSet("oHYDX",…)` and `WiringSet("paymentToken",…)`), and `setPaymentToken` (a
   direct override should the option's payment token need pinning). All revert `ZeroAddress` on a zero arg.

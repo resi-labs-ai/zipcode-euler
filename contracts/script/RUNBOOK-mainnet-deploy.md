@@ -21,7 +21,7 @@ use). `DeployLocal` = anvil fork only. `DeployMainnet` = THIS, the live-network 
 - [ ] `CRE_OPERATOR`    — engine-module operator + M1 stand-in for the ExitGate window controller & redemption controller
 - [ ] `WORKFLOW_AUTHOR` — CRE workflow owner sealed on every ReceiverTemplate
 - [ ] `EREBOR`          — the draw off-ramp
-- [ ] `TREASURY_SAFE`    — the protocol treasury Safe (loss-side xALPHA recovery custody, §11)
+- [ ] `ADMIN_SAFE`    — the protocol treasury Safe (loss-side xALPHA recovery custody, §11)
 - [ ] `WORKFLOW_ID`     — non-zero bytes32 (the identity pre-gate reverts on zero)
 - [ ] `SUMMON_SALT_NONCE` — single-use unpredictable nonce (also reused by the sub-deployers)
 

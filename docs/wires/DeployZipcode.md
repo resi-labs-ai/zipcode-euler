@@ -19,17 +19,17 @@ The broadcaster MUST be `TEAM_MULTISIG` — the Safe `v==1` pre-validated path n
 
 ## Phases (the deploy DAG, entrypoint `deploy()`)
 Execution order is P0 → P1 → P2 → **P4 → P3** (warehouse before the deposit module, since `ZipDepositModule`'s
-`warehouse` is an immutable ctor arg) → P5 → P6 → P7 → P8 → P9.
+`warehouseSafe` is an immutable ctor arg) → P5 → P6 → P7 → P8 → P9.
 
 | Phase | What it stands up |
 |---|---|
 | **P0 roots** | `TimelockController` (2-day, deployer = sole proposer/executor + retained build-phase admin). `EE_POOL` / `BASE_USDC_MARKET` are env inputs (out-of-band, see Gotchas). |
 | **P1 venue spine** | registry → lienFactory → hook (borrowDriver placeholder) → adapter (controller placeholder) → controller; close the two ctor cycles via `adapter.setController` / `hook.setBorrowDriver` / `registry.setController`. Asserts `SeamVenue`, `SeamRegistryController`. |
 | **P2 bridge** | `SzAlphaRateOracle` (Base side of 8x-02). |
-| **P4 warehouse** | `ZipRedemptionQueue` (deployed here with `zipUSD=address(0)` so the warehouse can pin `repaySink == queue`; delta 2) → `CreditWarehouseDeployer.deploy`. Asserts `SeamWarehouseCommingled`. |
-| **P3 supply substrate** | `_summon` (Baal + main Safe + sidecar) → `ESynth` zipUSD → `ZipDepositModule` → `SzipNavOracle` → `ExitGate` → `SzipUSD` → `setShareToken` both sides → `queue.setTokens` (re-point to the real zipUSD) → Gate `manager(2)` via `setShamans`. Asserts zero-Shares + `SeamGateShareToken`. |
-| **P5 reservoir** | `SzipReservoirLpOracle` + `ReservoirMarketDeployer.deploy` (governor = Timelock, engineSafe = main Safe). Asserts `SeamSharedLp` (`POL_ICHI_VAULT == escrowVault.asset()`). |
-| **P6 engine modules** | all 9 Zodiac modules cloned via `ModuleProxyFactory.deployModule(mastercopy, setUp, salt)` + `_enableModuleOnSafe`; DurationFreeze enabled on BOTH Safes, OffRamp + the rest on the main Safe. Sets `navOracle.setEngineSafe` / `gate.setEngineSafe`. Asserts `SeamEngineSafe`, `SeamOneBank`, `SeamSharedLp`; `owner=timelock != operator=CRE`. |
+| **P4 warehouse** | `ZipRedemptionQueue` (deployed here with `zipUSD=address(0)` so the warehouse can pin `redemptionBox == queue`; delta 2) → `CreditWarehouseDeployer.deploy`. Asserts `SeamWarehouseCommingled`. |
+| **P3 supply substrate** | `_summon` (Baal + main Safe + juniorTrancheSidecar) → `ESynth` zipUSD → `ZipDepositModule` → `SzipNavOracle` → `ExitGate` → `SzipUSD` → `setShareToken` both sides → `queue.setTokens` (re-point to the real zipUSD) → Gate `manager(2)` via `setShamans`. Asserts zero-Shares + `SeamGateShareToken`. |
+| **P5 reservoir** | `SzipReservoirLpOracle` + `ReservoirMarketDeployer.deploy` (governor = Timelock, juniorTrancheEngine = main Safe). Asserts `SeamSharedLp` (`POL_ICHI_VAULT == escrowVault.asset()`). |
+| **P6 engine modules** | all 9 Zodiac modules cloned via `ModuleProxyFactory.deployModule(mastercopy, setUp, salt)` + `_enableModuleOnSafe`; DurationFreeze enabled on BOTH Safes, OffRamp + the rest on the main Safe. Sets `navOracle.setJuniorTrancheEngine` / `gate.setJuniorTrancheEngine`. Asserts `SeamEngineSafe`, `SeamOneBank`, `SeamSharedLp`; `owner=timelock != operator=CRE`. |
 | **P7 loss** | `LienXAlphaEscrow` (coordinator placeholder) → `DefaultCoordinator` → close the cycle via `escrow.setCoordinator` / `coord.setEscrow` (the latter `forceApprove(max)`s the escrow) → `navOracle.setDefaultCoordinator`. Asserts `SeamEscrowCoordinator`. |
 | **P8 NAV final** | `navOracle.setLpPosition` + `navOracle.setXAlphaRateOracle`. Asserts `SeamNavShareTokenUnset`. |
 | **P9 seal** | `setExpectedAuthor`/`setExpectedWorkflowId` on every `ReceiverTemplate` (controller, registry, warehouse adapter, coord, navOracle, rateOracle, **and the CRE-push `lpOracle` when `lpOracle != address(0)`** — SEC-05/M4) → `ZipcodeDeployAsserts.requireIdentityWired` pre-gate **+ `requireReceiverIdentityWired(d.lpOracle)` when set** → `transferOwnership(timelock)` everywhere. The lpOracle seal+assert are guarded `!= address(0)` so the fair-LP branch (ownerless `AlgebraIchiFairLpOracle`) neither seals nor asserts. |
@@ -42,7 +42,7 @@ reverts — the script connects documented pins, it does not rediscover them.
 
 ## Inputs (env / stand-ins)
 ~30 env keys via `_loadInputs()`: principals (`TEAM_MULTISIG`, `GOD_OWNER`, `CRE_OPERATOR`, `WORKFLOW_AUTHOR`,
-`WORKFLOW_ID`, `EREBOR`, `TREASURY_SAFE`, `SUMMON_SALT_NONCE`), live-infra stand-ins (`IRM`, `XALPHA_MIRROR`,
+`WORKFLOW_ID`, `EREBOR`, `ADMIN_SAFE`, `SUMMON_SALT_NONCE`), live-infra stand-ins (`IRM`, `XALPHA_MIRROR`,
 `POL_ICHI_VAULT`, `POL_GAUGE`, `EE_POOL`, `BASE_USDC_MARKET`), and numeric knobs (NAV window/maxAge/deviation,
 TVL cap, recovery floor, borrow cap, LTVs, buy-burn discount/cap, rate staleness/window/cap). Mirrors
 `contracts/.env.example`.

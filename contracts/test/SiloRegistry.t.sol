@@ -9,15 +9,15 @@ import {SiloRegistry} from "../src/SiloRegistry.sol";
 // Thin stubs exposing the four topology getters with configurable addresses, so the topology assert can be driven
 // deterministically — both a self-consistent silo and deliberately mis-wired ones.
 
-/// @dev Stub for `DurationFreezeModule.{eulerEarn(), warehouse(), navOracle()}`.
+/// @dev Stub for `DurationFreezeModule.{eulerEarn(), warehouseSafe(), navOracle()}`.
 contract MockFreeze {
     address public eulerEarn;
-    address public warehouse;
+    address public warehouseSafe;
     address public navOracle;
 
     constructor(address eePool_, address warehouseSafe_, address navOracle_) {
         eulerEarn = eePool_;
-        warehouse = warehouseSafe_;
+        warehouseSafe = warehouseSafe_;
         navOracle = navOracle_;
     }
 }
@@ -192,7 +192,7 @@ contract SiloRegistryTest is Test {
         reg.addSilo(id, cfg);
     }
 
-    /// @dev Clause 2: freeze.warehouse() != warehouseSafe.
+    /// @dev Clause 2: freeze.warehouseSafe() != warehouseSafe.
     function test_addSilo_miswired_freezeWarehouse_reverts() public {
         bytes32 id = keccak256("mw3");
         SiloRegistry.SiloConfig memory cfg = _wiredConfig();

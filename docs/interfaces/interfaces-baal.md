@@ -30,7 +30,7 @@ A Zodiac Module on a Gnosis Safe, launched inert, with the team set as owner. De
 [wires/ExitGate-szipUSD.md]
 
 - IBaalAndVaultSummoner.sol → the higher-order summoner `0x2eF2fC8a18A914818169eFa183db480d31a90c5D`
-Produces the Baal DAO + main Safe + a non-ragequittable sidecar Safe in one transaction (`summonBaalAndVault`).
+Produces the Baal DAO + main Safe + a non-ragequittable juniorTrancheSidecar Safe in one transaction (`summonBaalAndVault`).
 [contracts/script/SummonSubstrate.s.sol]
 [wires/8-B1.md]
 
@@ -73,7 +73,7 @@ Zipcode lends the warehouse's USDC to HELOC originators, so that USDC carries du
 
 A standard ragequit (a pro-rata claim on a Safe's liquid assets) does not work here. It would pay a pro-rata slice of the main Safe's *literal* contents, which doesn't reflect the actual value of the safe's equity.
 
-- Utilized equity sits in the non-ragequittable sidecar Safe, so a ragequit only captures the main Safe; it would be correct only at 0% utilization.
+- Utilized equity sits in the non-ragequittable juniorTrancheSidecar Safe, so a ragequit only captures the main Safe; it would be correct only at 0% utilization.
 - The junior's LP is staked in the Hydrex gauge, so true per-share value is what the NAV oracle reports, not the Safe's on-chain balance.
 
 So redemption runs through a CoW buy-and-burn:

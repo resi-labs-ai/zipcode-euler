@@ -38,7 +38,7 @@ curator gets senior backing only by registering a SELF-CONSISTENT silo.
   footgun), appends `siloId` to `siloIds`, and adopts it as `currentSilo` iff none is set.
 - **The topology assert (load-bearing) — the exact 6-clause web.** All must hold:
   1. `IFreeze(cfg.freeze).eulerEarn()  == cfg.eePool`
-  2. `IFreeze(cfg.freeze).warehouse()  == cfg.warehouseSafe`
+  2. `IFreeze(cfg.freeze).warehouseSafe()  == cfg.warehouseSafe`
   3. `IFreeze(cfg.freeze).navOracle()  == cfg.navOracle`
   4. `IEscrow(cfg.escrow).coordinator() == cfg.defaultCoordinator`
   5. `INavWriter(cfg.defaultCoordinator).navOracle() == cfg.navOracle`
@@ -51,7 +51,7 @@ curator gets senior backing only by registering a SELF-CONSISTENT silo.
   exposing `seniorPool()`) with NO registry change; see the contract NatSpec "VENUE-AGNOSTIC ADMISSION" recipe.
   `curator` and `juniorBasket` are carried for routing/aggregation only — NOT topology-asserted
   (no getter to cross-check; only the non-zero-address check applies). The standalone `WarehouseAdminModule` assert
-  the draft ticket proposed was DROPPED: `freeze.warehouse()`/`freeze.eulerEarn()` already pin `warehouseSafe`/
+  the draft ticket proposed was DROPPED: `freeze.warehouseSafe()`/`freeze.eulerEarn()` already pin `warehouseSafe`/
   `eePool`, so a `WarehouseAdminModule` address field would be redundant for self-consistency.
 - **`retireSilo` / `setActive` / `setCurrentSilo`** — all `onlyOwner`, all `UnknownSilo`-guarded. `retireSilo` sets
   `active = false` (existing lines close normally, no new routing) and NEVER deletes the record (the book must stay
@@ -82,9 +82,9 @@ curator gets senior backing only by registering a SELF-CONSISTENT silo.
   (configuration one) via `addSilo` — it becomes `currentSilo` automatically.
 - **`MAX_LINES_PER_SILO = 28`** is a compile-time constant derived `30 − resting-USDC market (1) − reservoir vault
   (1)`. CTR-07's split-slot decision keeps it at 28.
-- **Non-commingling assert is NOT here.** The §11 `repaySink != juniorSafe` / `warehouseSafe != juniorSafe`
+- **Non-commingling assert is NOT here.** The §11 `redemptionBox != juniorSafe` / `warehouseSafe != juniorSafe`
   non-commingling check is a deploy-time obligation owed to the **SiloDeployer (CTR-06)**, not the registry — the
-  registry's struct carries `warehouseSafe`/`juniorBasket`/`escrow` but no `repaySink`. CTR-02 neither discharges
+  registry's struct carries `warehouseSafe`/`juniorBasket`/`escrow` but no `redemptionBox`. CTR-02 neither discharges
   nor contradicts it.
 
 ## Gotchas

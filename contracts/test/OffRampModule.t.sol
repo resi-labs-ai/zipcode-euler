@@ -173,7 +173,7 @@ contract OffRampModuleUnitTest is Test {
     function test_setUp_wires_storage() public view {
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
-        assertEq(m.rqSafe(), address(safe));
+        assertEq(m.juniorTrancheSafe(), address(safe));
         assertEq(m.avatar(), address(safe));
         assertEq(m.target(), address(safe));
         assertEq(m.zipUSD(), zipUSD);
@@ -241,7 +241,7 @@ contract OffRampModuleUnitTest is Test {
     function test_mastercopy_inert() public {
         OffRampModule mc = _cloneOffRampModule();
         assertEq(mc.operator(), address(0));
-        assertEq(mc.rqSafe(), address(0));
+        assertEq(mc.juniorTrancheSafe(), address(0));
         assertEq(mc.zipUSD(), address(0));
         assertEq(mc.queue(), address(0));
         vm.prank(operator);
@@ -271,11 +271,11 @@ contract OffRampModuleUnitTest is Test {
         vm.prank(owner);
         vm.expectRevert(OffRampModule.ZeroAddress.selector);
         m.setQueue(address(0));
-        // owner re-points (build-phase, §17) — rqSafe keeps avatar/target in lock-step
+        // owner re-points (build-phase, §17) — juniorTrancheSafe keeps avatar/target in lock-step
         address newSafe = makeAddr("newSafe");
         vm.prank(owner);
-        m.setRqSafe(newSafe);
-        assertEq(m.rqSafe(), newSafe);
+        m.setJuniorTrancheSafe(newSafe);
+        assertEq(m.juniorTrancheSafe(), newSafe);
         assertEq(m.avatar(), newSafe);
         assertEq(m.target(), newSafe);
         address newOp = makeAddr("newOp");
@@ -374,7 +374,7 @@ contract OffRampModuleUnitTest is Test {
 
 /// @notice Full-cycle Base-fork test: a real summoned rq Safe with the OffRampModule enabled, driving the REAL
 ///         `ZipRedemptionQueue` (C4-gated to the rq Safe) + the REAL `WarehouseAdminModule` REPAY to fund the epoch.
-///         Proves: `requestRedeem` through the real `exec` escrows with `RedeemRequest.sender == rqSafe` (C4 proof);
+///         Proves: `requestRedeem` through the real `exec` escrows with `RedeemRequest.sender == juniorTrancheSafe` (C4 proof);
 ///         the main-Safe zipUSD drops by exactly `zipAmount` immediately; the CRE-equiv settle + `claim` lands USDC
 ///         at par; NAV-neutrality across the FULL cycle (basket zipUSD value lost == USDC value gained).
 contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
@@ -402,7 +402,7 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
     address internal warehouseSafe;
 
     OffRampModule internal offRamp;
-    address internal rqSafe;
+    address internal juniorTrancheSafe;
 
     function setUp() public {
         _selectBaseFork();
@@ -416,30 +416,30 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
         // the queue FIRST (so the warehouse REPAY scope pins to == queue)
         queue = new ZipRedemptionQueue(address(zip), usdc, controller);
 
-        // warehouse side: deploy with repaySink == queue
+        // warehouse side: deploy with redemptionBox == queue
         ee = new MockEulerEarn(usdc);
         deployer = new CreditWarehouseDeployer();
         w = deployer.deploy(godOwner, godOwner, address(ee), usdc, forwarder, address(queue), 1);
         adapter = WarehouseAdminModule(w.adapter);
-        warehouseSafe = w.safe;
+        warehouseSafe = w.warehouseSafe;
 
         // summon the real substrate -> rq Safe = Baal.avatar()
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
-        rqSafe = s.mainSafe;
+        juniorTrancheSafe = s.juniorTrancheSafe;
 
         // deploy + enable the OffRampModule on the rq Safe
         offRamp = _cloneOffRampModule();
-        _enableModule(rqSafe, address(offRamp));
-        offRamp.setUp(abi.encode(owner, rqSafe, operator, address(zip), address(queue)));
+        _enableModule(juniorTrancheSafe, address(offRamp));
+        offRamp.setUp(abi.encode(owner, juniorTrancheSafe, operator, address(zip), address(queue)));
 
         // C4: authorize the rq Safe as the queue's redeemController (the module exec's THROUGH the Safe)
-        queue.setRedeemController(rqSafe);
+        queue.setRedeemController(juniorTrancheSafe);
 
         // seed the basket: mint zipUSD into the rq Safe (the idle basket leg the off-ramp redeems)
         zip.setCapacity(address(this), type(uint128).max);
-        zip.mint(rqSafe, Q);
+        zip.mint(juniorTrancheSafe, Q);
     }
 
     function _enableModule(address safe, address module) internal {
@@ -455,8 +455,8 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     function test_fork_full_cycle_par_nav_neutral() public {
-        uint256 zipBefore = zip.balanceOf(rqSafe);
-        uint256 usdcBefore = IERC20(usdc).balanceOf(rqSafe);
+        uint256 zipBefore = zip.balanceOf(juniorTrancheSafe);
+        uint256 usdcBefore = IERC20(usdc).balanceOf(juniorTrancheSafe);
 
         // --- leg 1: requestRedeem through the real exec ---
         vm.recordLogs();
@@ -473,21 +473,21 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
                     && logs[i].topics[0] == keccak256("RedeemRequest(address,address,address,uint256)")
             ) {
                 (address sender, uint256 shares) = abi.decode(logs[i].data, (address, uint256));
-                assertEq(sender, rqSafe, "RedeemRequest.sender == rqSafe (real exec-driven msg.sender)");
+                assertEq(sender, juniorTrancheSafe, "RedeemRequest.sender == juniorTrancheSafe (real exec-driven msg.sender)");
                 assertEq(shares, Q);
-                // controller (topic1) == owner (topic2) == rqSafe
-                assertEq(address(uint160(uint256(logs[i].topics[1]))), rqSafe, "requester == rqSafe");
-                assertEq(address(uint160(uint256(logs[i].topics[2]))), rqSafe, "owner == rqSafe");
+                // controller (topic1) == owner (topic2) == juniorTrancheSafe
+                assertEq(address(uint160(uint256(logs[i].topics[1]))), juniorTrancheSafe, "requester == juniorTrancheSafe");
+                assertEq(address(uint160(uint256(logs[i].topics[2]))), juniorTrancheSafe, "owner == juniorTrancheSafe");
                 foundReq = true;
             }
         }
         assertTrue(foundReq, "RedeemRequest emitted by the queue");
 
         // main-Safe zipUSD dropped by exactly zipAmount immediately (escrowed into the queue)
-        assertEq(zipBefore - zip.balanceOf(rqSafe), Q, "rq Safe zipUSD down by exactly zipAmount");
+        assertEq(zipBefore - zip.balanceOf(juniorTrancheSafe), Q, "rq Safe zipUSD down by exactly zipAmount");
         assertEq(queue.totalPending(), Q, "escrowed in the queue");
         // the module reset its approval (the 3rd leg)
-        assertEq(zip.allowance(rqSafe, address(queue)), 0, "approval reset to 0");
+        assertEq(zip.allowance(juniorTrancheSafe, address(queue)), 0, "approval reset to 0");
 
         // --- leg 2: CRE funds the epoch (warehouse REPAY) then settles ---
         uint256 par = Q / SCALE; // 1M USDC
@@ -500,11 +500,11 @@ contract OffRampModuleForkTest is ForkConfig, SummonSubstrate {
         // --- leg 3: claim the USDC back into the rq Safe (the basket) ---
         vm.prank(operator);
         offRamp.claim(par);
-        assertEq(IERC20(usdc).balanceOf(rqSafe) - usdcBefore, par, "USDC landed in the rq Safe at par");
+        assertEq(IERC20(usdc).balanceOf(juniorTrancheSafe) - usdcBefore, par, "USDC landed in the rq Safe at par");
 
         // NAV-neutrality across the FULL cycle: the basket lost Q (18-dp $1) zipUSD and gained par*1e12 (18-dp $1)
         // USDC value -> exactly neutral.
-        assertEq(zipBefore - zip.balanceOf(rqSafe), par * SCALE, "zipUSD value out == USDC value in (par neutral)");
-        assertEq(zip.balanceOf(rqSafe), zipBefore - Q, "rq Safe holds only the un-redeemed zipUSD");
+        assertEq(zipBefore - zip.balanceOf(juniorTrancheSafe), par * SCALE, "zipUSD value out == USDC value in (par neutral)");
+        assertEq(zip.balanceOf(juniorTrancheSafe), zipBefore - Q, "rq Safe holds only the un-redeemed zipUSD");
     }
 }

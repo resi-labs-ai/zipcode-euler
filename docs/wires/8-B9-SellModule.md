@@ -7,7 +7,7 @@
 
 ## Role
 The **sixth engine Zodiac Module** (`is Module`) of the auto-compounder harvest loop, enabled on the szipUSD engine
-Safe (`avatar == target == engineSafe`), CRE-operator-gated. It owns the **SWAP leg** (`claude-zipcode.md` §4.5.1,
+Safe (`avatar == target == juniorTrancheEngine`), CRE-operator-gated. It owns the **SWAP leg** (`claude-zipcode.md` §4.5.1,
 8-B9): per harvest the CRE robot (8-B11) market-sells the exercised HYDX (handed off from 8-B8) → USDC **immediately**
 so the proceeds can repay the 8-B5 strike-borrow (`debtOf(safe)→0`), and it also runs the **zipUSD→xALPHA on-our-POL**
 swap the 8-B10/8-B13 recycle/compound Mode-B/C policy consumes. It is **pure swap mechanism** — Algebra
@@ -25,16 +25,16 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
 ## Contracts involved (what each does)
 | Contract | What it does |
 |---|---|
-| `SellModule` (`is Module`) | The swap driver. `setUp(bytes)`-under-`initializer` decodes **8 addresses + 1 uint256**; three `onlyOperator` entrypoints `sellHydx`/`buyXAlpha`/`sellXAlpha` sharing a private `_swap` (approve→`exactInputSingle`→reset-approve); private bubbling `_exec`; an `onlyOwner` `setMaxSellHydx`; 7 Timelock (`onlyOwner`) address-wiring setters. Set-once storage `engineSafe`/`operator`/`swapRouter`/`hydx`/`usdc`/`zipUSD`/`xAlpha` + the `maxSellHydx` cap — **not `immutable`** (§18.6 clone fact: a `ModuleProxyFactory` clone shares mastercopy bytecode, so per-clone config must be `setUp` storage). |
+| `SellModule` (`is Module`) | The swap driver. `setUp(bytes)`-under-`initializer` decodes **8 addresses + 1 uint256**; three `onlyOperator` entrypoints `sellHydx`/`buyXAlpha`/`sellXAlpha` sharing a private `_swap` (approve→`exactInputSingle`→reset-approve); private bubbling `_exec`; an `onlyOwner` `setMaxSellHydx`; 7 Timelock (`onlyOwner`) address-wiring setters. Set-once storage `juniorTrancheEngine`/`operator`/`swapRouter`/`hydx`/`usdc`/`zipUSD`/`xAlpha` + the `maxSellHydx` cap — **not `immutable`** (§18.6 clone fact: a `ModuleProxyFactory` clone shares mastercopy bytecode, so per-clone config must be `setUp` storage). |
 | `ISwapRouter` (`src/interfaces/algebra/ISwapRouter.sol`) | The minimal Algebra **Integral** `SwapRouter` surface the module calls — only `exactInputSingle(ExactInputSingleParams)`. The struct carries `(tokenIn, tokenOut, deployer, recipient, deadline, amountIn, amountOutMinimum, limitSqrtPrice)` — **no `fee` field**, a `deployer` field, and `limitSqrtPrice` (NOT `sqrtPriceLimitX96`) ⇒ Algebra Integral, not Uniswap V3. On-chain-verified selector `0x1679c792` against the deployed router `0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e`. |
 | `IERC20` (`@openzeppelin/contracts/token/ERC20/IERC20.sol`) | Supplies the `approve.selector` for the swap-allowance set + reset legs of `_swap`. |
 
 ## Wiring — internal
 - **It is a `Module`.** `setUp(bytes initParams) public override initializer` decodes
-  `(owner, engineSafe, operator, swapRouter, hydx, usdc, zipUSD, xAlpha, maxSellHydx)` — **8 addresses + 1 uint256**.
+  `(owner, juniorTrancheEngine, operator, swapRouter, hydx, usdc, zipUSD, xAlpha, maxSellHydx)` — **8 addresses + 1 uint256**.
   ORDER is load-bearing: validate **all eight addresses nonzero** (`ZeroAddress`) FIRST, then `owner != operator`
   (`OwnerIsOperator`), then `maxSellHydx > 0` (`ZeroAmount` — a zero cap would brick `sellHydx`), then set
-  `avatar = target = engineSafe`, store the 7 wiring slots + the cap (emitting `MaxSellHydxSet`), **then**
+  `avatar = target = juniorTrancheEngine`, store the 7 wiring slots + the cap (emitting `MaxSellHydxSet`), **then**
   `_transferOwnership(owner)`. **No live-read / staticcall in `setUp`** — every token is wired directly (unlike 8-B8,
   which live-read `paymentToken` off oHYDX). `initializer` makes it callable once (mastercopy init-locked in its
   constructor (see `MastercopyInitLock`, SEC-14); re-`setUp` reverts).
@@ -59,7 +59,7 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
      Safe (`router = swapRouter` cached to a local);
   2. `_exec(router, abi.encodeCall(ISwapRouter.exactInputSingle, (params)))` — **typed `encodeCall`, NOT
      `encodeWithSelector`**, so a struct-field-order regression fails to compile rather than silently mis-encoding.
-     The params struct is **hard-pinned**: `deployer: address(0)`, `recipient: engineSafe`, `limitSqrtPrice: 0`,
+     The params struct is **hard-pinned**: `deployer: address(0)`, `recipient: juniorTrancheEngine`, `limitSqrtPrice: 0`,
      `tokenIn`/`tokenOut` per entrypoint, `deadline`/`amountIn`/`amountOutMinimum: minOut` passed through;
   3. `_exec(tokenIn, abi.encodeWithSelector(IERC20.approve.selector, router, uint256(0)))` — reset the residual
      allowance (no standing approval; hygiene parity with 8-B8/8-B5).
@@ -85,7 +85,7 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
   symmetry). `setMaxSellHydx(uint256 newMax) external onlyOwner` (the Timelock, NOT the hot operator) re-sizes it to
   track pool depth, reverts `ZeroAmount` on zero; both `setUp` and the setter `emit MaxSellHydxSet`.
 - **Timelock-settable wiring (build phase, §17).** Each of the 7 address slots has an `onlyOwner` setter,
-  `ZeroAddress`-guarded, emitting `WiringSet(bytes32 slot, address value)`: `setEngineSafe` (**also re-points
+  `ZeroAddress`-guarded, emitting `WiringSet(bytes32 slot, address value)`: `setJuniorTrancheEngine` (**also re-points
   avatar+target in lock-step**), `setOperator`, `setSwapRouter`, `setHydx`, `setUsdc`, `setZipUSD`, `setXAlpha`. Slots
   are **re-pointable, not set-once-frozen** (§17 build-phase doctrine). `setOperator` additionally re-checks
   `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse the two roles into one key. The inherited `setAvatar`/`setTarget` are
@@ -117,7 +117,7 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
   are **unit-proven only** this window; their live-pool fork proof is deferred to 8-B10/8-B13 integration (the router
   calldata shape is fork-grounded by the shared sell-leg sig-verify).
 - **recipient / output destination = the engine Safe, always.** `exactInputSingle.recipient` is hard-pinned to
-  `engineSafe` — the output token (USDC or xALPHA) can only ever land in the basket, never the operator or a third
+  `juniorTrancheEngine` — the output token (USDC or xALPHA) can only ever land in the basket, never the operator or a third
   party. `tokenIn` is pulled FROM the same Safe (it holds the input + grants the transient allowance).
 - **NOT wired to 8-B5/8-B8/8-B10.** The module never calls the borrow/repay, the exercise, or the free-value
   accumulator. It only moves tokens within the one engine Safe via the swap; the CRE chains the neighbors after.
@@ -127,7 +127,7 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
 > These are the wiring obligations the kept code imposes — discharged by the item-10 script.
 - **Clone, not `new` (row 350).** Deploy via zodiac-core `ModuleProxyFactory.deployModule(mastercopy, setUpCalldata,
   salt)` (CREATE2) so the clone `setUp`s **atomically in one factory tx (front-run-safe)** — never two-tx
-  deploy-then-init (the proven 8-B5/8-B8/8-B14 pattern). `setUpCalldata = abi.encode(owner, engineSafe, operator,
+  deploy-then-init (the proven 8-B5/8-B8/8-B14 pattern). `setUpCalldata = abi.encode(owner, juniorTrancheEngine, operator,
   swapRouter, hydx, usdc, zipUSD, xAlpha, maxSellHydx)`. Set-once storage (not `immutable`) is exactly what makes the
   shared-bytecode clone work.
 - **Init-lock the mastercopy.** The mastercopy is locked AUTOMATICALLY by its constructor (`MastercopyInitLock`,
@@ -181,6 +181,6 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
 - **No standing approval ever survives.** The 3rd `_exec` resets `tokenIn.approve(router, 0)`; and on a mid-swap
   failure the atomic tx revert rolls back exec #1's approve too (`allowance(safe, router) == 0` holds after both a
   happy path and a reverted path).
-- **`setEngineSafe` moves three slots.** Re-pointing `engineSafe` also re-points `avatar` and `target` in lock-step;
+- **`setJuniorTrancheEngine` moves three slots.** Re-pointing `juniorTrancheEngine` also re-points `avatar` and `target` in lock-step;
   the three must never diverge (the module only ever mutates its avatar, which must equal the engine Safe).
 - **`require(cond, CustomError())` is 0.8.26+; this is the 0.8.24 pin** — guards use `if (!cond) revert CustomError()`.

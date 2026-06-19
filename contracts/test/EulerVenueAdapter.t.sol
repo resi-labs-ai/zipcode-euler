@@ -12,7 +12,9 @@ import {CREGatingHook} from "../src/CREGatingHook.sol";
 import {ZipcodeOracleRegistry} from "../src/ZipcodeOracleRegistry.sol";
 import {LienCollateralToken} from "../src/LienCollateralToken.sol";
 import {SzipPerspectiveProbe} from "../script/SzipPerspectiveProbe.sol";
+import {LineIrm} from "../script/LineIrm.sol";
 
+import {RPow} from "evk/EVault/shared/lib/RPow.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault, IBorrowing} from "evk/EVault/IEVault.sol";
 import {EulerRouter} from "euler-price-oracle/EulerRouter.sol";
@@ -1326,8 +1328,8 @@ contract EulerVenueAdapterTest is ForkConfig {
     // ============================================================
     // (R) CTR-09 — the 0.1%-per-revolution protocol draw fee
     // ============================================================
-    // The fee defaults OFF (`feeRecipient == address(0)`), so every PRE-EXISTING draw test above asserts
-    // `debtOf == drawAmount` unchanged. These tests wire `feeRecipient` LOCALLY (never in setUp) to exercise the
+    // The fee defaults OFF (`adminSafe == address(0)`), so every PRE-EXISTING draw test above asserts
+    // `debtOf == drawAmount` unchanged. These tests wire `adminSafe` LOCALLY (never in setUp) to exercise the
     // fee-on path. The adapter's owner is this test contract (Ownable(msg.sender) at deploy), so it calls the
     // onlyOwner setters directly.
 
@@ -1347,11 +1349,11 @@ contract EulerVenueAdapterTest is ForkConfig {
     }
 
     /// @dev fee-on: wire the recipient, draw `amount`, assert financed-fee semantics — debt is `amount + fee`,
-    ///      `feeRecipient` got `fee` USDC, `erebor` got exactly `amount`, and `FeeLevied(lineRef, fee)` emitted.
+    ///      `adminSafe` got `fee` USDC, `erebor` got exactly `amount`, and `FeeLevied(lineRef, fee)` emitted.
     function test_CTR09_FeeOn_FinancesAndRoutesFee() public {
         (address lineRef, address borrowAccount) = _openAndFundA();
         assertEq(adapter.feeBps(), 50, "default feeBps is the CTR-09 calibration (50 bps)");
-        adapter.setFeeRecipient(feeSink); // fee fires at the non-zero default feeBps
+        adapter.setAdminSafe(feeSink); // fee fires at the non-zero default feeBps
 
         uint256 amount = 100_000e6; // 0.7 * $300k headroom easily covers amount + fee
         uint256 fee = amount * adapter.feeBps() / 10_000; // default-robust (50 bps => 500e6)
@@ -1365,7 +1367,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         adapter.draw(lineRef, amount, erebor);
 
         assertEq(IEVault(lineRef).debtOf(borrowAccount), amount + fee, "line debt = amount + fee (financed)");
-        assertEq(IERC20(usdc).balanceOf(feeSink) - sinkBefore, fee, "feeRecipient received the fee");
+        assertEq(IERC20(usdc).balanceOf(feeSink) - sinkBefore, fee, "adminSafe received the fee");
         assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, amount, "erebor received exactly the principal (F2)");
     }
 
@@ -1373,7 +1375,7 @@ contract EulerVenueAdapterTest is ForkConfig {
     ///      line that draws N times pays N×, not once per line).
     function test_CTR09_FeeIsPerRevolution() public {
         (address lineRef, address borrowAccount) = _openAndFundA();
-        adapter.setFeeRecipient(feeSink);
+        adapter.setAdminSafe(feeSink);
 
         uint256 amount1 = 100_000e6;
         uint256 fee1 = amount1 * adapter.feeBps() / 10_000;
@@ -1394,12 +1396,12 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(IERC20(usdc).balanceOf(feeSink) - sinkAfter1, fee2, "second fee levied again");
     }
 
-    /// @dev no-op via recipient: with `feeRecipient == address(0)` (the default disable sentinel) NO fee leg is
+    /// @dev no-op via recipient: with `adminSafe == address(0)` (the default disable sentinel) NO fee leg is
     ///      appended — debt == amount, and no FeeLevied is emitted.
     function test_CTR09_NoOp_WhenRecipientUnset() public {
         (address lineRef, address borrowAccount) = _openAndFundA();
-        // feeRecipient unset (address(0)); feeBps is the non-zero default.
-        assertEq(adapter.feeRecipient(), address(0), "recipient unset by default");
+        // adminSafe unset (address(0)); feeBps is the non-zero default.
+        assertEq(adapter.adminSafe(), address(0), "recipient unset by default");
 
         uint256 amount = 100_000e6;
         uint256 erBefore = IERC20(usdc).balanceOf(erebor);
@@ -1412,7 +1414,7 @@ contract EulerVenueAdapterTest is ForkConfig {
     /// @dev no-op via bps: recipient wired but `feeBps == 0` => fee == 0 => no leg, debt == amount.
     function test_CTR09_NoOp_WhenFeeBpsZero() public {
         (address lineRef, address borrowAccount) = _openAndFundA();
-        adapter.setFeeRecipient(feeSink);
+        adapter.setAdminSafe(feeSink);
         adapter.setFeeBps(0);
 
         uint256 amount = 100_000e6;
@@ -1427,7 +1429,7 @@ contract EulerVenueAdapterTest is ForkConfig {
     ///      The dust threshold is computed from the live feeBps (default-robust): any amount < 10_000/feeBps rounds to 0.
     function test_CTR09_DustDraw_NoFeeLeg() public {
         (address lineRef, address borrowAccount) = _openAndFundA();
-        adapter.setFeeRecipient(feeSink);
+        adapter.setAdminSafe(feeSink);
 
         uint256 amount = 10_000 / adapter.feeBps() - 1; // largest draw whose fee rounds to 0 (199 wei at 50 bps)
         assertEq(amount * adapter.feeBps() / 10_000, 0, "fee rounds down to zero (dust)");
@@ -1447,7 +1449,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         // onlyOwner: a non-owner cannot call either setter (Ownable reverts OwnableUnauthorizedAccount).
         vm.prank(bad);
         vm.expectRevert();
-        adapter.setFeeRecipient(feeSink);
+        adapter.setAdminSafe(feeSink);
         vm.prank(bad);
         vm.expectRevert();
         adapter.setFeeBps(20);
@@ -1462,28 +1464,129 @@ contract EulerVenueAdapterTest is ForkConfig {
         adapter.setFeeBps(500);
         assertEq(adapter.feeBps(), 500, "feeBps set to the cap");
 
-        // setFeeRecipient succeeds + emits WiringSet("feeRecipient", ..).
+        // setAdminSafe succeeds + emits WiringSet("adminSafe", ..).
         vm.expectEmit(true, false, false, true, address(adapter));
-        emit WiringSet("feeRecipient", feeSink);
-        adapter.setFeeRecipient(feeSink);
-        assertEq(adapter.feeRecipient(), feeSink, "recipient set");
+        emit WiringSet("adminSafe", feeSink);
+        adapter.setAdminSafe(feeSink);
+        assertEq(adapter.adminSafe(), feeSink, "recipient set");
 
-        // setFeeRecipient(address(0)) succeeds (the disable sentinel — NO ZeroAddress guard).
+        // setAdminSafe(address(0)) succeeds (the disable sentinel — NO ZeroAddress guard).
         vm.expectEmit(true, false, false, true, address(adapter));
-        emit WiringSet("feeRecipient", address(0));
-        adapter.setFeeRecipient(address(0));
-        assertEq(adapter.feeRecipient(), address(0), "recipient disabled back to address(0)");
+        emit WiringSet("adminSafe", address(0));
+        adapter.setAdminSafe(address(0));
+        assertEq(adapter.adminSafe(), address(0), "recipient disabled back to address(0)");
     }
 
     /// @dev F2 intact: even with the fee live, the PRINCIPAL leg still sends `amount` to `erebor`, and a draw with
     ///      `receiver != erebor` still reverts BadReceiver (the fee leg's distinct receiver does not relax the pin).
     function test_CTR09_F2_PinIntactWithFeeOn() public {
         (address lineRef,) = _openAndFundA();
-        adapter.setFeeRecipient(feeSink);
+        adapter.setAdminSafe(feeSink);
 
         // Principal still goes to erebor (asserted in test_CTR09_FeeOn_FinancesAndRoutesFee); here prove the pin still
         // rejects a non-erebor receiver while the fee is live.
         vm.expectRevert(EulerVenueAdapter.BadReceiver.selector);
         adapter.draw(lineRef, 100_000e6, makeAddr("notErebor"));
     }
+
+    // ============================================================
+    // (Q) CTR-13 — real line APR (~7.5%) via the adapter `irm` slot; reservoir / pre-existing lines stay 0%
+    // ============================================================
+
+    /// @dev Units proof (no on-chain call): `BASE_RATE` is the per-second RAY rate; nominal APR = rate * SPY / 1e27.
+    ///      750 bps == 7.50%. This is the "no load-bearing guess" gate — the rate is derived from EVK's own
+    ///      SECONDS_PER_YEAR / 1e27 convention, not a transcribed magic number.
+    function test_CTR13_LineIrm_BaseRate_Is_7_5pct_APR_Nominal() public pure {
+        // bps = (BASE_RATE * SPY / 1e27) * 1e4 = BASE_RATE * SPY / 1e23
+        uint256 nominalBps = LineIrm.BASE_RATE * LineIrm.SECONDS_PER_YEAR / 1e23;
+        assertApproxEqAbs(nominalBps, 750, 1, "nominal line APR ~= 7.50%");
+    }
+
+    /// @dev (a)+(b)+(c)+roll-off in one fork test on the live EVK factory:
+    ///      (c) `setIrm(realIRM)` re-points the slot and a FRESH `openLine` installs the real IRM on its borrow vault;
+    ///      (a) that line's `debtOf` accretes by EVK's exact per-second compounding factor at BASE_RATE over a year;
+    ///      (b)/roll-off a line opened BEFORE the rate was turned on stays on `ZeroIRM` and accrues ZERO over the SAME
+    ///          span — the same `ZeroIRM` the reservoir borrow vault runs (internal POL), so this is the structural
+    ///          equivalent of "the reservoir borrow accrues 0", and confirms the default roll-off (no forced re-price).
+    function test_CTR13_RealLineAccrues7_5pct_While_ZeroIrmLineAccruesZero() public {
+        // A pre-existing line on the setUp default ZeroIRM (models the reservoir / a pre-CTR-13 live line).
+        _seedRegistry(address(LIEN_B), PRICE_B);
+        (address zeroLine,) = _openB();
+        address zeroAcct = adapter.getLine(zeroLine).borrowAccount;
+        adapter.setLineLimits(zeroLine, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(zeroLine, 1_000_000e6);
+        uint256 zeroDraw = 100_000e6;
+        adapter.draw(zeroLine, zeroDraw, erebor);
+
+        // (c) Turn the rate on for NEW lines (the Timelock owns this slot in prod; here the test is the owner).
+        address realIrm = LineIrm.deploy();
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("irm", realIrm);
+        adapter.setIrm(realIrm);
+        assertEq(adapter.irm(), realIrm, "adapter irm re-pointed");
+
+        // A fresh line installs the real IRM; the pre-existing line is untouched (roll-off, not re-price).
+        (address realLine, address realAcct) = _openAndFundA();
+        assertEq(IEVault(realLine).interestRateModel(), realIrm, "fresh line installs the real IRM");
+        assertEq(IEVault(zeroLine).interestRateModel(), address(irm), "pre-existing line still on ZeroIRM");
+
+        uint256 realDraw = 100_000e6;
+        adapter.draw(realLine, realDraw, erebor);
+
+        // (a) Warp exactly one Gregorian year and realize accrual on both vaults.
+        uint256 t = LineIrm.SECONDS_PER_YEAR;
+        vm.warp(block.timestamp + t);
+        IEVault(zeroLine).touch();
+        IEVault(realLine).touch();
+
+        uint256 zeroDebt = IEVault(zeroLine).debtOf(zeroAcct);
+        uint256 realDebt = IEVault(realLine).debtOf(realAcct);
+
+        // (b) zero-IRM (reservoir-equivalent) line: ZERO accrual over the year.
+        assertEq(zeroDebt, zeroDraw, "ZeroIRM line accrues nothing over a year");
+
+        // (a) real line: debt == draw * EVK's per-second compounding multiplier at BASE_RATE (the exact accrual math).
+        (uint256 mult, bool overflow) = RPow.rpow(LineIrm.BASE_RATE + 1e27, t, 1e27);
+        assertFalse(overflow, "rpow no overflow");
+        uint256 expected = realDraw * mult / 1e27;
+        assertApproxEqRel(realDebt, expected, 1e15, "real line debt == draw * compounding factor (0.1% tol)");
+
+        // Human-legible APY band: per-second compounding lifts 7.5% nominal to ~7.788% (= e^0.075 - 1), strictly
+        // inside (7.5%, 8.5%) and far above 0 — the APR-vs-APY nuance.
+        assertGt(realDebt, realDraw * 1075 / 1000, "realized APY above the 7.5% nominal (compounding)");
+        assertLt(realDebt, realDraw * 1085 / 1000, "realized APY below 8.5%");
+    }
+
+    /// @dev CTR-13 curator fee: `setCuratorSafe` makes every fresh `openLine` install the curator vault as the line's
+    ///      EVK `feeReceiver`, so the line's interest-fee governor share (Euler capped at 50%) accrues to the curator
+    ///      instead of being forfeited 100% to Euler. Proves: (1) the fresh line's `feeReceiver == curatorSafe`;
+    ///      (2) after a year of interest, `convertFees()` pays the curator line-vault shares; (3) the curator's
+    ///      governor share is ≥ Euler's protocol share (governor keeps ≥50%, since Euler is capped at 50%).
+    function test_CTR13_CuratorFee_RoutesGovernorShareToCuratorVault() public {
+        address curatorSafe = makeAddr("curatorSafe");
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("curatorSafe", curatorSafe);
+        adapter.setCuratorSafe(curatorSafe);
+
+        // A real-rate line so the EVK interestFee (default 10%) has interest to skim.
+        adapter.setIrm(LineIrm.deploy());
+        (address line, address acct) = _openAndFundA();
+        assertEq(IEVault(line).feeReceiver(), curatorSafe, "fresh line feeReceiver == curatorSafe");
+
+        adapter.draw(line, 100_000e6, erebor);
+        vm.warp(block.timestamp + LineIrm.SECONDS_PER_YEAR);
+        IEVault(line).touch(); // realize interest → accumulatedFees (the 10% EVK interestFee)
+
+        address euler = IEVault(line).protocolFeeReceiver();
+        uint256 curBefore = IEVault(line).balanceOf(curatorSafe);
+        uint256 eulBefore = IEVault(line).balanceOf(euler);
+        IEVault(line).convertFees(); // mints accumulated fee-shares: governor share → curatorSafe, rest → Euler
+        uint256 curGain = IEVault(line).balanceOf(curatorSafe) - curBefore;
+        uint256 eulGain = IEVault(line).balanceOf(euler) - eulBefore;
+
+        assertGt(curGain, 0, "curatorSafe received the curator fee (line-vault shares)");
+        assertGe(curGain, eulGain, "governor (curator) share >= Euler protocol share (Euler capped at 50%)");
+        assertEq(acct, adapter.getLine(line).borrowAccount, "borrowAccount sanity");
+    }
+
 }

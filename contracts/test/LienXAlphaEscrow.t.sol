@@ -124,8 +124,8 @@ abstract contract EscrowBase is Test {
     LienXAlphaEscrow internal escrow;
 
     address internal coordinator = makeAddr("coordinator");
-    address internal treasurySafe = makeAddr("treasurySafe");
-    address internal sidecar = makeAddr("sidecar");
+    address internal adminSafe = makeAddr("adminSafe");
+    address internal juniorTrancheSafe = makeAddr("juniorTrancheSafe");
     address internal originator = makeAddr("originator");
     address internal originator2 = makeAddr("originator2");
     address internal stranger = makeAddr("stranger");
@@ -135,7 +135,7 @@ abstract contract EscrowBase is Test {
 
     function _baseSetUp() internal {
         xalpha = new MockERC20(18);
-        escrow = new LienXAlphaEscrow(address(xalpha), coordinator, treasurySafe, sidecar);
+        escrow = new LienXAlphaEscrow(address(xalpha), coordinator, adminSafe, juniorTrancheSafe);
     }
 
     /// @dev Fund the coordinator with `amt` xALPHA and have it approve the escrow (the item-10 wiring obligation).
@@ -162,28 +162,28 @@ contract LienXAlphaEscrowTest is EscrowBase {
     function test_ctor_stores_immutables() public view {
         assertEq(address(escrow.xAlpha()), address(xalpha));
         assertEq(escrow.coordinator(), coordinator);
-        assertEq(escrow.treasurySafe(), treasurySafe);
-        assertEq(escrow.sidecar(), sidecar);
+        assertEq(escrow.adminSafe(), adminSafe);
+        assertEq(escrow.juniorTrancheSafe(), juniorTrancheSafe);
     }
 
     function test_ctor_zero_xAlpha_reverts() public {
         vm.expectRevert(LienXAlphaEscrow.ZeroAddress.selector);
-        new LienXAlphaEscrow(address(0), coordinator, treasurySafe, sidecar);
+        new LienXAlphaEscrow(address(0), coordinator, adminSafe, juniorTrancheSafe);
     }
 
     function test_ctor_zero_coordinator_reverts() public {
         vm.expectRevert(LienXAlphaEscrow.ZeroAddress.selector);
-        new LienXAlphaEscrow(address(xalpha), address(0), treasurySafe, sidecar);
+        new LienXAlphaEscrow(address(xalpha), address(0), adminSafe, juniorTrancheSafe);
     }
 
-    function test_ctor_zero_treasurySafe_reverts() public {
+    function test_ctor_zero_adminSafe_reverts() public {
         vm.expectRevert(LienXAlphaEscrow.ZeroAddress.selector);
-        new LienXAlphaEscrow(address(xalpha), coordinator, address(0), sidecar);
+        new LienXAlphaEscrow(address(xalpha), coordinator, address(0), juniorTrancheSafe);
     }
 
-    function test_ctor_zero_sidecar_reverts() public {
+    function test_ctor_zero_juniorTrancheSafe_reverts() public {
         vm.expectRevert(LienXAlphaEscrow.ZeroAddress.selector);
-        new LienXAlphaEscrow(address(xalpha), coordinator, treasurySafe, address(0));
+        new LienXAlphaEscrow(address(xalpha), coordinator, adminSafe, address(0));
     }
 
     // -------------------------------------------------------------- lock (happy)
@@ -309,7 +309,7 @@ contract LienXAlphaEscrowTest is EscrowBase {
         vm.prank(coordinator);
         escrow.slashXAlphaToCapital(LIEN_A, amt);
 
-        assertEq(xalpha.balanceOf(treasurySafe), amt, "routed to treasurySafe");
+        assertEq(xalpha.balanceOf(adminSafe), amt, "routed to adminSafe");
         assertEq(escrow.bondAmount(LIEN_A), 0, "bond zeroed at exact boundary");
         assertEq(escrow.bondOriginator(LIEN_A), originator, "originator untouched");
     }
@@ -319,7 +319,7 @@ contract LienXAlphaEscrowTest is EscrowBase {
         vm.prank(coordinator);
         escrow.slashXAlphaToCapital(LIEN_A, 40e18);
 
-        assertEq(xalpha.balanceOf(treasurySafe), 40e18, "40 routed");
+        assertEq(xalpha.balanceOf(adminSafe), 40e18, "40 routed");
         assertEq(escrow.bondAmount(LIEN_A), 60e18, "60 remainder stays");
         assertEq(escrow.bondOriginator(LIEN_A), originator, "originator intact");
         assertEq(xalpha.balanceOf(address(escrow)), 60e18, "escrow holds remainder");
@@ -371,7 +371,7 @@ contract LienXAlphaEscrowTest is EscrowBase {
         vm.prank(coordinator);
         escrow.slashXAlphaToCohort(LIEN_A);
 
-        assertEq(xalpha.balanceOf(sidecar), B, "whole bond to sidecar");
+        assertEq(xalpha.balanceOf(juniorTrancheSafe), B, "whole bond to juniorTrancheSafe");
         assertEq(escrow.bondAmount(LIEN_A), 0);
         assertEq(escrow.bondOriginator(LIEN_A), address(0));
     }
@@ -388,7 +388,7 @@ contract LienXAlphaEscrowTest is EscrowBase {
         vm.prank(coordinator);
         escrow.slashXAlphaToCohort(LIEN_A);
 
-        assertEq(xalpha.balanceOf(sidecar), B - part, "remainder to sidecar");
+        assertEq(xalpha.balanceOf(juniorTrancheSafe), B - part, "remainder to juniorTrancheSafe");
         assertEq(escrow.bondAmount(LIEN_A), 0);
         assertEq(escrow.bondOriginator(LIEN_A), address(0));
     }
@@ -398,11 +398,11 @@ contract LienXAlphaEscrowTest is EscrowBase {
         vm.prank(coordinator);
         escrow.slashXAlphaToCohort(LIEN_A);
 
-        uint256 sidecarBefore = xalpha.balanceOf(sidecar);
+        uint256 juniorTrancheSafeBefore = xalpha.balanceOf(juniorTrancheSafe);
         vm.prank(coordinator);
         vm.expectRevert(LienXAlphaEscrow.NoBond.selector);
         escrow.slashXAlphaToCohort(LIEN_A);
-        assertEq(xalpha.balanceOf(sidecar), sidecarBefore, "no transfer on the reverting cohort call");
+        assertEq(xalpha.balanceOf(juniorTrancheSafe), juniorTrancheSafeBefore, "no transfer on the reverting cohort call");
     }
 
     function test_slashToCohort_nonCoordinator_reverts() public {
@@ -423,8 +423,8 @@ contract LienXAlphaEscrowTest is EscrowBase {
         vm.prank(coordinator);
         escrow.slashXAlphaToCohort(LIEN_A);
 
-        assertEq(xalpha.balanceOf(treasurySafe), part, "part to treasurySafe");
-        assertEq(xalpha.balanceOf(sidecar), B - part, "remainder to sidecar");
+        assertEq(xalpha.balanceOf(adminSafe), part, "part to adminSafe");
+        assertEq(xalpha.balanceOf(juniorTrancheSafe), B - part, "remainder to juniorTrancheSafe");
         assertEq(xalpha.balanceOf(address(escrow)), 0, "escrow net 0");
         assertEq(escrow.bondAmount(LIEN_A), 0, "bond cleared");
         assertEq(escrow.bondOriginator(LIEN_A), address(0));
@@ -455,7 +455,7 @@ contract LienXAlphaEscrowTest is EscrowBase {
         // slashToCapital(B) does NOT touch A
         vm.prank(coordinator);
         escrow.slashXAlphaToCapital(LIEN_B, 50e18);
-        assertEq(xalpha.balanceOf(treasurySafe), 50e18);
+        assertEq(xalpha.balanceOf(adminSafe), 50e18);
         assertEq(escrow.bondAmount(LIEN_A), 0, "A already released");
         assertEq(escrow.bondAmount(LIEN_B), 150e18);
         // aggregate invariant: escrow balance == Σ bondAmount over live liens
@@ -516,12 +516,12 @@ contract LienXAlphaEscrowTest is EscrowBase {
     // -------------------------------------------------------------- build-phase Timelock re-point
     function test_setWiring_onlyOwner_and_updates() public {
         address newSink = makeAddr("newSink");
-        escrow.setTreasurySafe(newSink);
-        assertEq(escrow.treasurySafe(), newSink);
+        escrow.setAdminSafe(newSink);
+        assertEq(escrow.adminSafe(), newSink);
 
         address newSidecar = makeAddr("newSidecar");
-        escrow.setSidecar(newSidecar);
-        assertEq(escrow.sidecar(), newSidecar);
+        escrow.setJuniorTrancheSafe(newSidecar);
+        assertEq(escrow.juniorTrancheSafe(), newSidecar);
 
         address newCoord = makeAddr("newCoord");
         escrow.setCoordinator(newCoord);
@@ -531,12 +531,12 @@ contract LienXAlphaEscrowTest is EscrowBase {
     function test_setWiring_nonOwner_reverts() public {
         vm.prank(makeAddr("stranger"));
         vm.expectRevert();
-        escrow.setSidecar(makeAddr("x"));
+        escrow.setJuniorTrancheSafe(makeAddr("x"));
     }
 
     function test_setWiring_zero_reverts() public {
         vm.expectRevert(LienXAlphaEscrow.ZeroWiring.selector);
-        escrow.setTreasurySafe(address(0));
+        escrow.setAdminSafe(address(0));
     }
 
     // -------------------------------------------------------------- fuzz: balance invariant preserved
@@ -552,17 +552,17 @@ contract LienXAlphaEscrowTest is EscrowBase {
         }
         assertEq(escrow.bondAmount(LIEN_A), bond - part, "remainder tracked");
         assertEq(xalpha.balanceOf(address(escrow)), bond - part, "escrow == bondAmount");
-        assertEq(xalpha.balanceOf(treasurySafe), part, "treasurySafe got the slash");
+        assertEq(xalpha.balanceOf(adminSafe), part, "adminSafe got the slash");
 
         if (bond - part != 0) {
             vm.prank(coordinator);
             escrow.slashXAlphaToCohort(LIEN_A);
-            assertEq(xalpha.balanceOf(sidecar), bond - part, "sidecar got the remainder");
+            assertEq(xalpha.balanceOf(juniorTrancheSafe), bond - part, "juniorTrancheSafe got the remainder");
         }
         assertEq(xalpha.balanceOf(address(escrow)), 0, "escrow fully drained");
         // total conservation: every minted token landed on one of the three destination classes
         assertEq(
-            xalpha.balanceOf(treasurySafe) + xalpha.balanceOf(sidecar) + xalpha.balanceOf(originator),
+            xalpha.balanceOf(adminSafe) + xalpha.balanceOf(juniorTrancheSafe) + xalpha.balanceOf(originator),
             bond,
             "conservation across the three destinations"
         );
@@ -574,8 +574,8 @@ contract LienXAlphaEscrowReentrancyTest is Test {
     ReentrantToken internal rtoken;
     LienXAlphaEscrow internal escrow;
 
-    address internal treasurySafe = makeAddr("treasurySafe");
-    address internal sidecar = makeAddr("sidecar");
+    address internal adminSafe = makeAddr("adminSafe");
+    address internal juniorTrancheSafe = makeAddr("juniorTrancheSafe");
     address internal originator = makeAddr("originator");
 
     bytes32 internal constant LIEN = bytes32(uint256(0xA11CE));
@@ -583,7 +583,7 @@ contract LienXAlphaEscrowReentrancyTest is Test {
     function setUp() public {
         rtoken = new ReentrantToken();
         // coordinator == the reentrant token, so its callback passes onlyCoordinator and exercises the guard/CEI.
-        escrow = new LienXAlphaEscrow(address(rtoken), address(rtoken), treasurySafe, sidecar);
+        escrow = new LienXAlphaEscrow(address(rtoken), address(rtoken), adminSafe, juniorTrancheSafe);
         rtoken.setEscrow(address(escrow));
     }
 
@@ -614,7 +614,7 @@ contract LienXAlphaEscrowReentrancyTest is Test {
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         escrow.releaseXAlpha(LIEN);
         assertEq(escrow.bondAmount(LIEN), 100e18, "bond intact");
-        assertEq(rtoken.balanceOf(sidecar), 0, "no cross-fn leak");
+        assertEq(rtoken.balanceOf(juniorTrancheSafe), 0, "no cross-fn leak");
     }
 
     function test_reentrancy_cohort_sameFn_blocked() public {
@@ -624,7 +624,7 @@ contract LienXAlphaEscrowReentrancyTest is Test {
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         escrow.slashXAlphaToCohort(LIEN);
         assertEq(escrow.bondAmount(LIEN), 100e18, "bond intact");
-        assertEq(rtoken.balanceOf(sidecar), 0, "no payout");
+        assertEq(rtoken.balanceOf(juniorTrancheSafe), 0, "no payout");
     }
 
     function test_reentrancy_lock_reentry_blocked() public {
@@ -658,8 +658,8 @@ contract LienXAlphaEscrowReentrancyTest is Test {
 contract EscrowHandler is Test {
     MockERC20 public xalpha;
     LienXAlphaEscrow public escrow;
-    address public treasurySafe;
-    address public sidecar;
+    address public adminSafe;
+    address public juniorTrancheSafe;
 
     bytes32[] public lienIds; // the fixed candidate set
     mapping(bytes32 => bool) public touched;
@@ -673,8 +673,8 @@ contract EscrowHandler is Test {
 
     constructor(MockERC20 x, address cs, address sc) {
         xalpha = x;
-        treasurySafe = cs;
-        sidecar = sc;
+        adminSafe = cs;
+        juniorTrancheSafe = sc;
         for (uint256 i = 0; i < 5; i++) {
             lienIds.push(bytes32(uint256(i + 1)));
         }
@@ -777,15 +777,15 @@ contract LienXAlphaEscrowInvariantTest is Test {
     LienXAlphaEscrow internal escrow;
     EscrowHandler internal handler;
 
-    address internal treasurySafe = makeAddr("treasurySafe");
-    address internal sidecar = makeAddr("sidecar");
+    address internal adminSafe = makeAddr("adminSafe");
+    address internal juniorTrancheSafe = makeAddr("juniorTrancheSafe");
 
     function setUp() public {
         xalpha = new MockERC20(18);
         // Break the escrow<->handler deploy cycle: handler first, then escrow with the handler as the immutable
         // coordinator, then point the handler at the escrow. The handler drives all four state-changers.
-        handler = new EscrowHandler(xalpha, treasurySafe, sidecar);
-        escrow = new LienXAlphaEscrow(address(xalpha), address(handler), treasurySafe, sidecar);
+        handler = new EscrowHandler(xalpha, adminSafe, juniorTrancheSafe);
+        escrow = new LienXAlphaEscrow(address(xalpha), address(handler), adminSafe, juniorTrancheSafe);
         handler.setEscrow(address(escrow));
 
         targetContract(address(handler));
@@ -808,12 +808,12 @@ contract LienXAlphaEscrowInvariantTest is Test {
     }
 
     /// @notice (ii) conservation (the security thesis): every minted xALPHA lands ONLY on one of the three
-    ///         destination classes — {escrow, treasurySafe, sidecar, the recorded originators} — and NO other
+    ///         destination classes — {escrow, adminSafe, juniorTrancheSafe, the recorded originators} — and NO other
     ///         address (the handler/coordinator, an attacker) ever accrues xALPHA from an outbound transfer.
-    ///         Exact: balanceOf(escrow) + balanceOf(treasurySafe) + balanceOf(sidecar) + Σ distinct originators ==
+    ///         Exact: balanceOf(escrow) + balanceOf(adminSafe) + balanceOf(juniorTrancheSafe) + Σ distinct originators ==
     ///         ghost_minted, AND the coordinator/handler holds 0 (its mint is fully forwarded at lock).
     function invariant_conservation_three_destinations() public view {
-        uint256 acc = xalpha.balanceOf(address(escrow)) + xalpha.balanceOf(treasurySafe) + xalpha.balanceOf(sidecar);
+        uint256 acc = xalpha.balanceOf(address(escrow)) + xalpha.balanceOf(adminSafe) + xalpha.balanceOf(juniorTrancheSafe);
         // Σ over every DISTINCT originator ever used (originators are unique per seed and never collide with the
         // three sinks — deterministic keccak | 1). This captures both live and already-released-and-paid bonds.
         uint256 m = handler.originatorsCount();

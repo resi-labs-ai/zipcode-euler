@@ -7,7 +7,7 @@
 ## Role
 The local interface set for **Baal (Moloch v3)** — the DAO substrate the szipUSD vault summons in 8-B1.
 Four shims: the DAO itself (`IBaal`), the two summoner factories (`IBaalSummoner` base,
-`IBaalAndVaultSummoner` higher-order DAO+sidecar-Safe), and the Loot/Shares ERC20 clones (`IBaalToken`).
+`IBaalAndVaultSummoner` higher-order DAO+juniorTrancheSidecar-Safe), and the Loot/Shares ERC20 clones (`IBaalToken`).
 All signatures Basescan/`cast`-verified against vendored `reference/Baal/` (forge fork auto-ABI not
 trusted). Live Base pins read from `contracts/script/BaseAddresses.sol`. Consumed by the summon script
 and the ExitGate.
@@ -30,8 +30,8 @@ and the ExitGate.
   - proposal lifecycle (test-only inertness proof): `submitProposal(bytes,uint32,uint256,string) payable returns (uint256)`, `sponsorProposal(uint32 id)`, `processProposal(uint32 id, bytes proposalData)`
   - view getters: `lootToken()`, `sharesToken()`, `avatar()`, `target()`, `shamans(address) returns (uint256)`, `totalShares()`, `totalLoot()`, `totalSupply()`, `quorumPercent()`, `sponsorThreshold()`, `proposalOffering()`, `votingPeriod() returns (uint32)`, `gracePeriod() returns (uint32)`, `adminLock()`, `managerLock()`, `governorLock()`
 - **Consumed by:**
-  - `contracts/script/SummonSubstrate.s.sol` — reads `avatar()`/`lootToken()`/`sharesToken()`; encodes init `actions[]` via selectors `setAdminConfig`/`setGovernanceConfig`/`setShamans`/`mintShares`/`mintLoot` and `executeAsBaal` (self-add team-multisig owner onto main Safe + sidecar).
-  - `contracts/src/supply/szipUSD/ExitGate.sol` — `IBaal public baal`; resolves `loot = baal.lootToken()`, `mainSafe = baal.avatar()`.
+  - `contracts/script/SummonSubstrate.s.sol` — reads `avatar()`/`lootToken()`/`sharesToken()`; encodes init `actions[]` via selectors `setAdminConfig`/`setGovernanceConfig`/`setShamans`/`mintShares`/`mintLoot` and `executeAsBaal` (self-add team-multisig owner onto main Safe + juniorTrancheSidecar).
+  - `contracts/src/supply/szipUSD/ExitGate.sol` — `IBaal public baal`; resolves `loot = baal.lootToken()`, `juniorTrancheSafe = baal.avatar()`.
   - `contracts/script/DeployZipcode.s.sol` — asserts `IBaal(baal).totalShares() == 0` (`SeamSharesNonZero`, the zero-Shares inertness seam check) and encodes `IBaal.setShamans` to grant the ExitGate the manager(2) shaman.
 - **Gotchas:** zero-Shares ⇒ governance-**inert** by design (proposal fns exist only to PROVE inertness in tests). `ragequit` exists on the DAO but the kept design wires NO ragequit — routine exit is the CoW book + `ExitGate.burnFor` (Loot held by the Gate; a full unwind is an orchestrated CoW drain). `setShamans` grants the manager(2) shaman bit (mint/burn) — admin=1/manager=2/governor=4. `executeAsBaal` is the only post-summon mutator used (avatar-gated). NatSpec must avoid bare `@word` (solc reads it as a tag).
 
@@ -49,15 +49,15 @@ and the ExitGate.
 
 ### `IBaalAndVaultSummoner.sol`
 - **Shims:** the higher-order **BaalAndVaultSummoner** — produces a Baal DAO + main Safe + a
-  non-ragequittable sidecar ("vault") Safe in one tx. Pin
+  non-ragequittable juniorTrancheSidecar ("vault") Safe in one tx. Pin
   **`BAAL_AND_VAULT_SUMMONER 0x2eF2fC8a18A914818169eFa183db480d31a90c5D`**; verified against
   `reference/Baal/contracts/higherOrderFactories/BaalAndVaultSummoner.sol`.
 - **Surface:**
-  - `summonBaalAndVault(bytes initializationParams, bytes[] initializationActions, uint256 saltNonce, bytes32 referrer, string name) returns (address daoAddress, address vaultAddress)` — `daoAddress` = the Baal; `vaultAddress` = the sidecar Safe (`deployAndSetupSafe(dao)`).
+  - `summonBaalAndVault(bytes initializationParams, bytes[] initializationActions, uint256 saltNonce, bytes32 referrer, string name) returns (address daoAddress, address vaultAddress)` — `daoAddress` = the Baal; `vaultAddress` = the juniorTrancheSidecar Safe (`deployAndSetupSafe(dao)`).
   - `vaultIdx() returns (uint256)` — public counter.
   - `vaults(uint256 id) returns (uint256 vaultId, bool active, address daoAddress, address vaultAddress, string name)` — Vault registry struct (BaalAndVaultSummoner.sol:24-31).
-- **Consumed by:** `contracts/script/SummonSubstrate.s.sol` — `IBaalAndVaultSummoner(BaseAddresses.BAAL_AND_VAULT_SUMMONER).summonBaalAndVault(initParams, actions, saltNonce, bytes32(0), VAULT_NAME)` → `(baal, sidecar)`. This is what 8-B1 actually summons through.
-- **Gotchas:** `summonBaalAndVault` lives on **this** contract, NOT the base `BaalSummoner` (different contract + selector). The returned `vaultAddress` is the structural utilization-sized sidecar freeze Safe (non-ragequittable), distinct from the main avatar Safe.
+- **Consumed by:** `contracts/script/SummonSubstrate.s.sol` — `IBaalAndVaultSummoner(BaseAddresses.BAAL_AND_VAULT_SUMMONER).summonBaalAndVault(initParams, actions, saltNonce, bytes32(0), VAULT_NAME)` → `(baal, juniorTrancheSidecar)`. This is what 8-B1 actually summons through.
+- **Gotchas:** `summonBaalAndVault` lives on **this** contract, NOT the base `BaalSummoner` (different contract + selector). The returned `vaultAddress` is the structural utilization-sized juniorTrancheSidecar freeze Safe (non-ragequittable), distinct from the main avatar Safe.
 
 ### `IBaalToken.sol`
 - **Shims:** the Baal **Loot / Shares ERC20 clones** (`reference/Baal/contracts/LootERC20.sol` /

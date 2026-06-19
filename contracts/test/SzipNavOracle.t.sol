@@ -180,10 +180,10 @@ contract SzipNavOracleTest is Test {
     SzipNavOracle oracle;
 
     address forwarder = makeAddr("forwarder");
-    address mainSafe = makeAddr("mainSafe");
-    address sidecar = makeAddr("sidecar");
+    address juniorTrancheSafe = makeAddr("juniorTrancheSafe");
+    address juniorTrancheSidecar = makeAddr("juniorTrancheSidecar");
     address dc = makeAddr("defaultCoordinator");
-    address engineSafe = makeAddr("engineSafe");
+    address juniorTrancheEngine = makeAddr("juniorTrancheEngine");
 
     MockToken zip;
     MockToken usdc;
@@ -217,8 +217,8 @@ contract SzipNavOracleTest is Test {
             address(xa),
             address(hydx),
             address(ohydx),
-            mainSafe,
-            sidecar,
+            juniorTrancheSafe,
+            juniorTrancheSidecar,
             W,
             MAX_AGE,
             DEV_BPS
@@ -256,8 +256,8 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.xAlpha(), address(xa));
         assertEq(oracle.hydx(), address(hydx));
         assertEq(oracle.oHydx(), address(ohydx));
-        assertEq(oracle.mainSafe(), mainSafe);
-        assertEq(oracle.sidecar(), sidecar);
+        assertEq(oracle.juniorTrancheSafe(), juniorTrancheSafe);
+        assertEq(oracle.juniorTrancheSidecar(), juniorTrancheSidecar);
         assertEq(oracle.W(), W);
         assertEq(oracle.maxAge(), MAX_AGE);
         assertEq(oracle.maxDeviationBps(), DEV_BPS);
@@ -272,17 +272,17 @@ contract SzipNavOracleTest is Test {
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         new SzipNavOracle(
             forwarder, address(0), address(usdc), address(xa), address(hydx),
-            address(ohydx), mainSafe, sidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
         );
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), mainSafe, sidecar, 0, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, 0, MAX_AGE, DEV_BPS
         );
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), mainSafe, sidecar, W, 0, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, 0, DEV_BPS
         );
     }
 
@@ -298,7 +298,7 @@ contract SzipNavOracleTest is Test {
         // non-owner
         SzipNavOracle fresh = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), mainSafe, sidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
         );
         vm.prank(makeAddr("rando"));
         vm.expectRevert();
@@ -317,19 +317,19 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.ichiVault(), address(iv2));
         SzipNavOracle fresh = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), mainSafe, sidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
         );
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         fresh.setLpPosition(address(0), address(g));
     }
 
-    function test_setEngineSafe_and_setDefaultCoordinator_setOnce() public {
-        oracle.setEngineSafe(engineSafe);
-        assertEq(oracle.engineSafe(), engineSafe);
+    function test_setJuniorTrancheEngine_and_setDefaultCoordinator_setOnce() public {
+        oracle.setJuniorTrancheEngine(juniorTrancheEngine);
+        assertEq(oracle.juniorTrancheEngine(), juniorTrancheEngine);
         // re-settable (build phase, §17)
         address es2 = makeAddr("es2");
-        oracle.setEngineSafe(es2);
-        assertEq(oracle.engineSafe(), es2);
+        oracle.setJuniorTrancheEngine(es2);
+        assertEq(oracle.juniorTrancheEngine(), es2);
         oracle.setDefaultCoordinator(dc);
         assertEq(oracle.defaultCoordinator(), dc);
         address dc2 = makeAddr("dc2");
@@ -348,7 +348,7 @@ contract SzipNavOracleTest is Test {
 
     function test_genesis_price_zero_supply_after_wiring() public {
         oracle.setShareToken(address(szip)); // totalSupply still 0
-        zip.setBalance(mainSafe, 500e18); // basket has value but no shares
+        zip.setBalance(juniorTrancheSafe, 500e18); // basket has value but no shares
         assertEq(oracle.spotNavPerShare(), 1e18);
     }
 
@@ -571,13 +571,13 @@ contract SzipNavOracleTest is Test {
     function _wireFullBasket() internal {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 100e18);
-        zip.setBalance(sidecar, 50e18); // _bal(zip) = 150e18
-        usdc.setBalance(mainSafe, 1000e6); // -> 1000e18
-        xa.setBalance(mainSafe, 10e18);
+        zip.setBalance(juniorTrancheSafe, 100e18);
+        zip.setBalance(juniorTrancheSidecar, 50e18); // _bal(zip) = 150e18
+        usdc.setBalance(juniorTrancheSafe, 1000e6); // -> 1000e18
+        xa.setBalance(juniorTrancheSafe, 10e18);
         xa.setExchangeRate(12e17); // 1.2
-        hydx.setBalance(mainSafe, 5e18);
-        ohydx.setBalance(mainSafe, 4e18); // discount 30
+        hydx.setBalance(juniorTrancheSafe, 5e18);
+        ohydx.setBalance(juniorTrancheSafe, 4e18); // discount 30
         _pushBoth(2e18, 5e17); // alphaUSD=2, hydxUSD=0.5
     }
 
@@ -600,8 +600,8 @@ contract SzipNavOracleTest is Test {
     function test_nav_engine_pending_burn_subtracts() public {
         _wireFullBasket();
         uint256 noBurn = oracle.spotNavPerShare(); // supply 1000
-        oracle.setEngineSafe(engineSafe);
-        szip.setBalance(engineSafe, 100e18); // effective supply 900
+        oracle.setJuniorTrancheEngine(juniorTrancheEngine);
+        szip.setBalance(juniorTrancheEngine, 100e18); // effective supply 900
         uint256 gross = oracle.grossBasketValue();
         assertEq(oracle.spotNavPerShare(), gross * 1e18 / 900e18);
         assertGt(oracle.spotNavPerShare(), noBurn);
@@ -609,15 +609,15 @@ contract SzipNavOracleTest is Test {
 
     function test_nav_engine_pending_burn_underflow_floors_to_genesis() public {
         _wireFullBasket();
-        oracle.setEngineSafe(engineSafe);
-        szip.setBalance(engineSafe, 2000e18); // > totalSupply 1000 -> effective 0
+        oracle.setJuniorTrancheEngine(juniorTrancheEngine);
+        szip.setBalance(juniorTrancheEngine, 2000e18); // > totalSupply 1000 -> effective 0
         assertEq(oracle.spotNavPerShare(), 1e18); // genesis, no underflow
     }
 
     function test_nav_usdc_scale_pinned() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1e18);
-        usdc.setBalance(mainSafe, 1e6); // exactly 1 USDC -> $1
+        usdc.setBalance(juniorTrancheSafe, 1e6); // exactly 1 USDC -> $1
         _pushBoth(1e18, 1e18);
         assertEq(oracle.grossBasketValue(), 1e18);
     }
@@ -637,8 +637,8 @@ contract SzipNavOracleTest is Test {
 
     function test_lp_marked_through() public {
         (MockICHIVault iv, MockGauge g) = _wireLp();
-        iv.setBalance(mainSafe, 100e18); // unstaked
-        g.setBalance(mainSafe, 400e18); // staked -> heldShares 500/1000 = half
+        iv.setBalance(juniorTrancheSafe, 100e18); // unstaked
+        g.setBalance(juniorTrancheSafe, 400e18); // staked -> heldShares 500/1000 = half
         // amt0 = 200*0.5=100 zipUSD -> 100e18 ; amt1 = 100*0.5=50 xAlpha -> 50*2.4=120e18 ; LP = 220e18
         assertEq(oracle.grossBasketValue(), 220e18);
         // IL marked-through: raise alphaUSD -> LP value moves
@@ -651,7 +651,7 @@ contract SzipNavOracleTest is Test {
     function test_lp_unset_contributes_zero() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 100e18);
+        zip.setBalance(juniorTrancheSafe, 100e18);
         _pushBoth(1e18, 1e18);
         assertEq(oracle.grossBasketValue(), 100e18); // no LP leg
     }
@@ -663,7 +663,7 @@ contract SzipNavOracleTest is Test {
         oracle.setLpPosition(address(iv), address(g));
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        g.setBalance(mainSafe, 1); // heldShares != 0 but supplyLp 0
+        g.setBalance(juniorTrancheSafe, 1); // heldShares != 0 but supplyLp 0
         _pushBoth(1e18, 1e18);
         assertEq(oracle.grossBasketValue(), 0); // no div-by-zero, LP leg 0
     }
@@ -676,7 +676,7 @@ contract SzipNavOracleTest is Test {
         oracle.setLpPosition(address(iv), address(g));
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        g.setBalance(mainSafe, 500e18);
+        g.setBalance(juniorTrancheSafe, 500e18);
         _pushBoth(1e18, 1e18);
         vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.UnknownLpToken.selector, address(rogue)));
         oracle.grossBasketValue();
@@ -693,8 +693,8 @@ contract SzipNavOracleTest is Test {
         _wireLp(); // 1000 LP supply, reserves 200 zip + 100 xAlpha, xAlphaUSD 2.4
         (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
         // 500 LP posted as escrow collateral (1:1) -> heldShares 500/1000 = half -> 100 zip + 50 xAlpha*2.4 = 220e18
-        e.setBalance(mainSafe, 500e18);
-        b.setDebt(mainSafe, 30e6); // 30 USDC strike debt -> 30e18
+        e.setBalance(juniorTrancheSafe, 500e18);
+        b.setDebt(juniorTrancheSafe, 30e6); // 30 USDC strike debt -> 30e18
         assertEq(oracle.pathLockedLpEquity(), 220e18 - 30e18, "LP(all states) - debt");
         assertEq(oracle.grossBasketValue(), 220e18 - 30e18, "escrow LP counted, debt subtracted");
     }
@@ -704,15 +704,15 @@ contract SzipNavOracleTest is Test {
         (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
 
         // BEFORE the loop: 500 LP staked in the gauge. gross = 220e18 (the test_lp_marked_through basket).
-        g.setBalance(mainSafe, 500e18);
+        g.setBalance(juniorTrancheSafe, 500e18);
         assertEq(oracle.grossBasketValue(), 220e18, "pre-loop: staked LP");
 
         // SIMULATE postCollateral + borrow: unstake (gauge->0), escrow the 500 LP, +30 USDC borrowed into the Safe,
         // +30 USDC debt. NAV must be INVARIANT (the blind spot closed).
-        g.setBalance(mainSafe, 0);
-        e.setBalance(mainSafe, 500e18);
-        usdc.setBalance(mainSafe, 30e6); // borrowed strike sits in the Safe
-        b.setDebt(mainSafe, 30e6);
+        g.setBalance(juniorTrancheSafe, 0);
+        e.setBalance(juniorTrancheSafe, 500e18);
+        usdc.setBalance(juniorTrancheSafe, 30e6); // borrowed strike sits in the Safe
+        b.setDebt(juniorTrancheSafe, 30e6);
         assertEq(oracle.grossBasketValue(), 220e18, "mid-loop: NAV invariant (escrow + USDC - debt)");
         // sanity: the un-fixed oracle would have read 0(escrow unseen) + 30(usdc) = 30e18 here, not 220.
     }
@@ -720,15 +720,15 @@ contract SzipNavOracleTest is Test {
     function test_reservoir_debt_saturates_at_zero() public {
         _wireLp();
         (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
-        e.setBalance(mainSafe, 100e18); // 100/1000 -> 20 zip + 10 xAlpha*2.4 = 44e18 LP
-        b.setDebt(mainSafe, 1_000_000e6); // debt far exceeds the basket
+        e.setBalance(juniorTrancheSafe, 100e18); // 100/1000 -> 20 zip + 10 xAlpha*2.4 = 44e18 LP
+        b.setDebt(juniorTrancheSafe, 1_000_000e6); // debt far exceeds the basket
         assertEq(oracle.grossBasketValue(), 0, "debt > basket saturates to 0, no underflow");
         assertEq(oracle.pathLockedLpEquity(), 0, "lp equity saturates to 0");
     }
 
     function test_reservoir_unset_contributes_zero() public {
         _wireLp();
-        MockGauge(oracle.gauge()).setBalance(mainSafe, 500e18);
+        MockGauge(oracle.gauge()).setBalance(juniorTrancheSafe, 500e18);
         // escrowVault/borrowVault unset -> pathLockedLpEquity is just the LP, no debt; gross unchanged.
         assertEq(oracle.grossBasketValue(), 220e18);
         assertEq(oracle.pathLockedLpEquity(), 220e18);
@@ -745,7 +745,7 @@ contract SzipNavOracleTest is Test {
     function test_twap_fallback_to_spot_before_W() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18); // spot = 1e18
+        zip.setBalance(juniorTrancheSafe, 1000e18); // spot = 1e18
         _pushBoth(1e18, 1e18);
         assertEq(oracle.twapNavPerShare(), oracle.spotNavPerShare());
     }
@@ -754,13 +754,13 @@ contract SzipNavOracleTest is Test {
         uint256 T = block.timestamp;
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18); // spot = 1e18
+        zip.setBalance(juniorTrancheSafe, 1000e18); // spot = 1e18
         _pushBoth(1e18, 1e18); // legs fresh, dt=0 (no accumulate)
 
         vm.warp(T + 2 hours);
         oracle.poke(); // books spot 1e18 over 2h
 
-        zip.setBalance(mainSafe, 3000e18); // spot = 3e18
+        zip.setBalance(juniorTrancheSafe, 3000e18); // spot = 3e18
         vm.warp(T + 4 hours);
         oracle.poke(); // books spot 3e18 over 2h
 
@@ -776,7 +776,7 @@ contract SzipNavOracleTest is Test {
     function test_poke_dt_zero_is_noop() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18);
+        zip.setBalance(juniorTrancheSafe, 1000e18);
         vm.warp(block.timestamp + 1 hours);
         oracle.poke();
         uint256 cumBefore = oracle.cumNav();
@@ -789,7 +789,7 @@ contract SzipNavOracleTest is Test {
     function test_twap_ring_wraparound() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18); // stable spot 1e18
+        zip.setBalance(juniorTrancheSafe, 1000e18); // stable spot 1e18
         for (uint256 i = 0; i < 70; i++) {
             vm.warp(block.timestamp + 1 hours);
             oracle.poke();
@@ -805,7 +805,7 @@ contract SzipNavOracleTest is Test {
     function test_poke_within_spacing_refreshes_head_no_advance() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18);
+        zip.setBalance(juniorTrancheSafe, 1000e18);
         vm.warp(block.timestamp + oracle.obsSpacing()); // first poke crosses obsSpacing -> one advance
         oracle.poke();
         uint16 idx = oracle.obsIndex();
@@ -824,7 +824,7 @@ contract SzipNavOracleTest is Test {
     function test_twap_window_survives_poke_spam() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18); // spot = 1e18
+        zip.setBalance(juniorTrancheSafe, 1000e18); // spot = 1e18
         _pushBoth(1e18, 1e18);
 
         // Build >= W of history at spot 1e18 (one checkpoint per obsSpacing).
@@ -837,7 +837,7 @@ contract SzipNavOracleTest is Test {
         uint16 idxBefore = oracle.obsIndex();
 
         // ATTACK: jump spot, then poke-spam in consecutive ~2s blocks (the eviction attempt).
-        zip.setBalance(mainSafe, 3000e18); // spot = 3e18 (manipulated)
+        zip.setBalance(juniorTrancheSafe, 3000e18); // spot = 3e18 (manipulated)
         assertEq(oracle.spotNavPerShare(), 3e18);
         for (uint256 i = 0; i < 200; i++) {
             vm.warp(block.timestamp + 2);
@@ -856,7 +856,7 @@ contract SzipNavOracleTest is Test {
     function test_staleness_pauses_issuance_not_exit() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18);
+        zip.setBalance(juniorTrancheSafe, 1000e18);
         _pushBoth(1e18, 1e18);
         assertTrue(oracle.fresh());
         vm.warp(block.timestamp + MAX_AGE + 1);
@@ -870,7 +870,7 @@ contract SzipNavOracleTest is Test {
     function test_staleness_single_leg_hydx_stale() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18);
+        zip.setBalance(juniorTrancheSafe, 1000e18);
         // push hydx first, then alpha later, then age past hydx but not alpha
         _push(1, 1e18); // hydx at T
         vm.warp(block.timestamp + 6 hours);
@@ -923,13 +923,13 @@ contract SzipNavOracleTest is Test {
         uint256 T = block.timestamp;
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
-        zip.setBalance(mainSafe, 1000e18); // spot 1e18
+        zip.setBalance(juniorTrancheSafe, 1000e18); // spot 1e18
         _pushBoth(1e18, 1e18);
         vm.warp(T + 5 hours);
         oracle.poke(); // establish a twap ~1e18 over the window
 
         // one-block UP spike (donation)
-        zip.setBalance(mainSafe, 2000e18); // spot jumps to 2e18 in this block, twap still ~1e18
+        zip.setBalance(juniorTrancheSafe, 2000e18); // spot jumps to 2e18 in this block, twap still ~1e18
         assertEq(oracle.navEntry(), oracle.spotNavPerShare()); // max picks the SPIKE -> minting MORE expensive
         assertGt(oracle.navEntry(), 1e18);
         assertEq(oracle.navExit(), oracle.twapNavPerShare()); // min ignores the up-spike -> ~1e18, no exit-rich
@@ -1079,7 +1079,7 @@ contract SzipNavOracleTest is Test {
         szip.setTotalSupply(1000e18);
         xa.setExchangeRate(12e17);
         _pushBoth(2e18, 5e17); // xAlphaUSD = 1.2*2 = 2.4
-        g.setBalance(mainSafe, 500e18); // held 500/1000 = half
+        g.setBalance(juniorTrancheSafe, 500e18); // held 500/1000 = half
     }
 
     /// @notice No plugin: `ichiVault` points at a pool whose `plugin() == address(0)` → `setLpTwapWindow(3600)`
@@ -1131,7 +1131,7 @@ contract SzipNavOracleTest is Test {
         // also succeeds before the LP is even wired (ichiVault could be 0 on a fresh oracle).
         SzipNavOracle freshOracle = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), mainSafe, sidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
         );
         freshOracle.setLpTwapWindow(0); // unconditionally valid
         assertEq(freshOracle.lpTwapWindow(), 0);

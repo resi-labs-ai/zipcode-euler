@@ -34,7 +34,7 @@ interface IReservoirDebt {
 /// @title SzipNavOracle
 /// @notice The szipUSD junior-vault NAV-per-share oracle: the **issuance + exit pricing primitive** (NAV is not
 ///         display-only). It composes the junior basket's NAV on-chain — reading every quantity trustlessly across
-///         the main + sidecar Safes (incl. the staked ICHI LP read off the Hydrex gauge), CRE-pushing only the
+///         the main + juniorTrancheSidecar Safes (incl. the staked ICHI LP read off the Hydrex gauge), CRE-pushing only the
 ///         off-chain leg prices it cannot read on Base (the xALPHA `alphaUSD` leg; HYDX/USD), and maintaining an
 ///         on-chain cumulative TWAP accumulator on `navPerShare` over a governed window `W`. Consumers read a
 ///         bracketed share price: `navEntry = max(spot, twap)` (issuance), `navExit = min(spot, twap)` (exit),
@@ -79,8 +79,8 @@ contract SzipNavOracle is ReceiverTemplate {
     address public immutable xAlpha; // 18-dp, two-layer mark
     address public immutable hydx; // 18-dp, pushed
     address public immutable oHydx; // 18-dp, intrinsic
-    address public immutable mainSafe; // free equity (Baal avatar)
-    address public immutable sidecar; // committed equity (non-RQ)
+    address public immutable juniorTrancheSafe; // free equity (Baal avatar)
+    address public immutable juniorTrancheSidecar; // committed equity (non-RQ)
     /// @notice The TWAP window (governed, set at deploy via `NAV_W`; default 1h / `W=3600`).
     uint32 public immutable W;
     /// @notice The pushed-leg staleness bound (governed).
@@ -116,7 +116,7 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         Timelock-settable (§17).
     address public borrowVault;
     /// @notice The 8-B14 buy-and-burn Safe whose transient pre-burn szipUSD is excluded from the denominator.
-    address public engineSafe;
+    address public juniorTrancheEngine;
     /// @notice The sole impairment-provision writer (M2). Zero ⇒ `writeProvision` reverts for everyone.
     address public defaultCoordinator;
     /// @notice The Base xALPHA rate oracle (`SzAlphaRateOracle`, exposing `exchangeRate()` + `fresh()`). When set,
@@ -176,7 +176,7 @@ contract SzipNavOracle is ReceiverTemplate {
     event LpPositionSet(address indexed ichiVault, address indexed gauge);
     event ReservoirLegSet(address indexed escrowVault, address indexed borrowVault);
     event LpTwapWindowSet(uint32 window);
-    event EngineSafeSet(address indexed engineSafe);
+    event EngineSafeSet(address indexed juniorTrancheEngine);
     event DefaultCoordinatorSet(address indexed dc);
     event XAlphaRateOracleSet(address indexed rateOracle);
     event LegPriceUpdated(uint8 indexed leg, uint256 price, uint48 ts);
@@ -191,23 +191,23 @@ contract SzipNavOracle is ReceiverTemplate {
         address xAlpha_,
         address hydx_,
         address oHydx_,
-        address mainSafe_,
-        address sidecar_,
+        address juniorTrancheSafe_,
+        address juniorTrancheSidecar_,
         uint32 W_,
         uint256 maxAge_,
         uint256 maxDeviationBps_
     ) ReceiverTemplate(forwarder) {
         if (
             zipUSD_ == address(0) || usdc_ == address(0) || xAlpha_ == address(0) || hydx_ == address(0)
-                || oHydx_ == address(0) || mainSafe_ == address(0) || sidecar_ == address(0) || W_ == 0 || maxAge_ == 0
+                || oHydx_ == address(0) || juniorTrancheSafe_ == address(0) || juniorTrancheSidecar_ == address(0) || W_ == 0 || maxAge_ == 0
         ) revert ZeroAddress();
         zipUSD = zipUSD_;
         usdc = usdc_;
         xAlpha = xAlpha_;
         hydx = hydx_;
         oHydx = oHydx_;
-        mainSafe = mainSafe_;
-        sidecar = sidecar_;
+        juniorTrancheSafe = juniorTrancheSafe_;
+        juniorTrancheSidecar = juniorTrancheSidecar_;
         W = W_;
         maxAge = maxAge_;
         maxDeviationBps = maxDeviationBps_;
@@ -273,10 +273,10 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @notice Wire/re-point the engine Safe (its transient pre-burn szipUSD is excluded). `onlyOwner` (Timelock).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        emit EngineSafeSet(engineSafe_);
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        emit EngineSafeSet(juniorTrancheEngine_);
     }
 
     /// @notice Wire/re-point the sole impairment-provision writer (M2). `onlyOwner` (Timelock).
@@ -359,7 +359,7 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     // --------------------------------------------------------------------- NAV composition
-    /// @notice The gross junior basket value (18-dp USD, `1e18 = $1`), summed across main + sidecar; IL marked-through.
+    /// @notice The gross junior basket value (18-dp USD, `1e18 = $1`), summed across main + juniorTrancheSidecar; IL marked-through.
     ///         The LP is counted in ALL states (loose share + gauge-staked + escrow-collateralized) and the reservoir
     ///         strike debt is subtracted, so a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle is
     ///         NAV-invariant (closes the §8.2 mid-loop blind spot). Saturates at 0 (debt can never exceed the basket
@@ -376,23 +376,23 @@ contract SzipNavOracle is ReceiverTemplate {
         value += _bal(xAlpha) * _xAlphaUSD() / 1e18;
         value += _bal(hydx) * legCache[LEG_HYDX_USD].price / 1e18;
         value += _bal(oHydx) * _oHydxUSD() / 1e18;
-        value += _lpValue(_lpShares(mainSafe) + _lpShares(sidecar));
-        uint256 debt = _reservoirDebt(mainSafe) + _reservoirDebt(sidecar);
+        value += _lpValue(_lpShares(juniorTrancheSafe) + _lpShares(juniorTrancheSidecar));
+        uint256 debt = _reservoirDebt(juniorTrancheSafe) + _reservoirDebt(juniorTrancheSidecar);
         value = value > debt ? value - debt : 0;
     }
 
-    /// @notice The committed (sidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
+    /// @notice The committed (juniorTrancheSidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
     ///         DurationFreezeModule bounds `release` against. ADDITIVE: `grossBasketValue()` is unchanged; this is
     ///         an INDEPENDENT per-Safe re-computation. For the five plain legs `committedValue() + freeValue()`
     ///         equals `grossBasketValue()` EXACTLY; for a split LP it is within ≤2 wei (the per-Safe pro-rata floors
     ///         twice vs once). The module only ever moves the five plain legs, so gross is exactly rotation-invariant.
     function committedValue() external view returns (uint256) {
-        return _grossValueOf(sidecar);
+        return _grossValueOf(juniorTrancheSidecar);
     }
 
     /// @notice The free (main-only) basket value, 18-dp USD. ADDITIVE; see `committedValue`.
     function freeValue() external view returns (uint256) {
-        return _grossValueOf(mainSafe);
+        return _grossValueOf(juniorTrancheSafe);
     }
 
     /// @dev Value ONE Safe's holdings (18-dp USD), mirroring `grossBasketValue` per-leg + LP marks (incl. the escrow
@@ -410,14 +410,14 @@ contract SzipNavOracle is ReceiverTemplate {
 
     /// @notice The path-locked LP equity (18-dp USD): the MAIN-Safe ICHI LP in every state (loose + gauge-staked +
     ///         escrow-collateralized), NET of the main Safe's reservoir strike debt. MAIN-SAFE ONLY — the SIDECAR's
-    ///         LP + debt are already owned by `committedValue()` (`_grossValueOf(sidecar)`), so summing this into
+    ///         LP + debt are already owned by `committedValue()` (`_grossValueOf(juniorTrancheSidecar)`), so summing this into
     ///         `coverageValue()` counts every Safe's LP exactly once (double-count fix).
     ///         The freeze module adds this to `committedValue()` for its coverage floor because the LP is fenced — its
     ///         only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it cannot reach an exit
     ///         below the floor.
     function pathLockedLpEquity() public view returns (uint256) {
-        uint256 lpValue = _lpValue(_lpShares(mainSafe));
-        uint256 debt = _reservoirDebt(mainSafe);
+        uint256 lpValue = _lpValue(_lpShares(juniorTrancheSafe));
+        uint256 debt = _reservoirDebt(juniorTrancheSafe);
         return lpValue > debt ? lpValue - debt : 0;
     }
 
@@ -558,7 +558,7 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     function _bal(address token) internal view returns (uint256) {
-        return IERC20(token).balanceOf(mainSafe) + IERC20(token).balanceOf(sidecar);
+        return IERC20(token).balanceOf(juniorTrancheSafe) + IERC20(token).balanceOf(juniorTrancheSidecar);
     }
 
     /// @dev USD per 1.0 xALPHA (18-dp): on-chain LST exchangeRate × the pushed alphaUSD.
@@ -608,7 +608,7 @@ contract SzipNavOracle is ReceiverTemplate {
     function _effectiveSupply() internal view returns (uint256) {
         if (shareToken == address(0)) return 0;
         uint256 ts = IERC20(shareToken).totalSupply();
-        uint256 pend = engineSafe == address(0) ? 0 : IERC20(shareToken).balanceOf(engineSafe);
+        uint256 pend = juniorTrancheEngine == address(0) ? 0 : IERC20(shareToken).balanceOf(juniorTrancheEngine);
         return ts > pend ? ts - pend : 0;
     }
 }

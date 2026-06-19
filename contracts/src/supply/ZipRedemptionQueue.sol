@@ -31,7 +31,7 @@ import {IZipUSD} from "../interfaces/euler/IZipUSD.sol";
 ///         is the par-burn core: escrow → fill `min(available, pending)` + burn → claim at par.
 ///
 ///         FUNDING (KR-1): the queue references NO EulerEarn and calls NOTHING to acquire USDC — the CRE cron does
-///         warehouse REDEEM then REPAY (`USDC.transfer(queue, amount)`, scope-pinned `EqualTo(repaySink==queue)`)
+///         warehouse REDEEM then REPAY (`USDC.transfer(queue, amount)`, scope-pinned `EqualTo(redemptionBox==queue)`)
 ///         then `settleEpoch()`. The queue treats its OWN USDC balance as the settlement liquidity.
 ///
 ///         OWNERSHIP (build phase, §17): wiring (`zipUSD`/`usdc`/`controller`/`redeemController`) is `Ownable`

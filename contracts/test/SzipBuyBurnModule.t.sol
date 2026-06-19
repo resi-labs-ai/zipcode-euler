@@ -193,11 +193,11 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     }
 
     // ----------------------------------------------------------------- helpers
-    function _deploy(address engineSafe_, address szipUSD_, uint256 cap_) internal returns (SzipBuyBurnModule m) {
+    function _deploy(address juniorTrancheEngine_, address szipUSD_, uint256 cap_) internal returns (SzipBuyBurnModule m) {
         m = _cloneSzipBuyBurnModule();
         m.setUp(
             abi.encode(
-                owner, engineSafe_, operator, address(oracle), szipUSD_, USDC, COW_SETTLEMENT, D_BPS, cap_, address(0)
+                owner, juniorTrancheEngine_, operator, address(oracle), szipUSD_, USDC, COW_SETTLEMENT, D_BPS, cap_, address(0)
             )
         );
     }
@@ -216,7 +216,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     function test_setUp_wires_storage_and_reads_live() public view {
         assertEq(module.owner(), owner);
         assertEq(module.operator(), operator);
-        assertEq(module.engineSafe(), address(safe));
+        assertEq(module.juniorTrancheEngine(), address(safe));
         assertEq(module.avatar(), address(safe));
         assertEq(module.target(), address(safe));
         assertEq(module.navOracle(), address(oracle));
@@ -292,19 +292,19 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     }
 
     function test_mastercopy_inert() public {
-        // A bare-deployed mastercopy (never setUp) has zero operator/engineSafe — postBid reverts NotOperator for all.
+        // A bare-deployed mastercopy (never setUp) has zero operator/juniorTrancheEngine — postBid reverts NotOperator for all.
         SzipBuyBurnModule mc = _cloneSzipBuyBurnModule();
         vm.prank(operator);
         vm.expectRevert(SzipBuyBurnModule.NotOperator.selector);
         mc.postBid(_order(1e6, 1e18, _validTo()));
         assertEq(mc.operator(), address(0));
-        assertEq(mc.engineSafe(), address(0));
+        assertEq(mc.juniorTrancheEngine(), address(0));
     }
 
-    function test_engineSafe_identity_matches() public view {
-        // The module's engineSafe is the order receiver/owner; deploy wires the Gate's + oracle's setEngineSafe to
-        // the same Safe (item-10). Here: the module's engineSafe == the Safe it is enabled on.
-        assertEq(module.engineSafe(), address(safe));
+    function test_juniorTrancheEngine_identity_matches() public view {
+        // The module's juniorTrancheEngine is the order receiver/owner; deploy wires the Gate's + oracle's setJuniorTrancheEngine to
+        // the same Safe (item-10). Here: the module's juniorTrancheEngine == the Safe it is enabled on.
+        assertEq(module.juniorTrancheEngine(), address(safe));
     }
 
     // ----------------------------------------------------------------- authority
@@ -764,7 +764,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     }
 
     function test_orderUid_known_answer_vector() public {
-        // A module whose usdc/szipUSD/engineSafe match the OUT-OF-BAND cast vector inputs.
+        // A module whose usdc/szipUSD/juniorTrancheEngine match the OUT-OF-BAND cast vector inputs.
         SzipBuyBurnModule m = _cloneSzipBuyBurnModule();
         m.setUp(
             abi.encode(owner, VEC_ENGINE, operator, address(oracle), VEC_SZIPUSD, USDC, COW_SETTLEMENT, D_BPS, CAP, address(0))
@@ -774,7 +774,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         // the pinned 56-byte known-answer vector (computed via `cast`, see the provenance comment above)
         assertEq(uid, VEC_UID);
         assertEq(uid.length, 56);
-        // owner (bytes 32:52) == engineSafe (big-endian, left-aligned 20-byte address)
+        // owner (bytes 32:52) == juniorTrancheEngine (big-endian, left-aligned 20-byte address)
         bytes20 ownerInUid;
         assembly {
             // uid memory: [len][32-byte digest][20-byte owner][4-byte validTo]; owner at offset 0x20 + 32
@@ -805,7 +805,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         (bytes memory uid,) = m.currentBid();
         // live Base settlement stored it under the packed owner = the engine Safe (msg.sender of setPreSignature)
         assertTrue(IGPv2Settlement(COW_SETTLEMENT).preSignature(uid) != 0, "presignature not stored");
-        // USDC allowance(engineSafe, vaultRelayer) == sellAmount
+        // USDC allowance(juniorTrancheEngine, vaultRelayer) == sellAmount
         assertEq(IERC20(USDC).allowance(address(esafe), COW_VAULT_RELAYER), 5e5);
 
         // cancel flips it false + resets allowance to 0
@@ -1050,7 +1050,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         OracleMockToken szipTok = new OracleMockToken(18);
         o.setShareToken(address(szipTok));
         szipTok.setTotalSupply(1000e18);
-        address main = o.mainSafe();
+        address main = o.juniorTrancheSafe();
         OracleMockToken zip = OracleMockToken(o.zipUSD());
         zip.setBalance(main, 3000e18); // spot = 3e18
         _pushBoth(o, fwd, 1e18, 5e17);

@@ -32,17 +32,17 @@ prod oracle + modules stay wired and untouched.
 | `DeployShowcaseVAMM` (`script/`) | Post-deploy step (run AFTER `DeployLocal`/`DeployZipcode`, as the **team**): deploy + wire the demo oracle, deploy + clone + **enable** the demo LP module on the existing Safe. |
 
 ## Wiring — internal (the diffs from prod; everything else per 8-B4 / 8-B6)
-**`SzipNavOracleDemoVAMM`** — same ctor as `SzipNavOracle` `(forwarder, zipUSD, usdc, xAlpha, hydx, oHydx, mainSafe,
-sidecar, W, maxAge, maxDeviationBps)`. The LP block in `grossBasketValue()` / `_grossValueOf(safe)` reads
+**`SzipNavOracleDemoVAMM`** — same ctor as `SzipNavOracle` `(forwarder, zipUSD, usdc, xAlpha, hydx, oHydx, juniorTrancheSafe,
+juniorTrancheSidecar, W, maxAge, maxDeviationBps)`. The LP block in `grossBasketValue()` / `_grossValueOf(safe)` reads
 `IVammPair(ichiVault).getReserves()` (not `IICHIVault.getTotalAmounts()`), then the same pro-rata
 `amt = reserve * heldShares / supplyLp` and `_tokenValue(token, amt)`. `_legPriceOfToken` adds:
 `token == hydx → legCache[LEG_HYDX_USD].price` (18-dp $/HYDX), `token == usdc → 1e30` (folds the 6→18dp scaling into
 the price so `amt*price/1e18` = 18-dp USD); zipUSD/xAlpha kept (additive). Owner = deployer (team) via
 `ReceiverTemplate`'s `Ownable(msg.sender)`.
 
-**`LpStrategyModuleDemoVAMM`** — same `setUp(owner, engineSafe, operator, ichiVault, gauge)`; `token0`/`token1` read
+**`LpStrategyModuleDemoVAMM`** — same `setUp(owner, juniorTrancheEngine, operator, ichiVault, gauge)`; `token0`/`token1` read
 LIVE off the pair (`IVammPair`). `addLiquidity`: per non-zero leg `_exec(tokenN, IERC20.transfer(pair, depositN))`
-then `_exec(pair, IVammPair.mint(engineSafe))`, decode `shares`, `shares < minShares → Slippage`. **No approval**
+then `_exec(pair, IVammPair.mint(juniorTrancheEngine))`, decode `shares`, `shares < minShares → Slippage`. **No approval**
 (direct `transfer`, not `transferFrom`). `stake`/`unstake`/views unchanged (`IGauge` + `IVammPair.balanceOf`).
 
 ## Wiring — cross-component (who points at whom)
@@ -51,9 +51,9 @@ then `_exec(pair, IVammPair.mint(engineSafe))`, decode `shares`, `shares < minSh
   rewardToken oHYDX). The oracle's `setLpPosition(pair, gauge)` and the module's `setUp(…, pair, gauge)` use the same.
 - **Demo oracle ← the prod CRE leg feed.** Same forwarder + sealed identity (`setExpectedAuthor 0x90F7…` /
   `setExpectedWorkflowId 0x…01`), so the existing reportType-7 HYDX leg push feeds `legCache[LEG_HYDX_USD]` (used to
-  price the LP's HYDX reserve). It also reads the szipUSD `shareToken` + `engineSafe` (= the prod ones).
+  price the LP's HYDX reserve). It also reads the szipUSD `shareToken` + `juniorTrancheEngine` (= the prod ones).
 - **Demo oracle ← `SzAlphaRateOracle` (REQUIRED — build-discovered).** `setXAlphaRateOracle(0x7251A305…)` MUST be wired
-  or `grossBasketValue` reverts on the sidecar's xALPHA leg (the fallback reads the mock mirror, which has no
+  or `grossBasketValue` reverts on the juniorTrancheSidecar's xALPHA leg (the fallback reads the mock mirror, which has no
   `exchangeRate()`). Folded into the deploy script.
 - **Demo LP module → enabled on the existing engine Safe** via `enableModule` (the team-owner `execTransaction` path,
   identical to how the prod modules are enabled). operator = `creOperator`, owner = team (so the team can re-point /
@@ -65,9 +65,9 @@ then `_exec(pair, IVammPair.mint(engineSafe))`, decode `shares`, `shares < minSh
 
 ## Deploy facts (`DeployShowcaseVAMM.s.sol`, run after the main deploy, as the team)
 - `new SzipNavOracleDemoVAMM(...)` (same ctor/params as the live prod oracle: `W=3600`, `maxAge=86400`,
-  `maxDeviationBps=1000`); then `setShareToken` / `setEngineSafe` / `setLpPosition(pair, gauge)` /
+  `maxDeviationBps=1000`); then `setShareToken` / `setJuniorTrancheEngine` / `setLpPosition(pair, gauge)` /
   `setXAlphaRateOracle(SzAlphaRateOracle)` / `setExpectedAuthor` / `setExpectedWorkflowId`.
-- `_cloneModule(new LpStrategyModuleDemoVAMM(), setUp(team, mainSafe, op, pair, gauge), mainSafe)` via the Zodiac
+- `_cloneModule(new LpStrategyModuleDemoVAMM(), setUp(team, juniorTrancheSafe, op, pair, gauge), juniorTrancheSafe)` via the Zodiac
   `ModuleProxyFactory` (distinct salt), then `enableModule` on the main Safe via the team's 1-of-n pre-validated
   `execTransaction` (copied verbatim from `DeployZipcode._cloneModule`/`_enableModuleOnSafe`/`_execAsTeam`).
 - **Live anvil addresses (deployed 2026-06-10):** `SzipNavOracleDemoVAMM` `0xF84eF3BA83BB62C88502241B878983D79708e371`,

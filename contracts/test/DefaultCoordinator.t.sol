@@ -72,8 +72,8 @@ abstract contract CoordBase is Test {
     LienXAlphaEscrow internal escrow;
 
     address internal forwarder = makeAddr("forwarder");
-    address internal treasurySafe = makeAddr("treasurySafe");
-    address internal sidecar = makeAddr("sidecar");
+    address internal adminSafe = makeAddr("adminSafe");
+    address internal juniorTrancheSidecar = makeAddr("juniorTrancheSidecar");
     address internal originator = makeAddr("originator");
     address internal originator2 = makeAddr("originator2");
     address internal stranger = makeAddr("stranger");
@@ -88,7 +88,7 @@ abstract contract CoordBase is Test {
         oracle = new MockNavOracle();
         coordinator = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), floor);
         // escrow's coordinator = the coordinator (circular break: coordinator deployed first with escrow unset)
-        escrow = new LienXAlphaEscrow(address(xalpha), address(coordinator), treasurySafe, sidecar);
+        escrow = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
         coordinator.setEscrow(address(escrow));
     }
 
@@ -208,7 +208,7 @@ contract DefaultCoordinatorTest is CoordBase {
     function test_setEscrow_sets_allowance_and_emits() public {
         // fresh coordinator (un-wired) to assert the EscrowSet emit + allowance landing
         DefaultCoordinator c = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
-        LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), treasurySafe, sidecar);
+        LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), adminSafe, juniorTrancheSidecar);
         vm.expectEmit(true, true, true, true, address(c));
         emit EscrowSet(address(e));
         c.setEscrow(address(e));
@@ -218,7 +218,7 @@ contract DefaultCoordinatorTest is CoordBase {
 
     function test_setEscrow_repoint_works() public {
         // build phase (§17): setEscrow re-points (no set-once lock) + re-approves the new escrow
-        LienXAlphaEscrow e2 = new LienXAlphaEscrow(address(xalpha), address(coordinator), treasurySafe, sidecar);
+        LienXAlphaEscrow e2 = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
         coordinator.setEscrow(address(e2));
         assertEq(address(coordinator.escrow()), address(e2));
         assertEq(xalpha.allowance(address(coordinator), address(e2)), type(uint256).max);
@@ -251,7 +251,7 @@ contract DefaultCoordinatorTest is CoordBase {
 
     function test_setEscrow_nonOwner_reverts() public {
         DefaultCoordinator c = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
-        LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), treasurySafe, sidecar);
+        LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), adminSafe, juniorTrancheSidecar);
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
         c.setEscrow(address(e));
@@ -261,10 +261,10 @@ contract DefaultCoordinatorTest is CoordBase {
         // build phase (§17): the Timelock admin can re-point the escrow (no set-once lock)
         address timelock = makeAddr("timelock");
         DefaultCoordinator c = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
-        LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), treasurySafe, sidecar);
+        LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), adminSafe, juniorTrancheSidecar);
         c.setEscrow(address(e));
         c.transferOwnership(timelock);
-        LienXAlphaEscrow e2 = new LienXAlphaEscrow(address(xalpha), address(c), treasurySafe, sidecar);
+        LienXAlphaEscrow e2 = new LienXAlphaEscrow(address(xalpha), address(c), adminSafe, juniorTrancheSidecar);
         vm.prank(timelock);
         c.setEscrow(address(e2));
         assertEq(address(c.escrow()), address(e2));
@@ -632,8 +632,8 @@ contract DefaultCoordinatorTest is CoordBase {
         assertEq(coordinator.totalProvision(), 0);
         assertEq(oracle.provision(), 0);
         assertEq(uint256(_status(LIEN_A)), uint256(DefaultCoordinator.LienStatus.Resolved));
-        assertEq(xalpha.balanceOf(treasurySafe), part, "part to treasurySafe");
-        assertEq(xalpha.balanceOf(sidecar), B - part, "remainder to sidecar");
+        assertEq(xalpha.balanceOf(adminSafe), part, "part to adminSafe");
+        assertEq(xalpha.balanceOf(juniorTrancheSidecar), B - part, "remainder to juniorTrancheSidecar");
         assertEq(xalpha.balanceOf(address(escrow)), 0, "escrow net 0");
     }
 
@@ -644,8 +644,8 @@ contract DefaultCoordinatorTest is CoordBase {
         _defaultReport(LIEN_A, 1000e18);
         _resolveReport(LIEN_A, 0); // pure premium
 
-        assertEq(xalpha.balanceOf(treasurySafe), 0);
-        assertEq(xalpha.balanceOf(sidecar), B, "whole bond to sidecar");
+        assertEq(xalpha.balanceOf(adminSafe), 0);
+        assertEq(xalpha.balanceOf(juniorTrancheSidecar), B, "whole bond to juniorTrancheSidecar");
         assertEq(escrow.bondAmount(LIEN_A), 0);
     }
 
@@ -656,8 +656,8 @@ contract DefaultCoordinatorTest is CoordBase {
         _defaultReport(LIEN_A, 1000e18);
         _resolveReport(LIEN_A, B); // full-bond capital slash -> bond 0 -> cohort skipped (no NoBond revert)
 
-        assertEq(xalpha.balanceOf(treasurySafe), B, "all to treasurySafe");
-        assertEq(xalpha.balanceOf(sidecar), 0, "cohort skipped");
+        assertEq(xalpha.balanceOf(adminSafe), B, "all to adminSafe");
+        assertEq(xalpha.balanceOf(juniorTrancheSidecar), 0, "cohort skipped");
         assertEq(escrow.bondAmount(LIEN_A), 0);
         assertEq(uint256(_status(LIEN_A)), uint256(DefaultCoordinator.LienStatus.Resolved));
     }
@@ -731,8 +731,8 @@ contract DefaultCoordinatorTest is CoordBase {
         assertEq(coordinator.totalProvision(), p0, "totalProvision still carries the residual");
         assertEq(oracle.provision(), p0, "oracle provision unchanged");
         assertEq(uint256(_status(LIEN_A)), uint256(DefaultCoordinator.LienStatus.WrittenOff));
-        assertEq(xalpha.balanceOf(treasurySafe), part);
-        assertEq(xalpha.balanceOf(sidecar), B - part);
+        assertEq(xalpha.balanceOf(adminSafe), part);
+        assertEq(xalpha.balanceOf(juniorTrancheSidecar), B - part);
     }
 
     function test_writeoff_fullBond_skips_cohort() public {
@@ -741,8 +741,8 @@ contract DefaultCoordinatorTest is CoordBase {
         _lock(LIEN_A, originator, B);
         _defaultReport(LIEN_A, 1000e18);
         _writeOffReport(LIEN_A, B);
-        assertEq(xalpha.balanceOf(treasurySafe), B);
-        assertEq(xalpha.balanceOf(sidecar), 0, "cohort skipped");
+        assertEq(xalpha.balanceOf(adminSafe), B);
+        assertEq(xalpha.balanceOf(juniorTrancheSidecar), 0, "cohort skipped");
         assertEq(escrow.bondAmount(LIEN_A), 0);
     }
 
@@ -752,8 +752,8 @@ contract DefaultCoordinatorTest is CoordBase {
         _lock(LIEN_A, originator, B);
         _defaultReport(LIEN_A, 1000e18);
         _writeOffReport(LIEN_A, 0);
-        assertEq(xalpha.balanceOf(sidecar), B);
-        assertEq(xalpha.balanceOf(treasurySafe), 0);
+        assertEq(xalpha.balanceOf(juniorTrancheSidecar), B);
+        assertEq(xalpha.balanceOf(adminSafe), 0);
     }
 
     function test_writeoff_exceedsBond_atomic_rollback() public {
@@ -992,8 +992,8 @@ contract DefaultCoordinatorIntegrationTest is Test {
     LienXAlphaEscrow internal escrow;
 
     address internal forwarder = makeAddr("forwarder");
-    address internal treasurySafe = makeAddr("treasurySafe");
-    address internal sidecar = makeAddr("sidecar");
+    address internal adminSafe = makeAddr("adminSafe");
+    address internal juniorTrancheSidecar = makeAddr("juniorTrancheSidecar");
     address internal originator = makeAddr("originator");
     address internal stranger = makeAddr("stranger");
 
@@ -1013,7 +1013,7 @@ contract DefaultCoordinatorIntegrationTest is Test {
         usdc = new MockERC20(6);
         hydx = new MockERC20(18);
         ohydx = new MockERC20(18);
-        address mainSafe = makeAddr("mainSafe");
+        address juniorTrancheSafe = makeAddr("juniorTrancheSafe");
         address oracleSidecar = makeAddr("oracleSidecar");
 
         // oracle deployed BEFORE the coordinator (navOracle immutable, no circularity)
@@ -1024,7 +1024,7 @@ contract DefaultCoordinatorIntegrationTest is Test {
             address(xalpha),
             address(hydx),
             address(ohydx),
-            mainSafe,
+            juniorTrancheSafe,
             oracleSidecar,
             4 hours, // W
             1 hours, // maxAge
@@ -1032,7 +1032,7 @@ contract DefaultCoordinatorIntegrationTest is Test {
         );
         coordinator = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
         // escrow coordinator = this coordinator
-        escrow = new LienXAlphaEscrow(address(xalpha), address(coordinator), treasurySafe, sidecar);
+        escrow = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
         // wire both seams
         oracle.setDefaultCoordinator(address(coordinator));
         coordinator.setEscrow(address(escrow));
@@ -1075,8 +1075,8 @@ contract DefaultCoordinatorIntegrationTest is Test {
         _drive(_report(4, abi.encode(LIEN, part)));
         assertEq(coordinator.totalProvision(), 0);
         assertEq(oracle.provision(), 0, "healed to 0 on the real oracle");
-        assertEq(xalpha.balanceOf(escrow.treasurySafe()), part, "treasurySafe got the slash");
-        assertEq(xalpha.balanceOf(escrow.sidecar()), B - part, "sidecar got the remainder");
+        assertEq(xalpha.balanceOf(escrow.adminSafe()), part, "adminSafe got the slash");
+        assertEq(xalpha.balanceOf(escrow.juniorTrancheSafe()), B - part, "junior tranche Safe got the remainder");
         assertEq(escrow.bondAmount(LIEN), 0);
     }
 
@@ -1223,8 +1223,8 @@ contract DefaultCoordinatorInvariantTest is Test {
     CoordHandler internal handler;
 
     address internal forwarder = makeAddr("forwarder");
-    address internal treasurySafe = makeAddr("treasurySafe");
-    address internal sidecar = makeAddr("sidecar");
+    address internal adminSafe = makeAddr("adminSafe");
+    address internal juniorTrancheSidecar = makeAddr("juniorTrancheSidecar");
 
     uint256 internal constant FLOOR = 0.8e18;
 
@@ -1232,7 +1232,7 @@ contract DefaultCoordinatorInvariantTest is Test {
         xalpha = new MockERC20(18);
         oracle = new MockNavOracle();
         coordinator = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
-        escrow = new LienXAlphaEscrow(address(xalpha), address(coordinator), treasurySafe, sidecar);
+        escrow = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
         coordinator.setEscrow(address(escrow));
 
         handler = new CoordHandler(xalpha, oracle, coordinator, escrow, forwarder, FLOOR);

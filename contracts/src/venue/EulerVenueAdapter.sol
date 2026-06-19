@@ -73,9 +73,9 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
 
     // ----- per-revolution protocol fee (CTR-09, §5/§17) -----
     /// @notice The protocol-fee recipient. DEFAULTS to `address(0)` = fee OFF until the Timelock wires it via
-    ///         `setFeeRecipient`. When non-zero and the computed fee is non-dust, `draw` appends a fourth EVC borrow
+    ///         `setAdminSafe`. When non-zero and the computed fee is non-dust, `draw` appends a fourth EVC borrow
     ///         leg crediting `fee` USDC here (financed by the line: line debt becomes `amount + fee`).
-    address public feeRecipient;
+    address public adminSafe;
     /// @notice The per-draw fee in basis points. INLINE-initialized to 50 (= 0.50%) — NOT a constructor arg (a ctor arg
     ///         would break `MisWiringAdapter`'s super-call). Timelock-settable via `setFeeBps`, capped at `MAX_FEE_BPS`.
     ///         CALIBRATION (CTR-09, dartboard 2026-06-19): 50 bps reads as a market-standard per-origination fee
@@ -87,6 +87,17 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     uint16 public feeBps = 50;
     /// @notice The hard ceiling on `feeBps` (5%). `setFeeBps` reverts `FeeTooHigh` above this.
     uint16 internal constant MAX_FEE_BPS = 500;
+
+    // ----- per-line curator fee (CTR-13, §5/§17) -----
+    /// @notice The EVK line-vault `feeReceiver` (governor fee-share recipient) installed on every per-line borrow
+    ///         vault at `openLine` — the curator's payment for designing/running the vaults. It captures the governor
+    ///         share of each line's EVK `interestFee` (the default 10% skimmed off borrow interest): EULER takes its
+    ///         protocol share (capped at 50% — EVK `MAX_PROTOCOL_FEE_SHARE`), this address takes the remaining
+    ///         governor share (≥50%). The share arrives as fee-SHARES of each line vault, realized via that vault's
+    ///         permissionless `convertFees()` (then redeem → USDC). DEFAULTS to `address(0)` = the EVK "governor
+    ///         forfeits" sentinel ⇒ 100% to Euler (no curator fee); the Timelock wires it via `setCuratorSafe`.
+    ///         DISTINCT from `adminSafe` (the CTR-09 per-DRAW fee) and from the EE pool-level perf-fee `f`.
+    address public curatorSafe;
 
     /// @notice Per-line record. `lineRef` = the borrow vault address.
     struct Line {
@@ -265,10 +276,19 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
 
     /// @notice Set the per-draw fee recipient (CTR-09, §17). onlyOwner (Timelock). UNLIKE the other wiring setters this
     ///         DELIBERATELY omits the `ZeroAddress` guard: `address(0)` is the legal "fee disabled" sentinel (a draw with
-    ///         `feeRecipient == address(0)` appends no fee leg), so wiring it to zero is how the Timelock turns the fee OFF.
-    function setFeeRecipient(address feeRecipient_) external onlyOwner {
-        feeRecipient = feeRecipient_;
-        emit WiringSet("feeRecipient", feeRecipient_);
+    ///         `adminSafe == address(0)` appends no fee leg), so wiring it to zero is how the Timelock turns the fee OFF.
+    function setAdminSafe(address adminSafe_) external onlyOwner {
+        adminSafe = adminSafe_;
+        emit WiringSet("adminSafe", adminSafe_);
+    }
+
+    /// @notice Set the per-line curator fee receiver (CTR-13, §17). onlyOwner (Timelock). Installed as the EVK
+    ///         `feeReceiver` on every SUBSEQUENT `openLine`'s borrow vault. Like `setAdminSafe` this DELIBERATELY
+    ///         omits the `ZeroAddress` guard: `address(0)` is the legal "no curator fee" sentinel (the EVK governor
+    ///         forfeits its fee-share ⇒ 100% to Euler), so wiring it to zero is how the Timelock turns the fee OFF.
+    function setCuratorSafe(address curatorSafe_) external onlyOwner {
+        curatorSafe = curatorSafe_;
+        emit WiringSet("curatorSafe", curatorSafe_);
     }
 
     /// @notice Set the per-draw fee in basis points (CTR-09, §17). onlyOwner (Timelock). Capped at `MAX_FEE_BPS` (5%).
@@ -321,6 +341,10 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         address evault =
             eVaultFactory.createProxy(address(0), false, abi.encodePacked(usdc, address(router), usdc));
         IEVault(evault).setInterestRateModel(irm);
+        // CTR-13: route this line vault's EVK interest-fee governor share to the curator vault (Euler keeps only its
+        // protocol share, capped at 50%). `address(0)` ⇒ skip, leaving the EVK default `feeReceiver == 0` (governor
+        // forfeits ⇒ 100% to Euler). The adapter is this vault's governor, so `setFeeReceiver` is authorized.
+        if (curatorSafe != address(0)) IEVault(evault).setFeeReceiver(curatorSafe);
         IEVault(evault).setHookConfig(gatingHook, OP_BORROW | OP_LIQUIDATE); // never hook OP_REPAY
 
         // step 4: onboard EVAULT to the EE pool so `fund` can reallocate into it. Curator submitCap is bounded to
@@ -422,10 +446,10 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         address borrowAccount = L.borrowAccount;
 
         // Per-revolution protocol fee (CTR-09, §5/§17). Round-DOWN (Solidity integer div). `feeBps == 0` => `fee == 0`,
-        // so `levyFee` also covers a zeroed bps; `feeRecipient == address(0)` is the disabled sentinel; a dust draw
+        // so `levyFee` also covers a zeroed bps; `adminSafe == address(0)` is the disabled sentinel; a dust draw
         // (`fee == 0`) appends NO leg (never a `borrow(0, ..)` leg, never `FeeLevied(.., 0)`).
         uint256 fee = amount * feeBps / 10_000;
-        bool levyFee = feeRecipient != address(0) && fee != 0;
+        bool levyFee = adminSafe != address(0) && fee != 0;
 
         IEVC.BatchItem[] memory items = new IEVC.BatchItem[](levyFee ? 4 : 3);
         // (1) enable controller — EVC self-call (account in calldata, onBehalfOf == 0, value == 0).
@@ -449,7 +473,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
             value: 0,
             data: abi.encodeCall(IBorrowing.borrow, (amount, erebor))
         });
-        // (4, optional) the fee leg — a SECOND borrow on the SAME borrowAccount, crediting `fee` to `feeRecipient`. The
+        // (4, optional) the fee leg — a SECOND borrow on the SAME borrowAccount, crediting `fee` to `adminSafe`. The
         // line's debt becomes `amount + fee` (financed by the line, repaid with it). The principal leg above keeps the
         // hardcoded `erebor` receiver (F2 preserved); only this leg's receiver differs. Both borrows on one
         // borrowAccount in one batch are mechanically valid — the deferred account-status check runs once at batch end
@@ -459,7 +483,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
                 targetContract: lineRef,
                 onBehalfOfAccount: borrowAccount,
                 value: 0,
-                data: abi.encodeCall(IBorrowing.borrow, (fee, feeRecipient))
+                data: abi.encodeCall(IBorrowing.borrow, (fee, adminSafe))
             });
         }
 

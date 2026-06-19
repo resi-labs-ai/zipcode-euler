@@ -6,6 +6,7 @@ import {BaseAddresses} from "./BaseAddresses.sol";
 import {ReservoirMarketDeployer} from "./ReservoirMarketDeployer.sol";
 import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
 import {SzipPerspectiveProbe} from "./SzipPerspectiveProbe.sol";
+import {LineIrm} from "./LineIrm.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
 
@@ -31,7 +32,8 @@ contract DeployLocal is DeployZipcode {
     address internal constant ANVIL_2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; // creOperator
     address internal constant ANVIL_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906; // workflowAuthor
     address internal constant ANVIL_4 = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65; // erebor
-    address internal constant ANVIL_5 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc; // treasurySafe
+    address internal constant ANVIL_5 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc; // adminSafe
+    address internal constant ANVIL_6 = 0x976EA74026E726554dB657fA54763abd0C3a0aa9; // curatorSafe (CTR-13)
 
     // The matched live ICHI vault + its Hydrex ALM gauge (POL stand-ins for the module fork tests). The vault is the
     // live WETH/USDC ICHI ALM (pool 0x82dbe1834). The gauge MUST be the vault-keyed ALM gauge `Voter.gauges(vault)`
@@ -69,7 +71,8 @@ contract DeployLocal is DeployZipcode {
         i.creOperator = ANVIL_2;
         i.workflowAuthor = ANVIL_3;
         i.erebor = ANVIL_4;
-        i.treasurySafe = ANVIL_5;
+        i.adminSafe = ANVIL_5;
+        i.curatorSafe = ANVIL_6; // CTR-13: per-line EVK feeReceiver (curator pay)
         i.saltNonce = 1;
         i.workflowId = bytes32(uint256(1)); // non-zero (identity pre-gate)
 
@@ -100,7 +103,11 @@ contract DeployLocal is DeployZipcode {
     ///         cross-chain stand-in — no real Base asset exists pre-bridge) are local. Collateral/Proof-of-Value stays
     ///         mocked per §17. CoW solver + CRE DON are simulated at smoke-time (the contracts they hit are real).
     function _provisionStandins() internal {
+        // Reservoir IRM: a real 0%-rate model (reservoir borrowing is internal POL — charging the protocol itself is
+        // pointless). The per-line IRM is SEPARATE (CTR-13): a real ~7.5%-APR flat `IRMLinearKink` wired into the
+        // adapter `irm` slot, so every `openLine` installs it while the reservoir stays at zero.
         i.irm = address(new ZeroIRM());
+        i.lineIrm = LineIrm.deploy();
         i.xAlphaMirror = address(new MockERC20("Zipcode xALPHA mirror", "xALPHA", 18));
 
         // REAL no-borrow USDC resting market — the EE supply-queue head. A bare EVK proxy (asset=USDC, no oracle/uoa
@@ -132,8 +139,11 @@ contract DeployLocal is DeployZipcode {
         uint256 capMax = type(uint136).max;
 
         // fee defaults to 0 (setFee(0) reverts AlreadySet); set only the recipient so a future non-zero fee routes
-        // lending yield to the warehouse Safe (treasury).
-        _eeCall(ee, abi.encodeWithSignature("setFeeRecipient(address)", d.warehouse.safe));
+        // lending yield to the warehouse Safe (treasury). NB (CTR-13): `f` is DORMANT by design — the warehouse Safe
+        // is the senior EE-share custodian (the sole pool shareholder), so net line interest already accrues to it via
+        // share appreciation; a non-zero `f` would only mint fee-shares to the entity that already owns the pool (a
+        // no-op). The recipient stays wired so `f` can be flipped on IF external senior LPs ever deposit (post-M1).
+        _eeCall(ee, abi.encodeWithSignature("setFeeRecipient(address)", d.warehouse.warehouseSafe));
 
         _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", i.baseUsdcMarket, capMax));
         _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", i.baseUsdcMarket));
@@ -159,7 +169,7 @@ contract DeployLocal is DeployZipcode {
             BaseAddresses.EVC,
             BaseAddresses.USDC,
             address(d.registry),
-            i.irm,
+            i.lineIrm, // CTR-13: mirror what `openLine` installs (the line IRM), not the reservoir's ZeroIRM
             address(d.hook),
             i.polIchiVault
         );
@@ -188,7 +198,7 @@ contract DeployLocal is DeployZipcode {
         // seed an initial mark: $1.00 per 1e18 LP share (6-dp quote).
         _seedLpMark(1e6);
 
-        // 24. reservoir market (governor = the Timelock; engineSafe = the main basket Safe).
+        // 24. reservoir market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
         (d.escrowVault, d.borrowVault, d.router) = new ReservoirMarketDeployer().deploy(
             ReservoirMarketDeployer.Params({
                 factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
@@ -198,7 +208,7 @@ contract DeployLocal is DeployZipcode {
                 usdc: BaseAddresses.USDC,
                 lpOracle: address(d.lpOracle),
                 irm: i.irm,
-                engineSafe: d.sub.mainSafe,
+                juniorTrancheEngine: d.sub.juniorTrancheSafe,
                 borrowLTV: i.borrowLTV,
                 liqLTV: i.liqLTV
             })

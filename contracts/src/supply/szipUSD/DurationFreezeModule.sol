@@ -11,8 +11,8 @@ import {ISeniorPool} from "../../interfaces/supply/ISeniorPool.sol";
 
 /// @title DurationFreezeModule
 /// @notice The §11-B / §6.4 / §8.2 duration-squeeze freeze actuator: the seventh engine Zodiac `Module`, and the
-///         first enabled on BOTH Safes (main + sidecar), because the freeze moves value across them. It fills the
-///         non-ragequittable sidecar (`commit`, MAIN→SIDECAR) and drains it (`release`, SIDECAR→MAIN), keeping the
+///         first enabled on BOTH Safes (main + juniorTrancheSidecar), because the freeze moves value across them. It fills the
+///         non-ragequittable juniorTrancheSidecar (`commit`, MAIN→SIDECAR) and drains it (`release`, SIDECAR→MAIN), keeping the
 ///         utilization-committed junior equity structurally unreachable by an Exit-Gate window exit. This is the
 ///         Duration-Bond trigger B — a LIQUIDITY squeeze: no realized loss, no xALPHA premium/slash, no markdown.
 ///
@@ -20,7 +20,7 @@ import {ISeniorPool} from "../../interfaces/supply/ISeniorPool.sol";
 ///      The CRE `operator` (single, trusted, the same authority every engine module trusts) is trusted for *which*
 ///      whitelisted asset to move, *how much*, the timing, and whether to `commit`. The on-chain guarantees are
 ///      narrow and exact: (a) value can only move between the two wired Safes — no recipient parameter, no third
-///      destination, no custody; (b) `release` cannot drop the sidecar below `requiredCommittedValue()` — the
+///      destination, no custody; (b) `release` cannot drop the juniorTrancheSidecar below `requiredCommittedValue()` — the
 ///      senior LIABILITY (`min(illiquidSeniorValue, grossBasketValue)`), read live and donation-immune from
 ///      EulerEarn and not outsider-manipulable (§4.3/§8.2) — so a compromised operator cannot open the run hatch
 ///      while debt is outstanding; the floor is pinned to ABSOLUTE debt, not a junior-basket fraction, so shrinking
@@ -32,8 +32,8 @@ import {ISeniorPool} from "../../interfaces/supply/ISeniorPool.sol";
 ///      single-operator invariant (no concurrent sibling-module rotation mid-`release`).
 ///
 /// @dev SECURITY BOUNDARY (the module's whole shape): the operator supplies ONLY `(asset, amount)`. The module
-///      builds ALL calldata; the source and destination of every transfer are the literal set-once `mainSafe` /
-///      `sidecar` — NO recipient parameter, NO generic exec/delegatecall, `value == 0` on every exec. The module
+///      builds ALL calldata; the source and destination of every transfer are the literal set-once `juniorTrancheSafe` /
+///      `juniorTrancheSidecar` — NO recipient parameter, NO generic exec/delegatecall, `value == 0` on every exec. The module
 ///      holds no custody (the Safes hold the tokens) and never touches the Exit Gate, any default/loss state, the
 ///      oracle's `provision`, or any xALPHA bond. `U` is read DONATION-IMMUNE off the senior pool (§8.2): never
 ///      `IERC20(usdc).balanceOf(eulerEarn)`.
@@ -44,10 +44,10 @@ import {ISeniorPool} from "../../interfaces/supply/ISeniorPool.sol";
 ///      mastercopy is init-locked in its constructor (see {MastercopyInitLock}). OZ `ReentrancyGuard` (non-upgradeable) is storage-safe under clones.
 contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
-    /// @notice The free-equity (ragequit-target) Safe — `avatar == target == mainSafe`; the `commit` source / `release` dest.
-    address public mainSafe;
-    /// @notice The committed-equity (non-ragequittable) sidecar Safe — the `commit` dest / `release` source.
-    address public sidecar;
+    /// @notice The free-equity (ragequit-target) Safe — `avatar == target == juniorTrancheSafe`; the `commit` source / `release` dest.
+    address public juniorTrancheSafe;
+    /// @notice The committed-equity (non-ragequittable) juniorTrancheSidecar Safe — the `commit` dest / `release` source.
+    address public juniorTrancheSidecar;
     /// @notice The single CRE operator (gates `commit`/`release`).
     address public operator;
     /// @notice The `SzipNavOracle` (read via `ISzipNavBasket`): the sole valuation authority for the floor.
@@ -56,7 +56,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///         (§8.2). Slot name retained as `eulerEarn` (Euler is config one); the read interface is now generic.
     address public eulerEarn;
     /// @notice The CreditWarehouse Safe holding the EulerEarn senior shares (the `owner` arg of the `U` read).
-    address public warehouse;
+    address public warehouseSafe;
 
     // -- the movable whitelist: the FIVE oracle plain legs ONLY (read LIVE at setUp). The ICHI LP share is NOT
     //    movable: it is fenced in place and counted via the oracle's `pathLockedLpEquity()`.
@@ -93,38 +93,38 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
     ///         `initializer`. Decodes the wired addresses, reads the movable assets (5 plain legs + the ICHI LP
     ///         share, the latter possibly address(0) pre-LP) LIVE off the oracle (so the
-    ///         whitelist == exactly what the oracle prices — no drift), sets `avatar == target == mainSafe` (the
+    ///         whitelist == exactly what the oracle prices — no drift), sets `avatar == target == juniorTrancheSafe` (the
     ///         inherited single-avatar exec is NOT used; both rotations go through explicit `ISafe(src)` calls), and
     ///         transfers ownership to the Timelock `owner`.
     function setUp(bytes memory initParams) public override initializer {
         (
             address owner_,
-            address mainSafe_,
-            address sidecar_,
+            address juniorTrancheSafe_,
+            address juniorTrancheSidecar_,
             address operator_,
             address navOracle_,
             address eulerEarn_,
-            address warehouse_
+            address warehouseSafe_
         ) = abi.decode(initParams, (address, address, address, address, address, address, address));
 
         if (
-            owner_ == address(0) || mainSafe_ == address(0) || sidecar_ == address(0) || operator_ == address(0)
-                || navOracle_ == address(0) || eulerEarn_ == address(0) || warehouse_ == address(0)
+            owner_ == address(0) || juniorTrancheSafe_ == address(0) || juniorTrancheSidecar_ == address(0) || operator_ == address(0)
+                || navOracle_ == address(0) || eulerEarn_ == address(0) || warehouseSafe_ == address(0)
         ) revert ZeroAddress();
         if (owner_ == operator_) revert OwnerIsOperator();
         // distinctness is load-bearing: equal Safes make a rotation a self-transfer that trivially passes the floor.
-        if (mainSafe_ == sidecar_) revert BadParams();
+        if (juniorTrancheSafe_ == juniorTrancheSidecar_) revert BadParams();
 
         // The module is enabled ON the main Safe; the inherited single-avatar exec is inert (rotation uses ISafe(src)).
-        avatar = mainSafe_;
-        target = mainSafe_;
+        avatar = juniorTrancheSafe_;
+        target = juniorTrancheSafe_;
 
-        mainSafe = mainSafe_;
-        sidecar = sidecar_;
+        juniorTrancheSafe = juniorTrancheSafe_;
+        juniorTrancheSidecar = juniorTrancheSidecar_;
         operator = operator_;
         navOracle = navOracle_;
         eulerEarn = eulerEarn_;
-        warehouse = warehouse_;
+        warehouseSafe = warehouseSafe_;
 
         // Read the movable assets LIVE off the wired oracle (the LpStrategyModule "read token0/token1 live"
         // idiom) — the whitelist is EXACTLY what the oracle prices, removing drift and five setUp args.
@@ -140,18 +140,18 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     }
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
-    /// @notice Re-point `mainSafe` (build phase, §17). onlyOwner (Timelock).
-    function setMainSafe(address mainSafe_) external onlyOwner {
-        if (mainSafe_ == address(0)) revert ZeroAddress();
-        mainSafe = mainSafe_;
-        emit WiringSet("mainSafe", mainSafe_);
+    /// @notice Re-point `juniorTrancheSafe` (build phase, §17). onlyOwner (Timelock).
+    function setJuniorTrancheSafe(address juniorTrancheSafe_) external onlyOwner {
+        if (juniorTrancheSafe_ == address(0)) revert ZeroAddress();
+        juniorTrancheSafe = juniorTrancheSafe_;
+        emit WiringSet("juniorTrancheSafe", juniorTrancheSafe_);
     }
 
-    /// @notice Re-point `sidecar` (build phase, §17). onlyOwner (Timelock).
-    function setSidecar(address sidecar_) external onlyOwner {
-        if (sidecar_ == address(0)) revert ZeroAddress();
-        sidecar = sidecar_;
-        emit WiringSet("sidecar", sidecar_);
+    /// @notice Re-point `juniorTrancheSidecar` (build phase, §17). onlyOwner (Timelock).
+    function setJuniorTrancheSidecar(address juniorTrancheSidecar_) external onlyOwner {
+        if (juniorTrancheSidecar_ == address(0)) revert ZeroAddress();
+        juniorTrancheSidecar = juniorTrancheSidecar_;
+        emit WiringSet("juniorTrancheSidecar", juniorTrancheSidecar_);
     }
 
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
@@ -176,11 +176,11 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         emit WiringSet("eulerEarn", eulerEarn_);
     }
 
-    /// @notice Re-point `warehouse` (build phase, §17). onlyOwner (Timelock).
-    function setWarehouse(address warehouse_) external onlyOwner {
-        if (warehouse_ == address(0)) revert ZeroAddress();
-        warehouse = warehouse_;
-        emit WiringSet("warehouse", warehouse_);
+    /// @notice Re-point `warehouseSafe` (build phase, §17). onlyOwner (Timelock).
+    function setWarehouseSafe(address warehouseSafe_) external onlyOwner {
+        if (warehouseSafe_ == address(0)) revert ZeroAddress();
+        warehouseSafe = warehouseSafe_;
+        emit WiringSet("warehouseSafe", warehouseSafe_);
     }
 
     /// @notice Re-point `zipUSD` (build phase, §17). onlyOwner (Timelock).
@@ -220,7 +220,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
 
     // --------------------------------------------------------------------- gates
     /// @notice Only the FIVE oracle-valued plain legs may rotate. Releasing/committing an unvalued asset is barred — a
-    ///         release of an unvalued asset would leave the sidecar without moving `committedValue()`, so the floor
+    ///         release of an unvalued asset would leave the juniorTrancheSidecar without moving `committedValue()`, so the floor
     ///         would pass while real value exits the freeze (the non-basket-asset leak, security #6). The ICHI LP
     ///         share is deliberately NOT here: it is fenced in place, not rotated.
     modifier onlyValued(address asset) {
@@ -233,24 +233,24 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     // @dev `setAvatar`/`setTarget` are inherited from zodiac-core `Module` as `onlyOwner`. The CRE `operator` (the
     //      hot key) CANNOT call them — only `owner` (the Timelock) can; a redirect by governance is a deliberate
     //      timelocked act, not an attack path, AND it is INERT for rotation (rotation uses the explicit set-once
-    //      `ISafe(mainSafe)` / `ISafe(sidecar)` calls, not the avatar-bound exec). We do NOT hard-lock them (that
+    //      `ISafe(juniorTrancheSafe)` / `ISafe(juniorTrancheSidecar)` calls, not the avatar-bound exec). We do NOT hard-lock them (that
     //      would require marking the vendored zodiac-core setters `virtual` — reference deps stay pristine).
 
     // --------------------------------------------------------------------- views (the §11-B / §8.2 math)
     /// @notice On-chain, donation-immune utilization `U` (18-dp, in `[0, 1e18]`): the illiquid fraction of the
-    ///         senior backing, `U = 1 − maxWithdraw(warehouse)/convertToAssets(balanceOf(warehouse))` (§8.2). NEVER
+    ///         senior backing, `U = 1 − maxWithdraw(warehouseSafe)/convertToAssets(balanceOf(warehouseSafe))` (§8.2). NEVER
     ///         reads `balanceOf(eulerEarn)` (donatable AND ≈0 for a pure-allocator pool). `sa == 0` → 0;
     ///         `free >= sa` → 0.
     function utilization() public view returns (uint256 u) {
         ISeniorPool e = ISeniorPool(eulerEarn);
-        uint256 sa = e.convertToAssets(e.balanceOf(warehouse));
+        uint256 sa = e.convertToAssets(e.balanceOf(warehouseSafe));
         if (sa == 0) return 0;
-        uint256 free = e.maxWithdraw(warehouse);
+        uint256 free = e.maxWithdraw(warehouseSafe);
         if (free >= sa) return 0;
         u = (sa - free) * 1e18 / sa;
     }
 
-    /// @notice The required sidecar floor FRACTION: `freeze% = utilization%` exactly. `utilization()` is already
+    /// @notice The required juniorTrancheSidecar floor FRACTION: `freeze% = utilization%` exactly. `utilization()` is already
     ///         clamped to `[0, 1e18]`, so this IS the whole formula — no escalation, no `min`/`max`. The §11-B
     ///         escalation surface (`U_lock`/`U_max`/`maxLockFraction`) is post-M1, not built. φ_A = utilization is
     ///         the liquidity-path identity (§6.4 structural baseline).
@@ -258,7 +258,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         return utilization();
     }
 
-    /// @notice The committed (sidecar-only) basket value, read FROM the oracle (18-dp USD).
+    /// @notice The committed (juniorTrancheSidecar-only) basket value, read FROM the oracle (18-dp USD).
     function committedValue() public view returns (uint256) {
         return ISzipNavBasket(navOracle).committedValue();
     }
@@ -281,9 +281,9 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         return ISzipNavBasket(navOracle).pathLockedLpEquity();
     }
 
-    /// @notice The coverage numerator the floor is checked against: sidecar liquid legs (`committedValue`) + the
+    /// @notice The coverage numerator the floor is checked against: juniorTrancheSidecar liquid legs (`committedValue`) + the
     ///         fenced LP equity (`pathLockedLpEquity`). Using this — NOT `committedValue()` alone — is what lets the
-    ///         productive LP back the floor without being hoarded idle in the sidecar (the line-74 resolution).
+    ///         productive LP back the floor without being hoarded idle in the juniorTrancheSidecar (the line-74 resolution).
     function coverageValue() public view returns (uint256) {
         return committedValue() + pathLockedLpEquity();
     }
@@ -295,9 +295,9 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///         un-drainable. `sa == 0` → 0; `free >= sa` → 0.
     function illiquidSeniorValue() public view returns (uint256) {
         ISeniorPool e = ISeniorPool(eulerEarn);
-        uint256 sa = e.convertToAssets(e.balanceOf(warehouse));
+        uint256 sa = e.convertToAssets(e.balanceOf(warehouseSafe));
         if (sa == 0) return 0;
-        uint256 free = e.maxWithdraw(warehouse);
+        uint256 free = e.maxWithdraw(warehouseSafe);
         if (free >= sa) return 0;
         return (sa - free) * 1e12; // USDC 6-dp -> 18-dp USD
     }
@@ -323,7 +323,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @dev DOUBLE-SQUEEZE — bucket holds, the "debt nets out consistently" rationale was wrong: a
     ///      reservoir borrow against the fenced LP pushes BOTH sides of this inequality the wrong way at once —
     ///      (1) the NUMERATOR drops, because `pathLockedLpEquity()` subtracts the reservoir strike debt from the LP
-    ///      mark; and (2) the FLOOR rises, because the borrow draws senior cash so `maxWithdraw(warehouse)` falls,
+    ///      mark; and (2) the FLOOR rises, because the borrow draws senior cash so `maxWithdraw(warehouseSafe)` falls,
     ///      lifting `illiquidSeniorValue()` and thus `requiredCommittedValue()`. The two effects do NOT cancel. This
     ///      is FAIL-CLOSED / SELF-DoS by design: the borrower can only freeze its own outflow, and it recovers fully
     ///      on repay (the debt clears, both sides relax). Liveness footgun only — never a solvency hole.
@@ -344,7 +344,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     }
 
     // --------------------------------------------------------------------- commit (MAIN→SIDECAR — increase the freeze)
-    /// @notice Rotate `amount` of a whitelisted `asset` from the main Safe into the non-ragequittable sidecar,
+    /// @notice Rotate `amount` of a whitelisted `asset` from the main Safe into the non-ragequittable juniorTrancheSidecar,
     ///         INCREASING the freeze. Operator-gated, whitelist-gated, `nonReentrant`. NO value floor/ceiling
     ///         (§11 canonical): `commit` is always peg-safe so it is ungated-by-value; an unbounded commit can
     ///         freeze 100% — the intended squeeze. The residual operator-grief (over-freeze) is accepted (item-10
@@ -354,36 +354,36 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         if (msg.sender != operator) revert NotOperator();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 beforeBal = IERC20(asset).balanceOf(sidecar);
-        bool ok = ISafe(mainSafe).execTransactionFromModule(
-            asset, 0, abi.encodeCall(IERC20.transfer, (sidecar, amount)), 0
+        uint256 beforeBal = IERC20(asset).balanceOf(juniorTrancheSidecar);
+        bool ok = ISafe(juniorTrancheSafe).execTransactionFromModule(
+            asset, 0, abi.encodeCall(IERC20.transfer, (juniorTrancheSidecar, amount)), 0
         );
         if (!ok) revert ExecFailed();
-        if (IERC20(asset).balanceOf(sidecar) - beforeBal != amount) revert TransferShortfall();
+        if (IERC20(asset).balanceOf(juniorTrancheSidecar) - beforeBal != amount) revert TransferShortfall();
 
         emit Committed(asset, amount, committedValue());
     }
 
     // --------------------------------------------------------------------- release (SIDECAR→MAIN — THE autonomous floor)
-    /// @notice Rotate `amount` of a whitelisted `asset` from the sidecar back to the main Safe, SHRINKING the
+    /// @notice Rotate `amount` of a whitelisted `asset` from the juniorTrancheSidecar back to the main Safe, SHRINKING the
     ///         freeze. Operator-gated, whitelist-gated, `nonReentrant`. THE autonomous floor (checked AFTER the
-    ///         move; the revert atomically rolls the transfer back): `release` reverts unless the sidecar still
+    ///         move; the revert atomically rolls the transfer back): `release` reverts unless the juniorTrancheSidecar still
     ///         holds at least `requiredCommittedValue()` — the senior LIABILITY (`min(illiquidSeniorValue, gross)`),
     ///         NOT a fraction of the junior basket. The liability is read live → an over-release
     ///         reverts regardless of operator intent. `grossBasketValue` is invariant under a rotation because the oracle
     ///         sums BOTH Safes for every valued asset (the five legs via `_bal`, and the LP across both Safes +
-    ///         their gauge stakes), so moving any whitelisted asset — incl. the ICHI LP share — main↔sidecar leaves
-    ///         the total constant; the floor is a pure "did the sidecar keep enough value" check.
+    ///         their gauge stakes), so moving any whitelisted asset — incl. the ICHI LP share — main↔juniorTrancheSidecar leaves
+    ///         the total constant; the floor is a pure "did the juniorTrancheSidecar keep enough value" check.
     function release(address asset, uint256 amount) external nonReentrant onlyValued(asset) {
         if (msg.sender != operator) revert NotOperator();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 beforeBal = IERC20(asset).balanceOf(mainSafe);
-        bool ok = ISafe(sidecar).execTransactionFromModule(
-            asset, 0, abi.encodeCall(IERC20.transfer, (mainSafe, amount)), 0
+        uint256 beforeBal = IERC20(asset).balanceOf(juniorTrancheSafe);
+        bool ok = ISafe(juniorTrancheSidecar).execTransactionFromModule(
+            asset, 0, abi.encodeCall(IERC20.transfer, (juniorTrancheSafe, amount)), 0
         );
         if (!ok) revert ExecFailed();
-        if (IERC20(asset).balanceOf(mainSafe) - beforeBal != amount) revert TransferShortfall();
+        if (IERC20(asset).balanceOf(juniorTrancheSafe) - beforeBal != amount) revert TransferShortfall();
 
         // THE FLOOR — read AFTER the move; the revert atomically rolls the transfer back. The coverage numerator is
         // `committedValue + pathLockedLpEquity` (the fenced LP backs the floor in place).

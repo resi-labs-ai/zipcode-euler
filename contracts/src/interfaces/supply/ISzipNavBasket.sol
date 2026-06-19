@@ -2,15 +2,15 @@
 pragma solidity 0.8.24;
 
 /// @notice Minimal local interface for the `SzipNavOracle` basket-value seam the DurationFreezeModule reads.
-/// @dev Source: `contracts/src/supply/SzipNavOracle.sol`. The module reads the per-Safe sidecar value
+/// @dev Source: `contracts/src/supply/SzipNavOracle.sol`. The module reads the per-Safe juniorTrancheSidecar value
 ///      (`committedValue()`) and the whole-basket value (`grossBasketValue()`) to compute the autonomous release
 ///      floor, and the five movable plain-leg addresses (read LIVE at `setUp` to form the whitelist == exactly
 ///      what the oracle prices). The GPL oracle is NOT imported for these views (the local-interface house posture).
 interface ISzipNavBasket {
-    /// @notice The gross junior-basket value (18-dp USD), summed across the main + sidecar Safes.
+    /// @notice The gross junior-basket value (18-dp USD), summed across the main + juniorTrancheSidecar Safes.
     function grossBasketValue() external view returns (uint256);
 
-    /// @notice The sidecar-only (committed) basket value (18-dp USD).
+    /// @notice The juniorTrancheSidecar-only (committed) basket value (18-dp USD).
     function committedValue() external view returns (uint256);
 
     /// @notice The main-only (free) basket value (18-dp USD).

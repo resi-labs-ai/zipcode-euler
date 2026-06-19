@@ -134,7 +134,7 @@ contract RevertTarget {
 }
 
 /// @notice A gauge stand-in: settable `rewardToken()` (incl. address(0) to prove the setUp fail-closed) + an
-///         `earned(token, account)` that RECORDS its args (to prove `pendingReward` reads `(oHYDX, engineSafe)`).
+///         `earned(token, account)` that RECORDS its args (to prove `pendingReward` reads `(oHYDX, juniorTrancheEngine)`).
 contract MockGauge {
     address public rewardToken;
     uint256 public earnedReturn;
@@ -255,7 +255,7 @@ contract HarvestVoteModuleUnitTest is Test {
     function test_setUp_wires_storage() public view {
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
-        assertEq(m.engineSafe(), address(safe));
+        assertEq(m.juniorTrancheEngine(), address(safe));
         assertEq(m.avatar(), address(safe));
         assertEq(m.target(), address(safe));
         assertEq(m.gauge(), address(gauge));
@@ -297,7 +297,7 @@ contract HarvestVoteModuleUnitTest is Test {
     function test_setUp_rejects_zero_in_each_of_six() public {
         // owner
         _expectZero(abi.encode(address(0), address(safe), operator, address(gauge), address(voter), address(rd)));
-        // engineSafe
+        // juniorTrancheEngine
         _expectZero(abi.encode(owner, address(0), operator, address(gauge), address(voter), address(rd)));
         // operator
         _expectZero(abi.encode(owner, address(safe), address(0), address(gauge), address(voter), address(rd)));
@@ -341,7 +341,7 @@ contract HarvestVoteModuleUnitTest is Test {
     function test_mastercopy_inert() public {
         HarvestVoteModule mc = _cloneHarvestVoteModule();
         assertEq(mc.operator(), address(0));
-        assertEq(mc.engineSafe(), address(0));
+        assertEq(mc.juniorTrancheEngine(), address(0));
         assertEq(mc.gauge(), address(0));
         assertEq(mc.voter(), address(0));
         assertEq(mc.rewardsDistributor(), address(0));
@@ -449,11 +449,11 @@ contract HarvestVoteModuleUnitTest is Test {
         assertEq(safe.callCount(), 1, "lockVe = 1 exec");
         _assertCall(0, address(oHYDX), abi.encodeCall(IOptionToken.exerciseVe, (uint256(5e18), address(safe))));
 
-        // decode the recorded recipient arg and assert == engineSafe (the irreversibility firewall, not a keccak match).
+        // decode the recorded recipient arg and assert == juniorTrancheEngine (the irreversibility firewall, not a keccak match).
         (,, bytes memory data,) = safe.getCall(0);
         (uint256 amt, address recipient) = abi.decode(_slice(data, 4), (uint256, address));
         assertEq(amt, 5e18, "amount arg");
-        assertEq(recipient, address(safe), "exerciseVe recipient == engineSafe");
+        assertEq(recipient, address(safe), "exerciseVe recipient == juniorTrancheEngine");
     }
 
     function test_lockVe_reverts_on_short_return_data() public {
@@ -538,9 +538,9 @@ contract HarvestVoteModuleUnitTest is Test {
         x.resetVote();
     }
 
-    // ----------------------------------------------------------------- views read engineSafe
+    // ----------------------------------------------------------------- views read juniorTrancheEngine
 
-    function test_views_read_engineSafe() public {
+    function test_views_read_juniorTrancheEngine() public {
         gauge.setEarnedReturn(123);
         escrow.setVotesReturn(456);
         rd.setClaimableReturn(789);
@@ -549,9 +549,9 @@ contract HarvestVoteModuleUnitTest is Test {
         assertEq(m.rebaseClaimable(1), 789, "rebaseClaimable reads rd.claimable");
     }
 
-    /// @dev Pin that `pendingReward` passes `(oHYDX, engineSafe)` (not the operator) — via `vm.expectCall` on the
-    ///      exact `earned(oHYDX, engineSafe)` calldata. `voteFloor` likewise reads `getVotes(engineSafe)`.
-    function test_views_pass_oHYDX_and_engineSafe() public {
+    /// @dev Pin that `pendingReward` passes `(oHYDX, juniorTrancheEngine)` (not the operator) — via `vm.expectCall` on the
+    ///      exact `earned(oHYDX, juniorTrancheEngine)` calldata. `voteFloor` likewise reads `getVotes(juniorTrancheEngine)`.
+    function test_views_pass_oHYDX_and_juniorTrancheEngine() public {
         vm.expectCall(address(gauge), abi.encodeCall(IGauge.earned, (oHYDX, address(safe))));
         m.pendingReward();
         vm.expectCall(address(escrow), abi.encodeWithSignature("getVotes(address)", address(safe)));
@@ -627,24 +627,24 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
         _selectBaseFork();
     }
 
-    function _summonAndEnable(HarvestVoteModule m) internal returns (address mainSafe) {
+    function _summonAndEnable(HarvestVoteModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
-        mainSafe = s.mainSafe;
+        juniorTrancheSafe = s.juniorTrancheSafe;
         bytes memory enableMod = abi.encodeWithSelector(ISafe.enableModule.selector, address(m));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(mainSafe).execTransaction(mainSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(juniorTrancheSafe).execTransaction(juniorTrancheSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
-    function _deploy() internal returns (HarvestVoteModule m, address engineSafe) {
+    function _deploy() internal returns (HarvestVoteModule m, address juniorTrancheEngine) {
         m = _cloneHarvestVoteModule();
-        engineSafe = _summonAndEnable(m);
+        juniorTrancheEngine = _summonAndEnable(m);
         m.setUp(
             abi.encode(
                 owner,
-                engineSafe,
+                juniorTrancheEngine,
                 operator,
                 LIVE_GAUGE,
                 BaseAddresses.HYDREX_VOTER,
@@ -654,13 +654,13 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     /// @dev Fund the Safe with oHYDX: try `deal` first, fall back to impersonating the whale.
-    function _fundOHYDX(address engineSafe, uint256 amount) internal {
-        try this.tryDeal(BaseAddresses.OHYDX, engineSafe, amount) {
-            if (IERC20(BaseAddresses.OHYDX).balanceOf(engineSafe) >= amount) return;
+    function _fundOHYDX(address juniorTrancheEngine, uint256 amount) internal {
+        try this.tryDeal(BaseAddresses.OHYDX, juniorTrancheEngine, amount) {
+            if (IERC20(BaseAddresses.OHYDX).balanceOf(juniorTrancheEngine) >= amount) return;
         } catch {}
         // fallback: impersonate the whale.
         vm.prank(OHYDX_WHALE);
-        IERC20(BaseAddresses.OHYDX).transfer(engineSafe, amount);
+        IERC20(BaseAddresses.OHYDX).transfer(juniorTrancheEngine, amount);
     }
 
     function tryDeal(address token, address to, uint256 amount) external {
@@ -670,15 +670,15 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- sig-verify
 
     function test_fork_sig_verify() public {
-        (HarvestVoteModule m, address engineSafe) = _deploy();
+        (HarvestVoteModule m, address juniorTrancheEngine) = _deploy();
 
         // the module live-read oHYDX off the gauge and ve off the voter.
         assertEq(m.oHYDX(), BaseAddresses.OHYDX, "oHYDX == gauge.rewardToken()");
         assertEq(m.ve(), BaseAddresses.HYDREX_VE, "ve == Voter.ve()");
 
         // the views resolve on the live addresses (read-only).
-        IGauge(LIVE_GAUGE).earned(BaseAddresses.OHYDX, engineSafe);
-        IVotingEscrow(BaseAddresses.HYDREX_VE).getVotes(engineSafe);
+        IGauge(LIVE_GAUGE).earned(BaseAddresses.OHYDX, juniorTrancheEngine);
+        IVotingEscrow(BaseAddresses.HYDREX_VE).getVotes(juniorTrancheEngine);
         assertEq(IVoter(BaseAddresses.HYDREX_VOTER).ve(), BaseAddresses.HYDREX_VE, "Voter.ve() resolves");
         IRewardsDistributor(BaseAddresses.HYDREX_REWARDS_DISTRIBUTOR).claimable(1);
 
@@ -691,17 +691,17 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- real exerciseVe (the model)
 
     function test_fork_real_exerciseVe_fresh_nft_account_aggregate() public {
-        (HarvestVoteModule m, address engineSafe) = _deploy();
+        (HarvestVoteModule m, address juniorTrancheEngine) = _deploy();
 
         uint256 amount = 10e18;
-        _fundOHYDX(engineSafe, amount * 2);
+        _fundOHYDX(juniorTrancheEngine, amount * 2);
 
         IVotingEscrow veC = IVotingEscrow(BaseAddresses.HYDREX_VE);
         IERC20 oToken = IERC20(BaseAddresses.OHYDX);
 
-        uint256 ohydxBefore = oToken.balanceOf(engineSafe);
-        uint256 nftCountBefore = veC.balanceOf(engineSafe);
-        uint256 votesBefore = veC.getVotes(engineSafe);
+        uint256 ohydxBefore = oToken.balanceOf(juniorTrancheEngine);
+        uint256 nftCountBefore = veC.balanceOf(juniorTrancheEngine);
+        uint256 votesBefore = veC.getVotes(juniorTrancheEngine);
 
         // first lock
         vm.recordLogs();
@@ -709,13 +709,13 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
         m.lockVe(amount);
         uint256 nftId1 = _lastLockedNftId();
 
-        assertEq(veC.balanceOf(engineSafe), nftCountBefore + 1, "one fresh veNFT minted");
-        assertGt(veC.getVotes(engineSafe), votesBefore, "votes grew");
-        assertEq(ohydxBefore - oToken.balanceOf(engineSafe), amount, "exactly `amount` oHYDX burned (NO approval)");
+        assertEq(veC.balanceOf(juniorTrancheEngine), nftCountBefore + 1, "one fresh veNFT minted");
+        assertGt(veC.getVotes(juniorTrancheEngine), votesBefore, "votes grew");
+        assertEq(ohydxBefore - oToken.balanceOf(juniorTrancheEngine), amount, "exactly `amount` oHYDX burned (NO approval)");
         assertGt(nftId1, 0, "Locked emitted a nonzero nftId");
-        assertEq(veC.ownerOf(nftId1), engineSafe, "the decoded id is the Safe's veNFT");
+        assertEq(veC.ownerOf(nftId1), juniorTrancheEngine, "the decoded id is the Safe's veNFT");
 
-        uint256 votesAfter1 = veC.getVotes(engineSafe);
+        uint256 votesAfter1 = veC.getVotes(juniorTrancheEngine);
 
         // second lock -> a SECOND fresh NFT (proves no tokenId state, account-aggregate).
         vm.recordLogs();
@@ -723,10 +723,10 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
         m.lockVe(amount);
         uint256 nftId2 = _lastLockedNftId();
 
-        assertEq(veC.balanceOf(engineSafe), nftCountBefore + 2, "second fresh veNFT minted");
-        assertGt(veC.getVotes(engineSafe), votesAfter1, "account aggregate grew further");
+        assertEq(veC.balanceOf(juniorTrancheEngine), nftCountBefore + 2, "second fresh veNFT minted");
+        assertGt(veC.getVotes(juniorTrancheEngine), votesAfter1, "account aggregate grew further");
         assertTrue(nftId2 != nftId1, "a fresh distinct nftId");
-        assertEq(veC.ownerOf(nftId2), engineSafe, "second id is the Safe's");
+        assertEq(veC.ownerOf(nftId2), juniorTrancheEngine, "second id is the Safe's");
     }
 
     function _lastLockedNftId() internal returns (uint256) {
@@ -744,10 +744,10 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- real vote / reset
 
     function test_fork_real_vote_and_reset() public {
-        (HarvestVoteModule m, address engineSafe) = _deploy();
+        (HarvestVoteModule m, address juniorTrancheEngine) = _deploy();
 
         // need veHYDX to vote.
-        _fundOHYDX(engineSafe, 50e18);
+        _fundOHYDX(juniorTrancheEngine, 50e18);
         vm.prank(operator);
         m.lockVe(50e18);
 
@@ -773,7 +773,7 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
         uint256 ts = block.timestamp;
         vm.prank(operator);
         m.vote(pools, ws);
-        assertGe(voterC.lastVoted(engineSafe), ts, "vote recorded lastVoted");
+        assertGe(voterC.lastVoted(juniorTrancheEngine), ts, "vote recorded lastVoted");
 
         // BUILD-EXPOSED: the live Voter enforces a per-account VOTE DELAY (~1h) between consecutive vote/reset actions
         // (it reverts `VoteDelayNotMet()` 0x2add46eb otherwise). So `reset` then `re-vote` cannot run in the same block
@@ -790,27 +790,27 @@ contract HarvestVoteModuleForkTest is ForkConfig, SummonSubstrate {
         uint256 ts2 = block.timestamp;
         vm.prank(operator);
         m.vote(pools, ws);
-        assertGe(voterC.lastVoted(engineSafe), ts2, "re-vote after reset succeeded in-epoch");
+        assertGe(voterC.lastVoted(juniorTrancheEngine), ts2, "re-vote after reset succeeded in-epoch");
     }
 
     // ----------------------------------------------------------------- real claimRebase
 
     function test_fork_real_claimRebase() public {
-        (HarvestVoteModule m, address engineSafe) = _deploy();
+        (HarvestVoteModule m, address juniorTrancheEngine) = _deploy();
 
         // mint a veNFT so the Safe owns one to enumerate.
-        _fundOHYDX(engineSafe, 50e18);
+        _fundOHYDX(juniorTrancheEngine, 50e18);
         vm.prank(operator);
         m.lockVe(50e18);
 
         IVotingEscrow veC = IVotingEscrow(BaseAddresses.HYDREX_VE);
         IRewardsDistributor rdC = IRewardsDistributor(BaseAddresses.HYDREX_REWARDS_DISTRIBUTOR);
 
-        uint256 n = veC.balanceOf(engineSafe);
+        uint256 n = veC.balanceOf(juniorTrancheEngine);
         assertGt(n, 0, "Safe owns at least one veNFT");
         uint256[] memory ids = new uint256[](n);
         for (uint256 i = 0; i < n; i++) {
-            ids[i] = veC.tokenOfOwnerByIndex(engineSafe, i);
+            ids[i] = veC.tokenOfOwnerByIndex(juniorTrancheEngine, i);
         }
 
         uint256 claimableBefore = rdC.claimable(ids[0]);

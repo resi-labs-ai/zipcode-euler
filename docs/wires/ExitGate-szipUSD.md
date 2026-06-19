@@ -28,7 +28,7 @@ mints to a receiver, keeping `szipUSD.totalSupply() == loot.balanceOf(gate)` and
 `constructor(address baal_, address navOracle_, address zipUSD_, address xAlpha_, uint256 tvlCap_) Ownable(msg.sender)`
 — rejects any zero address and a zero `tvlCap_`, then:
 - `baal = IBaal(baal_)`, `navOracle = SzipNavOracle(navOracle_)`, `zipUSD = zipUSD_`, `xAlpha = xAlpha_`, `tvlCap = tvlCap_`.
-- **Derives** `loot = IBaal(baal_).lootToken()` and `mainSafe = IBaal(baal_).avatar()` from the Baal — these are not
+- **Derives** `loot = IBaal(baal_).lootToken()` and `juniorTrancheSafe = IBaal(baal_).avatar()` from the Baal — these are not
   ctor args, they are read off the substrate. The deployer becomes `owner` (handed to the Timelock at item 10).
 
 All wiring is **Timelock-settable, NOT immutable** (`§17`, 2026-06-09 build-phase): a redeployed Baal/oracle/token/
@@ -36,8 +36,8 @@ Safe is a one-call re-point, not a redeploy cascade. The `onlyOwner` setters:
 - `setShareToken(address szipUSD_)` → sets `shareToken` (szipUSD is deployed *after* the Gate, so it is wired in
   post-construction; `depositFor` reverts `NotWired` until this is set).
 - `setWindowController(address)` → the CRE operator/keeper that drives `burnFor`.
-- `setEngineSafe(address)` → the 8-B14 buy-and-burn Safe whose szipUSD `burnFor` burns from.
-- `setBaal(address)` → re-points and **re-derives** `loot` + `mainSafe`.
+- `setJuniorTrancheEngine(address)` → the 8-B14 buy-and-burn Safe whose szipUSD `burnFor` burns from.
+- `setBaal(address)` → re-points and **re-derives** `loot` + `juniorTrancheSafe`.
 - `setNavOracle(address)`, `setTokens(zipUSD_, xAlpha_)`, `setTvlCap(uint256)` (rejects 0).
 
 ### `depositFor(address asset, uint256 amount, address receiver) returns (uint256 shares)` — the issuance seam
@@ -48,7 +48,7 @@ Safe is a one-call re-point, not a redeploy cascade. The `onlyOwner` setters:
 3. `value = navOracle.valueOf(asset, amount)` — the Gate owns valuation; the caller asserts no price.
 4. **TVL-cap backstop:** `if (navOracle.grossBasketValue() + value > tvlCap) revert TvlCapExceeded()`.
 5. `shares = value * 1e18 / navE` — **round DOWN** (favors the vault); `shares != 0` (`ZeroShares`).
-6. `IERC20(asset).safeTransferFrom(msg.sender, mainSafe, amount)` — the asset lands straight in the basket (main
+6. `IERC20(asset).safeTransferFrom(msg.sender, juniorTrancheSafe, amount)` — the asset lands straight in the basket (main
    Safe); the Gate keeps **zero custody** of it.
 7. `baal.mintLoot(_one(address(this)), _one(shares))` — Loot to the Gate (the `manager(2)` capability).
 8. `SzipUSD(shareToken).mint(receiver, shares)` — transferable szipUSD to the receiver.
@@ -66,8 +66,8 @@ unsupported asset, a zero amount, or a stale oracle (`navEntry()` propagates `St
 at execution). View-only ⇒ it cannot `poke()` first; it reads the accumulator as-is.
 
 ### `burnFor(uint256 amount)` — the only exit executor (paired buy-and-burn, §7 / 8-B14)
-`nonReentrant`. `if (msg.sender != windowController) revert NotWindowController()`; `engineSafe != 0` (`NotWired`);
-`amount != 0`. Then `baal.burnLoot(_one(address(this)), _one(amount))` + `SzipUSD(shareToken).burn(engineSafe, amount)`
+`nonReentrant`. `if (msg.sender != windowController) revert NotWindowController()`; `juniorTrancheEngine != 0` (`NotWired`);
+`amount != 0`. Then `baal.burnLoot(_one(address(this)), _one(amount))` + `SzipUSD(shareToken).burn(juniorTrancheEngine, amount)`
 — pure supply reduction on **both** sides, **no asset payout**, basket untouched ⇒ NAV-per-share ticks up for
 stayers. This retires szipUSD the engine Safe bought below NAV on the CoW book.
 
@@ -80,7 +80,7 @@ public mint/burn, no cap, no pause** — the Gate is the entire authority surfac
 ## Wiring — cross-component (who points at whom)
 - **Gate `manager(2)` grant (the inbound 8-B1 F4.2 obligation).** The Gate's Loot-mint capability is granted by the
   team-admin, NOT a Baal proposal (governance is inert at zero Shares), NOT a raw `setShamans` (it is avatar-only):
-  `team-admin → mainSafe.execTransaction → Baal.setShamans([gate], [2])`. Fork-proven in `ExitGate.t.sol`
+  `team-admin → juniorTrancheSafe.execTransaction → Baal.setShamans([gate], [2])`. Fork-proven in `ExitGate.t.sol`
   (`test_depositFor_reverts_without_manager_grant`: pre-grant `depositFor` reverts at `mintLoot`
   (`baalOrManagerOnly`), post-grant it succeeds). PROGRESS row 319 = DISCHARGED.
 - **szipUSD ↔ Gate ↔ NavOracle.** szipUSD's ctor takes the Gate (deployed first), so the Gate is its sole minter.
@@ -91,8 +91,8 @@ public mint/burn, no cap, no pause** — the Gate is the entire authority surfac
   into the basket and mints transferable szipUSD to the user on-behalf (`claude-zipcode.md` §4.5 / §6.4).
 - **`SzipBuyBurnModule.burnFor` rail.** 8-B14 (`is Module` on the engine Safe, `onlyOperator`) posts a discounted
   resting `BUY szipUSD` CoW bid `≤ navExit×(1−d)`; on fill the bought szipUSD lands in the engine Safe; the CRE/
-  `windowController` then calls `ExitGate.burnFor(amount)`, which burns it from `engineSafe`. The Gate's
-  `engineSafe` must equal the module's `engineSafe` and the oracle's `setEngineSafe` (denominator exclusion of the
+  `windowController` then calls `ExitGate.burnFor(amount)`, which burns it from `juniorTrancheEngine`. The Gate's
+  `juniorTrancheEngine` must equal the module's `juniorTrancheEngine` and the oracle's `setJuniorTrancheEngine` (denominator exclusion of the
   transient pre-burn szipUSD) — wired at deploy (PROGRESS rows 325 module-side ADDRESSED, oracle-side OPEN at item 10).
 - **Hard `tvlCap` backstop ↔ WOOF-06 measured cap.** The Gate carries a hard `tvlCap` (`grossBasketValue()+value ≤
   tvlCap`); 8-B12 describes a dynamic measured `maxDeposit` as the WOOF-06 deposit gate. WOOF-06 composes the
@@ -100,17 +100,17 @@ public mint/burn, no cap, no pause** — the Gate is the entire authority surfac
   row 332, OPEN.
 
 ## Item-10 deploy facts
-- **Manager grant + zero-Shares invariant (PROGRESS 319).** Grant `manager(2)` via `team → mainSafe.execTransaction
+- **Manager grant + zero-Shares invariant (PROGRESS 319).** Grant `manager(2)` via `team → juniorTrancheSafe.execTransaction
   → setShamans([gate],[2])` only AFTER the Gate is deployed; the genesis seed (§4.3) mints Loot only after the Gate
   holds manager. The Gate (and every manager-holder) MUST be structurally unable to call `mintShares` — the kept
   code only `mintLoot`/`burnLoot`, and every downstream fork test asserts `IBaal(baal).totalShares() == 0`.
 - **szipUSD owner == TIMELOCK, not 0 (PROGRESS 322 lineage).** szipUSD is NOT renounced — its `gate` pointer stays
   re-pointable in the build phase, so `owner()` is transferred to the `TimelockController`, asserted `== TIMELOCK`
   (NOT `== 0`). Same Timelock-LAST-not-renounce discipline as `SzipNavOracle` (PROGRESS 327).
-- **engineSafe wiring (PROGRESS 325).** Wire `module.engineSafe == ExitGate.engineSafe == SzipNavOracle.engineSafe ==
+- **juniorTrancheEngine wiring (PROGRESS 325).** Wire `module.juniorTrancheEngine == ExitGate.juniorTrancheEngine == SzipNavOracle.juniorTrancheEngine ==
   order.receiver` so the bought szipUSD lands in the one Safe `burnFor` burns from AND that Safe's transient szipUSD
-  is excluded from the navPerShare denominator. Module-side proven (`module.engineSafe() == ExitGate.engineSafe()`);
-  the oracle's `setEngineSafe` clause is still OPEN at deploy.
+  is excluded from the navPerShare denominator. Module-side proven (`module.juniorTrancheEngine() == ExitGate.juniorTrancheEngine()`);
+  the oracle's `setJuniorTrancheEngine` clause is still OPEN at deploy.
 - **windowController wiring.** `setWindowController(CRE-keeper)` — the single actor allowed to call `burnFor`
   (`NotWindowController` otherwise). The CRE holds both the buy-burn `operator` and this `windowController` role and
   drives `postBid`/`burnFor` directly.
@@ -140,7 +140,7 @@ public mint/burn, no cap, no pause** — the Gate is the entire authority surfac
   174) after every path. Do not look for an on-chain `_assertInvariants`.
 - **Two distinct exits, both Gate-mediated, depositors hold no raw Loot.** (1) The CoW book — a holder rests a
   szipUSD sell order, the treasury (`SzipBuyBurnModule`, buy `≤ navExit×(1−d)`) or an external buyer fills it,
-  retired via `burnFor`. (2) The windowed-RQ via the sidecar is **wind-down-only** / the structural freeze, not the
+  retired via `burnFor`. (2) The windowed-RQ via the juniorTrancheSidecar is **wind-down-only** / the structural freeze, not the
   routine impatient exit. The routine exit is the CoW book.
 - **`previewDeposit` is an ESTIMATE.** NAV (and staleness) can move between the read and the tx (the §3
   `max(spot,twap)` entry bracket); the realized `shares` may differ. It is exact only in the same block with a fresh

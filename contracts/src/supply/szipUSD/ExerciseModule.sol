@@ -10,7 +10,7 @@ import {IOptionToken} from "../../interfaces/hydrex/IOptionToken.sol";
 /// @title ExerciseModule
 /// @notice The on-chain seam of the 8-B8 paid-exercise leg (§4.5.1): the fifth engine Zodiac Module (after the 8-B14
 ///         buy-and-burn, the 8-B5 reservoir loop, the 8-B6 LP strategy, and the 8-B7 harvest/vote), CRE-operator-gated,
-///         enabled on the szipUSD engine Safe (`avatar == target == engineSafe`). It owns the PAID exercise of the sell
+///         enabled on the szipUSD engine Safe (`avatar == target == juniorTrancheEngine`). It owns the PAID exercise of the sell
 ///         slice: per harvest the CRE robot (8-B11) finances the ~30% USDC strike via the 8-B5 borrow (the USDC is
 ///         already in the Safe), then calls `exercise(amount, maxPayment, deadline)` here — the module approves the
 ///         strike to oHYDX, calls `oHYDX.exercise(...)` (burns the Safe's oHYDX, pulls the strike USDC, mints liquid
@@ -22,7 +22,7 @@ import {IOptionToken} from "../../interfaces/hydrex/IOptionToken.sol";
 ///
 /// @dev SECURITY BOUNDARY (§10.1, the module's whole reason for shape): the operator supplies ONLY scalars (`amount`,
 ///      `maxPayment`, `deadline`). The module builds ALL calldata to the set-once wired targets (`oHYDX`,
-///      `paymentToken`), and the exercise `recipient` is hard-pinned to the literal set-once `engineSafe` (the HYDX
+///      `paymentToken`), and the exercise `recipient` is hard-pinned to the literal set-once `juniorTrancheEngine` (the HYDX
 ///      can only ever mint to the basket, never the operator or a third party). NO generic call/exec passthrough, NO
 ///      delegatecall, `value == 0` on every `exec`. `maxPayment` is the SLIPPAGE GUARD: oHYDX (immutable, non-proxy,
 ///      verified on Base) computes the strike from its own TWAP and pulls EXACTLY that, reverting if it would exceed
@@ -37,8 +37,8 @@ import {IOptionToken} from "../../interfaces/hydrex/IOptionToken.sol";
 ///      `immutable`. The mastercopy is init-locked in its constructor (see {MastercopyInitLock}).
 contract ExerciseModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
-    /// @notice The engine Safe (`avatar == target == engineSafe`); the exercise `recipient` + the strike payer.
-    address public engineSafe;
+    /// @notice The engine Safe (`avatar == target == juniorTrancheEngine`); the exercise `recipient` + the strike payer.
+    address public juniorTrancheEngine;
     /// @notice The single CRE operator (gates the exercise entrypoint).
     address public operator;
     /// @notice The Hydrex option token (oHYDX) — the exercise target.
@@ -65,25 +65,25 @@ contract ExerciseModule is MastercopyInitLock {
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
-    ///         `initializer`. Decodes the 4 addresses `(owner, engineSafe, operator, oHYDX)`; reads `paymentToken`
+    ///         `initializer`. Decodes the 4 addresses `(owner, juniorTrancheEngine, operator, oHYDX)`; reads `paymentToken`
     ///         LIVE off `oHYDX.paymentToken()`. ORDER is load-bearing: validate all four decoded addresses nonzero
     ///         FIRST + `owner != operator` (so a zero `oHYDX` reverts `ZeroAddress`, not a confusing staticcall-to-
-    ///         zero), set `avatar = target = engineSafe`, store the wiring, THEN read + assert the live `paymentToken`
+    ///         zero), set `avatar = target = juniorTrancheEngine`, store the wiring, THEN read + assert the live `paymentToken`
     ///         nonzero, THEN `_transferOwnership(owner)`.
     function setUp(bytes memory initParams) public override initializer {
-        (address owner_, address engineSafe_, address operator_, address oHYDX_) =
+        (address owner_, address juniorTrancheEngine_, address operator_, address oHYDX_) =
             abi.decode(initParams, (address, address, address, address));
 
-        if (owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || oHYDX_ == address(0)) {
+        if (owner_ == address(0) || juniorTrancheEngine_ == address(0) || operator_ == address(0) || oHYDX_ == address(0)) {
             revert ZeroAddress();
         }
         if (owner_ == operator_) revert OwnerIsOperator();
 
-        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
-        avatar = engineSafe_;
-        target = engineSafe_;
+        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == juniorTrancheEngine.
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
 
-        engineSafe = engineSafe_;
+        juniorTrancheEngine = juniorTrancheEngine_;
         operator = operator_;
         oHYDX = oHYDX_;
 
@@ -108,14 +108,14 @@ contract ExerciseModule is MastercopyInitLock {
     //      zodiac-core setters `virtual` — reference deps stay pristine). Tested: a non-owner caller reverts.
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
-    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in sync since the
-    ///         module is enabled ON, and only mutates, the engine Safe (avatar == target == engineSafe).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        avatar = engineSafe_;
-        target = engineSafe_;
-        emit WiringSet("engineSafe", engineSafe_);
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in sync since the
+    ///         module is enabled ON, and only mutates, the engine Safe (avatar == target == juniorTrancheEngine).
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
+        emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
@@ -166,7 +166,7 @@ contract ExerciseModule is MastercopyInitLock {
 
     /// @notice Pay the strike + exercise `amount` oHYDX → liquid HYDX to the Safe. Exactly 3 `exec`s:
     ///         (1) `paymentToken.approve(oHYDX, maxPayment)` — the strike allowance from the Safe;
-    ///         (2) `oHYDX.exercise(amount, maxPayment, engineSafe, deadline)` — burns the Safe's oHYDX, pulls
+    ///         (2) `oHYDX.exercise(amount, maxPayment, juniorTrancheEngine, deadline)` — burns the Safe's oHYDX, pulls
     ///             `paymentAmount` (≤ maxPayment) USDC from the Safe, mints HYDX to the Safe, returns `paymentAmount`;
     ///         (3) `paymentToken.approve(oHYDX, 0)` — reset the residual allowance (no standing approval, security
     ///             parity with 8-B5 `repay`).
@@ -183,7 +183,7 @@ contract ExerciseModule is MastercopyInitLock {
         if (amount == 0 || maxPayment == 0) revert ZeroAmount();
 
         _exec(paymentToken, abi.encodeWithSelector(IERC20.approve.selector, oHYDX, maxPayment));
-        bytes memory ret = _exec(oHYDX, abi.encodeCall(IOptionToken.exercise, (amount, maxPayment, engineSafe, deadline)));
+        bytes memory ret = _exec(oHYDX, abi.encodeCall(IOptionToken.exercise, (amount, maxPayment, juniorTrancheEngine, deadline)));
         _exec(paymentToken, abi.encodeWithSelector(IERC20.approve.selector, oHYDX, uint256(0)));
 
         paymentAmount = abi.decode(ret, (uint256));

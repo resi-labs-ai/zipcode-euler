@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @dev The supply-side zap (WOOF-06), in-repo. `deposit(usdcIn)` pulls `usdcIn` USDC from the CALLER
 ///      (`safeTransferFrom(msg.sender,...)` — so the engine Safe must approve first), mints `usdcIn * scaleUp` BACKED
-///      zipUSD to the caller (msg.sender = the engine Safe), and parks the USDC into the venue pool with the warehouse
+///      zipUSD to the caller (msg.sender = the engine Safe), and parks the USDC into the venue pool with the warehouseSafe
 ///      Safe as the EE-share receiver (senior backing). Local interface only.
 ///      `contracts/src/supply/ZipDepositModule.sol:115`.
 interface IZipDepositModule {
@@ -23,7 +23,7 @@ interface ISzipNavProvision {
 }
 
 /// @dev The senior pool (`EulerEarn`, ERC-4626 over USDC). `deposit(assets, receiver)` pulls `assets` from the caller
-///      (the engine Safe) and mints shares to `receiver` (the warehouse). Local interface only — same surface
+///      (the engine Safe) and mints shares to `receiver` (the warehouseSafe). Local interface only — same surface
 ///      `ZipDepositModule` uses. `reference/euler-earn/src/EulerEarn.sol:560`.
 interface IEulerEarn {
     function deposit(uint256 assets, address receiver) external returns (uint256 shares);
@@ -33,7 +33,7 @@ interface IEulerEarn {
 /// @notice The 8-B10 engine module (§4.5.1) — the auto-compounder's **free-value ledger** and the spends that draw it
 ///         down. A CRE-operator-gated Zodiac Module (sibling of 8-B14 buy-and-burn, 8-B5 reservoir-loop, 8-B6
 ///         LP-strategy, 8-B7 harvest/vote, 8-B8 exercise, 8-B9 sell), enabled on the szipUSD engine Safe
-///         (`avatar == target == engineSafe`). It owns the engine's ONE piece of real mutable state — the single
+///         (`avatar == target == juniorTrancheEngine`). It owns the engine's ONE piece of real mutable state — the single
 ///         `freeValueAccrued` accumulator (no other module writes it; the CRE operator is the only writer, §8 inv. 3) —
 ///         and spends it through TWO sinks, both debiting the same ledger:
 ///         (1) `recycle` (NAV accretion) deposits the free-value USDC as senior backing + mints backed zipUSD 1:1 into
@@ -41,7 +41,7 @@ interface IEulerEarn {
 ///             single-sides that zipUSD into the ICHI LP. The basket grows, share count is flat → NAV-per-share rises
 ///             for every holder.
 ///         (2) `divert` (loss-side Stream 2, `solvency.md` §C.S1) supplies the free-value USDC as RAW USDC into the
-///             senior pool crediting the warehouse (`eePool.deposit(amount, warehouse)`, NO zipUSD minted), bounded by
+///             senior pool crediting the warehouseSafe (`eePool.deposit(amount, warehouseSafe)`, NO zipUSD minted), bounded by
 ///             the live `provision()` hole — filling the capital hole a default left behind so depositors stay whole.
 ///         No payout, no xALPHA, no distributor (the prior Mode A/B/C framing + 8-B13 compounder are removed —
 ///         single-sided LP removes the balanced-add/swap machinery they carried).
@@ -72,8 +72,8 @@ interface IEulerEarn {
 ///      `ZipDepositModule`'s own `nonReentrant`.)
 contract RecycleModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
-    /// @notice The engine Safe (`avatar == target == engineSafe`); the free-value source + the deposit/mint recipient.
-    address public engineSafe;
+    /// @notice The engine Safe (`avatar == target == juniorTrancheEngine`); the free-value source + the deposit/mint recipient.
+    address public juniorTrancheEngine;
     /// @notice The single CRE operator (gates the action legs + `creditFreeValue`).
     address public operator;
     /// @notice The WOOF-06 zap (`ZipDepositModule`) — the backed-mint path (deposit -> senior backing + mint).
@@ -83,10 +83,10 @@ contract RecycleModule is MastercopyInitLock {
 
     /// @notice The `SzipNavOracle` — the `provision()` hole-size read (Stream 2 bound). Set-once, Timelock-re-pointable.
     address public navOracle;
-    /// @notice The `EulerEarn` senior pool the warehouse supplies into (Stream 2 sink). Set-once, Timelock-re-pointable.
+    /// @notice The `EulerEarn` senior pool the warehouseSafe supplies into (Stream 2 sink). Set-once, Timelock-re-pointable.
     address public eePool;
     /// @notice The `CreditWarehouse` Safe — the `eePool.deposit` share **receiver** (the bank). Set-once, re-pointable.
-    address public warehouse;
+    address public warehouseSafe;
 
     /// @notice The engine's free-value ledger (USDC, 6-dp): credited by the CRE after each harvest loop, debited by the
     ///         recycle leg (NAV accretion) AND the divert leg (Stream 2, fill the bank). The ONLY mutable state.
@@ -113,7 +113,7 @@ contract RecycleModule is MastercopyInitLock {
     error NoHole();
     /// @notice `divert` would over-fill the hole (`usdcAmount * 1e12 > provision()`) — bounded by the live provision.
     error ExceedsHole();
-    /// @notice The `eePool.deposit` did not credit the warehouse with new shares (false-return / FoT / no-op pool guard).
+    /// @notice The `eePool.deposit` did not credit the warehouseSafe with new shares (false-return / FoT / no-op pool guard).
     error NoSharesMinted();
     /// @notice The deposit did not pull exactly `usdcAmount` USDC from the engine Safe (hard-backing / value guard).
     error BackingShortfall();
@@ -122,51 +122,51 @@ contract RecycleModule is MastercopyInitLock {
     event FreeValueCredited(uint256 amount, uint256 newAccrued);
     event FreeValueSpent(uint256 amount, uint256 newAccrued);
     event Recycled(uint256 usdcAmount, uint256 zipMinted);
-    /// @notice Stream 2: `usdcAmount` USDC supplied into `eePool` crediting `warehouse`. `provisionAfter` is the live
+    /// @notice Stream 2: `usdcAmount` USDC supplied into `eePool` crediting `warehouseSafe`. `provisionAfter` is the live
     ///         hole at divert time — divert does NOT itself write provision (the CRE reduces it later via
     ///         `DefaultCoordinator.Recovery`), so it equals the pre-spend `provision()` read.
-    event Filled(uint256 usdcAmount, address indexed warehouse, uint256 provisionAfter);
+    event Filled(uint256 usdcAmount, address indexed warehouseSafe, uint256 provisionAfter);
     /// @notice A Timelock-settable wiring slot was re-pointed (build phase, §17).
     event WiringSet(bytes32 indexed slot, address value);
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). Decodes 8 addresses
-    ///         `(owner, engineSafe, operator, zipDepositModule, usdc, navOracle, eePool, warehouse)`. ORDER is
+    ///         `(owner, juniorTrancheEngine, operator, zipDepositModule, usdc, navOracle, eePool, warehouseSafe)`. ORDER is
     ///         load-bearing: validate ALL 8 decoded addresses nonzero FIRST + `owner != operator` (so a zero address
-    ///         reverts `ZeroAddress` deterministically before any use), set `avatar = target = engineSafe`, store the
+    ///         reverts `ZeroAddress` deterministically before any use), set `avatar = target = juniorTrancheEngine`, store the
     ///         wiring, THEN `_transferOwnership(owner)`. No live-read / staticcall in `setUp`.
     function setUp(bytes memory initParams) public override initializer {
         (
             address owner_,
-            address engineSafe_,
+            address juniorTrancheEngine_,
             address operator_,
             address zipDepositModule_,
             address usdc_,
             address navOracle_,
             address eePool_,
-            address warehouse_
+            address warehouseSafe_
         ) = abi.decode(initParams, (address, address, address, address, address, address, address, address));
 
         if (
-            owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0)
+            owner_ == address(0) || juniorTrancheEngine_ == address(0) || operator_ == address(0)
                 || zipDepositModule_ == address(0) || usdc_ == address(0) || navOracle_ == address(0)
-                || eePool_ == address(0) || warehouse_ == address(0)
+                || eePool_ == address(0) || warehouseSafe_ == address(0)
         ) {
             revert ZeroAddress();
         }
         if (owner_ == operator_) revert OwnerIsOperator();
 
-        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
-        avatar = engineSafe_;
-        target = engineSafe_;
+        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == juniorTrancheEngine.
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
 
-        engineSafe = engineSafe_;
+        juniorTrancheEngine = juniorTrancheEngine_;
         operator = operator_;
         zipDepositModule = zipDepositModule_;
         usdc = usdc_;
         navOracle = navOracle_;
         eePool = eePool_;
-        warehouse = warehouse_;
+        warehouseSafe = warehouseSafe_;
 
         _transferOwnership(owner_);
     }
@@ -182,11 +182,11 @@ contract RecycleModule is MastercopyInitLock {
     //      zodiac-core setters by marking them `virtual`). Tested: a non-owner caller reverts.
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
-    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        emit WiringSet("engineSafe", engineSafe_);
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock).
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
@@ -225,11 +225,11 @@ contract RecycleModule is MastercopyInitLock {
         emit WiringSet("eePool", eePool_);
     }
 
-    /// @notice Re-point `warehouse` (build phase, §17). onlyOwner (Timelock).
-    function setWarehouse(address warehouse_) external onlyOwner {
-        if (warehouse_ == address(0)) revert ZeroAddress();
-        warehouse = warehouse_;
-        emit WiringSet("warehouse", warehouse_);
+    /// @notice Re-point `warehouseSafe` (build phase, §17). onlyOwner (Timelock).
+    function setWarehouseSafe(address warehouseSafe_) external onlyOwner {
+        if (warehouseSafe_ == address(0)) revert ZeroAddress();
+        warehouseSafe = warehouseSafe_;
+        emit WiringSet("warehouseSafe", warehouseSafe_);
     }
 
     // --------------------------------------------------------------------- the accumulator (CRE-written)
@@ -257,7 +257,7 @@ contract RecycleModule is MastercopyInitLock {
     /// @notice Spend `usdcAmount` of free value into senior backing + a backed zipUSD mint into the basket. Debits the
     ///         accumulator FIRST, then drives the Safe: `usdc.approve(zipDepositModule, usdcAmount)` ->
     ///         `zipDepositModule.deposit(usdcAmount)` (mints `usdcAmount * scaleUp` BACKED zipUSD to the Safe, parks the
-    ///         USDC as senior warehouse backing) -> `usdc.approve(zipDepositModule, 0)` (reset). 8-B6 single-sides the
+    ///         USDC as senior warehouseSafe backing) -> `usdc.approve(zipDepositModule, 0)` (reset). 8-B6 single-sides the
     ///         minted zipUSD into the LP next (CRE-sequenced). The basket grows, share count is flat → NAV accretes.
     /// @return zipMinted The backed zipUSD minted to the Safe (decoded from the `deposit` return).
     function recycle(uint256 usdcAmount) external onlyOperator returns (uint256 zipMinted) {
@@ -274,8 +274,8 @@ contract RecycleModule is MastercopyInitLock {
 
     // --------------------------------------------------------------------- the divert sink (Stream 2 — fill the bank)
     /// @notice STREAM 2 (`solvency.md` §C.S1): supply `usdcAmount` of free value as **raw USDC** into the senior pool
-    ///         crediting the **warehouse** — `eePool.deposit(usdcAmount, warehouse)`, **NO zipUSD minted** — so the
-    ///         warehouse's USDC backing rises toward ≥ zipUSD owed, filling the capital hole a default left behind. A
+    ///         crediting the **warehouseSafe** — `eePool.deposit(usdcAmount, warehouseSafe)`, **NO zipUSD minted** — so the
+    ///         warehouseSafe's USDC backing rises toward ≥ zipUSD owed, filling the capital hole a default left behind. A
     ///         SECOND spend of `freeValueAccrued` (distinct from `recycle`'s backed-mint-into-the-basket sink); both
     ///         debit the same ledger and leave the other working on the remainder. Bounded CUMULATIVELY by the LIVE hole
     ///         (`provision()`): the total diverted across calls can never over-fill it WITHIN a provision-epoch (SEC-09).
@@ -289,9 +289,9 @@ contract RecycleModule is MastercopyInitLock {
     ///      `_spendFreeValue` (effects first — the policy gate), then `divertedSinceProvisionChange += scaled` (also
     ///      effects-phase, so a reentrant divert sees the updated tally — it rolls back atomically with the ledger if a
     ///      post-deposit guard reverts); (f) the Safe drives `approve(eePool, usdcAmount)` → `deposit(usdcAmount,
-    ///      warehouse)` → `approve(eePool, 0)`. TWO value guards after the deposit: **hard backing** — the Safe's USDC
+    ///      warehouseSafe)` → `approve(eePool, 0)`. TWO value guards after the deposit: **hard backing** — the Safe's USDC
     ///      MUST have fallen by exactly `usdcAmount` (`BackingShortfall`, proves real value moved, not a trusted-pool
-    ///      no-op); and **liveness** — the warehouse's EE-share balance MUST have risen (`NoSharesMinted`, the
+    ///      no-op); and **liveness** — the warehouseSafe's EE-share balance MUST have risen (`NoSharesMinted`, the
     ///      false-return/FoT guard, since the Safe swallows inner reverts). Divert never WRITES `provision` (the CRE
     ///      reduces the hole later via `DefaultCoordinator.Recovery`); the cumulative bound is enforced by OBSERVING
     ///      `provision()` and resetting the tally on any change.
@@ -321,8 +321,8 @@ contract RecycleModule is MastercopyInitLock {
         divertedSinceProvisionChange += scaled; // effects-phase tally bump (before the value-moving execs)
 
         address pool = eePool;
-        address wh = warehouse;
-        address safe = engineSafe;
+        address wh = warehouseSafe;
+        address safe = juniorTrancheEngine;
 
         _exec(usdc, abi.encodeWithSelector(IERC20.approve.selector, pool, usdcAmount));
         uint256 beforeUsdc = IERC20(usdc).balanceOf(safe);
@@ -330,7 +330,7 @@ contract RecycleModule is MastercopyInitLock {
         _exec(pool, abi.encodeCall(IEulerEarn.deposit, (usdcAmount, wh)));
         // hard backing: the deposit MUST have pulled exactly `usdcAmount` from the Safe (value conservation).
         if (beforeUsdc - IERC20(usdc).balanceOf(safe) != usdcAmount) revert BackingShortfall();
-        // liveness: the warehouse MUST have been credited new senior shares (catches a no-op / FoT / false-return pool).
+        // liveness: the warehouseSafe MUST have been credited new senior shares (catches a no-op / FoT / false-return pool).
         if (IERC20(pool).balanceOf(wh) <= beforeShares) revert NoSharesMinted();
         _exec(usdc, abi.encodeWithSelector(IERC20.approve.selector, pool, uint256(0)));
 

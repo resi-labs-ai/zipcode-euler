@@ -7,8 +7,8 @@
 
 ## What it shims
 The basket-valuation face of `SzipNavOracle` (`contracts/src/supply/SzipNavOracle.sol`) — the **implementer**. The oracle is the sole valuation authority for the freeze floor; the module consumes:
-- `grossBasketValue()` — whole-basket value (main + sidecar Safes), backed by the oracle's per-Safe `_grossValueOf(safe)` summation.
-- `committedValue()` — sidecar-only (frozen) value.
+- `grossBasketValue()` — whole-basket value (main + juniorTrancheSidecar Safes), backed by the oracle's per-Safe `_grossValueOf(safe)` summation.
+- `committedValue()` — juniorTrancheSidecar-only (frozen) value.
 - `freeValue()` — main-only value.
 - the five movable plain-leg addresses (`zipUSD`/`usdc`/`xAlpha`/`hydx`/`oHydx`) — read LIVE at `setUp` to form the whitelist == exactly what the oracle prices.
 
@@ -16,8 +16,8 @@ The basket-valuation face of `SzipNavOracle` (`contracts/src/supply/SzipNavOracl
 
 ## Declared surface (exact signatures)
 ```solidity
-function grossBasketValue()  external view returns (uint256);          // 18-dp USD, main + sidecar
-function committedValue()    external view returns (uint256);          // 18-dp USD, sidecar-only (committed)
+function grossBasketValue()  external view returns (uint256);          // 18-dp USD, main + juniorTrancheSidecar
+function committedValue()    external view returns (uint256);          // 18-dp USD, juniorTrancheSidecar-only (committed)
 function freeValue()         external view returns (uint256);          // 18-dp USD, main-only (free)
 function pathLockedLpEquity() external view returns (uint256);         // 18-dp USD, ICHI LP across both Safes net of strike debt
 function lpShareValue(uint256 lpShares) external view returns (uint256); // 18-dp USD value of lpShares LP

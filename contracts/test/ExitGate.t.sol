@@ -80,7 +80,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
 
     address internal team = makeAddr("teamMultisig");
     address internal keeper = makeAddr("windowKeeper");
-    address internal engine = makeAddr("engineSafe");
+    address internal engine = makeAddr("juniorTrancheEngine");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
     address internal forwarder = makeAddr("forwarder");
@@ -119,8 +119,8 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
             address(xa),
             address(hydx),
             address(ohydx),
-            sub.mainSafe,
-            sub.sidecar,
+            sub.juniorTrancheSafe,
+            sub.juniorTrancheSidecar,
             W,
             MAX_AGE,
             DEV_BPS
@@ -133,10 +133,10 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         // 5. Wire set-once seams (Gate is `this`'s owner since this deployed it).
         gate.setShareToken(address(szip));
         gate.setWindowController(keeper);
-        gate.setEngineSafe(engine);
+        gate.setJuniorTrancheEngine(engine);
         oracle.setShareToken(address(szip));
 
-        // 6. Grant the Gate manager(2) via team-admin -> mainSafe.execTransaction -> Baal.setShamans.
+        // 6. Grant the Gate manager(2) via team-admin -> juniorTrancheSafe.execTransaction -> Baal.setShamans.
         _grantManager(address(gate));
 
         // 7. Push leg prices so the oracle is fresh (alphaUSD=$1, hydxUSD=$0.5).
@@ -148,7 +148,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         bytes memory data = abi.encodeWithSelector(IBaal.setShamans.selector, _arr(shaman), _arrU(2));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(sub.mainSafe).execTransaction(sub.baal, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(sub.juniorTrancheSafe).execTransaction(sub.baal, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
     function _pushBoth(uint256 alphaUSD, uint256 hydxUSD) internal {
@@ -191,11 +191,11 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
     function test_deploy_and_wiring() public view {
         assertEq(address(gate.baal()), sub.baal);
         assertEq(gate.loot(), sub.loot);
-        assertEq(gate.mainSafe(), sub.mainSafe);
+        assertEq(gate.juniorTrancheSafe(), sub.juniorTrancheSafe);
         assertEq(gate.zipUSD(), address(zip));
         assertEq(gate.shareToken(), address(szip));
         assertEq(gate.windowController(), keeper);
-        assertEq(gate.engineSafe(), engine);
+        assertEq(gate.juniorTrancheEngine(), engine);
         assertEq(szip.gate(), address(gate));
         assertEq(IBaal(sub.baal).shamans(address(gate)), 2, "gate is manager");
     }
@@ -235,7 +235,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         vm.stopPrank();
         SzipNavOracle o2 = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx), address(ohydx),
-            s2.mainSafe, s2.sidecar, W, MAX_AGE, DEV_BPS
+            s2.juniorTrancheSafe, s2.juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
         );
         ExitGate g2 = new ExitGate(s2.baal, address(o2), address(zip), address(xa), TVL_CAP);
         SzipUSD sz2 = new SzipUSD(address(g2));
@@ -264,14 +264,14 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         uint256 shares = _deposit(alice, 12e18); // genesis NAV = $1
         assertEq(shares, 12e18, "genesis shares == value");
         assertEq(szip.balanceOf(alice), 12e18);
-        assertEq(zip.balanceOf(sub.mainSafe), 12e18, "asset landed in basket");
+        assertEq(zip.balanceOf(sub.juniorTrancheSafe), 12e18, "asset landed in basket");
         _assertInvariants();
     }
 
     function test_depositFor_navProportional_roundDown() public {
         _deposit(alice, 12e18); // supply 12e18, gross 12e18 -> spot $1
         // donate zip to the basket to bump spot to $1.2 (gross 14.4e18 / supply 12e18)
-        zip.mint(sub.mainSafe, 24e17);
+        zip.mint(sub.juniorTrancheSafe, 24e17);
         // twap has <W history -> twap == spot == 1.2 ; navEntry = max = 1.2e18
         uint256 shares = _deposit(bob, 12e18); // value 12e18 / 1.2 = 10e18
         assertEq(shares, 10e18, "navEntry $1.2 -> 10 shares");
@@ -286,7 +286,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         assertEq(q0, 12e18);
 
         // non-par: bump spot to $1.2, preview still mirrors depositFor's pricing
-        zip.mint(sub.mainSafe, 24e17); // gross 14.4e18 / supply 12e18 -> $1.2
+        zip.mint(sub.juniorTrancheSafe, 24e17); // gross 14.4e18 / supply 12e18 -> $1.2
         uint256 q1 = gate.previewDeposit(address(zip), 12e18);
         assertEq(q1, 10e18, "previewDeposit at navEntry $1.2");
         uint256 s1 = _deposit(bob, 12e18);
@@ -324,7 +324,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         _grantManager(address(g));
         // NOTE: g shares the same oracle/szip denominator as the suite's; keep it simple — fresh oracle wiring
         // is covered elsewhere. Here we only exercise the cap arithmetic against the suite oracle's gross.
-        // gross is 0 here (suite gate's deposits are separate token flows into the same mainSafe) -> use a tiny cap.
+        // gross is 0 here (suite gate's deposits are separate token flows into the same juniorTrancheSafe) -> use a tiny cap.
         zip.mint(alice, 20e18);
         vm.startPrank(alice);
         zip.approve(address(g), 20e18);
@@ -370,13 +370,13 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         vm.prank(alice);
         szip.transfer(engine, 3e18);
 
-        uint256 mainBefore = zip.balanceOf(sub.mainSafe);
+        uint256 mainBefore = zip.balanceOf(sub.juniorTrancheSafe);
         vm.prank(keeper);
         gate.burnFor(3e18);
 
         assertEq(szip.balanceOf(engine), 0, "engine szip burned");
         assertEq(szip.totalSupply(), 7e18, "supply down by burned amount");
-        assertEq(zip.balanceOf(sub.mainSafe), mainBefore, "basket untouched (no asset payout)");
+        assertEq(zip.balanceOf(sub.juniorTrancheSafe), mainBefore, "basket untouched (no asset payout)");
         _assertInvariants();
 
         // auth + edges

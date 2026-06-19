@@ -9,7 +9,7 @@ Gnosis Safe is the core container for the Junior Tranche, as well as the Credit 
 Note: Gnosis Safe is on an older Solidity/OZ version than our build, so we don't compile it — we hand-write small interfaces with only the functions we call, matched to the verified on-chain ABI.
 
 - ISafe.sol → a Gnosis Safe (SafeL2 1.4.1 singleton `0x29fcB43b46531BcA003ddC8FCB67FFE91900C762`)
-The Safe itself. Modules and deploy scripts drive Safes through it: enable a module, execute a transaction, manage owners. The DurationFreezeModule drives both the main and sidecar Safes to rotate shares; the deploy scripts set Safes up and hand off ownership.
+The Safe itself. Modules and deploy scripts drive Safes through it: enable a module, execute a transaction, manage owners. The DurationFreezeModule drives both the main and juniorTrancheSidecar Safes to rotate shares; the deploy scripts set Safes up and hand off ownership.
 [contracts/src/supply/szipUSD/DurationFreezeModule.sol]
 [contracts/script/SummonSubstrate.s.sol]
 [contracts/script/CreditWarehouseDeployer.sol]

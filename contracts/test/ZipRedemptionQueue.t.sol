@@ -769,12 +769,12 @@ contract ZipRedemptionQueueForkTest is ForkConfig {
         // the queue FIRST (so REPAY scope can pin to == queue)
         queue = new ZipRedemptionQueue(address(zip), usdc, controller);
 
-        // warehouse side: deploy with repaySink == queue
+        // warehouse side: deploy with redemptionBox == queue
         ee = new MockEulerEarn(usdc);
         deployer = new CreditWarehouseDeployer();
         w = deployer.deploy(godOwner, godOwner, address(ee), usdc, forwarder, address(queue), 1);
         adapter = WarehouseAdminModule(w.adapter);
-        safe = w.safe;
+        safe = w.warehouseSafe;
 
         // mint zipUSD to the requester and escrow the request
         zip.setCapacity(address(this), type(uint128).max);

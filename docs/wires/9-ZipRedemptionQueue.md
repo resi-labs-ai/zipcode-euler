@@ -31,7 +31,7 @@ into the venue pool itself.
 |---|---|
 | `ZipRedemptionQueue` (`is ReentrancyGuard, Ownable`) | The senior par-burn sink. Lifecycle `requestRedeem` → `settleEpoch` → `withdraw`/`redeem`. Holds escrowed zipUSD + REPAY-delivered USDC; fills `min(available, pending)`, burns, pays out at par. Single-requester (no pro-rata). |
 | `IZipUSD` (`contracts/src/interfaces/euler/IZipUSD.sol`) | Minimal local seam: `burn(address burnFrom, uint256 amount)`. The queue burns its OWN escrowed zipUSD (`burnFrom == address(this) == msg.sender`) ⇒ the `ESynth._spendAllowance` branch is skipped: **no allowance, no minter-capacity grant** needed. |
-| `WarehouseAdminModule` (`contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol`) | The CRE adapter that funds the queue. Its `REPAY` op is `usdc.transfer(to, amount)` with the Roles scope pinned `EqualTo(repaySink)`; **`repaySink == this queue`** is the wiring item-10 owes. |
+| `WarehouseAdminModule` (`contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol`) | The CRE adapter that funds the queue. Its `REPAY` op is `usdc.transfer(to, amount)` with the Roles scope pinned `EqualTo(redemptionBox)`; **`redemptionBox == this queue`** is the wiring item-10 owes. |
 | zipUSD `ESynth` (Euler, 18-dp) | The escrowed-and-burned senior synth (interfaced, not compiled). |
 | USDC (Base, 6-dp) | The redemption asset, delivered by REPAY, paid at par on claim. |
 
@@ -103,27 +103,27 @@ direct reads now).
 
 - **Funded by `WarehouseAdminModule` REDEEM → REPAY.** The CRE drives the warehouse: **REDEEM** (EulerEarn
   `redeem` → USDC to the senior Safe, `receiver == owner == Safe`) then **REPAY** (`usdc.transfer(to, amount)`
-  with the Roles scope pinned `EqualTo(repaySink)`). **The queue IS the `repaySink`.** The queue references/calls
+  with the Roles scope pinned `EqualTo(redemptionBox)`). **The queue IS the `redemptionBox`.** The queue references/calls
   **no** EulerEarn (grep-confirmed: only a doc comment mentions it; no `IEulerEarn` import) — it settles against
   the USDC the REPAY delivered into its own balance.
 - **Burns escrowed zipUSD via `IZipUSD`.** On every filled settle the queue calls
   `IZipUSD(zipUSD).burn(address(this), filledShares)`. Because `burnFrom == address(this) == msg.sender`, the
   `ESynth` allowance/minter-capacity branch is skipped — the queue needs no grant. Fork-proven: a real REPAY raises
   the queue balance by exactly `amount`, and the real `ESynth.totalSupply` drops by the burned amount.
-- **Non-commingling.** Item-10 must assert `repaySink != juniorBaalSafe` and the queue is not the junior Safe
+- **Non-commingling.** Item-10 must assert `redemptionBox != juniorBaalSafe` and the queue is not the junior Safe
   (§11) — the senior par exit and the junior NAV exit never share custody.
 
 ## Item-10 deploy facts (the obligations this queue owes / is owed)
 
 From `PROGRESS.md` (rows 364–369, 371):
-1. **Wire `WarehouseAdminModule.repaySink == ZipRedemptionQueue`** — pinned in the Roles scope `EqualTo`. The
+1. **Wire `WarehouseAdminModule.redemptionBox == ZipRedemptionQueue`** — pinned in the Roles scope `EqualTo`. The
    queue is the warehouse's single REPAY sink (M1).
 2. **Deploy the queue with `controller =` a DISTINCT CRE redemption-settle identity** (CRE-02) — separate from
    the §4.4 origination controller and from the warehouse's CRE adapter identity. Assert **`controller != 0`** and
    confirm **non-sweepable** (no owner-sweep selector — KR-2 ABI-negative) before going live.
-3. **The REPAY Roles-scope re-target authority (who can change `repaySink`) MUST be the timelock/multisig, NOT the
+3. **The REPAY Roles-scope re-target authority (who can change `redemptionBox`) MUST be the timelock/multisig, NOT the
    CRE settle operator** (security F6) — a re-scope can redirect senior redemption funding. The queue's own
-   `setRepaySink`-equivalent (`WarehouseAdminModule.setRepaySink`) is `onlyOwner` (Timelock); keep it there.
+   `setRedemptionBox`-equivalent (`WarehouseAdminModule.setRedemptionBox`) is `onlyOwner` (Timelock); keep it there.
 4. **Ownership hand-off:** `transferOwnership(Timelock)` on the queue after deploy (it is `Ownable(deployer)` at
    construction); the three setters (`setTokens` / `setController` / `setRedeemController`) then sit behind the
    Timelock.

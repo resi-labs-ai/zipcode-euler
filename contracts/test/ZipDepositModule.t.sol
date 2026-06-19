@@ -211,11 +211,11 @@ contract ZipDepositModuleTest is ZipModuleBase {
         assertEq(module.zipUSD(), address(zip));
         assertEq(module.usdc(), address(usdc));
         assertEq(module.eePool(), address(ee));
-        assertEq(module.warehouse(), WAREHOUSE_SAFE);
+        assertEq(module.warehouseSafe(), WAREHOUSE_SAFE);
         assertEq(module.deployer(), address(this));
     }
 
-    // -------------------------------------------------------------- deposit (warehouse custody)
+    // -------------------------------------------------------------- deposit (warehouseSafe custody)
     function test_deposit_warehouse_custody() public {
         _mintUsdc(LP, 1_000_000e6);
         vm.startPrank(LP);
@@ -230,11 +230,11 @@ contract ZipDepositModuleTest is ZipModuleBase {
         assertEq(usdc.balanceOf(address(ee)), 1_000_000e6, "USDC parked in pool");
         assertEq(zip.balanceOf(LP), 1_000_000e18, "user holds zipUSD");
         assertEq(zip.totalSupply(), 1_000_000e18);
-        assertEq(ee.balanceOf(WAREHOUSE_SAFE), 1_000_000e6, "shares -> warehouse");
+        assertEq(ee.balanceOf(WAREHOUSE_SAFE), 1_000_000e6, "shares -> warehouseSafe");
         assertEq(ee.balanceOf(address(module)), 0);
         assertEq(usdc.allowance(address(module), address(ee)), 0, "approval consumed");
         _assertModuleEmpty();
-        // conservation: USDC in pool * scaleUp == zipUSD supply AND warehouse shares == pooled USDC (par)
+        // conservation: USDC in pool * scaleUp == zipUSD supply AND warehouseSafe shares == pooled USDC (par)
         assertEq(usdc.balanceOf(address(ee)) * 1e12, zip.totalSupply());
         assertEq(ee.balanceOf(WAREHOUSE_SAFE), usdc.balanceOf(address(ee)));
     }
@@ -271,7 +271,7 @@ contract ZipDepositModuleTest is ZipModuleBase {
         assertEq(zip.balanceOf(address(module)), 0);
         assertEq(zip.balanceOf(address(gate)), 200_000e18, "gate pulled the basket zipUSD");
         assertEq(zip.allowance(address(module), address(gate)), 0, "per-zap allowance reset to 0");
-        assertEq(ee.balanceOf(WAREHOUSE_SAFE), 200_000e6, "shares -> warehouse");
+        assertEq(ee.balanceOf(WAREHOUSE_SAFE), 200_000e6, "shares -> warehouseSafe");
         assertEq(ee.balanceOf(address(module)), 0);
         assertEq(ee.balanceOf(address(gate)), 0);
         assertEq(usdc.balanceOf(address(ee)), 200_000e6);
@@ -415,7 +415,7 @@ contract ZipDepositModuleTest is ZipModuleBase {
         assertEq(zip.balanceOf(address(module)), modZip);
         assertEq(usdc.balanceOf(address(module)), modUsdc);
         assertEq(usdc.balanceOf(USER), userUsdc, "user USDC untouched");
-        assertEq(ee.balanceOf(WAREHOUSE_SAFE), whShares, "warehouse shares unchanged");
+        assertEq(ee.balanceOf(WAREHOUSE_SAFE), whShares, "warehouseSafe shares unchanged");
         assertEq(usdc.balanceOf(address(ee)), eeUsdc, "pool USDC unchanged");
         assertEq(zip.totalSupply(), supply, "no zipUSD minted");
         assertEq(gate.szip().balanceOf(USER), 0, "no szipUSD minted");
@@ -465,7 +465,7 @@ contract ZipDepositModuleTest is ZipModuleBase {
         assertEq(ret, 1_000_000e18, "zip minted is share-count-agnostic");
         assertEq(zip.balanceOf(LP), 1_000_000e18);
         uint256 expShares = 1_000_000e6 * customEe.num() / customEe.den();
-        assertEq(customEe.balanceOf(WAREHOUSE_SAFE), expShares, "warehouse shares scaled by EE ratio");
+        assertEq(customEe.balanceOf(WAREHOUSE_SAFE), expShares, "warehouseSafe shares scaled by EE ratio");
         assertEq(customEe.balanceOf(address(m)), 0);
     }
 
@@ -632,7 +632,7 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
 
     address internal team = makeAddr("teamMultisig");
     address internal keeper = makeAddr("windowKeeper");
-    address internal engine = makeAddr("engineSafe");
+    address internal engine = makeAddr("juniorTrancheEngine");
     address internal forwarder = makeAddr("forwarder");
     address internal USER = makeAddr("user");
 
@@ -675,8 +675,8 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
             address(xa),
             address(hydx),
             address(ohydx),
-            sub.mainSafe,
-            sub.sidecar,
+            sub.juniorTrancheSafe,
+            sub.juniorTrancheSidecar,
             W,
             MAX_AGE,
             DEV_BPS
@@ -687,7 +687,7 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
         szip = new SzipUSD(address(gate));
         gate.setShareToken(address(szip));
         gate.setWindowController(keeper);
-        gate.setEngineSafe(engine);
+        gate.setJuniorTrancheEngine(engine);
         oracle.setShareToken(address(szip));
         _grantManager(address(gate));
         _pushBoth(1e18, 5e17);
@@ -703,7 +703,7 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
         bytes memory data = abi.encodeWithSelector(IBaal.setShamans.selector, _arr(shaman), _arrU(2));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(sub.mainSafe).execTransaction(sub.baal, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(sub.juniorTrancheSafe).execTransaction(sub.baal, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
     function _pushBoth(uint256 alphaUSD, uint256 hydxUSD) internal {
@@ -746,7 +746,7 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
         assertEq(pShares, shares, "previewZap shares == realized (same block, fresh oracle)");
         assertEq(szip.balanceOf(USER), shares, "user holds szipUSD");
         assertEq(zip.balanceOf(USER), 0, "user never holds zipUSD");
-        assertEq(zip.balanceOf(sub.mainSafe), 200_000e18, "zipUSD landed in the basket (main Safe)");
+        assertEq(zip.balanceOf(sub.juniorTrancheSafe), 200_000e18, "zipUSD landed in the basket (main Safe)");
         assertEq(szip.totalSupply(), shares);
         // the real two-token invariant: szip supply == Loot held by the Gate
         assertEq(szip.totalSupply(), MockERC20Like(sub.loot).balanceOf(address(gate)), "two-token invariant");
@@ -755,7 +755,7 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
         assertEq(zip.balanceOf(address(module)), 0);
         assertEq(usdc.balanceOf(address(module)), 0);
         assertEq(zip.allowance(address(module), address(gate)), 0, "per-zap allowance reset");
-        assertEq(ee.balanceOf(WAREHOUSE_SAFE), 200_000e6, "EE shares -> warehouse");
+        assertEq(ee.balanceOf(WAREHOUSE_SAFE), 200_000e6, "EE shares -> warehouseSafe");
     }
 
     function test_real_zap_nav_proportional() public {
@@ -770,7 +770,7 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
 
         // bump the basket: mint 2.4e18 zipUSD straight into the main Safe -> gross 14.4e18 / supply 12e18 = spot $1.2
         zip.setCapacity(address(this), type(uint128).max);
-        zip.mint(sub.mainSafe, 24e17);
+        zip.mint(sub.juniorTrancheSafe, 24e17);
 
         // second zap of 12 USDC -> value 12e18 / navEntry($1.2) = 10e18 shares (round down)
         usdc.mint(USER, 12e6);

@@ -47,10 +47,10 @@ contract ExitGate is Ownable, ReentrancyGuard {
     address public xAlpha; // 18-dp — (POL-as-LM) deposit asset + a basket leg
     uint256 public tvlCap; // 18-dp USD gross-basket cap (governed; see 8-B12 overlap note)
     address public loot; // baal.lootToken()
-    address public mainSafe; // baal.avatar() — the main Safe / the basket
+    address public juniorTrancheSafe; // baal.avatar() — the main Safe / the basket
     address public shareToken; // szipUSD (deployed after the Gate — its ctor takes the Gate)
     address public windowController; // the CRE operator/keeper that opens windows
-    address public engineSafe; // the 8-B14 buy-and-burn Safe whose szipUSD `burnFor` retires
+    address public juniorTrancheEngine; // the 8-B14 buy-and-burn Safe whose szipUSD `burnFor` retires
 
     // --------------------------------------------------------------------- errors
     error ZeroAddress();
@@ -67,8 +67,8 @@ contract ExitGate is Ownable, ReentrancyGuard {
     event Burned(uint256 amount);
     event ShareTokenSet(address indexed szipUSD);
     event WindowControllerSet(address indexed controller);
-    event EngineSafeSet(address indexed engineSafe);
-    event BaalSet(address indexed baal, address loot, address mainSafe);
+    event EngineSafeSet(address indexed juniorTrancheEngine);
+    event BaalSet(address indexed baal, address loot, address juniorTrancheSafe);
     event NavOracleSet(address indexed navOracle);
     event TokensSet(address indexed zipUSD, address indexed xAlpha);
     event TvlCapSet(uint256 tvlCap);
@@ -86,7 +86,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
         xAlpha = xAlpha_;
         tvlCap = tvlCap_;
         loot = IBaal(baal_).lootToken();
-        mainSafe = IBaal(baal_).avatar();
+        juniorTrancheSafe = IBaal(baal_).avatar();
     }
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase)
@@ -105,19 +105,19 @@ contract ExitGate is Ownable, ReentrancyGuard {
     }
 
     /// @notice Wire/re-point the engine Safe (the 8-B14 buy-and-burn target). `onlyOwner` (Timelock).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        emit EngineSafeSet(engineSafe_);
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        emit EngineSafeSet(juniorTrancheEngine_);
     }
 
-    /// @notice Re-point the Baal substrate (re-derives `loot` + `mainSafe`). `onlyOwner` (Timelock), build-phase.
+    /// @notice Re-point the Baal substrate (re-derives `loot` + `juniorTrancheSafe`). `onlyOwner` (Timelock), build-phase.
     function setBaal(address baal_) external onlyOwner {
         if (baal_ == address(0)) revert ZeroAddress();
         baal = IBaal(baal_);
         loot = IBaal(baal_).lootToken();
-        mainSafe = IBaal(baal_).avatar();
-        emit BaalSet(baal_, loot, mainSafe);
+        juniorTrancheSafe = IBaal(baal_).avatar();
+        emit BaalSet(baal_, loot, juniorTrancheSafe);
     }
 
     /// @notice Re-point the NAV oracle. `onlyOwner` (Timelock), build-phase.
@@ -167,7 +167,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
         if (shares == 0) revert ZeroShares();
 
         // Pull the asset into the basket (main Safe) — the Gate keeps zero custody of it.
-        IERC20(asset).safeTransferFrom(msg.sender, mainSafe, amount);
+        IERC20(asset).safeTransferFrom(msg.sender, juniorTrancheSafe, amount);
 
         // Mint Loot to the Gate (manager(2)) + transferable szipUSD to the receiver — paired, equal amounts.
         baal.mintLoot(_one(address(this)), _one(shares));
@@ -199,10 +199,10 @@ contract ExitGate is Ownable, ReentrancyGuard {
     ///         payout — `burnLoot` from the Gate + burn the engine Safe's szipUSD. NAV-per-share ticks up for stayers.
     function burnFor(uint256 amount) external nonReentrant {
         if (msg.sender != windowController) revert NotWindowController();
-        if (engineSafe == address(0)) revert NotWired();
+        if (juniorTrancheEngine == address(0)) revert NotWired();
         if (amount == 0) revert ZeroAmount();
         baal.burnLoot(_one(address(this)), _one(amount));
-        SzipUSD(shareToken).burn(engineSafe, amount);
+        SzipUSD(shareToken).burn(juniorTrancheEngine, amount);
         emit Burned(amount);
     }
 

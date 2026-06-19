@@ -34,7 +34,7 @@ contract ReservoirMarketDeployer {
     /// @param usdc USDC (borrow asset + unit-of-account — prices 1:1, no feed).
     /// @param lpOracle The `SzipReservoirLpOracle` the router resolves the LP collateral through.
     /// @param irm The interest rate model installed on the borrow vault.
-    /// @param engineSafe The szipUSD engine Safe (the guard's sole legal borrower).
+    /// @param juniorTrancheEngine The szipUSD engine Safe (the guard's sole legal borrower).
     /// @param borrowLTV The borrow LTV (1e4 scale) accepting the escrow as collateral.
     /// @param liqLTV The liquidation LTV (1e4 scale).
     struct Params {
@@ -45,7 +45,7 @@ contract ReservoirMarketDeployer {
         address usdc;
         address lpOracle;
         address irm;
-        address engineSafe;
+        address juniorTrancheEngine;
         uint16 borrowLTV;
         uint16 liqLTV;
     }
@@ -77,7 +77,7 @@ contract ReservoirMarketDeployer {
         borrowVault = p.factory.createProxy(address(0), false, abi.encodePacked(p.usdc, router, p.usdc));
         IEVault(borrowVault).setInterestRateModel(p.irm);
         IEVault(borrowVault).setHookConfig(
-            address(new ReservoirBorrowGuard(address(p.factory), p.engineSafe)), OP_BORROW
+            address(new ReservoirBorrowGuard(address(p.factory), p.juniorTrancheEngine)), OP_BORROW
         ); // never hook OP_REPAY
         IEVault(borrowVault).setLTV(escrowVault, p.borrowLTV, p.liqLTV, 0); // 1e4 scale; ramp 0
 

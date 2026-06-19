@@ -29,9 +29,9 @@ interface ICoverageGate {
 
 /// @title SzipBuyBurnModule
 /// @notice The §7 "haircut buy-and-burn" BID side (8-B14): a CRE-operator-gated Zodiac Module enabled on the engine
-///         Safe (`avatar == target == engineSafe`) that makes the protocol the **discounted buyer of last resort**
+///         Safe (`avatar == target == juniorTrancheEngine`) that makes the protocol the **discounted buyer of last resort**
 ///         for szipUSD. On the operator's tick it posts a SINGLE resting CoW `BUY szipUSD` limit order
-///         (`sellToken = USDC`, `receiver = engineSafe`, `partiallyFillable`), priced **at or below
+///         (`sellToken = USDC`, `receiver = juniorTrancheEngine`, `partiallyFillable`), priced **at or below
 ///         `navExit × (1 − d)`** off `SzipNavOracle`, `sellAmount ≤ buybackCap`, signed on-chain via PRESIGN
 ///         (`GPv2Settlement.setPreSignature`). Everything it buys lands in the engine Safe; the BURN is the existing
 ///         `ExitGate.burnFor` (the CRE windowController's authority — OUT of this contract's scope).
@@ -77,7 +77,7 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     /// @dev buy-burn FILL is INTENTIONALLY not fill-time coverage-gated. The `postBid` `covered()` gate
     ///      below gates POSTING, not the solver fill — but a fill after coverage drifts below the floor cannot breach
     ///      it, because the USDC the bid spends is engine-Safe value that `coverageValue()` already EXCLUDES (it is
-    ///      free-side, not committed sidecar value). Adding a CoW pre-/post-interaction HOOK to re-check coverage at
+    ///      free-side, not committed juniorTrancheSidecar value). Adding a CoW pre-/post-interaction HOOK to re-check coverage at
     ///      fill is REJECTED — `APP_DATA == 0` deliberately forbids any hook (the rejection is the finding). (The
     ///      undercovered-fill WINDOW is bounded by the NAV freshness `maxAge`; optionally shrinking the DEPLOYED
     ///      `NAV_MAX_AGE` to tighten it is a deploy-tuning decision, not changed here — §6/§7.)
@@ -94,8 +94,8 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
     /// @notice The single CRE operator (gates `postBid`/`cancelBid`).
     address public operator;
-    /// @notice The engine Safe (`avatar == target == engineSafe`); the order `receiver` and the uid `owner`.
-    address public engineSafe;
+    /// @notice The engine Safe (`avatar == target == juniorTrancheEngine`); the order `receiver` and the uid `owner`.
+    address public juniorTrancheEngine;
     /// @notice The `SzipNavOracle` (the pricing primitive — priced off `navExit()`, gated on `fresh()`).
     address public navOracle;
     /// @notice The szipUSD share token (the `buyToken`, 18-dp).
@@ -128,7 +128,7 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     // --------------------------------------------------------------------- operator-supplied order (3 fields only)
     /// @notice The ONLY operator-supplied order fields. Every other GPv2 field is a module-fixed constant (the §4
     ///         hardening — no unvalidated field enters the hash). The module validates these, builds the full
-    ///         canonical order from `(usdc, szipUSD, engineSafe, sellAmount, buyAmount, validTo, APP_DATA, 0,
+    ///         canonical order from `(usdc, szipUSD, juniorTrancheEngine, sellAmount, buyAmount, validTo, APP_DATA, 0,
     ///         KIND_BUY, true, BALANCE_ERC20, BALANCE_ERC20)`, and hashes EXACTLY that into the uid.
     struct GPv2OrderInput {
         uint256 sellAmount; // USDC (6-dp) — validated ≤ buybackCap, > 0
@@ -164,13 +164,13 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the
-    ///         zodiac-core `initializer`. Decodes `(owner, engineSafe, operator, navOracle, szipUSD, usdc,
+    ///         zodiac-core `initializer`. Decodes `(owner, juniorTrancheEngine, operator, navOracle, szipUSD, usdc,
     ///         settlement, dBps, buybackCap, coverageGate)`; reads the VaultRelayer + domain separator LIVE off the
     ///         settlement. `coverageGate` MAY be address(0) (gate OFF) — no zero-check, mirrors setCoverageGate.
     function setUp(bytes memory initParams) public override initializer {
         (
             address owner_,
-            address engineSafe_,
+            address juniorTrancheEngine_,
             address operator_,
             address navOracle_,
             address szipUSD_,
@@ -184,17 +184,17 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         );
 
         if (
-            owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || navOracle_ == address(0)
+            owner_ == address(0) || juniorTrancheEngine_ == address(0) || operator_ == address(0) || navOracle_ == address(0)
                 || szipUSD_ == address(0) || usdc_ == address(0) || settlement_ == address(0)
         ) revert ZeroAddress();
         if (owner_ == operator_) revert OwnerIsOperator();
         if (dBps_ == 0 || dBps_ >= 10_000) revert BadDiscount();
 
-        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
-        avatar = engineSafe_;
-        target = engineSafe_;
+        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == juniorTrancheEngine.
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
 
-        engineSafe = engineSafe_;
+        juniorTrancheEngine = juniorTrancheEngine_;
         operator = operator_;
         navOracle = navOracle_;
         szipUSD = szipUSD_;
@@ -246,11 +246,11 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         emit WiringSet("operator", operator_);
     }
 
-    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        emit WiringSet("engineSafe", engineSafe_);
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock).
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
     /// @notice Re-point `navOracle` (build phase, §17). onlyOwner (Timelock).
@@ -335,7 +335,7 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         if (order.buyAmount > MAX_BUY_AMOUNT) revert BuyAmountTooLarge();
         if (order.sellAmount > buybackCap) revert CapExceeded();
         // PATH-LOCK outflow gate: a buy-and-burn bid spends basket USDC to retire szipUSD — a
-        // free-side outflow. Block it while sidecar+LP coverage is below the floor (a price-drift breach), so exits
+        // free-side outflow. Block it while juniorTrancheSidecar+LP coverage is below the floor (a price-drift breach), so exits
         // cannot drain coverage. Gate OFF (coverageGate == 0) is the M1 pre-wiring state. Wired by the Timelock.
         address gate = coverageGate;
         if (gate != address(0) && !ICoverageGate(gate).covered()) revert Undercovered();
@@ -417,14 +417,14 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     /// @dev    `structHash = keccak256(abi.encode(TYPE_HASH, sellToken, buyToken, receiver, sellAmount, buyAmount,
     ///         uint256(validTo), appData, feeAmount, kind, partiallyFillable, sellTokenBalance, buyTokenBalance))`;
     ///         `digest = keccak256(0x1901 ++ domainSeparator ++ structHash)`;
-    ///         `uid = digest(32) ++ owner(20 = engineSafe) ++ validTo(uint32, 4)` → 56 bytes.
+    ///         `uid = digest(32) ++ owner(20 = juniorTrancheEngine) ++ validTo(uint32, 4)` → 56 bytes.
     function _orderUid(GPv2OrderInput memory order) public view returns (bytes memory) {
         bytes32 structHash = keccak256(
             abi.encode(
                 TYPE_HASH,
                 usdc, // sellToken
                 szipUSD, // buyToken
-                engineSafe, // receiver
+                juniorTrancheEngine, // receiver
                 order.sellAmount,
                 order.buyAmount,
                 uint256(order.validTo),
@@ -437,7 +437,7 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
             )
         );
         bytes32 digest = keccak256(abi.encodePacked(hex"1901", domainSeparator, structHash));
-        return abi.encodePacked(digest, engineSafe, order.validTo);
+        return abi.encodePacked(digest, juniorTrancheEngine, order.validTo);
     }
 
     // --------------------------------------------------------------------- views (CRE op surface / monitoring)

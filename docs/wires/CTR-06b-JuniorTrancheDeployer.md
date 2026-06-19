@@ -51,8 +51,8 @@ It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the 
   admin multisig (step 17, `swapOwner` from the transient deployer-self, `prevOwner` located by traversing
   `getOwners()`), asserted by `SafeHandoffFailed` (`isOwner(team)` true on both AND `isOwner(self)` false on both).
   `ZipDepositModule` has no ownable surface; the shared `rateOracle` is an input the deployer never owns (NOT transferred).
-- **Non-commingling (Key req 5).** Asserts `sub.mainSafe != warehouseSafe && sub.sidecar != warehouseSafe` — STRENGTHENS
-  `DeployZipcode`'s `SeamWarehouseCommingled` (`:291`, which checks only the main Safe) by also covering the sidecar.
+- **Non-commingling (Key req 5).** Asserts `sub.juniorTrancheSafe != warehouseSafe && sub.juniorTrancheSidecar != warehouseSafe` — STRENGTHENS
+  `DeployZipcode`'s `SeamWarehouseCommingled` (`:291`, which checks only the main Safe) by also covering the juniorTrancheSidecar.
 
 ## Wiring — cross-component (who points at whom)
 - **← `SiloDeployer`** (CTR-06c, not yet built) is the sole intended caller: it builds the EE pool + reservoir market
@@ -70,7 +70,7 @@ It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the 
 
 ## Item-10 / deploy facts
 - **D1 (POL sharing) RATIFIED:** `polIchiVault` + `polGauge` are deploy `JuniorParams` INPUTS — one shared pool address
-  across silos by default; each silo's `mainSafe` stakes its own LP position. (Real pool not live — M1 stand-in on the
+  across silos by default; each silo's `juniorTrancheSafe` stakes its own LP position. (Real pool not live — M1 stand-in on the
   WETH/USDC vault, PROGRESS "BLOCKED (external)".) No `setLpTwapWindow` (the fair-LP TWAP branch) — M1 uses the
   CRE-push LP mark.
 - **D5 (senior off-ramp) RATIFIED:** EXCLUDES `OffRampModule` + `ZipRedemptionQueue.setRedeemController`. The junior

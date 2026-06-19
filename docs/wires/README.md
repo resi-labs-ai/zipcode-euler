@@ -78,9 +78,9 @@ The minimal local interfaces for the deployed-on-Base protocols (interface+fork)
 ## Safe topology (who is who — what the Safes actually are)
 
 There are only **three Gnosis Safes** across the whole protocol, in two deployments. The thing that trips people
-up: **"engineSafe" and "rqSafe" are not separate Safes — they are names for the main Baal Safe.** In
-`DeployZipcode.s.sol` the engine modules are wired with `engineSafe = d.sub.mainSafe` (≈ line 370), and the
-redemption queue's `redeemController` is `setRedeemController(d.sub.mainSafe)` (≈ line 448). So one address wears
+up: **"juniorTrancheEngine" and "juniorTrancheSafe" are not separate Safes — they are names for the main Baal Safe.** In
+`DeployZipcode.s.sol` the engine modules are wired with `juniorTrancheEngine = d.sub.juniorTrancheSafe` (≈ line 370), and the
+redemption queue's `redeemController` is `setRedeemController(d.sub.juniorTrancheSafe)` (≈ line 448). So one address wears
 the basket / ragequit / engine / rq hats at once.
 
 ```
@@ -91,22 +91,22 @@ DEPLOYMENT 1 — szipUSD junior substrate  (SummonSubstrate → BaalAndVaultSumm
 │   MAIN SAFE   ( = Baal.avatar() == target )      ◄── ONE Safe, many hats    │
 │     hats:  • basket (holds zipUSD/xALPHA; backs szipUSD NAV)                 │
 │            • ragequit target (the "free equity")                            │
-│            • engineSafe  ── all engine modules bolt on here:                │
+│            • juniorTrancheEngine  ── all engine modules bolt on here:                │
 │                 SzipBuyBurnModule (8-B14), ReservoirLoopModule (8-B5),       │
 │                 LpStrategyModule (8-B6), HarvestVoteModule (8-B7),           │
 │                 ExerciseModule (8-B8), SellModule (8-B9),                    │
 │                 RecycleModule (8-B10), OffRampModule                         │
-│            • rqSafe  (redeemController for ZipRedemptionQueue)               │
+│            • juniorTrancheSafe  (redeemController for ZipRedemptionQueue)               │
 │            • Baal enabled as a module (ragequit path); team multisig = owner │
 │                                                                             │
 │   SIDECAR SAFE   ◄── the one genuinely separate Safe in Deployment 1        │
 │     • non-ragequittable "committed equity" (the §11 structural freeze)      │
-│     • DurationFreezeModule enabled on BOTH main + sidecar                   │
+│     • DurationFreezeModule enabled on BOTH main + juniorTrancheSidecar                   │
 │     • LienXAlphaEscrow targets it; Baal enabled as a module; team = owner   │
-│     • SzipNavOracle sums balances across main + sidecar to price NAV        │
+│     • SzipNavOracle sums balances across main + juniorTrancheSidecar to price NAV        │
 └───────────────────────────────────────────────────────────────────────────┘
 
-DEPLOYMENT 2 — credit warehouse   (CreditWarehouseDeployer; asserted != mainSafe)
+DEPLOYMENT 2 — credit warehouse   (CreditWarehouseDeployer; asserted != juniorTrancheSafe)
 ┌───────────────────────────────────────────────────────────────────────────┐
 │   WAREHOUSE SAFE                                                            │
 │     • holds the EulerEarn shares (the resting USDC depositors fund)         │
@@ -117,7 +117,7 @@ DEPLOYMENT 2 — credit warehouse   (CreditWarehouseDeployer; asserted != mainSa
 
 **Mental model:** modules are scoped admin-governors bolted onto a Safe; the **Timelock owns the modules**
 (re-points wiring / swaps them), the **CRE operator** is the hot key that fires their entrypoints, and the Safe
-is the account they move. `engineSafe` is a *separately-settable wire* (`setEngineSafe`), so it could be split
+is the account they move. `juniorTrancheEngine` is a *separately-settable wire* (`setJuniorTrancheEngine`), so it could be split
 into its own Safe later — but in the M1 deploy it points at the main Baal Safe. Cross-deployment, the warehouse
 Safe is explicitly asserted **not** to equal the main Safe (`SeamWarehouseCommingled`), keeping senior custody
 and the junior basket non-commingled.
@@ -143,9 +143,9 @@ These recur across many components and are where the item-10 deploy script lives
    **conditional on the expected values being non-zero** — sealing before they are set permanently bypasses it.
    This must be a **tested negative** per contract, not an unexercised assert line (`WOOF-10a.md`).
 
-3. **The engineSafe denominator-exclusion chain.** One address must be identical across:
-   `SzipBuyBurnModule.engineSafe == ExitGate.engineSafe == SzipNavOracle.engineSafe == order.receiver`. The
-   module-side equalities are tested; the **oracle-side `SzipNavOracle.setEngineSafe`** is an OPEN item-10
+3. **The juniorTrancheEngine denominator-exclusion chain.** One address must be identical across:
+   `SzipBuyBurnModule.juniorTrancheEngine == ExitGate.juniorTrancheEngine == SzipNavOracle.juniorTrancheEngine == order.receiver`. The
+   module-side equalities are tested; the **oracle-side `SzipNavOracle.setJuniorTrancheEngine`** is an OPEN item-10
    step (so the transient pre-burn szipUSD is excluded from navPerShare). (`8-B14`, `8-B4`, PROGRESS 325.)
 
 4. **The shared-LP-address invariant.** One ICHI vault share address must be identical across:
@@ -158,15 +158,15 @@ These recur across many components and are where the item-10 deploy script lives
    the `DefaultCoordinator` writes provision to — else diverted USDC supplies the wrong pool / reads the wrong
    hole. Deploy-time assert, revert on mismatch. (`8-B10`, `WOOF-06`, PROGRESS 357/375.)
 
-6. **The repaySink chain (senior funding).** `WarehouseAdminModule.repaySink == ZipRedemptionQueue` (Roles
+6. **The redemptionBox chain (senior funding).** `WarehouseAdminModule.redemptionBox == ZipRedemptionQueue` (Roles
    scope `EqualTo`); the queue is non-sweepable and never calls EulerEarn (settles own balance). The REPAY
    re-scope authority must be the timelock/multisig, NOT the CRE settle operator. (`8-Bw`, `9`, PROGRESS 369.)
 
 7. **The engine module deploy template.** Every engine Zodiac module (`8-B5..B10`, `8-B14`,
    `DurationFreezeModule`, `OffRampModule`) is: CREATE2-cloned via `ModuleProxyFactory.deployModule` + `setUp`
-   atomically in one tx (front-run-safe) + mastercopy init-locked; `avatar = target = engineSafe`;
+   atomically in one tx (front-run-safe) + mastercopy init-locked; `avatar = target = juniorTrancheEngine`;
    `owner = Timelock != operator (CRE)`; all calls `Operation.Call` value-0 via a bubbling `_exec`. The
-   `DurationFreezeModule` is enabled on **both** Safes (sidecar only after `isOwner(team)`).
+   `DurationFreezeModule` is enabled on **both** Safes (juniorTrancheSidecar only after `isOwner(team)`).
 
 8. **The xALPHA rate/balance split (production).** `SzipNavOracle` holds `xAlpha` immutable as the **balance**
    token but reads the **rate** from a distinct Timelock-settable `xAlphaRateOracle` (`setXAlphaRateOracle`).
@@ -181,12 +181,12 @@ The order `DeployZipcode` realizes (phases P0–P9; see `DeployZipcode.md`), ove
    `ZipcodeController` (5-arg) → `registry.setController` → EE_POOL `setIsAllocator`+`setCurator(VENUE)` (curator
    timelock 0) + `setFeeRecipient` (protocol-side).
 3. **Bridge first (xALPHA leg is a dependency):** `8x-01` mirror + pool, `8x-02` `SzAlphaRateOracle`.
-4. **Supply substrate:** `SummonSubstrate` (main + sidecar Safe) → `ESynth` zipUSD + `setCapacity(module)` →
+4. **Supply substrate:** `SummonSubstrate` (main + juniorTrancheSidecar Safe) → `ESynth` zipUSD + `setCapacity(module)` →
    `ZipDepositModule` → `SzipNavOracle` → `ExitGate` + `SzipUSD` (Gate manager(2) grant; `setShareToken`) →
-   `CreditWarehouse` Safe + `WarehouseAdminModule` (Roles) → `ZipRedemptionQueue` (`repaySink` wiring).
+   `CreditWarehouse` Safe + `WarehouseAdminModule` (Roles) → `ZipRedemptionQueue` (`redemptionBox` wiring).
 5. **Engine modules:** create the POL ICHI vault + resolve the gauge (whitelist-gated) → deploy `8-B5`
    reservoir market (governor → timelock; point EE supply queue at it) → clone `8-B5..B10`, `8-B14`,
-   `DurationFreeze`, `OffRamp` (enable on the right Safe(s), wire operators, the shared-LP/one-bank/engineSafe
+   `DurationFreeze`, `OffRamp` (enable on the right Safe(s), wire operators, the shared-LP/one-bank/juniorTrancheEngine
    asserts).
 6. **Loss side:** `LienXAlphaEscrow` → `DefaultCoordinator` (`setEscrow` + `forceApprove`, oracle
    `setDefaultCoordinator`, fund launch xALPHA).

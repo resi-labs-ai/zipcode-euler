@@ -36,7 +36,7 @@ contract CreditWarehouseDeployer {
 
     /// @notice The deployed warehouse handle (single source of truth for the test's `roleKey` read).
     struct Warehouse {
-        address safe;
+        address warehouseSafe;
         address roles;
         address adapter;
         bytes32 roleKey;
@@ -69,7 +69,7 @@ contract CreditWarehouseDeployer {
         address eePool,
         address usdc,
         address forwarder,
-        address repaySink,
+        address redemptionBox,
         uint256 saltNonce
     ) external returns (Warehouse memory w) {
         // 1. Safe — owner = this deployer (transient), threshold 1, no fallbackHandler (holds only ERC-20 shares/USDC).
@@ -83,18 +83,18 @@ contract CreditWarehouseDeployer {
         if (!ISafe(safe).isModuleEnabled(roles)) revert ModuleNotEnabled();
 
         // 4. Scope the role (as Roles owner = this). Call-only (options = None).
-        _scope(roles, eePool, usdc, repaySink);
+        _scope(roles, eePool, usdc, redemptionBox);
 
         // 5. Adapter.
         address adapter = address(
-            new WarehouseAdminModule(forwarder, roles, ROLE_KEY, safe, eePool, usdc, repaySink)
+            new WarehouseAdminModule(forwarder, roles, ROLE_KEY, safe, eePool, usdc, redemptionBox)
         );
 
         // 6. assignRoles the adapter as the sole role member; 7. hand off Safe/Roles to godOwner + the adapter (a CRE
         //    receiver) to receiverAdmin (the item-10 broadcaster).
         _assignAndHandoff(safe, roles, adapter, godOwner, receiverAdmin);
 
-        w = Warehouse({safe: safe, roles: roles, adapter: adapter, roleKey: ROLE_KEY});
+        w = Warehouse({warehouseSafe: safe, roles: roles, adapter: adapter, roleKey: ROLE_KEY});
     }
 
     function _deploySafe(uint256 saltNonce) internal returns (address safe) {
@@ -134,14 +134,14 @@ contract CreditWarehouseDeployer {
         }
     }
 
-    function _scope(address roles, address eePool, address usdc, address repaySink) internal {
+    function _scope(address roles, address eePool, address usdc, address redemptionBox) internal {
         bytes32 rk = ROLE_KEY;
         IRoles(roles).scopeTarget(rk, eePool);
         IRoles(roles).scopeFunction(rk, eePool, IEulerEarn.deposit.selector, _treeDeposit(), EXEC_NONE);
         IRoles(roles).scopeFunction(rk, eePool, IEulerEarn.redeem.selector, _treeRedeem(), EXEC_NONE);
         IRoles(roles).scopeTarget(rk, usdc);
         IRoles(roles).scopeFunction(rk, usdc, IERC20.approve.selector, _treeApprove(eePool), EXEC_NONE);
-        IRoles(roles).scopeFunction(rk, usdc, IERC20.transfer.selector, _treeTransfer(repaySink), EXEC_NONE);
+        IRoles(roles).scopeFunction(rk, usdc, IERC20.transfer.selector, _treeTransfer(redemptionBox), EXEC_NONE);
     }
 
     function _assignAndHandoff(address safe, address roles, address adapter, address godOwner, address receiverAdmin)
@@ -202,11 +202,11 @@ contract CreditWarehouseDeployer {
         c[2] = IRoles.ConditionFlat(0, ABI_STATIC, OP_PASS, ""); // amount
     }
 
-    /// @dev D — transfer(address to, uint256 amount): `to` pinned to repaySink (MUST be EqualTo, never Pass).
-    function _treeTransfer(address repaySink) internal pure returns (IRoles.ConditionFlat[] memory c) {
+    /// @dev D — transfer(address to, uint256 amount): `to` pinned to redemptionBox (MUST be EqualTo, never Pass).
+    function _treeTransfer(address redemptionBox) internal pure returns (IRoles.ConditionFlat[] memory c) {
         c = new IRoles.ConditionFlat[](3);
         c[0] = _root();
-        c[1] = IRoles.ConditionFlat(0, ABI_STATIC, OP_EQUAL_TO, abi.encode(repaySink)); // to == repaySink
+        c[1] = IRoles.ConditionFlat(0, ABI_STATIC, OP_EQUAL_TO, abi.encode(redemptionBox)); // to == redemptionBox
         c[2] = IRoles.ConditionFlat(0, ABI_STATIC, OP_PASS, ""); // amount
     }
 

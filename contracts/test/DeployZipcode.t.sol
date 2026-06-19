@@ -40,7 +40,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
     address internal creOperator;
     address internal workflowAuthor;
     address internal erebor;
-    address internal treasurySafe;
+    address internal adminSafe;
 
     function setUp() public virtual {
         _selectBaseFork();
@@ -51,7 +51,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         creOperator = makeAddr("creOperator");
         workflowAuthor = makeAddr("workflowAuthor");
         erebor = makeAddr("erebor");
-        treasurySafe = makeAddr("treasurySafe");
+        adminSafe = makeAddr("adminSafe");
 
         _setDeployEnv();
         dep = new DeployZipcode();
@@ -69,7 +69,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         vm.setEnv("WORKFLOW_AUTHOR", vm.toString(workflowAuthor));
         vm.setEnv("WORKFLOW_ID", vm.toString(bytes32(uint256(1)))); // non-zero (identity pre-gate)
         vm.setEnv("EREBOR", vm.toString(erebor));
-        vm.setEnv("TREASURY_SAFE", vm.toString(treasurySafe));
+        vm.setEnv("ADMIN_SAFE", vm.toString(adminSafe));
         vm.setEnv("SUMMON_SALT_NONCE", vm.toString(uint256(1)));
 
         // (T) stand-ins — REPLACE with real/mock fork contracts before un-skipping.
@@ -108,8 +108,8 @@ contract DeployZipcodeForkTest is DeployZipcodeForkBase {
     /// TODO(next window): replace the stand-ins, drive as `team`, expose `getDeployment()`, then assert:
     ///   - controller.venue()==adapter; registry.controller()==controller
     ///   - IBaal(sub.baal).totalShares()==0; gate.shareToken()==szip
-    ///   - RecycleModule one-bank trio; LpStrategy/escrow shared-LP; buyBurn/gate/navOracle engineSafe trio
-    ///   - escrow.coordinator()==coord; navOracle.shareToken()!=0; warehouse.safe != sub.mainSafe
+    ///   - RecycleModule one-bank trio; LpStrategy/escrow shared-LP; buyBurn/gate/navOracle juniorTrancheEngine trio
+    ///   - escrow.coordinator()==coord; navOracle.shareToken()!=0; warehouse.safe != sub.juniorTrancheSafe
     ///   - every ReceiverTemplate owner()==timelock (post-seal); nothing renounced (owner()!=address(0))
     function test_phaseS_postState() public {
         vm.skip(true); // SCAFFOLD — un-skip once the stand-ins + broadcaster + getDeployment() are wired.

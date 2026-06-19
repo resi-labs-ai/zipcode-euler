@@ -8,11 +8,11 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 // public, address-typed getter on the as-built silo components (see the ticket's "Binds to"). `ISzipNavOracle` /
 // `IEulerEarn` returns are cast to `address` for comparison, so these declare the getters as `address`-returning.
 
-/// @notice `DurationFreezeModule.{eulerEarn(), warehouse(), navOracle()}`
+/// @notice `DurationFreezeModule.{eulerEarn(), warehouseSafe(), navOracle()}`
 ///         (`contracts/src/supply/szipUSD/DurationFreezeModule.sol:54,56,57`).
 interface IFreeze {
     function eulerEarn() external view returns (address);
-    function warehouse() external view returns (address);
+    function warehouseSafe() external view returns (address);
     function navOracle() external view returns (address);
 }
 
@@ -42,7 +42,7 @@ interface ISeniorVenue {
 ///         Timelock (the `EulerVenueAdapter`/`DefaultCoordinator` idiom; NOT a Zodiac module, NOT an EVK hook). It is
 ///         a pure catalog: it touches NO silo-internal contract; silo logic is unchanged.
 ///
-/// @dev Each silo is the set `{venue adapter + warehouse Safe + EulerEarn pool + junior tranche}` plus its loss-side
+/// @dev Each silo is the set `{venue adapter + warehouseSafe Safe + EulerEarn pool + junior tranche}` plus its loss-side
 ///      and freeze components. Admission (`addSilo`, `onlyOwner`/Timelock) is the federation's underwriting gate:
 ///      a curator gets senior backing only by registering a SELF-CONSISTENT silo — one whose freeze/escrow/coordinator
 ///      all point only at its OWN pool/safe/oracle (the §2 topology assert). `lineCount`/`active` are registry-managed
@@ -175,7 +175,7 @@ contract SiloRegistry is Ownable {
         // topology assert (Key req 2): the exact 6-clause web. All clauses must hold; the silo must point only at
         // its OWN components (curator/juniorBasket carried for routing only — NOT asserted).
         if (
-            IFreeze(cfg.freeze).eulerEarn() != cfg.eePool || IFreeze(cfg.freeze).warehouse() != cfg.warehouseSafe
+            IFreeze(cfg.freeze).eulerEarn() != cfg.eePool || IFreeze(cfg.freeze).warehouseSafe() != cfg.warehouseSafe
                 || IFreeze(cfg.freeze).navOracle() != cfg.navOracle
                 || IEscrow(cfg.escrow).coordinator() != cfg.defaultCoordinator
                 || INavWriter(cfg.defaultCoordinator).navOracle() != cfg.navOracle

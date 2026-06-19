@@ -12,7 +12,7 @@ import {ISafeProxyFactory} from "../src/interfaces/safe/ISafeProxyFactory.sol";
 /// @title SummonSubstrate (8-B1)
 /// @notice Summons the szipUSD junior-vault substrate against the LIVE Baal `BaalAndVaultSummoner` on
 /// Base 8453: a Baal (Moloch v3) DAO + its main Gnosis Safe (avatar/ragequit target = FREE equity) + a
-/// non-ragequittable sidecar Safe (COMMITTED equity / the structural freeze) + Loot/Shares clones (Loot
+/// non-ragequittable juniorTrancheSidecar Safe (COMMITTED equity / the structural freeze) + Loot/Shares clones (Loot
 /// soulbound/paused at genesis, Shares = 0 forever). It injects the TEAM MULTISIG as a Safe owner/signer
 /// on BOTH Safes so the otherwise governance-inert substrate is driveable (the two-tier admin/operator
 /// model, claude-zipcode.md §4.5 item-0 / baal-spec.md 8-B1).
@@ -26,8 +26,8 @@ contract SummonSubstrate is Script {
 
     struct Substrate {
         address baal;
-        address mainSafe;
-        address sidecar;
+        address juniorTrancheSafe;
+        address juniorTrancheSidecar;
         address loot;
         address shares;
     }
@@ -45,9 +45,9 @@ contract SummonSubstrate is Script {
     string internal constant VAULT_NAME = "Zipcode szipUSD Junior Sidecar";
 
     /// @notice Script entrypoint. Reads TEAM_MULTISIG + SUMMON_SALT_NONCE from env and broadcasts the summon.
-    /// @dev The broadcaster MUST be the team multisig signer (the sidecar owner-add uses the Safe pre-validated
+    /// @dev The broadcaster MUST be the team multisig signer (the juniorTrancheSidecar owner-add uses the Safe pre-validated
     /// signature path, which requires `msg.sender == owner`). In production the team is a k-of-n Gnosis Safe and the
-    /// sidecar owner-add + all later wiring are separate team-signed Safe txs; this script models the MVP path.
+    /// juniorTrancheSidecar owner-add + all later wiring are separate team-signed Safe txs; this script models the MVP path.
     function run() external returns (Substrate memory s) {
         address team = vm.envAddress("TEAM_MULTISIG");
         uint256 saltNonce = vm.envUint("SUMMON_SALT_NONCE");
@@ -57,21 +57,21 @@ contract SummonSubstrate is Script {
     }
 
     /// @notice Summon the substrate and inject `teamMultisig` as a signer on BOTH Safes (the full, driveable
-    /// substrate). The CALLER must be `teamMultisig` (the sidecar owner-add requires `msg.sender == owner`).
+    /// substrate). The CALLER must be `teamMultisig` (the juniorTrancheSidecar owner-add requires `msg.sender == owner`).
     /// Reusable from `run()` and the fork test.
     function _summon(address teamMultisig, uint256 saltNonce) internal returns (Substrate memory s) {
         // Summon + main-Safe team owner-add (init action, caller-agnostic).
         s = _summonCore(teamMultisig, saltNonce);
 
-        // Sidecar owner-add (the sidecar ships Baal-only; close it now). The team (caller) drives the main Safe
-        // -> Baal.executeAsBaal(sidecar, ...) -> sidecar.execTransactionFromModule(self, addOwnerWithThreshold).
-        _addOwnerToSidecar(s.baal, s.mainSafe, s.sidecar, teamMultisig);
-        if (!ISafe(s.sidecar).isOwner(teamMultisig)) revert TeamOwnerNotSet(s.sidecar);
+        // Sidecar owner-add (the juniorTrancheSidecar ships Baal-only; close it now). The team (caller) drives the main Safe
+        // -> Baal.executeAsBaal(juniorTrancheSidecar, ...) -> juniorTrancheSidecar.execTransactionFromModule(self, addOwnerWithThreshold).
+        _addOwnerToJuniorTrancheSidecar(s.baal, s.juniorTrancheSafe, s.juniorTrancheSidecar, teamMultisig);
+        if (!ISafe(s.juniorTrancheSidecar).isOwner(teamMultisig)) revert TeamOwnerNotSet(s.juniorTrancheSidecar);
     }
 
     /// @notice Summon the substrate + add `teamMultisig` to the MAIN Safe (via the summon init-action — so this is
-    /// caller-agnostic; no prank/broadcast-as-team needed). The sidecar is NOT yet team-owned after this — see
-    /// `_summon` / `_addOwnerToSidecar`.
+    /// caller-agnostic; no prank/broadcast-as-team needed). The juniorTrancheSidecar is NOT yet team-owned after this — see
+    /// `_summon` / `_addOwnerToJuniorTrancheSidecar`.
     function _summonCore(address teamMultisig, uint256 saltNonce) internal returns (Substrate memory s) {
         // 1. Predict the main Safe (deterministic CREATE2 over factory/singleton/saltNonce, empty initializer).
         address predictedMainSafe = computeMainSafe(saltNonce);
@@ -82,24 +82,24 @@ contract SummonSubstrate is Script {
         bytes[] memory actions = _buildInitActions(predictedMainSafe, teamMultisig);
 
         // 3. Summon: Baal + main Safe + Loot/Shares (+ run init-actions, incl. the main-Safe team owner-add) then
-        //    the sidecar. daoAddress = Baal; vaultAddress = sidecar.
-        (address baal, address sidecar) = IBaalAndVaultSummoner(BaseAddresses.BAAL_AND_VAULT_SUMMONER)
+        //    the juniorTrancheSidecar. daoAddress = Baal; vaultAddress = juniorTrancheSidecar.
+        (address baal, address juniorTrancheSidecar) = IBaalAndVaultSummoner(BaseAddresses.BAAL_AND_VAULT_SUMMONER)
             .summonBaalAndVault(initParams, actions, saltNonce, bytes32(0), VAULT_NAME);
 
         // 4. Resolve the rest from getters; FAIL CLOSED if the predicted main Safe is wrong.
-        address mainSafe = IBaal(baal).avatar();
-        if (predictedMainSafe != mainSafe) revert MainSafeMismatch(predictedMainSafe, mainSafe);
+        address juniorTrancheSafe = IBaal(baal).avatar();
+        if (predictedMainSafe != juniorTrancheSafe) revert MainSafeMismatch(predictedMainSafe, juniorTrancheSafe);
 
         s = Substrate({
             baal: baal,
-            mainSafe: mainSafe,
-            sidecar: sidecar,
+            juniorTrancheSafe: juniorTrancheSafe,
+            juniorTrancheSidecar: juniorTrancheSidecar,
             loot: IBaal(baal).lootToken(),
             shares: IBaal(baal).sharesToken()
         });
 
         // 5. Assert the main-Safe admin injection landed (effect, never just "didn't revert").
-        if (!ISafe(mainSafe).isOwner(teamMultisig)) revert TeamOwnerNotSet(mainSafe);
+        if (!ISafe(juniorTrancheSafe).isOwner(teamMultisig)) revert TeamOwnerNotSet(juniorTrancheSafe);
     }
 
     /// @notice Predict the main Safe address the summoner will deploy for `saltNonce`.
@@ -117,7 +117,7 @@ contract SummonSubstrate is Script {
         return vm.computeCreate2Address(salt, initCodeHash, factory);
     }
 
-    function _buildInitActions(address mainSafe, address teamMultisig)
+    function _buildInitActions(address juniorTrancheSafe, address teamMultisig)
         internal
         pure
         returns (bytes[] memory actions)
@@ -143,7 +143,7 @@ contract SummonSubstrate is Script {
         // 6. THE authority injection: add the team multisig as a main-Safe owner/signer (threshold stays 1).
         //    executeAsBaal calls AS the Baal, so route through the Safe's self-authorized owner-management.
         actions[5] = abi.encodeWithSelector(
-            IBaal.executeAsBaal.selector, mainSafe, uint256(0), _selfAddOwnerPayload(mainSafe, teamMultisig)
+            IBaal.executeAsBaal.selector, juniorTrancheSafe, uint256(0), _selfAddOwnerPayload(juniorTrancheSafe, teamMultisig)
         );
     }
 
@@ -154,14 +154,14 @@ contract SummonSubstrate is Script {
         return abi.encodeWithSelector(ISafe.execTransactionFromModule.selector, safe, uint256(0), addOwner, uint8(0));
     }
 
-    /// @dev Team (caller, an owner of `mainSafe`) drives the main Safe via the owner `execTransaction` path to reach
-    /// the sidecar through the Baal. Pre-validated single-owner signature (v=1, no ECDSA) since msg.sender == team.
-    function _addOwnerToSidecar(address baal, address mainSafe, address sidecar, address teamMultisig) internal {
+    /// @dev Team (caller, an owner of `juniorTrancheSafe`) drives the main Safe via the owner `execTransaction` path to reach
+    /// the juniorTrancheSidecar through the Baal. Pre-validated single-owner signature (v=1, no ECDSA) since msg.sender == team.
+    function _addOwnerToJuniorTrancheSidecar(address baal, address juniorTrancheSafe, address juniorTrancheSidecar, address teamMultisig) internal {
         bytes memory execAsBaal = abi.encodeWithSelector(
-            IBaal.executeAsBaal.selector, sidecar, uint256(0), _selfAddOwnerPayload(sidecar, teamMultisig)
+            IBaal.executeAsBaal.selector, juniorTrancheSidecar, uint256(0), _selfAddOwnerPayload(juniorTrancheSidecar, teamMultisig)
         );
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(teamMultisig))), bytes32(0), uint8(1));
-        ISafe(mainSafe).execTransaction(
+        ISafe(juniorTrancheSafe).execTransaction(
             baal, 0, execAsBaal, 0, 0, 0, 0, address(0), payable(address(0)), sig
         );
     }

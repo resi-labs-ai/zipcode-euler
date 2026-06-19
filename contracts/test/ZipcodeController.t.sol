@@ -286,15 +286,15 @@ contract MockSiloRegistry {
 
 /// @notice Minimal self-consistent topology stub for the REAL SiloRegistry's 6-clause admission assert. The adapter
 ///         is the real EulerVenueAdapter (adapter.eulerEarn() == ee), so eePool == address(ee). The freeze stub
-///         returns {eulerEarn=ee, warehouse=warehouseSafe, navOracle=navOracle}.
+///         returns {eulerEarn=ee, warehouseSafe=warehouseSafe, navOracle=navOracle}.
 contract StubFreeze {
     address public eulerEarn;
-    address public warehouse;
+    address public warehouseSafe;
     address public navOracle;
 
-    constructor(address ee_, address warehouse_, address navOracle_) {
+    constructor(address ee_, address warehouseSafe_, address navOracle_) {
         eulerEarn = ee_;
-        warehouse = warehouse_;
+        warehouseSafe = warehouseSafe_;
         navOracle = navOracle_;
     }
 }

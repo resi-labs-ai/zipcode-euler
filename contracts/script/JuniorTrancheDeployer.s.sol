@@ -60,7 +60,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
     error SeamOneBank();
     error SeamEscrowCoordinator();
     error SeamNavShareTokenUnset();
-    /// @notice §2 topology / non-commingling (Key req 5): the junior `mainSafe`/`sidecar` collide with the warehouse.
+    /// @notice §2 topology / non-commingling (Key req 5): the junior `juniorTrancheSafe`/`juniorTrancheSidecar` collide with the warehouse.
     error SeamWarehouseCommingled();
     /// @notice The transient-owner -> `team` Safe handoff did not land (effect, not "didn't revert").
     error SafeHandoffFailed();
@@ -102,7 +102,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         // -- POL (D1: shared pool address; per-silo staked position) --
         address polIchiVault; // == escrowVault.asset() (seam #4)
         address polGauge;
-        address treasurySafe; // the protocol treasury Safe — loss-side xALPHA recovery custody (LienXAlphaEscrow ctor, §11)
+        address adminSafe; // the protocol treasury Safe — loss-side xALPHA recovery custody (LienXAlphaEscrow ctor, §11)
         // -- numeric knobs --
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV
@@ -117,8 +117,8 @@ contract JuniorTrancheDeployer is SummonSubstrate {
     /// @notice The deployed junior tranche handle (one source of truth for CTR-06c's `addSilo`).
     struct JuniorTranche {
         address baal;
-        address mainSafe;
-        address sidecar;
+        address juniorTrancheSafe;
+        address juniorTrancheSidecar;
         SzipNavOracle navOracle;
         ExitGate gate;
         SzipUSD szip;
@@ -147,11 +147,11 @@ contract JuniorTrancheDeployer is SummonSubstrate {
 
         // -- 1. Baal two-Safe substrate (self as transient owner/signer of BOTH Safes).
         Substrate memory sub = _summon(address(this), p.saltNonce);
-        address engineSafe = sub.mainSafe;
+        address juniorTrancheEngine = sub.juniorTrancheSafe;
 
-        // §2 non-commingling (Key req 5): main AND sidecar both distinct from the silo's warehouse Safe (strengthens
+        // §2 non-commingling (Key req 5): main AND juniorTrancheSidecar both distinct from the silo's warehouse Safe (strengthens
         // DeployZipcode's `SeamWarehouseCommingled`, which checks only the main Safe).
-        if (sub.mainSafe == p.warehouseSafe || sub.sidecar == p.warehouseSafe) revert SeamWarehouseCommingled();
+        if (sub.juniorTrancheSafe == p.warehouseSafe || sub.juniorTrancheSidecar == p.warehouseSafe) revert SeamWarehouseCommingled();
 
         // -- 2. SzipNavOracle (NAV legs are p.* inputs, not BaseAddresses.* — the freeze setUp reads them live).
         t.navOracle = new SzipNavOracle(
@@ -161,8 +161,8 @@ contract JuniorTrancheDeployer is SummonSubstrate {
             p.xAlphaMirror,
             p.hydx,
             p.oHydx,
-            sub.mainSafe,
-            sub.sidecar,
+            sub.juniorTrancheSafe,
+            sub.juniorTrancheSidecar,
             p.W,
             p.maxAge,
             p.maxDeviationBps
@@ -180,8 +180,8 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         t.depositModule = new ZipDepositModule(p.zipUSD, p.usdc, p.eePool, p.warehouseSafe);
         t.depositModule.setGate(address(t.gate));
 
-        // -- 5. Shaman grant: self -> mainSafe.execTransaction -> Baal.setShamans([gate],[2]).
-        _setShamansManager(sub.baal, sub.mainSafe, address(t.gate));
+        // -- 5. Shaman grant: self -> juniorTrancheSafe.execTransaction -> Baal.setShamans([gate],[2]).
+        _setShamansManager(sub.baal, sub.juniorTrancheSafe, address(t.gate));
         if (IBaal(sub.baal).totalShares() != 0) revert SeamSharesNonZero();
         if (t.gate.shareToken() != address(t.szip)) revert SeamGateShareToken();
 
@@ -189,18 +189,18 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         t.durationFreeze = _cloneModule(
             address(new DurationFreezeModule()),
             abi.encode(
-                p.timelock, sub.mainSafe, sub.sidecar, p.creOperator, address(t.navOracle), p.eePool, p.warehouseSafe
+                p.timelock, sub.juniorTrancheSafe, sub.juniorTrancheSidecar, p.creOperator, address(t.navOracle), p.eePool, p.warehouseSafe
             ),
-            sub.mainSafe
+            sub.juniorTrancheSafe
         );
-        _enableModuleOnSafe(sub.sidecar, t.durationFreeze); // enabled on BOTH Safes
+        _enableModuleOnSafe(sub.juniorTrancheSidecar, t.durationFreeze); // enabled on BOTH Safes
 
-        // -- 7. SzipBuyBurnModule (engineSafe). coverageGate = durationFreeze.
+        // -- 7. SzipBuyBurnModule (juniorTrancheEngine). coverageGate = durationFreeze.
         t.buyBurn = _cloneModule(
             address(new SzipBuyBurnModule()),
             abi.encode(
                 p.timelock,
-                engineSafe,
+                juniorTrancheEngine,
                 p.creOperator,
                 address(t.navOracle),
                 address(t.szip),
@@ -210,22 +210,22 @@ contract JuniorTrancheDeployer is SummonSubstrate {
                 p.buybackCap,
                 t.durationFreeze
             ),
-            engineSafe
+            juniorTrancheEngine
         );
         if (SzipBuyBurnModule(t.buyBurn).coverageGate() != t.durationFreeze) revert SeamCoverageGate();
-        t.navOracle.setEngineSafe(engineSafe);
-        t.gate.setEngineSafe(engineSafe);
+        t.navOracle.setJuniorTrancheEngine(juniorTrancheEngine);
+        t.gate.setJuniorTrancheEngine(juniorTrancheEngine);
         if (
-            SzipBuyBurnModule(t.buyBurn).engineSafe() != t.gate.engineSafe()
-                || t.gate.engineSafe() != t.navOracle.engineSafe()
+            SzipBuyBurnModule(t.buyBurn).juniorTrancheEngine() != t.gate.juniorTrancheEngine()
+                || t.gate.juniorTrancheEngine() != t.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
 
-        // -- 8. ReservoirLoopModule (engineSafe).
+        // -- 8. ReservoirLoopModule (juniorTrancheEngine).
         t.reservoirLoop = _cloneModule(
             address(new ReservoirLoopModule()),
             abi.encode(
                 p.timelock,
-                engineSafe,
+                juniorTrancheEngine,
                 p.creOperator,
                 EVC,
                 p.borrowVault,
@@ -234,14 +234,14 @@ contract JuniorTrancheDeployer is SummonSubstrate {
                 p.usdc,
                 p.borrowCap
             ),
-            engineSafe
+            juniorTrancheEngine
         );
 
-        // -- 9. LpStrategyModule (engineSafe). coverageGate = durationFreeze. Shared-LP seam.
+        // -- 9. LpStrategyModule (juniorTrancheEngine). coverageGate = durationFreeze. Shared-LP seam.
         t.lpStrategy = _cloneModule(
             address(new LpStrategyModule()),
-            abi.encode(p.timelock, engineSafe, p.creOperator, p.polIchiVault, p.polGauge, t.durationFreeze),
-            engineSafe
+            abi.encode(p.timelock, juniorTrancheEngine, p.creOperator, p.polIchiVault, p.polGauge, t.durationFreeze),
+            juniorTrancheEngine
         );
         if (
             LpStrategyModule(t.lpStrategy).ichiVault() != p.polIchiVault
@@ -249,26 +249,26 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         ) revert SeamSharedLp();
         if (LpStrategyModule(t.lpStrategy).coverageGate() != t.durationFreeze) revert SeamCoverageGate();
 
-        // -- 10. HarvestVoteModule (engineSafe).
+        // -- 10. HarvestVoteModule (juniorTrancheEngine).
         t.harvestVote = _cloneModule(
             address(new HarvestVoteModule()),
-            abi.encode(p.timelock, engineSafe, p.creOperator, p.polGauge, HYDREX_VOTER, HYDREX_REWARDS_DISTRIBUTOR),
-            engineSafe
+            abi.encode(p.timelock, juniorTrancheEngine, p.creOperator, p.polGauge, HYDREX_VOTER, HYDREX_REWARDS_DISTRIBUTOR),
+            juniorTrancheEngine
         );
 
-        // -- 11. ExerciseModule (engineSafe).
+        // -- 11. ExerciseModule (juniorTrancheEngine).
         t.exercise = _cloneModule(
             address(new ExerciseModule()),
-            abi.encode(p.timelock, engineSafe, p.creOperator, p.oHydx),
-            engineSafe
+            abi.encode(p.timelock, juniorTrancheEngine, p.creOperator, p.oHydx),
+            juniorTrancheEngine
         );
 
-        // -- 12. SellModule (engineSafe).
+        // -- 12. SellModule (juniorTrancheEngine).
         t.sell = _cloneModule(
             address(new SellModule()),
             abi.encode(
                 p.timelock,
-                engineSafe,
+                juniorTrancheEngine,
                 p.creOperator,
                 ALGEBRA_SWAP_ROUTER,
                 p.hydx,
@@ -277,15 +277,15 @@ contract JuniorTrancheDeployer is SummonSubstrate {
                 p.xAlphaMirror,
                 uint256(300_000e18)
             ),
-            engineSafe
+            juniorTrancheEngine
         );
 
-        // -- 13. RecycleModule (engineSafe). One-bank seam.
+        // -- 13. RecycleModule (juniorTrancheEngine). One-bank seam.
         t.recycle = _cloneModule(
             address(new RecycleModule()),
             abi.encode(
                 p.timelock,
-                engineSafe,
+                juniorTrancheEngine,
                 p.creOperator,
                 address(t.depositModule),
                 p.usdc,
@@ -293,17 +293,19 @@ contract JuniorTrancheDeployer is SummonSubstrate {
                 p.eePool,
                 p.warehouseSafe
             ),
-            engineSafe
+            juniorTrancheEngine
         );
         if (
-            RecycleModule(t.recycle).warehouse() != t.depositModule.warehouse()
+            RecycleModule(t.recycle).warehouseSafe() != t.depositModule.warehouseSafe()
                 || RecycleModule(t.recycle).eePool() != t.depositModule.eePool()
                 || RecycleModule(t.recycle).navOracle() != address(t.navOracle)
         ) revert SeamOneBank();
 
         // -- 14. Loss side (coordinator FIRST to break the ctor cycle).
         t.coord = new DefaultCoordinator(CRE_KEYSTONE_FORWARDER, address(t.navOracle), p.xAlphaMirror, p.recoveryFloor);
-        t.escrow = new LienXAlphaEscrow(p.xAlphaMirror, address(t.coord), p.treasurySafe, sub.sidecar);
+        // CTR-11: cohort premium → the engine/main basket Safe (junior tranche Safe) so the flywheel subsumes it
+        // (was the juniorTrancheSidecar, inert). juniorTrancheSafe is already asserted distinct from the warehouse Safe above.
+        t.escrow = new LienXAlphaEscrow(p.xAlphaMirror, address(t.coord), p.adminSafe, sub.juniorTrancheSafe);
         t.coord.setEscrow(address(t.escrow));
         t.navOracle.setDefaultCoordinator(address(t.coord));
         if (t.escrow.coordinator() != address(t.coord)) revert SeamEscrowCoordinator();
@@ -327,16 +329,16 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         t.coord.transferOwnership(p.timelock);
 
         // -- 17. Safe ownership handoff to `team` (the transient-owner cleanup) — both Safes, self -> team.
-        _handoffSafe(sub.mainSafe, p.team);
-        _handoffSafe(sub.sidecar, p.team);
+        _handoffSafe(sub.juniorTrancheSafe, p.team);
+        _handoffSafe(sub.juniorTrancheSidecar, p.team);
         if (
-            !ISafe(sub.mainSafe).isOwner(p.team) || !ISafe(sub.sidecar).isOwner(p.team)
-                || ISafe(sub.mainSafe).isOwner(address(this)) || ISafe(sub.sidecar).isOwner(address(this))
+            !ISafe(sub.juniorTrancheSafe).isOwner(p.team) || !ISafe(sub.juniorTrancheSidecar).isOwner(p.team)
+                || ISafe(sub.juniorTrancheSafe).isOwner(address(this)) || ISafe(sub.juniorTrancheSidecar).isOwner(address(this))
         ) revert SafeHandoffFailed();
 
         t.baal = sub.baal;
-        t.mainSafe = sub.mainSafe;
-        t.sidecar = sub.sidecar;
+        t.juniorTrancheSafe = sub.juniorTrancheSafe;
+        t.juniorTrancheSidecar = sub.juniorTrancheSidecar;
     }
 
     // ================================================================= helpers (reimplemented; self-bound)
@@ -357,14 +359,14 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         _execAsSelf(safe, safe, data);
     }
 
-    /// @notice self -> mainSafe.execTransaction -> Baal.setShamans([gate],[2]) (grant the Gate manager).
-    function _setShamansManager(address baal, address mainSafe, address gate) internal {
+    /// @notice self -> juniorTrancheSafe.execTransaction -> Baal.setShamans([gate],[2]) (grant the Gate manager).
+    function _setShamansManager(address baal, address juniorTrancheSafe, address gate) internal {
         address[] memory shamans = new address[](1);
         shamans[0] = gate;
         uint256[] memory perms = new uint256[](1);
         perms[0] = 2; // manager
         bytes memory setShamans = abi.encodeWithSelector(IBaal.setShamans.selector, shamans, perms);
-        _execAsSelf(mainSafe, baal, setShamans);
+        _execAsSelf(juniorTrancheSafe, baal, setShamans);
     }
 
     /// @notice Set the CRE identity (author + workflow id) on a `ReceiverTemplate` (selectors inherited from it).
@@ -397,7 +399,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
 
     /// @notice Generic owner-driven Safe call: this deployer (an owner of `safe`) drives `safe.execTransaction(to, 0,
     ///         data)` with the 1-of-n pre-validated signature (`v==1`, msg.sender == owner == this). Same pattern as
-    ///         CreditWarehouseDeployer `_execTransactionAsSelf` / SummonSubstrate `_addOwnerToSidecar`.
+    ///         CreditWarehouseDeployer `_execTransactionAsSelf` / SummonSubstrate `_addOwnerToJuniorTrancheSidecar`.
     function _execAsSelf(address safe, address to, bytes memory data) internal {
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(address(this)))), bytes32(0), uint8(1));
         ISafe(safe).execTransaction(to, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), sig);

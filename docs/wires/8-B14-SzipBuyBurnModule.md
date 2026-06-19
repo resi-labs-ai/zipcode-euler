@@ -9,8 +9,8 @@
 ## Role
 The §7 **haircut buy-and-burn BID side** — the protocol-as-discounted-buyer-of-last-resort for szipUSD, the
 impatient-exit liquidity floor. A CRE-operator-gated Zodiac Module enabled ON the engine Safe
-(`avatar == target == engineSafe`) that posts a **single resting CoW `BUY szipUSD` limit order** —
-`sellToken = USDC`, `buyToken = szipUSD`, `receiver = engineSafe`, `partiallyFillable` — priced **at or below
+(`avatar == target == juniorTrancheEngine`) that posts a **single resting CoW `BUY szipUSD` limit order** —
+`sellToken = USDC`, `buyToken = szipUSD`, `receiver = juniorTrancheEngine`, `partiallyFillable` — priced **at or below
 `navExit × (1 − d)`** off `SzipNavOracle`, `sellAmount ≤ buybackCap`, signed on-chain via PRESIGN
 (`GPv2Settlement.setPreSignature`). Everything it buys lands in the engine Safe at a discount; the discount
 is the haircut accruing to stayers when the bought szipUSD is later burned.
@@ -41,16 +41,16 @@ mastercopy at ITS construction and are identical for every clone — they **cann
 config. EVERY wired address/param is therefore plain **set-once storage written in `setUp`** under
 `initializer`, NOT `immutable`. The mastercopy is init-locked in its constructor (see `MastercopyInitLock`,
 SEC-14) — a bare mastercopy `setUp` reverts `AlreadyInitialized`, and one that was never `setUp` has zero
-`operator`/`engineSafe` ⇒ every `postBid` reverts `NotOperator`).
+`operator`/`juniorTrancheEngine` ⇒ every `postBid` reverts `NotOperator`).
 
 ### `setUp(bytes initParams)` (`public override initializer`)
-Decodes **10 fields** `(address owner_, address engineSafe_, address operator_, address navOracle_, address
+Decodes **10 fields** `(address owner_, address juniorTrancheEngine_, address operator_, address navOracle_, address
 szipUSD_, address usdc_, address settlement_, uint16 dBps_, uint256 buybackCap_, address coverageGate_)`:
 - Zero-guards the seven required addresses (`ZeroAddress`); asserts `owner_ != operator_` (`OwnerIsOperator` —
   the Timelock owner must not be the CRE hot key); asserts `0 < dBps_ < 10_000` (`BadDiscount`). `buybackCap_` is
   NOT guarded (0 = kill-switch). `coverageGate_` MAY be `address(0)` (gate OFF) — no zero-check.
-- Sets `avatar = target = engineSafe_` — the module is enabled ON the engine Safe and only ever `exec`s through it.
-- Writes set-once storage: `engineSafe`, `operator`, `navOracle`, `szipUSD`, `usdc`, `settlement`, `dBps`,
+- Sets `avatar = target = juniorTrancheEngine_` — the module is enabled ON the engine Safe and only ever `exec`s through it.
+- Writes set-once storage: `juniorTrancheEngine`, `operator`, `navOracle`, `szipUSD`, `usdc`, `settlement`, `dBps`,
   `buybackCap`, `coverageGate` (the `DurationFreezeModule`; ARMED at deploy, Timelock-re-pointable / kill-switch).
 - **Reads LIVE off the settlement** (does not hard-trust a constant): `vaultRelayer = IGPv2Settlement(settlement_).vaultRelayer()` (the USDC `approve` spender) + `domainSeparator = IGPv2Settlement(settlement_).domainSeparator()` (the EIP-712 domain for the uid), caches both.
 - `_transferOwnership(owner_)` — the zodiac-core `Module` owner (= the Timelock at item 10).
@@ -64,7 +64,7 @@ enters the hash). Validation order:
 3. `sellAmount > buybackCap` ⇒ `CapExceeded` (so `buybackCap == 0` reverts every post = the kill-switch).
 3b. **COVERAGE GATE** (LP path-lock, 2026-06-13): `if coverageGate != 0 && !ICoverageGate(coverageGate).covered()
    ⇒ Undercovered` — a buy-burn bid is a free-side outflow (spends basket USDC to retire szipUSD), blocked while
-   sidecar+LP coverage is below the debt floor (incl. a price-drift breach). Transparent at zero senior debt
+   juniorTrancheSidecar+LP coverage is below the debt floor (incl. a price-drift breach). Transparent at zero senior debt
    (`floor = 0 ⇒ covered() == true`). `coverageGate == 0` is the M1 / kill-switch state.
 4. `validTo <= now || validTo > now + MAX_BID_TTL (1 day)` ⇒ `BadValidTo`.
 5. **NAV-freshness fence (SEC-13 / L12, leg-anchored):** `anchor = INavOracle(navOracle).oldestRequiredLegTs()`;
@@ -84,7 +84,7 @@ enters the hash). Validation order:
 Then `uid = _orderUid(order)` and TWO `exec`s in ONE tx (atomic — a revert of the 2nd rolls back the 1st):
 - `exec(usdc, 0, approve(vaultRelayer, sellAmount), Operation.Call)` — the exact-`sellAmount` allowance.
 - `exec(settlement, 0, setPreSignature(uid, true), Operation.Call)` — the **CoW GPv2 presign seam**. `msg.sender`
-  to the settlement is the engine Safe (avatar), and `engineSafe` is the `owner` packed into the uid — so
+  to the settlement is the engine Safe (avatar), and `juniorTrancheEngine` is the `owner` packed into the uid — so
   `setPreSignature`'s `owner == msg.sender` requirement holds.
 
 Records `currentUid = uid`, `currentSellAmount = sellAmount`; emits `BidPosted(uid, sellAmount, buyAmount,
@@ -119,10 +119,10 @@ route through the same `_postBid`/`_cancelBid` internals, so neither can skip a 
 
 ### `_orderUid(order)` (`public view`) — the canonical GPv2 hashing the module owns
 Builds the full order from the 3 validated fields + the module-fixed constants and returns the 56-byte uid:
-`structHash = keccak256(abi.encode(TYPE_HASH, usdc, szipUSD, engineSafe, sellAmount, buyAmount,
+`structHash = keccak256(abi.encode(TYPE_HASH, usdc, szipUSD, juniorTrancheEngine, sellAmount, buyAmount,
 uint256(validTo), APP_DATA, 0 /*feeAmount*/, KIND_BUY, true /*partiallyFillable*/, BALANCE_ERC20,
 BALANCE_ERC20))`; `digest = keccak256(0x1901 ++ domainSeparator ++ structHash)`; `uid = digest(32) ++
-engineSafe(20) ++ validTo(uint32, 4)`. The module signs the SAME struct it validates — no field is both
+juniorTrancheEngine(20) ++ validTo(uint32, 4)`. The module signs the SAME struct it validates — no field is both
 operator-supplied and unvalidated. `APP_DATA = bytes32(0)` is pinned (a non-zero/unconstrained appData could
 attach hooks/partner-fees the validation never saw). Pinned constants: `TYPE_HASH`, `KIND_BUY` (buy only),
 `BALANCE_ERC20`, `MAX_BID_TTL = 1 days`, `MAX_BUY_AMOUNT = 1e30`. A mis-hash fails CLOSED (no solver matches —
@@ -130,7 +130,7 @@ liveness only).
 
 ### Governed params + Timelock-settable wiring (`onlyOwner` = Timelock, build phase §17)
 - `setDiscountBps(dBps_)` — re-asserts `0 < dBps_ < 10_000`; `setBuybackCap(buybackCap_)` — unguarded (0 = kill-switch).
-- **8 wiring setters** (emit `WiringSet(slot, value)`): `setOperator`, `setEngineSafe`,
+- **8 wiring setters** (emit `WiringSet(slot, value)`): `setOperator`, `setJuniorTrancheEngine`,
   `setNavOracle`, `setSzipUSD`, `setUsdc`, `setSettlement`, `setVaultRelayer` (each zero-guarded), plus
   `setCoverageGate` (allows `address(0)` = gate OFF kill-switch / re-point the `DurationFreezeModule`).
   `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse
@@ -149,12 +149,12 @@ share), rounds DOWN (buyer-conservative — a `sellAmount = maxUsdc6PerShare` pe
 on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for monitoring.
 
 ## Wiring — cross-component (who points at whom)
-- **`engineSafe` is the single shared Safe — the three-way wire.** `SzipBuyBurnModule.engineSafe ==
-  ExitGate.engineSafe == SzipNavOracle.engineSafe == order.receiver`. The bought szipUSD lands in this one Safe
+- **`juniorTrancheEngine` is the single shared Safe — the three-way wire.** `SzipBuyBurnModule.juniorTrancheEngine ==
+  ExitGate.juniorTrancheEngine == SzipNavOracle.juniorTrancheEngine == order.receiver`. The bought szipUSD lands in this one Safe
   (it is the `receiver` + the uid `owner`); `ExitGate.burnFor` burns szipUSD FROM exactly this Safe; and
   `SzipNavOracle` **excludes** this Safe's transient pre-burn szipUSD from the navPerShare denominator
-  (`_effectiveSupply = shareToken.totalSupply − engineSafe balance`) so a bought-not-yet-burned position cannot
-  dilute NAV. A test asserts `module.engineSafe() == ExitGate.engineSafe()` (PROGRESS row 325).
+  (`_effectiveSupply = shareToken.totalSupply − juniorTrancheEngine balance`) so a bought-not-yet-burned position cannot
+  dilute NAV. A test asserts `module.juniorTrancheEngine() == ExitGate.juniorTrancheEngine()` (PROGRESS row 325).
 - **`operator` + `windowController` = the CRE.** The single CRE keeper holds `SzipBuyBurnModule.operator` (drives
   `postBid`/`cancelBid`) AND `ExitGate.windowController` (drives `burnFor`) — it orchestrates the async 3-step
   buy-then-burn directly (no separate on-chain controller; see Gotchas).
@@ -163,7 +163,7 @@ on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for mon
   the module's own `fresh()` gate + the fence are what keep a resting bid from filling against a price that has
   since gone stale.
 - **→ `ExitGate.burnFor`.** No call edge from this module — the cycle is async: `postBid` here → CoW solver fills
-  the resting order, szipUSD arrives in `engineSafe` → the CRE `windowController` calls `ExitGate.burnFor(amount)`
+  the resting order, szipUSD arrives in `juniorTrancheEngine` → the CRE `windowController` calls `ExitGate.burnFor(amount)`
   separately (it cannot be atomic with the buy — async CoW fill).
 - **→ CoW `GPv2Settlement` / `GPv2VaultRelayer`.** `settlement` = `COW_SETTLEMENT 0x9008…ab41` (PRESIGN target,
   `setPreSignature`); `vaultRelayer` = `COW_VAULT_RELAYER 0xC92E…0110` (read LIVE off the settlement in `setUp` —
@@ -182,9 +182,9 @@ on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for mon
   the TOP of P6 (before this module) and passes it as the 10th `setUp` arg; a `SeamCoverageGate` assert confirms
   `coverageGate() == durationFreeze`. `postBid` then blocks while `!covered()`. Kill-switch: Timelock
   `setCoverageGate(0)`.
-- **Wire `module.engineSafe == ExitGate.engineSafe == SzipNavOracle.engineSafe == order.receiver`** (PROGRESS row
-  325). The module side is proven (`module.engineSafe() == ExitGate.engineSafe()`); the **oracle-side**
-  `SzipNavOracle.setEngineSafe(engineSafe)` (denominator exclusion of the transient pre-burn szipUSD) is the
+- **Wire `module.juniorTrancheEngine == ExitGate.juniorTrancheEngine == SzipNavOracle.juniorTrancheEngine == order.receiver`** (PROGRESS row
+  325). The module side is proven (`module.juniorTrancheEngine() == ExitGate.juniorTrancheEngine()`); the **oracle-side**
+  `SzipNavOracle.setJuniorTrancheEngine(juniorTrancheEngine)` (denominator exclusion of the transient pre-burn szipUSD) is the
   **remaining OPEN item-10 deploy-wiring step**.
 - **CoW addresses** (`BaseAddresses.sol`): `settlement = COW_SETTLEMENT 0x9008D19f58AAbD9eD0D60971565AA8510560ab41`;
   `vaultRelayer` + `domainSeparator` are read live in `setUp` (not passed) — `COW_VAULT_RELAYER

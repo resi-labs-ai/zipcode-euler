@@ -214,7 +214,7 @@ contract SellModuleUnitTest is Test {
     function test_setUp_wires_storage() public view {
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
-        assertEq(m.engineSafe(), address(safe));
+        assertEq(m.juniorTrancheEngine(), address(safe));
         assertEq(m.avatar(), address(safe));
         assertEq(m.target(), address(safe));
         assertEq(m.swapRouter(), address(router));
@@ -227,7 +227,7 @@ contract SellModuleUnitTest is Test {
 
     /// @dev (qa iii) every one of the 7 wired getters returns its wired address after setUp.
     function test_getters() public view {
-        assertEq(m.engineSafe(), address(safe), "engineSafe getter");
+        assertEq(m.juniorTrancheEngine(), address(safe), "juniorTrancheEngine getter");
         assertEq(m.operator(), operator, "operator getter");
         assertEq(m.swapRouter(), address(router), "swapRouter getter");
         assertEq(m.hydx(), address(hydx), "hydx getter");
@@ -269,7 +269,7 @@ contract SellModuleUnitTest is Test {
     ///      selector is SellModule.ZeroAddress specifically (the order-guard fires before any use).
     function test_setUp_rejects_zero_in_each_of_eight() public {
         _expectZero(abi.encode(address(0), address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // owner
-        _expectZero(abi.encode(owner, address(0), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // engineSafe
+        _expectZero(abi.encode(owner, address(0), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // juniorTrancheEngine
         _expectZero(abi.encode(owner, address(safe), address(0), address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // operator
         _expectZero(abi.encode(owner, address(safe), operator, address(0), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // swapRouter
         _expectZero(abi.encode(owner, address(safe), operator, address(router), address(0), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // hydx
@@ -310,7 +310,7 @@ contract SellModuleUnitTest is Test {
     function test_mastercopy_inert() public {
         SellModule mc = _cloneSellModule();
         assertEq(mc.operator(), address(0));
-        assertEq(mc.engineSafe(), address(0));
+        assertEq(mc.juniorTrancheEngine(), address(0));
         assertEq(mc.swapRouter(), address(0));
         assertEq(mc.hydx(), address(0));
         assertEq(mc.usdc(), address(0));
@@ -532,7 +532,7 @@ contract SellModuleUnitTest is Test {
         assertEq(p.tokenIn, tokenIn, "tokenIn field");
         assertEq(p.tokenOut, tokenOut, "tokenOut field");
         assertEq(p.deployer, address(0), "deployer == 0 (base-factory pool)");
-        assertEq(p.recipient, address(safe), "recipient == engineSafe");
+        assertEq(p.recipient, address(safe), "recipient == juniorTrancheEngine");
         assertEq(p.deadline, deadline, "deadline field");
         assertEq(p.amountIn, amountIn, "amountIn field");
         assertEq(p.amountOutMinimum, minOut, "amountOutMinimum == minOut");
@@ -679,23 +679,23 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
         _selectBaseFork();
     }
 
-    function _summonAndEnable(SellModule m) internal returns (address mainSafe) {
+    function _summonAndEnable(SellModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
-        mainSafe = s.mainSafe;
+        juniorTrancheSafe = s.juniorTrancheSafe;
         bytes memory enableMod = abi.encodeWithSelector(ISafe.enableModule.selector, address(m));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(mainSafe).execTransaction(mainSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(juniorTrancheSafe).execTransaction(juniorTrancheSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
-    function _deploy() internal returns (SellModule m, address engineSafe) {
+    function _deploy() internal returns (SellModule m, address juniorTrancheEngine) {
         m = _cloneSellModule();
-        engineSafe = _summonAndEnable(m);
+        juniorTrancheEngine = _summonAndEnable(m);
         m.setUp(abi.encode(
             owner,
-            engineSafe,
+            juniorTrancheEngine,
             operator,
             BaseAddresses.ALGEBRA_SWAP_ROUTER,
             BaseAddresses.HYDX,
@@ -706,12 +706,12 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
         ));
     }
 
-    function _fundHYDX(address engineSafe, uint256 amount) internal {
-        try this.tryDeal(BaseAddresses.HYDX, engineSafe, amount) {
-            if (IERC20(BaseAddresses.HYDX).balanceOf(engineSafe) >= amount) return;
+    function _fundHYDX(address juniorTrancheEngine, uint256 amount) internal {
+        try this.tryDeal(BaseAddresses.HYDX, juniorTrancheEngine, amount) {
+            if (IERC20(BaseAddresses.HYDX).balanceOf(juniorTrancheEngine) >= amount) return;
         } catch {}
         vm.prank(HYDX_WHALE);
-        IERC20(BaseAddresses.HYDX).transfer(engineSafe, amount);
+        IERC20(BaseAddresses.HYDX).transfer(juniorTrancheEngine, amount);
     }
 
     function tryDeal(address token, address to, uint256 amount) external {
@@ -749,19 +749,19 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- real sell (the model)
 
     function test_fork_real_sellHydx() public {
-        (SellModule m, address engineSafe) = _deploy();
+        (SellModule m, address juniorTrancheEngine) = _deploy();
 
         // small amountIn well within pool depth: 100 HYDX.
         uint256 amountIn = 100e18;
-        _fundHYDX(engineSafe, amountIn);
+        _fundHYDX(juniorTrancheEngine, amountIn);
 
         // quote + exec in the SAME block, no warp/roll between (avoid a stale-quote flake).
         uint256 expectedOut = _spotQuoteUsdc(amountIn);
         assertGt(expectedOut, 0, "sanity quote > 0");
         uint256 minOut = expectedOut * 80 / 100; // generous integer-math cushion — the test proves mechanism not price.
 
-        uint256 hBefore = IERC20(BaseAddresses.HYDX).balanceOf(engineSafe);
-        uint256 uBefore = IERC20(BaseAddresses.USDC).balanceOf(engineSafe);
+        uint256 hBefore = IERC20(BaseAddresses.HYDX).balanceOf(juniorTrancheEngine);
+        uint256 uBefore = IERC20(BaseAddresses.USDC).balanceOf(juniorTrancheEngine);
 
         vm.recordLogs();
         vm.prank(operator);
@@ -769,12 +769,12 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
 
         assertGt(amountOut, 0, "amountOut > 0");
         assertGe(amountOut, minOut, "amountOut >= minOut");
-        assertEq(hBefore - IERC20(BaseAddresses.HYDX).balanceOf(engineSafe), amountIn, "exactly amountIn HYDX pulled");
+        assertEq(hBefore - IERC20(BaseAddresses.HYDX).balanceOf(juniorTrancheEngine), amountIn, "exactly amountIn HYDX pulled");
         assertEq(
-            IERC20(BaseAddresses.USDC).balanceOf(engineSafe) - uBefore, amountOut, "exactly amountOut USDC to the Safe"
+            IERC20(BaseAddresses.USDC).balanceOf(juniorTrancheEngine) - uBefore, amountOut, "exactly amountOut USDC to the Safe"
         );
         assertEq(
-            IERC20(BaseAddresses.HYDX).allowance(engineSafe, BaseAddresses.ALGEBRA_SWAP_ROUTER),
+            IERC20(BaseAddresses.HYDX).allowance(juniorTrancheEngine, BaseAddresses.ALGEBRA_SWAP_ROUTER),
             0,
             "approval reset to 0 (no standing approval)"
         );
@@ -799,14 +799,14 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- minOut-too-high / deadline reverts
 
     function test_fork_minOut_too_high_reverts_state_unchanged() public {
-        (SellModule m, address engineSafe) = _deploy();
+        (SellModule m, address juniorTrancheEngine) = _deploy();
         uint256 amountIn = 100e18;
-        _fundHYDX(engineSafe, amountIn);
+        _fundHYDX(juniorTrancheEngine, amountIn);
 
         IERC20 hydx = IERC20(BaseAddresses.HYDX);
         IERC20 usdc = IERC20(BaseAddresses.USDC);
-        uint256 hBefore = hydx.balanceOf(engineSafe);
-        uint256 uBefore = usdc.balanceOf(engineSafe);
+        uint256 hBefore = hydx.balanceOf(juniorTrancheEngine);
+        uint256 uBefore = usdc.balanceOf(juniorTrancheEngine);
 
         // an impossible slippage floor -> the router slippage guard reverts, bubbled through _exec.
         vm.prank(operator);
@@ -814,15 +814,15 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
         m.sellHydx(amountIn, type(uint256).max, block.timestamp + 1 hours);
 
         // the atomic revert rolled back exec #1's approve -> no dangling approval, no partial swap.
-        assertEq(hydx.allowance(engineSafe, BaseAddresses.ALGEBRA_SWAP_ROUTER), 0, "no dangling approval");
-        assertEq(hydx.balanceOf(engineSafe), hBefore, "HYDX balance unchanged");
-        assertEq(usdc.balanceOf(engineSafe), uBefore, "USDC balance unchanged");
+        assertEq(hydx.allowance(juniorTrancheEngine, BaseAddresses.ALGEBRA_SWAP_ROUTER), 0, "no dangling approval");
+        assertEq(hydx.balanceOf(juniorTrancheEngine), hBefore, "HYDX balance unchanged");
+        assertEq(usdc.balanceOf(juniorTrancheEngine), uBefore, "USDC balance unchanged");
     }
 
     function test_fork_past_deadline_reverts() public {
-        (SellModule m, address engineSafe) = _deploy();
+        (SellModule m, address juniorTrancheEngine) = _deploy();
         uint256 amountIn = 100e18;
-        _fundHYDX(engineSafe, amountIn);
+        _fundHYDX(juniorTrancheEngine, amountIn);
         uint256 minOut = _spotQuoteUsdc(amountIn) * 80 / 100;
 
         vm.warp(block.timestamp + 100);

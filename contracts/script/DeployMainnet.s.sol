@@ -6,6 +6,7 @@ import {ZeroIRM, MockERC20} from "./DeployLocal.s.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
 import {ReservoirMarketDeployer} from "./ReservoirMarketDeployer.sol";
 import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {LineIrm} from "./LineIrm.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
 
@@ -61,7 +62,8 @@ contract DeployMainnet is DeployZipcode {
         i.creOperator = vm.envAddress("CRE_OPERATOR");
         i.workflowAuthor = vm.envAddress("WORKFLOW_AUTHOR");
         i.erebor = vm.envAddress("EREBOR");
-        i.treasurySafe = vm.envAddress("TREASURY_SAFE");
+        i.adminSafe = vm.envAddress("ADMIN_SAFE");
+        i.curatorSafe = vm.envOr("CURATOR_SAFE", address(0)); // CTR-13: 0 ⇒ no curator fee (forfeit to Euler)
         i.saltNonce = vm.envUint("SUMMON_SALT_NONCE");
         i.workflowId = vm.envBytes32("WORKFLOW_ID");
 
@@ -71,6 +73,7 @@ contract DeployMainnet is DeployZipcode {
 
         // --- provision-if-zero seams (env override OR script-create in _provisionStandins) ---
         i.irm = vm.envOr("IRM", address(0));
+        i.lineIrm = vm.envOr("LINE_IRM", address(0)); // CTR-13 per-line ~7.5% APR (provision-if-zero, like IRM)
         i.xAlphaMirror = vm.envOr("XALPHA_MIRROR", address(0));
         i.eePool = vm.envOr("EE_POOL", address(0));
         i.baseUsdcMarket = vm.envOr("BASE_USDC_MARKET", address(0));
@@ -104,6 +107,9 @@ contract DeployMainnet is DeployZipcode {
     ///         BASE_USDC_MARKET: real EVK/EulerEarn contracts off the live factories.
     function _provisionStandins() internal {
         if (i.irm == address(0)) i.irm = address(new ZeroIRM());
+        // CTR-13: the per-line credit-line IRM is SEPARATE from the reservoir's ZeroIRM — a real ~7.5%-APR flat
+        // `IRMLinearKink` wired into the adapter `irm` slot. Reservoir borrowing stays 0% (internal POL, §4.5.1).
+        if (i.lineIrm == address(0)) i.lineIrm = LineIrm.deploy();
         if (i.xAlphaMirror == address(0)) {
             i.xAlphaMirror = address(new MockERC20("Zipcode xALPHA mirror", "xALPHA", 18));
         }
@@ -141,7 +147,10 @@ contract DeployMainnet is DeployZipcode {
         address ee = i.eePool;
         uint256 capMax = type(uint136).max;
 
-        _eeCall(ee, abi.encodeWithSignature("setFeeRecipient(address)", d.warehouse.safe));
+        // Recipient wired, fee left at 0 (CTR-13: `f` is dormant — the warehouse Safe is the sole senior EE-share
+        // custodian, so net interest already accrues to it; a non-zero `f` would mint fee-shares to the pool's own
+        // owner, a no-op. Flip on only if external senior LPs ever deposit, post-M1).
+        _eeCall(ee, abi.encodeWithSignature("setFeeRecipient(address)", d.warehouse.warehouseSafe));
 
         _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", i.baseUsdcMarket, capMax));
         _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", i.baseUsdcMarket));
@@ -185,7 +194,7 @@ contract DeployMainnet is DeployZipcode {
                 usdc: BaseAddresses.USDC,
                 lpOracle: address(d.lpOracle),
                 irm: i.irm,
-                engineSafe: d.sub.mainSafe,
+                juniorTrancheEngine: d.sub.juniorTrancheSafe,
                 borrowLTV: i.borrowLTV,
                 liqLTV: i.liqLTV
             })

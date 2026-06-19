@@ -33,7 +33,7 @@ SPDX `GPL-2.0-or-later`, `pragma solidity 0.8.24`.
 - **PRESIGN flow, not delegatecall.** The module builds the order and triggers `setPreSignature(orderUid, true)`,
   but the call reaches the settlement **through the engine Safe** (`Module.exec` → `execTransactionFromModule`,
   so the settlement's `msg.sender` is the Safe). The `owner` packed into `orderUid` MUST therefore be the
-  **engine Safe**, not the module — `_orderUid` packs `engineSafe` (`SzipBuyBurnModule.sol:335`), matching the
+  **engine Safe**, not the module — `_orderUid` packs `juniorTrancheEngine` (`SzipBuyBurnModule.sol:335`), matching the
   8-B14 wire doc and confirmed against the live Base settlement in `test/SzipBuyBurnModule.t.sol`. This is the
   on-chain presignature path; it is NOT a `GPv2Settlement.settle` delegatecall and not EIP-1271.
 - **`approve` to `vaultRelayer`, not to settlement.** Sell-side USDC must be `approve`d to

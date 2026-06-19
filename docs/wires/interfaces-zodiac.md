@@ -61,7 +61,7 @@ forwarding. Both consumed only at the boundary: factory by the deployer, Roles b
     `assignRoles(adapter)` and owner hand-off to `godOwner`. Builds `ConditionFlat[]` trees via this struct.
 - **Gotchas:**
   - **Roles v2 scoped policy** is the warehouse op-set: DEPOSIT/REDEEM pin `receiver`/`owner ==`
-    `EqualToAvatar`(15); APPROVE pins `spender == EqualTo(eePool)`(16); REPAY pins `to == EqualTo(repaySink)`(16);
+    `EqualToAvatar`(15); APPROVE pins `spender == EqualTo(eePool)`(16); REPAY pins `to == EqualTo(redemptionBox)`(16);
     amounts are `Pass`(0). The wildcard `allowFunction` skips ALL param checks (would unpin receiver/spender/`to`)
     — it is the WRONG tool for the warehouse and is deliberately unused; `scopeFunction` is the one wired.
   - **`EXEC_NONE`(0) = Call-only** on every scoped function — no Send/DelegateCall escalation.

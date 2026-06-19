@@ -93,11 +93,13 @@ contract DeployZipcode is SummonSubstrate {
         uint256 saltNonce; // SUMMON_SALT_NONCE (also reused for the sub-deployers)
         address creOperator; // CRE_OPERATOR — the engine-module operator (owner != operator)
         address erebor; // EREBOR — the draw off-ramp
-        address irm; // IRM — interest-rate model
+        address irm; // IRM — interest-rate model for the RESERVOIR borrow vault (ZeroIRM: internal POL, §4.5.1)
+        address lineIrm; // LINE_IRM — interest-rate model for the per-line credit-line borrow vaults (CTR-13, ~7.5% APR)
         address xAlphaMirror; // XALPHA_MIRROR — 8x-01 Base xALPHA leg (M1 stand-in token ok)
         address polIchiVault; // POL_ICHI_VAULT — the zipUSD/xALPHA ICHI vault (OTC-gated; stand-in)
         address polGauge; // POL_GAUGE — the Hydrex gauge the LP stakes in
-        address treasurySafe; // TREASURY_SAFE — the protocol treasury Safe (loss-side xALPHA recovery custody, §11)
+        address adminSafe; // ADMIN_SAFE — the protocol treasury Safe (loss-side xALPHA recovery custody, §11)
+        address curatorSafe; // CURATOR_SAFE — the per-line EVK feeReceiver: curator pay for running the vaults (CTR-13)
         address workflowAuthor; // WORKFLOW_AUTHOR — the CRE workflow owner (all receivers)
         bytes32 workflowId; // WORKFLOW_ID — the CRE workflow id (all receivers; one author/id family)
         // EE-factory ABI avoidance (pre-step env inputs; see contract NatSpec):
@@ -219,7 +221,7 @@ contract DeployZipcode is SummonSubstrate {
             BaseAddresses.EVAULT_FACTORY,
             address(d.registry),
             address(d.hook),
-            i.irm,
+            i.lineIrm, // CTR-13: the adapter `irm` slot drives the per-line vaults (real ~7.5% APR), NOT the reservoir
             BaseAddresses.USDC,
             i.erebor,
             i.baseUsdcMarket
@@ -238,6 +240,10 @@ contract DeployZipcode is SummonSubstrate {
         d.adapter.setController(address(d.controller));
         d.hook.setBorrowDriver(address(d.adapter));
         d.registry.setController(address(d.controller));
+
+        // 8b. CTR-13: wire the per-line curator fee receiver (the EVK `feeReceiver` every `openLine` installs).
+        // `address(0)` is the legal "no curator fee" sentinel (governor forfeits ⇒ 100% to Euler).
+        d.adapter.setCuratorSafe(i.curatorSafe);
 
         // 9. assert the venue spine seams.
         if (d.controller.venue() != address(d.adapter)) revert SeamVenue();
@@ -259,8 +265,8 @@ contract DeployZipcode is SummonSubstrate {
         // P3's later steps (deposit module, NAV oracle, Gate) reuse `d.zipUSD`.
         d.zipUSD = new ESynth(BaseAddresses.EVC, "Zipcode USD", "zipUSD");
 
-        // 21. repaySink = the redemption queue — deployed here (before the warehouse) so the warehouse can pin
-        //     repaySink == queue (the §6 repaySink chain). The queue's remaining wiring (controllers) lands in P3.
+        // 21. redemptionBox = the redemption queue — deployed here (before the warehouse) so the warehouse can pin
+        //     redemptionBox == queue (the §6 redemptionBox chain). The queue's remaining wiring (controllers) lands in P3.
         d.queue = new ZipRedemptionQueue(address(d.zipUSD), BaseAddresses.USDC, _redemptionController());
 
         d.warehouse = new CreditWarehouseDeployer().deploy(
@@ -269,16 +275,16 @@ contract DeployZipcode is SummonSubstrate {
             i.eePool,
             BaseAddresses.USDC,
             BaseAddresses.CRE_KEYSTONE_FORWARDER,
-            address(d.queue), // repaySink == queue (seam #6)
+            address(d.queue), // redemptionBox == queue (seam #6)
             i.saltNonce
         );
 
         // assert the warehouse is real + non-commingling (its Safe must NOT be the summon main Safe). The main Safe
         // is summoned in P3 — but the warehouse Safe is a fresh CREATE2 Safe and is asserted again post-P3 in P3.
-        if (d.warehouse.safe == address(0)) revert SeamWarehouseCommingled();
+        if (d.warehouse.warehouseSafe == address(0)) revert SeamWarehouseCommingled();
 
         // 22. EE config (S8, fork-only — admin ABI not compiled): on the live EE pool —
-        //       eePool.setIsAllocator(adapter, true); eePool.setCurator(adapter); eePool.setFeeRecipient(w.safe);
+        //       eePool.setIsAllocator(adapter, true); eePool.setCurator(adapter); eePool.setFeeRecipient(w.warehouseSafe);
         //       eePool.setFee(0.5e18). Done as a pre/post fork step via the live EulerEarn admin surface.
     }
 
@@ -288,13 +294,13 @@ contract DeployZipcode is SummonSubstrate {
         d.sub = _summon(i.team, i.saltNonce);
 
         // warehouse non-commingling now that the main Safe exists.
-        if (d.warehouse.safe == d.sub.mainSafe) revert SeamWarehouseCommingled();
+        if (d.warehouse.warehouseSafe == d.sub.juniorTrancheSafe) revert SeamWarehouseCommingled();
 
         // 12. zipUSD synth — already deployed at the top of P4 (the queue ctor needs the real token); `d.zipUSD` is set.
 
         // 13. deposit module (warehouse is an immutable ctor arg — warehouse Safe from P4).
         d.depositModule =
-            new ZipDepositModule(address(d.zipUSD), BaseAddresses.USDC, i.eePool, d.warehouse.safe);
+            new ZipDepositModule(address(d.zipUSD), BaseAddresses.USDC, i.eePool, d.warehouse.warehouseSafe);
 
         // 14. NAV oracle.
         d.navOracle = new SzipNavOracle(
@@ -304,8 +310,8 @@ contract DeployZipcode is SummonSubstrate {
             i.xAlphaMirror,
             BaseAddresses.HYDX,
             BaseAddresses.OHYDX,
-            d.sub.mainSafe,
-            d.sub.sidecar,
+            d.sub.juniorTrancheSafe,
+            d.sub.juniorTrancheSidecar,
             i.W,
             i.maxAge,
             i.maxDeviationBps
@@ -329,8 +335,8 @@ contract DeployZipcode is SummonSubstrate {
         // 18. the redemption queue already binds the real zipUSD (deployed at the top of P4); no token re-point needed.
         //     Its settle controller is the ctor `controller_`; its redeem controller is wired in P6 (setRedeemController).
 
-        // 19. grant the Gate manager(2): team -> mainSafe.execTransaction -> Baal.setShamans([gate],[2]).
-        _setShamansManager(d.sub.baal, d.sub.mainSafe, address(d.gate));
+        // 19. grant the Gate manager(2): team -> juniorTrancheSafe.execTransaction -> Baal.setShamans([gate],[2]).
+        _setShamansManager(d.sub.baal, d.sub.juniorTrancheSafe, address(d.gate));
 
         // 20. assert.
         if (IBaal(d.sub.baal).totalShares() != 0) revert SeamSharesNonZero();
@@ -356,7 +362,7 @@ contract DeployZipcode is SummonSubstrate {
             lpOracleAddr = address(d.lpOracle);
         }
 
-        // 24. reservoir market (governor = the Timelock; engineSafe = the main basket Safe).
+        // 24. reservoir market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
         (d.escrowVault, d.borrowVault, d.router) = new ReservoirMarketDeployer().deploy(
             ReservoirMarketDeployer.Params({
                 factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
@@ -366,7 +372,7 @@ contract DeployZipcode is SummonSubstrate {
                 usdc: BaseAddresses.USDC,
                 lpOracle: lpOracleAddr,
                 irm: i.irm,
-                engineSafe: d.sub.mainSafe,
+                juniorTrancheEngine: d.sub.juniorTrancheSafe,
                 borrowLTV: i.borrowLTV,
                 liqLTV: i.liqLTV
             })
@@ -381,9 +387,9 @@ contract DeployZipcode is SummonSubstrate {
     function _phaseP6() internal {
         address tl = address(d.timelock);
         address op = i.creOperator;
-        address engineSafe = d.sub.mainSafe; // the basket Safe (buy-burn denominator-excluded address)
+        address juniorTrancheEngine = d.sub.juniorTrancheSafe; // the basket Safe (buy-burn denominator-excluded address)
 
-        // -- DurationFreezeModule FIRST (enabled on BOTH the main Safe AND the sidecar) — it is the coverage gate the
+        // -- DurationFreezeModule FIRST (enabled on BOTH the main Safe AND the juniorTrancheSidecar) — it is the coverage gate the
         //    buy-burn + LP-strategy modules wire to at construction, so it must exist before them.
         //    The floor is debt-pinned + STRUCTURAL (no governed knob, §17): `requiredCommittedValue =
         //    min(illiquidSeniorValue, grossBasketValue)` — freeze 100% of the lent-out senior dollars, live-marked,
@@ -392,43 +398,43 @@ contract DeployZipcode is SummonSubstrate {
         d.durationFreeze = _cloneModule(
             address(new DurationFreezeModule()),
             abi.encode(
-                tl, d.sub.mainSafe, d.sub.sidecar, op, address(d.navOracle), i.eePool, d.warehouse.safe
+                tl, d.sub.juniorTrancheSafe, d.sub.juniorTrancheSidecar, op, address(d.navOracle), i.eePool, d.warehouse.warehouseSafe
             ),
-            d.sub.mainSafe
+            d.sub.juniorTrancheSafe
         );
-        _enableModuleOnSafe(d.sub.sidecar, d.durationFreeze);
+        _enableModuleOnSafe(d.sub.juniorTrancheSidecar, d.durationFreeze);
 
-        // -- SzipBuyBurnModule (engineSafe) — coverageGate = durationFreeze: postBid blocked while !covered() --
+        // -- SzipBuyBurnModule (juniorTrancheEngine) — coverageGate = durationFreeze: postBid blocked while !covered() --
         d.buyBurn = _cloneModule(
             address(new SzipBuyBurnModule()),
             abi.encode(
-                tl, engineSafe, op, address(d.navOracle), address(d.szip), BaseAddresses.USDC,
+                tl, juniorTrancheEngine, op, address(d.navOracle), address(d.szip), BaseAddresses.USDC,
                 BaseAddresses.COW_SETTLEMENT, i.dBps, i.buybackCap, d.durationFreeze
             ),
-            engineSafe
+            juniorTrancheEngine
         );
         // path-lock arming seam: the buy-burn exit gate is wired LIVE to the freeze module (Timelock re-pointable).
         if (SzipBuyBurnModule(d.buyBurn).coverageGate() != d.durationFreeze) revert SeamCoverageGate();
-        // engineSafe denominator-exclusion seam (#3): navOracle + gate must equal the buy-burn engineSafe.
-        d.navOracle.setEngineSafe(engineSafe);
-        d.gate.setEngineSafe(engineSafe);
+        // juniorTrancheEngine denominator-exclusion seam (#3): navOracle + gate must equal the buy-burn juniorTrancheEngine.
+        d.navOracle.setJuniorTrancheEngine(juniorTrancheEngine);
+        d.gate.setJuniorTrancheEngine(juniorTrancheEngine);
         if (
-            SzipBuyBurnModule(d.buyBurn).engineSafe() != d.gate.engineSafe()
-                || d.gate.engineSafe() != d.navOracle.engineSafe()
+            SzipBuyBurnModule(d.buyBurn).juniorTrancheEngine() != d.gate.juniorTrancheEngine()
+                || d.gate.juniorTrancheEngine() != d.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
 
-        // -- ReservoirLoopModule (engineSafe) --
+        // -- ReservoirLoopModule (juniorTrancheEngine) --
         d.reservoirLoop = _cloneModule(
             address(new ReservoirLoopModule()),
-            abi.encode(tl, engineSafe, op, BaseAddresses.EVC, d.borrowVault, d.escrowVault, i.polIchiVault, BaseAddresses.USDC, i.borrowCap),
-            engineSafe
+            abi.encode(tl, juniorTrancheEngine, op, BaseAddresses.EVC, d.borrowVault, d.escrowVault, i.polIchiVault, BaseAddresses.USDC, i.borrowCap),
+            juniorTrancheEngine
         );
 
-        // -- LpStrategyModule (engineSafe) — coverageGate = durationFreeze: removeLiquidity bounded to the excess --
+        // -- LpStrategyModule (juniorTrancheEngine) — coverageGate = durationFreeze: removeLiquidity bounded to the excess --
         d.lpStrategy = _cloneModule(
             address(new LpStrategyModule()),
-            abi.encode(tl, engineSafe, op, i.polIchiVault, i.polGauge, d.durationFreeze),
-            engineSafe
+            abi.encode(tl, juniorTrancheEngine, op, i.polIchiVault, i.polGauge, d.durationFreeze),
+            juniorTrancheEngine
         );
         // shared-LP seam (#4): LpStrategyModule.ichiVault == POL_ICHI_VAULT == escrow.asset().
         if (
@@ -438,47 +444,47 @@ contract DeployZipcode is SummonSubstrate {
         // path-lock arming seam: the LP-dissolution gate is wired LIVE to the freeze module (Timelock re-pointable).
         if (LpStrategyModule(d.lpStrategy).coverageGate() != d.durationFreeze) revert SeamCoverageGate();
 
-        // -- HarvestVoteModule (engineSafe) --
+        // -- HarvestVoteModule (juniorTrancheEngine) --
         d.harvestVote = _cloneModule(
             address(new HarvestVoteModule()),
-            abi.encode(tl, engineSafe, op, i.polGauge, BaseAddresses.HYDREX_VOTER, BaseAddresses.HYDREX_REWARDS_DISTRIBUTOR),
-            engineSafe
+            abi.encode(tl, juniorTrancheEngine, op, i.polGauge, BaseAddresses.HYDREX_VOTER, BaseAddresses.HYDREX_REWARDS_DISTRIBUTOR),
+            juniorTrancheEngine
         );
 
-        // -- ExerciseModule (engineSafe) --
+        // -- ExerciseModule (juniorTrancheEngine) --
         d.exercise = _cloneModule(
             address(new ExerciseModule()),
-            abi.encode(tl, engineSafe, op, BaseAddresses.OHYDX),
-            engineSafe
+            abi.encode(tl, juniorTrancheEngine, op, BaseAddresses.OHYDX),
+            juniorTrancheEngine
         );
 
-        // -- SellModule (engineSafe) --
+        // -- SellModule (juniorTrancheEngine) --
         d.sell = _cloneModule(
             address(new SellModule()),
-            abi.encode(tl, engineSafe, op, BaseAddresses.ALGEBRA_SWAP_ROUTER, BaseAddresses.HYDX, BaseAddresses.USDC, address(d.zipUSD), i.xAlphaMirror, uint256(300_000e18)),
-            engineSafe
+            abi.encode(tl, juniorTrancheEngine, op, BaseAddresses.ALGEBRA_SWAP_ROUTER, BaseAddresses.HYDX, BaseAddresses.USDC, address(d.zipUSD), i.xAlphaMirror, uint256(300_000e18)),
+            juniorTrancheEngine
         );
 
-        // -- RecycleModule (engineSafe) --
+        // -- RecycleModule (juniorTrancheEngine) --
         d.recycle = _cloneModule(
             address(new RecycleModule()),
-            abi.encode(tl, engineSafe, op, address(d.depositModule), BaseAddresses.USDC, address(d.navOracle), i.eePool, d.warehouse.safe),
-            engineSafe
+            abi.encode(tl, juniorTrancheEngine, op, address(d.depositModule), BaseAddresses.USDC, address(d.navOracle), i.eePool, d.warehouse.warehouseSafe),
+            juniorTrancheEngine
         );
         // one-bank seam (#5): RecycleModule.warehouse/eePool/navOracle == the deposit module's bank + the NAV oracle.
         if (
-            RecycleModule(d.recycle).warehouse() != d.depositModule.warehouse()
+            RecycleModule(d.recycle).warehouseSafe() != d.depositModule.warehouseSafe()
                 || RecycleModule(d.recycle).eePool() != d.depositModule.eePool()
                 || RecycleModule(d.recycle).navOracle() != address(d.navOracle)
         ) revert SeamOneBank();
 
-        // -- OffRampModule (rqSafe = the basket Safe) --
+        // -- OffRampModule (juniorTrancheSafe = the basket Safe) --
         d.offRamp = _cloneModule(
             address(new OffRampModule()),
-            abi.encode(tl, engineSafe, op, address(d.zipUSD), address(d.queue)),
-            engineSafe
+            abi.encode(tl, juniorTrancheEngine, op, address(d.zipUSD), address(d.queue)),
+            juniorTrancheEngine
         );
-        d.queue.setRedeemController(d.sub.mainSafe);
+        d.queue.setRedeemController(d.sub.juniorTrancheSafe);
 
         // NOTE (path-lock arming): the coverage gates are now wired LIVE at construction —
         // `DurationFreezeModule` is cloned at the TOP of this phase and passed into the buy-burn + LP-strategy
@@ -496,7 +502,9 @@ contract DeployZipcode is SummonSubstrate {
         );
 
         // 27. escrow with the REAL coordinator (ctor-pinned; no placeholder re-point needed).
-        d.escrow = new LienXAlphaEscrow(i.xAlphaMirror, address(d.coord), i.treasurySafe, d.sub.sidecar);
+        // CTR-11: the cohort-premium destination is the engine/main basket Safe (the junior tranche Safe), so the
+        // yield flywheel subsumes the premium; was the juniorTrancheSidecar (inert). juniorTrancheSafe is already asserted != warehouseSafe.
+        d.escrow = new LienXAlphaEscrow(i.xAlphaMirror, address(d.coord), i.adminSafe, d.sub.juniorTrancheSafe);
 
         // 28. close the cycle (coord.setEscrow forceApproves escrow internally per the ctor NatSpec).
         d.coord.setEscrow(address(d.escrow));
@@ -590,14 +598,14 @@ contract DeployZipcode is SummonSubstrate {
         _execAsTeam(safe, safe, data);
     }
 
-    /// @notice team -> mainSafe.execTransaction -> Baal.setShamans([gate],[2]) (grant the Gate manager).
-    function _setShamansManager(address baal, address mainSafe, address gate) internal {
+    /// @notice team -> juniorTrancheSafe.execTransaction -> Baal.setShamans([gate],[2]) (grant the Gate manager).
+    function _setShamansManager(address baal, address juniorTrancheSafe, address gate) internal {
         address[] memory shamans = new address[](1);
         shamans[0] = gate;
         uint256[] memory perms = new uint256[](1);
         perms[0] = 2; // manager
         bytes memory setShamans = abi.encodeWithSelector(IBaal.setShamans.selector, shamans, perms);
-        _execAsTeam(mainSafe, baal, setShamans);
+        _execAsTeam(juniorTrancheSafe, baal, setShamans);
     }
 
     /// @notice Set the CRE identity (author + workflow id) on a `ReceiverTemplate` (selectors inherited from it).
@@ -613,14 +621,14 @@ contract DeployZipcode is SummonSubstrate {
 
     /// @notice Generic Safe owner-driven call: team (an owner of `safe`) drives `safe.execTransaction(to, 0, data)`
     ///         with the 1-of-n pre-validated signature (`v==1`, msg.sender == owner == team). Same pattern as
-    ///         SummonSubstrate `_addOwnerToSidecar`.
+    ///         SummonSubstrate `_addOwnerToJuniorTrancheSidecar`.
     function _execAsTeam(address safe, address to, bytes memory data) internal {
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(i.team))), bytes32(0), uint8(1));
         ISafe(safe).execTransaction(to, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
     /// @dev The redemption queue's CRE settle controller is a DISTINCT identity from the origination controller; in
-    ///      M1 it is wired to the engine OffRamp/RQ Safe (`setRedeemController(mainSafe)` in P6). The ctor `controller_`
+    ///      M1 it is wired to the engine OffRamp/RQ Safe (`setRedeemController(juniorTrancheSafe)` in P6). The ctor `controller_`
     ///      is the par-settle CRE identity; reuse the CRE operator as the M1 stand-in (re-pointable via setController).
     function _redemptionController() internal view returns (address) {
         return i.creOperator;
@@ -633,14 +641,18 @@ contract DeployZipcode is SummonSubstrate {
         i.saltNonce = vm.envUint("SUMMON_SALT_NONCE");
         i.creOperator = vm.envAddress("CRE_OPERATOR");
         i.erebor = vm.envAddress("EREBOR");
+        i.curatorSafe = vm.envOr("CURATOR_SAFE", address(0)); // CTR-13: 0 ⇒ no curator fee (forfeit to Euler)
         i.irm = vm.envAddress("IRM");
+        // CTR-13: the per-line rate. Defaults to the reservoir IRM if unset (back-compat), but a real deploy SHOULD
+        // set LINE_IRM to the ~7.5%-APR `LineIrm` instance so lines accrue while the reservoir stays at zero.
+        i.lineIrm = vm.envOr("LINE_IRM", i.irm);
         i.xAlphaMirror = vm.envAddress("XALPHA_MIRROR");
         i.polIchiVault = vm.envAddress("POL_ICHI_VAULT");
         // POL_GAUGE MUST be the ICHI-vault-keyed ALM gauge (`Voter.gauges(POL_ICHI_VAULT)`), NOT the per-pool CL gauge
         // (`Voter.gauges(pool)`). The CL gauge rejects ICHI ALM wrapper shares (reverts 0x87c5d02a — wrong staking
         // token). See DeployLocal.s.sol's LIVE_HYDREX_GAUGE note (verified on the fork).
         i.polGauge = vm.envAddress("POL_GAUGE");
-        i.treasurySafe = vm.envAddress("TREASURY_SAFE");
+        i.adminSafe = vm.envAddress("ADMIN_SAFE");
         i.workflowAuthor = vm.envAddress("WORKFLOW_AUTHOR");
         i.workflowId = vm.envBytes32("WORKFLOW_ID");
         i.eePool = vm.envAddress("EE_POOL");

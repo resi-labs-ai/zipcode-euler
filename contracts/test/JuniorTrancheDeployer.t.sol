@@ -193,7 +193,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
     address internal creOperator = makeAddr("creOperator");
     address internal warehouseSafe = makeAddr("warehouseSafe");
     address internal curator = makeAddr("curator");
-    address internal treasurySafe = makeAddr("treasurySafe");
+    address internal adminSafe = makeAddr("adminSafe");
     address internal workflowAuthor = makeAddr("workflowAuthor");
     address internal rateOracle = makeAddr("rateOracle"); // a shared hub input (never owned/transferred here)
     bytes32 internal workflowId = keccak256("zipcode.cre.workflow.junior");
@@ -257,7 +257,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
                 usdc: address(usdc),
                 lpOracle: address(lpOracle),
                 irm: address(irm),
-                engineSafe: makeAddr("reservoirEngineSafePlaceholder"),
+                juniorTrancheEngine: makeAddr("reservoirEngineSafePlaceholder"),
                 borrowLTV: 0.7e4,
                 liqLTV: 0.8e4
             })
@@ -290,7 +290,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
             oHydx: address(ohydx),
             polIchiVault: address(lp),
             polGauge: address(gauge),
-            treasurySafe: treasurySafe,
+            adminSafe: adminSafe,
             W: 4 hours,
             maxAge: 1 hours,
             maxDeviationBps: 1000,
@@ -308,19 +308,19 @@ contract JuniorTrancheDeployerTest is ForkConfig {
         JuniorTrancheDeployer.JuniorTranche memory t = deployer.deploy(_params());
 
         assertTrue(t.baal != address(0), "baal deployed");
-        assertTrue(t.mainSafe != address(0) && t.sidecar != address(0), "safes deployed");
-        assertTrue(t.mainSafe != t.sidecar, "main != sidecar");
+        assertTrue(t.juniorTrancheSafe != address(0) && t.juniorTrancheSidecar != address(0), "safes deployed");
+        assertTrue(t.juniorTrancheSafe != t.juniorTrancheSidecar, "main != juniorTrancheSidecar");
         // share token wired both ways (NAV + Gate).
         assertEq(address(t.gate.shareToken()), address(t.szip), "gate share token");
         assertEq(t.navOracle.shareToken(), address(t.szip), "nav share token");
         // engine-safe denominator-exclusion seam holds across NAV/Gate/buyBurn.
-        assertEq(t.navOracle.engineSafe(), t.mainSafe, "nav engineSafe == mainSafe");
-        assertEq(t.gate.engineSafe(), t.mainSafe, "gate engineSafe == mainSafe");
+        assertEq(t.navOracle.juniorTrancheEngine(), t.juniorTrancheSafe, "nav juniorTrancheEngine == juniorTrancheSafe");
+        assertEq(t.gate.juniorTrancheEngine(), t.juniorTrancheSafe, "gate juniorTrancheEngine == juniorTrancheSafe");
         // loss side closed.
         assertEq(t.escrow.coordinator(), address(t.coord), "escrow.coordinator");
         // deposit-module gate wired (step 4) + warehouse pinned.
         assertEq(t.depositModule.gate(), address(t.gate), "deposit module gate");
-        assertEq(t.depositModule.warehouse(), warehouseSafe, "deposit module warehouse");
+        assertEq(t.depositModule.warehouseSafe(), warehouseSafe, "deposit module warehouse");
         // shaman grant landed: totalShares stays 0 (governance-inert).
         assertEq(IBaalShares(t.baal).totalShares(), 0, "totalShares 0");
     }
@@ -349,10 +349,10 @@ contract JuniorTrancheDeployerTest is ForkConfig {
         assertEq(Ownable(t.recycle).owner(), tl, "recycle owner TL");
 
         // both Safes -> team, NOT the throwaway deployer instance.
-        assertTrue(ISafe(t.mainSafe).isOwner(team), "main owned by team");
-        assertTrue(ISafe(t.sidecar).isOwner(team), "sidecar owned by team");
-        assertFalse(ISafe(t.mainSafe).isOwner(address(deployer)), "main NOT owned by deployer");
-        assertFalse(ISafe(t.sidecar).isOwner(address(deployer)), "sidecar NOT owned by deployer");
+        assertTrue(ISafe(t.juniorTrancheSafe).isOwner(team), "main owned by team");
+        assertTrue(ISafe(t.juniorTrancheSidecar).isOwner(team), "juniorTrancheSidecar owned by team");
+        assertFalse(ISafe(t.juniorTrancheSafe).isOwner(address(deployer)), "main NOT owned by deployer");
+        assertFalse(ISafe(t.juniorTrancheSidecar).isOwner(address(deployer)), "juniorTrancheSidecar NOT owned by deployer");
 
         // the shared rate oracle was never transferred (we never owned it) — it stays a plain input address.
         assertEq(t.navOracle.xAlphaRateOracle(), rateOracle, "rate oracle wired (not owned)");
@@ -375,7 +375,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
             adapter: address(adapter),
             warehouseSafe: warehouseSafe,
             eePool: address(ee),
-            juniorBasket: t.mainSafe,
+            juniorBasket: t.juniorTrancheSafe,
             escrow: address(t.escrow),
             defaultCoordinator: address(t.coord),
             navOracle: address(t.navOracle),
@@ -392,13 +392,13 @@ contract JuniorTrancheDeployerTest is ForkConfig {
         assertTrue(s.active, "silo active");
     }
 
-    /// @notice (d) §2 non-commingling: main AND sidecar are both distinct from the warehouse Safe.
+    /// @notice (d) §2 non-commingling: main AND juniorTrancheSidecar are both distinct from the warehouse Safe.
     function test_non_commingling() public {
         JuniorTrancheDeployer deployer = new JuniorTrancheDeployer();
         JuniorTrancheDeployer.JuniorTranche memory t = deployer.deploy(_params());
 
-        assertTrue(t.mainSafe != warehouseSafe, "main != warehouse");
-        assertTrue(t.sidecar != warehouseSafe, "sidecar != warehouse");
+        assertTrue(t.juniorTrancheSafe != warehouseSafe, "main != warehouse");
+        assertTrue(t.juniorTrancheSidecar != warehouseSafe, "juniorTrancheSidecar != warehouse");
     }
 }
 

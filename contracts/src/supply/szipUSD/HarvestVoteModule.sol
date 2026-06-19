@@ -13,7 +13,7 @@ import {IRewardsDistributor} from "../../interfaces/hydrex/IRewardsDistributor.s
 /// @title HarvestVoteModule
 /// @notice The on-chain seam of the 8-B7 harvest/vote leg (§4.5.1): the fourth engine Zodiac Module (after the 8-B14
 ///         buy-and-burn, the 8-B5 reservoir loop, and the 8-B6 LP strategy), CRE-operator-gated, enabled on the
-///         szipUSD engine Safe (`avatar == target == engineSafe`). It owns the emissions + governance leg of the
+///         szipUSD engine Safe (`avatar == target == juniorTrancheEngine`). It owns the emissions + governance leg of the
 ///         auto-compounder: per epoch it (1) CLAIMS the gauge's oHYDX to the Safe (`gauge.getReward()`), (2) takes the
 ///         vote-floor `exerciseVe` slice FIRST (the free permalock → grows the Safe's account-aggregate veHYDX),
 ///         (3) re-VOTES our gauge (votes reset weekly), and (4) claims the anti-dilution REBASE on the veNFTs.
@@ -21,7 +21,7 @@ import {IRewardsDistributor} from "../../interfaces/hydrex/IRewardsDistributor.s
 /// @dev SECURITY BOUNDARY (§10.1, the module's whole reason for shape): the operator supplies ONLY scalars/arrays
 ///      (`amount`, `poolVote`/`weights`, `tokenIds`). The module builds ALL calldata to the set-once wired targets
 ///      (`gauge`/`voter`/`oHYDX`/`rewardsDistributor`), the `exerciseVe` recipient is hard-pinned to the literal
-///      set-once `engineSafe`, and every balance/floor read is `engineSafe`. NO generic call/exec passthrough, NO
+///      set-once `juniorTrancheEngine`, and every balance/floor read is `juniorTrancheEngine`. NO generic call/exec passthrough, NO
 ///      delegatecall, `value == 0` on every `exec`. The Voter is ACCOUNT-KEYED (no tokenId); the veNFT and votes
 ///      accrue to the Safe purely because the Safe is the `exec` msg.sender. There is NO `tokenId` state — the module
 ///      is stateless beyond the set-once wiring. There are NO token approvals (`getReward`/`exerciseVe`/`vote`/
@@ -33,8 +33,8 @@ import {IRewardsDistributor} from "../../interfaces/hydrex/IRewardsDistributor.s
 ///      The mastercopy is init-locked in its constructor (see {MastercopyInitLock}).
 contract HarvestVoteModule is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
-    /// @notice The engine Safe (`avatar == target == engineSafe`); the `exerciseVe` recipient + every balance read.
-    address public engineSafe;
+    /// @notice The engine Safe (`avatar == target == juniorTrancheEngine`); the `exerciseVe` recipient + every balance read.
+    address public juniorTrancheEngine;
     /// @notice The single CRE operator (gates the five mutators).
     address public operator;
     /// @notice The Hydrex gauge over our pool (`getReward()` claims its oHYDX to the Safe).
@@ -69,15 +69,15 @@ contract HarvestVoteModule is MastercopyInitLock {
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
-    ///         `initializer`. Decodes the 6 addresses `(owner, engineSafe, operator, gauge, voter, rewardsDistributor)`;
+    ///         `initializer`. Decodes the 6 addresses `(owner, juniorTrancheEngine, operator, gauge, voter, rewardsDistributor)`;
     ///         reads `oHYDX`/`ve` LIVE off the wired dependencies. ORDER is load-bearing: validate all six decoded
     ///         addresses nonzero FIRST + `owner != operator` (so a zero `gauge` reverts `ZeroAddress`, not a confusing
-    ///         staticcall-to-zero), set `avatar = target = engineSafe`, store the wiring, THEN read + assert the live
+    ///         staticcall-to-zero), set `avatar = target = juniorTrancheEngine`, store the wiring, THEN read + assert the live
     ///         `oHYDX`/`ve` nonzero, THEN `_transferOwnership(owner)`.
     function setUp(bytes memory initParams) public override initializer {
         (
             address owner_,
-            address engineSafe_,
+            address juniorTrancheEngine_,
             address operator_,
             address gauge_,
             address voter_,
@@ -85,16 +85,16 @@ contract HarvestVoteModule is MastercopyInitLock {
         ) = abi.decode(initParams, (address, address, address, address, address, address));
 
         if (
-            owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || gauge_ == address(0)
+            owner_ == address(0) || juniorTrancheEngine_ == address(0) || operator_ == address(0) || gauge_ == address(0)
                 || voter_ == address(0) || rewardsDistributor_ == address(0)
         ) revert ZeroAddress();
         if (owner_ == operator_) revert OwnerIsOperator();
 
-        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
-        avatar = engineSafe_;
-        target = engineSafe_;
+        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == juniorTrancheEngine.
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
 
-        engineSafe = engineSafe_;
+        juniorTrancheEngine = juniorTrancheEngine_;
         operator = operator_;
         gauge = gauge_;
         voter = voter_;
@@ -126,11 +126,11 @@ contract HarvestVoteModule is MastercopyInitLock {
     // Re-point cross-component wiring during the build phase. onlyOwner == the Timelock; the CRE `operator` (hot key)
     // cannot reach these. A redirect is a deliberate timelocked governance act, not an attack path.
 
-    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        emit WiringSet("engineSafe", engineSafe_);
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock).
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
@@ -205,7 +205,7 @@ contract HarvestVoteModule is MastercopyInitLock {
     ///         by the Safe; the module stores no id — the Voter is account-keyed).
     function lockVe(uint256 amount) external onlyOperator {
         if (amount == 0) revert ZeroAmount();
-        bytes memory ret = _exec(oHYDX, abi.encodeCall(IOptionToken.exerciseVe, (amount, engineSafe)));
+        bytes memory ret = _exec(oHYDX, abi.encodeCall(IOptionToken.exerciseVe, (amount, juniorTrancheEngine)));
         uint256 nftId = abi.decode(ret, (uint256));
         emit Locked(amount, nftId);
     }
@@ -237,12 +237,12 @@ contract HarvestVoteModule is MastercopyInitLock {
     // --------------------------------------------------------------------- views (8-B11/8-B12 back-pressure)
     /// @notice The claimable oHYDX sitting on the gauge for the Safe (the two-arg `earned(token, account)` form).
     function pendingReward() external view returns (uint256) {
-        return IGauge(gauge).earned(oHYDX, engineSafe);
+        return IGauge(gauge).earned(oHYDX, juniorTrancheEngine);
     }
 
     /// @notice The Safe's account-aggregate veHYDX voting power (the floor metric — summed across ALL its veNFTs).
     function voteFloor() external view returns (uint256) {
-        return IVotingEscrow(ve).getVotes(engineSafe);
+        return IVotingEscrow(ve).getVotes(juniorTrancheEngine);
     }
 
     /// @notice The claimable rebase on a single veNFT (per-id; the operator enumerates off-chain).

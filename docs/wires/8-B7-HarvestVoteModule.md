@@ -8,7 +8,7 @@
 The **4th engine Zodiac Module** (after 8-B14 buy-and-burn, 8-B5 reservoir loop, 8-B6 LP strategy) — the
 simplest sibling of 8-B6: **no EVC, no oracle, no custody, no approvals, and NO `tokenId` state**. It owns the
 emissions + governance leg of the auto-compounder. Enabled ON the szipUSD engine Safe (`avatar == target ==
-engineSafe`), CRE-operator-gated. Per epoch it (1) CLAIMS the gauge's oHYDX to the Safe, (2) takes the
+juniorTrancheEngine`), CRE-operator-gated. Per epoch it (1) CLAIMS the gauge's oHYDX to the Safe, (2) takes the
 vote-floor `exerciseVe` slice (the free permalock that grows the Safe's account-aggregate veHYDX), (3) re-VOTES
 our gauge (votes reset weekly), and (4) claims the per-veNFT anti-dilution REBASE. The module is **stateless
 beyond its set-once wiring** — the veNFT and votes accrue to the Safe purely because the Safe is the `exec`
@@ -30,18 +30,18 @@ msg.sender, and the Hydrex Voter is **account-keyed** (no per-NFT id is ever tra
   **CLONE FACT** (§18.6): a `ModuleProxyFactory`
   clone shares mastercopy bytecode, so `immutable` cannot carry per-clone config — EVERY wired address is plain
   set-once storage, NOT `immutable`.
-- **`setUp(bytes initParams)`** decodes 6 addresses `(owner, engineSafe, operator, gauge, voter,
+- **`setUp(bytes initParams)`** decodes 6 addresses `(owner, juniorTrancheEngine, operator, gauge, voter,
   rewardsDistributor)`. **ORDER is load-bearing:** (1) revert `ZeroAddress` if ANY of the six is zero (so a zero
   `gauge` fails cleanly, not as a confusing staticcall-to-zero), (2) `OwnerIsOperator` if `owner == operator`,
-  (3) `avatar = target = engineSafe`, (4) store `engineSafe`/`operator`/`gauge`/`voter`/`rewardsDistributor`,
+  (3) `avatar = target = juniorTrancheEngine`, (4) store `juniorTrancheEngine`/`operator`/`gauge`/`voter`/`rewardsDistributor`,
   (5) read `oHYDX = gauge.rewardToken()` and `ve = voter.ve()` LIVE (the 8-B6 live-read pattern) + assert both
   nonzero, (6) `_transferOwnership(owner)`. The live reads GUARANTEE the `exerciseVe` target == the gauge's reward
   token and the floor-read escrow == the Voter's escrow.
 - **The 5 `onlyOperator` mutators** (operator supplies ONLY scalars/arrays; the module builds ALL calldata to the
   wired targets via `abi.encodeCall`):
   - `claimReward()` → `_exec(gauge, getReward())` — oHYDX lands in the Safe (= the gauge call's msg.sender). Emits `RewardClaimed`.
-  - `lockVe(uint256 amount)` → `ZeroAmount` guard → `_exec(oHYDX, exerciseVe(amount, engineSafe))`; decodes the
-    returned `nftId` and emits `Locked(amount, nftId)`. The recipient is **hard-pinned to `engineSafe`** (the
+  - `lockVe(uint256 amount)` → `ZeroAmount` guard → `_exec(oHYDX, exerciseVe(amount, juniorTrancheEngine))`; decodes the
+    returned `nftId` and emits `Locked(amount, nftId)`. The recipient is **hard-pinned to `juniorTrancheEngine`** (the
     irreversibility firewall — the fresh veNFT can only mint to the Safe).
   - `vote(address[] poolVote, uint256[] weights)` → `EmptyArray` + `LengthMismatch` guards → `_exec(voter,
     vote(poolVote, weights))`. Account-keyed: votes the Safe's WHOLE veHYDX position, NO tokenId. Emits `Voted`.
@@ -56,9 +56,9 @@ msg.sender, and the Hydrex Voter is **account-keyed** (no per-NFT id is ever tra
   claim/lock/vote. `value == 0` and `Operation.Call` on EVERY exec; **no delegatecall, no generic passthrough**.
   Only `lockVe` decodes the returned bytes (the fresh nftId).
 - **3 views** (the 8-B11/8-B12 back-pressure metrics, all reads pinned to the Safe):
-  - `pendingReward()` = `gauge.earned(oHYDX, engineSafe)` — the two-arg `earned(token, account)` form (the
+  - `pendingReward()` = `gauge.earned(oHYDX, juniorTrancheEngine)` — the two-arg `earned(token, account)` form (the
     guessed single-arg `earned(address)` is ABSENT from the gauge bytecode).
-  - `voteFloor()` = `ve.getVotes(engineSafe)` — the account-aggregate veHYDX voting power summed across ALL the
+  - `voteFloor()` = `ve.getVotes(juniorTrancheEngine)` — the account-aggregate veHYDX voting power summed across ALL the
     Safe's veNFTs (NOT `balanceOfNFT(tokenId)` — the Safe holds many).
   - `rebaseClaimable(uint256 tokenId)` = `rewardsDistributor.claimable(tokenId)` — per-id (operator enumerates off-chain).
 - **No token approvals anywhere** — `getReward`/`exerciseVe`/`vote`/`reset`/`claim_many` all act on the Safe's own

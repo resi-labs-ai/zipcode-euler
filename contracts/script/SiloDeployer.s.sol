@@ -20,7 +20,7 @@ import {IEVault} from "evk/EVault/IEVault.sol";
 ///         (`ReservoirMarketDeployer` CTR-06a, `CreditWarehouseDeployer` 8-Bw, `JuniorTrancheDeployer` CTR-06b) plus
 ///         the per-silo venue front (EulerEarn pool + resting `baseUsdcMarket` + per-silo `CREGatingHook` +
 ///         `EulerVenueAdapter`), and returns a `Silo` handle that maps 1:1 to `SiloRegistry.SiloConfig`. The hub
-///         (`timelock`/`controller`/`oracleRegistry`/`zipUSD`/`rateOracle`/`repaySink`/`erebor`/`forwarder` + the shared
+///         (`timelock`/`controller`/`oracleRegistry`/`zipUSD`/`rateOracle`/`redemptionBox`/`erebor`/`forwarder` + the shared
 ///         POL + EVC/EVK factory) is a deploy INPUT, never built here; only the per-silo venue + reservoir + warehouse +
 ///         junior are built. `claude-zipcode.md` §4.5/§4.7/§9.1/§17.
 ///
@@ -46,7 +46,7 @@ contract SiloDeployer is Script {
     address internal constant EVC = BaseAddresses.EVC;
 
     // ----------------------------------------------------------------- deployer-added post-asserts (fail-closed)
-    /// @notice §2 non-commingling: the shared repaySink/queue, the warehouse Safe, and the junior Safes collide.
+    /// @notice §2 non-commingling: the shared redemptionBox/queue, the warehouse Safe, and the junior Safes collide.
     error SeamCommingled();
     /// @notice The reservoir borrow vault's governor is not the Timelock (CTR-06a §17 standing-tunable facility).
     error SeamReservoirGovernor();
@@ -69,7 +69,7 @@ contract SiloDeployer is Script {
         address oracleRegistry;
         address zipUSD;
         address rateOracle;
-        address repaySink; // == the ONE shared ZipRedemptionQueue (D5/§6)
+        address redemptionBox; // == the ONE shared ZipRedemptionQueue (D5/§6)
         address erebor;
         address forwarder;
         // shared POL (D1) + the pre-seeded reservoir LP oracle
@@ -88,7 +88,8 @@ contract SiloDeployer is Script {
         string eeName;
         string eeSymbol;
         // numeric knobs (pass-through to the sub-deployers)
-        address treasurySafe;
+        address adminSafe;
+        address curatorSafe; // per-line EVK feeReceiver — curator pay (CTR-13). NB: distinct from the EE `curator` role.
         uint16 borrowLTV;
         uint16 liqLTV;
         uint32 W;
@@ -107,7 +108,7 @@ contract SiloDeployer is Script {
         address adapter; // venue adapter (SiloConfig.adapter)
         address warehouseSafe; // SiloConfig.warehouseSafe
         address eePool; // SiloConfig.eePool
-        address juniorBasket; // junior.mainSafe (SiloConfig.juniorBasket)
+        address juniorBasket; // junior.juniorTrancheSafe (SiloConfig.juniorBasket)
         address escrow; // junior.escrow (SiloConfig.escrow)
         address defaultCoordinator; // junior.coord (SiloConfig.defaultCoordinator)
         address navOracle; // junior.navOracle (SiloConfig.navOracle)
@@ -125,10 +126,10 @@ contract SiloDeployer is Script {
     ///         venue front / cap onboarding / post-asserts are factored out so `deploy` stays under the 16-local
     ///         stack-depth limit.
     function deploy(SiloParams memory p) external returns (Silo memory s) {
-        // -- 0. Precompute the junior mainSafe (breaks the reservoir<->junior cycle). The reservoir's `engineSafe`
-        //       MUST be the junior mainSafe (the ReservoirBorrowGuard pins OP_BORROW to it, IMMUTABLE). `computeMainSafe`
+        // -- 0. Precompute the junior juniorTrancheSafe (breaks the reservoir<->junior cycle). The reservoir's `juniorTrancheEngine`
+        //       MUST be the junior juniorTrancheSafe (the ReservoirBorrowGuard pins OP_BORROW to it, IMMUTABLE). `computeMainSafe`
         //       is a pure function of saltNonce + the live Safe factory/singleton, so the precompute here EQUALS the
-        //       mainSafe `jr.deploy(...)` later summons (its `MainSafeMismatch` assert guarantees it). REUSE `jr` in
+        //       juniorTrancheSafe `jr.deploy(...)` later summons (its `MainSafeMismatch` assert guarantees it). REUSE `jr` in
         //       step 7 so the salt + summon match.
         JuniorTrancheDeployer jr = new JuniorTrancheDeployer();
 
@@ -141,7 +142,7 @@ contract SiloDeployer is Script {
         );
         IEVault(baseUsdcMarket).setHookConfig(address(0), 0);
 
-        // -- 3. Reservoir market (CTR-06a-fixed). engineSafe = the precomputed junior mainSafe (step 0).
+        // -- 3. Reservoir market (CTR-06a-fixed). juniorTrancheEngine = the precomputed junior juniorTrancheSafe (step 0).
         (address escrowVault, address borrowVault,) =
             new ReservoirMarketDeployer().deploy(_reservoirParams(p, jr.computeMainSafe(p.saltNonce)));
 
@@ -151,22 +152,22 @@ contract SiloDeployer is Script {
         // -- 5. Per-silo CREGatingHook + EulerVenueAdapter (borrowDriver -> this silo's adapter; hook owner -> TL).
         (s.adapter, s.hook) = _deployVenueFront(p, s.eePool, baseUsdcMarket);
 
-        // -- 6. Warehouse (verbatim CreditWarehouseDeployer). repaySink MUST be the shared queue (D5/§6).
+        // -- 6. Warehouse (verbatim CreditWarehouseDeployer). redemptionBox MUST be the shared queue (D5/§6).
         CreditWarehouseDeployer.Warehouse memory warehouse = new CreditWarehouseDeployer().deploy(
-            p.godOwner, p.receiverAdmin, s.eePool, p.usdc, p.forwarder, p.repaySink, p.saltNonce
+            p.godOwner, p.receiverAdmin, s.eePool, p.usdc, p.forwarder, p.redemptionBox, p.saltNonce
         );
-        s.warehouseSafe = warehouse.safe;
+        s.warehouseSafe = warehouse.warehouseSafe;
         s.warehouseRoles = warehouse.roles;
 
         // -- 4b. EE admin config needing the warehouse Safe + venue adapter (built in steps 5–6).
         _eeCall(s.eePool, abi.encodeWithSignature("setFeeRecipient(address)", s.warehouseSafe));
         _eeCall(s.eePool, abi.encodeWithSignature("setCurator(address)", s.adapter));
 
-        // -- 7. Junior tranche (the step-0 `jr` instance so the salt + summon match; CTR-06b). engineSafe of the
-        //       reservoir (step 3) == the mainSafe this summons.
+        // -- 7. Junior tranche (the step-0 `jr` instance so the salt + summon match; CTR-06b). juniorTrancheEngine of the
+        //       reservoir (step 3) == the juniorTrancheSafe this summons.
         JuniorTrancheDeployer.JuniorTranche memory junior =
             jr.deploy(_juniorParams(p, s.eePool, s.warehouseSafe, escrowVault, borrowVault));
-        s.juniorBasket = junior.mainSafe;
+        s.juniorBasket = junior.juniorTrancheSafe;
         s.escrow = address(junior.escrow);
         s.defaultCoordinator = address(junior.coord);
         s.navOracle = address(junior.navOracle);
@@ -187,12 +188,12 @@ contract SiloDeployer is Script {
         JuniorTrancheDeployer.JuniorTranche memory junior,
         address borrowVault
     ) internal view {
-        if (p.repaySink == junior.mainSafe || s.warehouseSafe == junior.mainSafe || s.warehouseSafe == junior.sidecar) {
+        if (p.redemptionBox == junior.juniorTrancheSafe || s.warehouseSafe == junior.juniorTrancheSafe || s.warehouseSafe == junior.juniorTrancheSidecar) {
             revert SeamCommingled();
         }
         if (IEVault(borrowVault).governorAdmin() != p.timelock) revert SeamReservoirGovernor();
         if (
-            IFreeze(s.freeze).eulerEarn() != s.eePool || IFreeze(s.freeze).warehouse() != s.warehouseSafe
+            IFreeze(s.freeze).eulerEarn() != s.eePool || IFreeze(s.freeze).warehouseSafe() != s.warehouseSafe
                 || IFreeze(s.freeze).navOracle() != s.navOracle
                 || IEscrow(s.escrow).coordinator() != s.defaultCoordinator
                 || INavWriter(s.defaultCoordinator).navOracle() != s.navOracle
@@ -234,6 +235,7 @@ contract SiloDeployer is Script {
             p.erebor,
             baseUsdcMarket
         );
+        a.setCuratorSafe(p.curatorSafe); // CTR-13: per-line EVK feeReceiver (deployer is adapter owner at birth)
         h.setBorrowDriver(address(a));
         h.transferOwnership(p.timelock);
         return (address(a), address(h));
@@ -262,7 +264,7 @@ contract SiloDeployer is Script {
 
     // ================================================================= sub-deployer param helpers (stack relief)
 
-    function _reservoirParams(SiloParams memory p, address engineSafe)
+    function _reservoirParams(SiloParams memory p, address juniorTrancheEngine)
         internal
         pure
         returns (ReservoirMarketDeployer.Params memory)
@@ -275,7 +277,7 @@ contract SiloDeployer is Script {
             usdc: p.usdc,
             lpOracle: p.lpOracle,
             irm: p.reservoirIrm,
-            engineSafe: engineSafe,
+            juniorTrancheEngine: juniorTrancheEngine,
             borrowLTV: p.borrowLTV,
             liqLTV: p.liqLTV
         });
@@ -307,7 +309,7 @@ contract SiloDeployer is Script {
             oHydx: p.oHydx,
             polIchiVault: p.polIchiVault,
             polGauge: p.polGauge,
-            treasurySafe: p.treasurySafe,
+            adminSafe: p.adminSafe,
             W: p.W,
             maxAge: p.maxAge,
             maxDeviationBps: p.maxDeviationBps,
@@ -340,7 +342,7 @@ contract SiloDeployer is Script {
 /// @notice `DurationFreezeModule.{eulerEarn(), warehouse(), navOracle()}`.
 interface IFreeze {
     function eulerEarn() external view returns (address);
-    function warehouse() external view returns (address);
+    function warehouseSafe() external view returns (address);
     function navOracle() external view returns (address);
 }
 

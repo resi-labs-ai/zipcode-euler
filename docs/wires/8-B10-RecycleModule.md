@@ -8,7 +8,7 @@
 ## Role
 The 8-B10 engine module (§4.5.1) — the auto-compounder's **free-value ledger** and the two spends that draw it
 down. A CRE-operator-gated Zodiac `Module` (`is Module`), enabled ON the szipUSD engine Safe
-(`avatar == target == engineSafe`), sibling of 8-B5..B9/B14. It owns the engine's **one** piece of real mutable
+(`avatar == target == juniorTrancheEngine`), sibling of 8-B5..B9/B14. It owns the engine's **one** piece of real mutable
 state — the single `freeValueAccrued` accumulator (no other module writes it; the CRE operator is the only
 writer, §8 inv. 3) — and spends it through **two sinks that both debit the same ledger**:
 
@@ -35,11 +35,11 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
 | `IEulerEarn` (local iface; `reference/euler-earn/src/EulerEarn.sol:560`) | The senior pool (ERC-4626 over USDC). `deposit(assets, receiver)` pulls `assets` from the Safe, mints shares to `receiver` (the warehouse). The `divert` Stream-2 sink — same surface `ZipDepositModule` uses. |
 
 ## Wiring — internal
-- **`setUp(bytes)` decodes 8 addresses** (S1 grew it 5 → 8): `(owner, engineSafe, operator, zipDepositModule,
+- **`setUp(bytes)` decodes 8 addresses** (S1 grew it 5 → 8): `(owner, juniorTrancheEngine, operator, zipDepositModule,
   usdc, navOracle, eePool, warehouse)`. ORDER is load-bearing: validate ALL 8 decoded addresses nonzero FIRST +
   `owner != operator` (`OwnerIsOperator`), so a zero reverts `ZeroAddress` deterministically before any use; then
-  set `avatar = target = engineSafe`, store the wiring, THEN `_transferOwnership(owner)`. No live-read/staticcall
-  in `setUp`. The first 5 are the recycle wiring; `navOracle`/`eePool`/`warehouse` are the S1 divert add (the same
+  set `avatar = target = juniorTrancheEngine`, store the wiring, THEN `_transferOwnership(owner)`. No live-read/staticcall
+  in `setUp`. The first 5 are the recycle wiring; `navOracle`/`eePool`/`warehouseSafe` are the S1 divert add (the same
   set-once, NOT-`immutable`, clone-safe pattern).
 - **`onlyOperator` entrypoints** (`msg.sender != operator` → `NotOperator`):
   - `creditFreeValue(amount)` — `amount==0`→`ZeroAmount`; `freeValueAccrued += amount`; emits `FreeValueCredited`.
@@ -94,9 +94,9 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
 - **`navOracle` → the SAME `SzipNavOracle`** the `DefaultCoordinator` writes `provision` to. The `divert` bound
   reads the live hole; if `navOracle` pointed at a different oracle the bound would read a stale/zero hole. (S1
   obligation, item-10 wiring below.)
-- **`eePool` / `warehouse` → the ONE bank.** `eePool` MUST equal `ZipDepositModule.eePool()` and `warehouse` MUST
+- **`eePool` / `warehouseSafe` → the ONE bank.** `eePool` MUST equal `ZipDepositModule.eePool()` and `warehouseSafe` MUST
   equal the `ZipDepositModule`/`WarehouseAdminModule` warehouse Safe — else diverted USDC supplies the wrong pool
-  / credits the wrong receiver and never fills the hole. Stream 1's `treasurySafe` USDC output is supplied to THIS
+  / credits the wrong receiver and never fills the hole. Stream 1's `adminSafe` USDC output is supplied to THIS
   same warehouse too (a CRE/off-chain step, not on-chain). Enforced by the item-10 deploy-asserts.
 - **`creditFreeValue` is operator-trusted UNBOUNDED** — §17 / §8.7 trust boundary. The policy ceiling (the ledger
   can never route more than the credited free value) is operator-TRUSTED, not cryptographic: an over-credit could
@@ -114,14 +114,14 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
   `zipDepositModule` → the deployed WOOF-06 module; `usdc` → the live token. (No `xAlpha`/`distributor`/
   `compounder` — deleted in the rework.) `owner` = the Timelock, `!= operator` (asserted in `setUp`).
 - **S1 divert wiring (PROGRESS row 375):** call the three Timelock setters on the deployed module —
-  `setNavOracle(SzipNavOracle)` / `setEePool(EE_POOL)` / `setWarehouse(CreditWarehouse Safe)` — then **deploy-time
+  `setNavOracle(SzipNavOracle)` / `setEePool(EE_POOL)` / `setWarehouseSafe(CreditWarehouse Safe)` — then **deploy-time
   assert the one-bank invariant**, reverting the deploy on mismatch:
   - `RecycleModule.warehouse == ` the `ZipDepositModule`/`WarehouseAdminModule` warehouse Safe;
   - `RecycleModule.eePool() == ZipDepositModule.eePool()`;
   - `RecycleModule.navOracle == ` the `DefaultCoordinator`'s oracle (the SAME `SzipNavOracle` that holds
     `provision`).
-- All 7 wiring slots are Timelock-re-pointable (`setEngineSafe`/`setOperator`/`setZipDepositModule`/`setUsdc`/
-  `setNavOracle`/`setEePool`/`setWarehouse`, each `onlyOwner` + zero-guard + `WiringSet` event) — build-phase §17,
+- All 7 wiring slots are Timelock-re-pointable (`setJuniorTrancheEngine`/`setOperator`/`setZipDepositModule`/`setUsdc`/
+  `setNavOracle`/`setEePool`/`setWarehouseSafe`, each `onlyOwner` + zero-guard + `WiringSet` event) — build-phase §17,
   not set-once-renounce-frozen. `setAvatar`/`setTarget` are inherited `onlyOwner` (the hot operator key CANNOT
   call them).
 - **`setOperator` re-checks `operator != owner` (`OwnerIsOperator`), SEC-15.** Beyond the zero-guard, the re-point

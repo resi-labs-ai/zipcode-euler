@@ -210,12 +210,12 @@ contract MockZipUsd {
 ///      the aggregator sums it. NOT a SiloDeployer-built silo — the de-scoped D4 only needs a registrable handle.
 contract MockFreeze {
     address public eulerEarn;
-    address public warehouse;
+    address public warehouseSafe;
     address public navOracle;
 
     constructor(address ee, address wh, address nav) {
         eulerEarn = ee;
-        warehouse = wh;
+        warehouseSafe = wh;
         navOracle = nav;
     }
 }
@@ -275,12 +275,13 @@ contract SiloDeployerTest is ForkConfig {
     address internal creOperator = makeAddr("creOperator");
     address internal godOwner = makeAddr("godOwner");
     address internal receiverAdmin = makeAddr("receiverAdmin");
-    address internal treasurySafe = makeAddr("treasurySafe");
+    address internal adminSafe = makeAddr("adminSafe");
+    address internal curatorSafe = makeAddr("curatorSafe");
     address internal workflowAuthor = makeAddr("workflowAuthor");
     address internal controller = makeAddr("controller"); // hub controller (an input; never built here)
     address internal oracleRegistry = makeAddr("oracleRegistry"); // hub ZipcodeOracleRegistry (input)
     address internal rateOracle = makeAddr("rateOracle"); // hub SzAlphaRateOracle (input)
-    address internal repaySink = makeAddr("repaySink"); // the shared ZipRedemptionQueue (input)
+    address internal redemptionBox = makeAddr("redemptionBox"); // the shared ZipRedemptionQueue (input)
     address internal erebor = makeAddr("erebor"); // the immutable line receiver (input)
     bytes32 internal workflowId = keccak256("zipcode.cre.workflow.silo");
 
@@ -349,7 +350,7 @@ contract SiloDeployerTest is ForkConfig {
             oracleRegistry: oracleRegistry,
             zipUSD: address(zip),
             rateOracle: rateOracle,
-            repaySink: repaySink,
+            redemptionBox: redemptionBox,
             erebor: erebor,
             forwarder: BaseAddresses.CRE_KEYSTONE_FORWARDER,
             polIchiVault: address(lp),
@@ -363,7 +364,8 @@ contract SiloDeployerTest is ForkConfig {
             lineIrm: address(irm),
             eeName: "Zipcode Senior USDC",
             eeSymbol: "zSNR",
-            treasurySafe: treasurySafe,
+            adminSafe: adminSafe,
+            curatorSafe: curatorSafe,
             borrowLTV: 0.7e4,
             liqLTV: 0.8e4,
             W: 4 hours,
@@ -411,7 +413,7 @@ contract SiloDeployerTest is ForkConfig {
         assertEq(IAdapterView(s.adapter).eulerEarn(), address(ee), "adapter eulerEarn == mockEE");
         assertEq(ICREHook(s.hook).borrowDriver(), s.adapter, "hook borrowDriver == adapter");
         assertEq(IFreezeView(s.freeze).eulerEarn(), s.eePool, "freeze.eulerEarn == eePool");
-        assertEq(IFreezeView(s.freeze).warehouse(), s.warehouseSafe, "freeze.warehouse == warehouseSafe");
+        assertEq(IFreezeView(s.freeze).warehouseSafe(), s.warehouseSafe, "freeze.warehouseSafe == warehouseSafe");
         assertEq(IFreezeView(s.freeze).navOracle(), s.navOracle, "freeze.navOracle == navOracle");
         assertEq(IEscrowView(s.escrow).coordinator(), s.defaultCoordinator, "escrow.coordinator == coord");
         assertEq(INavWriterView(s.defaultCoordinator).navOracle(), s.navOracle, "coord.navOracle == navOracle");
@@ -420,14 +422,14 @@ contract SiloDeployerTest is ForkConfig {
         assertEq(ee.feeRecipient(), s.warehouseSafe, "EE feeRecipient == warehouseSafe");
 
         // non-commingling holds.
-        assertTrue(s.warehouseSafe != s.juniorBasket, "warehouse != junior main");
-        assertTrue(repaySink != s.juniorBasket, "repaySink != junior main");
+        assertTrue(s.warehouseSafe != s.juniorBasket, "warehouseSafe != junior main");
+        assertTrue(redemptionBox != s.juniorBasket, "redemptionBox != junior main");
     }
 
     // ----------------------------------------------------------------- 2. ownership handoff
 
     /// @notice Every transferred owner lands away from the deployer: junior OZ-ownables + the per-silo hook + the
-    ///         reservoir borrow-vault governor → Timelock; warehouse Safe/Roles → godOwner; warehouse adapter →
+    ///         reservoir borrow-vault governor → Timelock; warehouseSafe Safe/Roles → godOwner; warehouseSafe adapter →
     ///         receiverAdmin; both Baal Safes → team & NOT the deployer.
     function test_ownership_handoff() public {
         (SiloDeployerHarness dep, SiloDeployer.Silo memory s,) = _deploySilo(SALT);
@@ -447,10 +449,10 @@ contract SiloDeployerTest is ForkConfig {
         // the ticket does not direct an adapter handoff), and the borrow vault governor was asserted == TL in step 8.
         // (the borrow vault address is not on the handle; the step-8 SeamReservoirGovernor pass proves governor==TL.)
 
-        // warehouse Safe → godOwner; Roles → godOwner; warehouse admin adapter → receiverAdmin.
-        assertTrue(ISafe(s.warehouseSafe).isOwner(godOwner), "warehouse Safe owned by godOwner");
-        assertFalse(ISafe(s.warehouseSafe).isOwner(address(dep)), "warehouse Safe NOT owned by deployer");
-        assertEq(IOwnableView(s.warehouseRoles).owner(), godOwner, "warehouse Roles -> godOwner");
+        // warehouseSafe Safe → godOwner; Roles → godOwner; warehouseSafe admin adapter → receiverAdmin.
+        assertTrue(ISafe(s.warehouseSafe).isOwner(godOwner), "warehouseSafe Safe owned by godOwner");
+        assertFalse(ISafe(s.warehouseSafe).isOwner(address(dep)), "warehouseSafe Safe NOT owned by deployer");
+        assertEq(IOwnableView(s.warehouseRoles).owner(), godOwner, "warehouseSafe Roles -> godOwner");
 
         // both Baal Safes → team, NOT the deployer.
         assertTrue(ISafe(s.juniorBasket).isOwner(team), "junior main owned by team");
@@ -590,7 +592,7 @@ interface ICREHook {
 
 interface IFreezeView {
     function eulerEarn() external view returns (address);
-    function warehouse() external view returns (address);
+    function warehouseSafe() external view returns (address);
     function navOracle() external view returns (address);
 }
 

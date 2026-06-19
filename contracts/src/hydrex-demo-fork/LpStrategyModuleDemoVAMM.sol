@@ -19,15 +19,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         oracle `SzipNavOracleDemoVAMM` (the paired oracle fork). See `build/wires/SHOWCASE-VAMM.md`.
 ///
 /// @notice [prod docstring, unchanged below] The on-chain seam of the 8-B6 LP strategy (§4.5.1): the third engine
-///         Zodiac Module, CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target == engineSafe`).
+///         Zodiac Module, CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target == juniorTrancheEngine`).
 ///         It owns the LP's whole lifecycle: build the LP (`addLiquidity`), gauge-stake it to farm oHYDX (`stake` →
 ///         `IGauge.deposit`), and unstake/re-stake slices for the 8-B5 harvest loop (`unstake` → `IGauge.withdraw`).
 ///         The LP token IS the pool/pair contract; the gauge custodies the staked LP.
 ///
 /// @dev SECURITY BOUNDARY (§10.1, the module's whole reason for shape): the operator supplies ONLY scalar amounts
 ///      (`deposit0`/`deposit1`/`minShares`/`lpAmount`). The module builds ALL calldata to the set-once wired targets
-///      (`ichiVault`/`gauge`/`token0`/`token1`), the deposit `to` is the literal set-once `engineSafe`, and every
-///      balance read is `engineSafe`. NO generic call/exec passthrough, NO delegatecall, `value == 0` on every
+///      (`ichiVault`/`gauge`/`token0`/`token1`), the deposit `to` is the literal set-once `juniorTrancheEngine`, and every
+///      balance read is `juniorTrancheEngine`. NO generic call/exec passthrough, NO delegatecall, `value == 0` on every
 ///      `exec`. There is no EVC leg (the module never borrows) — the gauge/vault calls credit/debit the Safe purely
 ///      because the Safe is the `exec` msg.sender. The module writes NO storage in any mutating path (no live-bid
 ///      analog) and holds no custody — the Safe holds the tokens, the LP, and the staked position.
@@ -38,8 +38,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///      The mastercopy is init-locked at deploy.
 contract LpStrategyModuleDemoVAMM is Module {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
-    /// @notice The engine Safe (`avatar == target == engineSafe`); the deposit `to` + every balance read.
-    address public engineSafe;
+    /// @notice The engine Safe (`avatar == target == juniorTrancheEngine`); the deposit `to` + every balance read.
+    address public juniorTrancheEngine;
     /// @notice The single CRE operator (gates `addLiquidity`/`stake`/`unstake`).
     address public operator;
     /// @notice DEMO: the Solidly vAMM **pair** (the pair contract IS the LP token, an 18-dp ERC20). Named `ichiVault`
@@ -74,24 +74,24 @@ contract LpStrategyModuleDemoVAMM is Module {
 
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (or the mastercopy at deploy, then init-locked). One-shot via the zodiac-core
-    ///         `initializer`. Decodes `(owner, engineSafe, operator, ichiVault, gauge)`; reads `token0`/`token1` LIVE
+    ///         `initializer`. Decodes `(owner, juniorTrancheEngine, operator, ichiVault, gauge)`; reads `token0`/`token1` LIVE
     ///         off the vault. ORDER is load-bearing: validate the five addresses nonzero FIRST (so an `ichiVault == 0`
     ///         reverts `ZeroAddress`, not the live `token0()` staticcall), then read + assert the tokens nonzero.
     function setUp(bytes memory initParams) public override initializer {
-        (address owner_, address engineSafe_, address operator_, address ichiVault_, address gauge_) =
+        (address owner_, address juniorTrancheEngine_, address operator_, address ichiVault_, address gauge_) =
             abi.decode(initParams, (address, address, address, address, address));
 
         if (
-            owner_ == address(0) || engineSafe_ == address(0) || operator_ == address(0) || ichiVault_ == address(0)
+            owner_ == address(0) || juniorTrancheEngine_ == address(0) || operator_ == address(0) || ichiVault_ == address(0)
                 || gauge_ == address(0)
         ) revert ZeroAddress();
         if (owner_ == operator_) revert OwnerIsOperator();
 
-        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == engineSafe.
-        avatar = engineSafe_;
-        target = engineSafe_;
+        // The module is enabled ON the engine Safe and only ever mutates it: avatar == target == juniorTrancheEngine.
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
 
-        engineSafe = engineSafe_;
+        juniorTrancheEngine = juniorTrancheEngine_;
         operator = operator_;
         ichiVault = ichiVault_;
         gauge = gauge_;
@@ -110,16 +110,16 @@ contract LpStrategyModuleDemoVAMM is Module {
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
     // Re-point cross-component wiring during the build phase. onlyOwner == the Timelock (a deliberate timelocked act,
     // never the hot CRE `operator`). These mirror the set-once `setUp` wiring; numeric/format params (minShares floors,
-    // decimals) are NOT settable. `avatar`/`target` (also onlyOwner via zodiac-core) track `engineSafe`.
+    // decimals) are NOT settable. `avatar`/`target` (also onlyOwner via zodiac-core) track `juniorTrancheEngine`.
 
-    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in lockstep
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in lockstep
     ///         (the module is enabled ON the engine Safe and only ever mutates it).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        avatar = engineSafe_;
-        target = engineSafe_;
-        emit WiringSet("engineSafe", engineSafe_);
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
+        emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
     /// @notice Re-point `operator` (build phase, §17). onlyOwner (Timelock).
@@ -187,7 +187,7 @@ contract LpStrategyModuleDemoVAMM is Module {
     }
 
     /// @notice DEMO: build the vAMM (Solidly) pair LP by `transfer`ring each non-zero leg straight to the pair, then
-    ///         `IVammPair.mint(engineSafe)` (routerless, NO approval — the pair IS the LP token). Single-sided ⇒ one
+    ///         `IVammPair.mint(juniorTrancheEngine)` (routerless, NO approval — the pair IS the LP token). Single-sided ⇒ one
     ///         side 0; balanced ⇒ both > 0. The minted LP lands in the engine Safe.
     /// @param deposit0   token0 amount to add (0 to skip the token0 leg).
     /// @param deposit1   token1 amount to add (0 to skip the token1 leg).
@@ -212,7 +212,7 @@ contract LpStrategyModuleDemoVAMM is Module {
             _exec(token1, abi.encodeWithSelector(IERC20.transfer.selector, ichiVault, deposit1));
         }
 
-        bytes memory ret = _exec(ichiVault, abi.encodeCall(IVammPair.mint, (engineSafe)));
+        bytes memory ret = _exec(ichiVault, abi.encodeCall(IVammPair.mint, (juniorTrancheEngine)));
         shares = abi.decode(ret, (uint256));
 
         if (shares < minShares) revert Slippage();
@@ -241,11 +241,11 @@ contract LpStrategyModuleDemoVAMM is Module {
     // --------------------------------------------------------------------- views (8-B5/8-B11/8-B12 back-pressure)
     /// @notice The gauge-staked LP balance (read live from the gauge; 8-B5 sizes the unstake slice off it).
     function stakedBalance() external view returns (uint256) {
-        return IGauge(gauge).balanceOf(engineSafe);
+        return IGauge(gauge).balanceOf(juniorTrancheEngine);
     }
 
     /// @notice The unstaked LP sitting in the Safe (read live from the pair LP token).
     function lpBalance() external view returns (uint256) {
-        return IVammPair(ichiVault).balanceOf(engineSafe);
+        return IVammPair(ichiVault).balanceOf(juniorTrancheEngine);
     }
 }

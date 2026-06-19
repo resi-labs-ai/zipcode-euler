@@ -13,7 +13,7 @@ interface IGenericFactory {
 ///         reservoir borrow vault IS the warehouse's shared resting USDC (idle depositor cash); without this guard any
 ///         ICHI-LP holder could post the escrow collateral on their OWN EVC account and lever that shared USDC. The
 ///         guard pins `OP_BORROW` to the engine Safe: a borrow is allowed ONLY when the EVK-appended on-behalf account
-///         `== engineSafe` (else revert `NotEngineSafe`). The engine Safe borrows on its own account (no operator,
+///         `== juniorTrancheEngine` (else revert `NotEngineSafe`). The engine Safe borrows on its own account (no operator,
 ///         §4.5.1) so the gate is account-identity, NOT operator-authorization — distinct from `CREGatingHook`
 ///         (which gates `isAccountOperatorAuthorized`, the per-line `LineAccount` model). Op-agnostic; installed only
 ///         on `OP_BORROW`, so it only ever guards borrows.
@@ -24,7 +24,7 @@ contract ReservoirBorrowGuard is IHookTarget {
     /// @notice The EVK vault factory; used to validate the caller is a factory proxy (vault).
     IGenericFactory public eVaultFactory;
     /// @notice The engine Safe — the ONLY account permitted to borrow the reservoir's resting USDC.
-    address public engineSafe;
+    address public juniorTrancheEngine;
     /// @notice The Timelock admin (build phase, §17). NOT OZ `Ownable` — the inherited `Context._msgSender()` would
     ///         collide with this hook's EVK trailing-data `_msgSender()` decoder; `onlyOwner` checks `msg.sender`
     ///         DIRECTLY (the admin is never an EVK on-behalf call).
@@ -49,10 +49,10 @@ contract ReservoirBorrowGuard is IHookTarget {
     }
 
     /// @param eVaultFactory_ The EVK GenericFactory that deployed the reservoir vaults.
-    /// @param engineSafe_ The szipUSD engine Safe (the sole legal borrower).
-    constructor(address eVaultFactory_, address engineSafe_) {
+    /// @param juniorTrancheEngine_ The szipUSD engine Safe (the sole legal borrower).
+    constructor(address eVaultFactory_, address juniorTrancheEngine_) {
         eVaultFactory = IGenericFactory(eVaultFactory_);
-        engineSafe = engineSafe_;
+        juniorTrancheEngine = juniorTrancheEngine_;
         owner = msg.sender;
         emit OwnershipTransferred(address(0), msg.sender);
     }
@@ -72,11 +72,11 @@ contract ReservoirBorrowGuard is IHookTarget {
         emit WiringSet("eVaultFactory", eVaultFactory_);
     }
 
-    /// @notice Re-point `engineSafe` (build phase, §17). onlyOwner (Timelock).
-    function setEngineSafe(address engineSafe_) external onlyOwner {
-        if (engineSafe_ == address(0)) revert ZeroAddress();
-        engineSafe = engineSafe_;
-        emit WiringSet("engineSafe", engineSafe_);
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock).
+    function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
+        if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        juniorTrancheEngine = juniorTrancheEngine_;
+        emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
     /// @inheritdoc IHookTarget
@@ -89,7 +89,7 @@ contract ReservoirBorrowGuard is IHookTarget {
     /// @notice The only gate: the appended on-behalf account must be the engine Safe. Op-agnostic; reverts with no
     ///         return data. Non-payable — the EVK invokes the hook with no value.
     fallback() external {
-        if (_msgSender() != engineSafe) revert NotEngineSafe();
+        if (_msgSender() != juniorTrancheEngine) revert NotEngineSafe();
     }
 
     /// @notice Extracts the on-behalf account appended by the EVK (`abi.encodePacked(msg.data, caller)`), but trusts

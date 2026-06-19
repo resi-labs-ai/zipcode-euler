@@ -31,7 +31,7 @@ import {ILienXAlphaEscrow} from "../interfaces/loss/ILienXAlphaEscrow.sol";
 ///      WRITEOFF leaves the residual provision IN PLACE — it is the realized loss — and never calls
 ///      `writeProvision`.) (b) `totalProvision == Σ lienLoss.provision ==
 ///      oracle.provision()` at all times (sole writer); (c) every bond can flow only to `bondOriginator` /
-///      immutable `treasurySafe` / immutable `sidecar` — no attacker-chosen destination except the CRE-named
+///      immutable `adminSafe` / immutable `juniorTrancheSafe` — no attacker-chosen destination except the CRE-named
 ///      originator leg; (d) the status machine forbids re-recognition, post-resolution heal, and release of a
 ///      defaulted lien. A compromised CRE can GRIEF (down-mark NAV — making concurrent exiters exit-poor since
 ///      `writeProvision` is immediate/unsmoothed; slash a healthy bond; reclaim a freshly-funded bond via a

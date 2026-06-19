@@ -19,20 +19,20 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
 |---|---|
 | `SiloDeployer` (`is Script`) | The callable. `deploy(SiloParams)` runs the load-bearing 0–9 build order, builds the per-silo venue front (EE pool + resting `baseUsdcMarket` + per-silo `CREGatingHook` + `EulerVenueAdapter`), composes the reservoir/warehouse/junior sub-deployers, runs the fail-closed post-asserts, and returns a `Silo` handle. `is Script` (not a plain factory) because it calls `JuniorTrancheDeployer.computeMainSafe`, a `vm`-using view. |
 | `ReservoirMarketDeployer` (CTR-06a) | Builds this silo's reservoir escrow/borrow vaults (governor = Timelock). |
-| `CreditWarehouseDeployer` (8-Bw) | Builds this silo's senior warehouse `{Safe, Roles, WarehouseAdminModule}`; `repaySink` = the SHARED queue. |
+| `CreditWarehouseDeployer` (8-Bw) | Builds this silo's senior warehouse `{Safe, Roles, WarehouseAdminModule}`; `redemptionBox` = the SHARED queue. |
 | `JuniorTrancheDeployer` (CTR-06b) | Builds this silo's junior tranche (Baal substrate + NAV + ExitGate/SzipUSD + deposit module + 8 engine modules + loss side). |
 | `CREGatingHook` (per-silo) | A fresh hook per silo, `borrowDriver` → THIS silo's adapter, owner → Timelock. |
 | `EulerVenueAdapter` (per-silo) | The 1:1-with-the-pool venue adapter (10-arg ctor); also the registry `curator`/`venueOf`. |
 | `IFreeze`/`IEscrow`/`INavWriter`/`IAdapter` (local interfaces) | The getters the step-8 `addSilo` 6-clause pre-flight dereferences (mirror `SiloRegistry.sol`'s). |
 
 ## Wiring — internal (the build model, steps 0–9)
-- **0. Precompute the junior mainSafe (breaks the reservoir↔junior circular dependency — load-bearing).** The reservoir
-  market needs `engineSafe` = the junior `mainSafe` (the `ReservoirBorrowGuard` pins `OP_BORROW` to it, IMMUTABLE), but
+- **0. Precompute the junior juniorTrancheSafe (breaks the reservoir↔junior circular dependency — load-bearing).** The reservoir
+  market needs `juniorTrancheEngine` = the junior `juniorTrancheSafe` (the `ReservoirBorrowGuard` pins `OP_BORROW` to it, IMMUTABLE), but
   `JuniorTrancheDeployer.deploy` is monolithic — it self-summons its Baal internally AND consumes the reservoir's
   `escrowVault`/`borrowVault` as inputs. Resolved WITHOUT a CTR-06b change: instantiate `jr = new JuniorTrancheDeployer()`
-  once, precompute `engineSafe = jr.computeMainSafe(p.saltNonce)`. `computeMainSafe` (`SummonSubstrate.s.sol:110-118`) is
+  once, precompute `juniorTrancheEngine = jr.computeMainSafe(p.saltNonce)`. `computeMainSafe` (`SummonSubstrate.s.sol:110-118`) is
   a pure function of `saltNonce` + the live Safe factory/singleton — caller-independent — so the precompute EQUALS the
-  `mainSafe` `jr.deploy(...)` later summons (CTR-06b's `MainSafeMismatch` assert `:91` guarantees it). The SAME `jr`
+  `juniorTrancheSafe` `jr.deploy(...)` later summons (CTR-06b's `MainSafeMismatch` assert `:91` guarantees it). The SAME `jr`
   instance is reused in step 7 so the salt + summon match.
 - **1. EE pool** — `_createEePool(p)`, a `virtual internal` D3 seam. Base impl: the live-factory `.call`
   (`createEulerEarn(p.timelock, 0, p.usdc, p.eeName, p.eeSymbol, bytes32(p.saltNonce))`, `DeployLocal.s.sol:115-122`).
@@ -40,7 +40,7 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
   test overrides it to return a `MockEulerEarn`.
 - **2. Resting `baseUsdcMarket`** — SiloDeployer CREATES it (bare EVK proxy `createProxy(0,false,(usdc,0,0))` +
   `setHookConfig(0,0)`; `DeployLocal.s.sol:108-112`). NOT an input.
-- **3. Reservoir market** — `new ReservoirMarketDeployer().deploy(Params{... engineSafe, lpOracle, governor=timelock ...})`.
+- **3. Reservoir market** — `new ReservoirMarketDeployer().deploy(Params{... juniorTrancheEngine, lpOracle, governor=timelock ...})`.
   `lpOracle` is a built-and-SEEDED INPUT (`setLTV`'s `getQuote` reverts without a resolvable LP mark, and the mark is a
   CRE/forwarder push the deployer cannot make).
 - **4. EE admin config** (low-level `_eeCall`/`abi.encodeWithSignature` — the EE admin ABI is NOT compiled in): split —
@@ -52,10 +52,10 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
   eePool, factory, oracleRegistry, hook, lineIrm, usdc, erebor, baseUsdcMarket)` → `hook.setBorrowDriver(adapter)` →
   `hook.transferOwnership(timelock)`.
 - **6. Warehouse** — `new CreditWarehouseDeployer().deploy(godOwner, receiverAdmin, eePool, usdc, forwarder,
-  repaySink=SHARED queue, saltNonce)` (Safe/Roles → `godOwner`; the CRE warehouse admin adapter → `receiverAdmin`).
+  redemptionBox=SHARED queue, saltNonce)` (Safe/Roles → `godOwner`; the CRE warehouse admin adapter → `receiverAdmin`).
 - **7. Junior tranche** — `jr.deploy(JuniorParams{... eePool, warehouseSafe, escrowVault, borrowVault, shared
   zipUSD/rateOracle/POL, NAV-leg tokens ...})` (all 25 fields threaded from `SiloParams`).
-- **8. Fail-closed post-asserts** — §2 non-commingling (`repaySink != mainSafe`, `warehouseSafe != mainSafe/sidecar` —
+- **8. Fail-closed post-asserts** — §2 non-commingling (`redemptionBox != juniorTrancheSafe`, `warehouseSafe != juniorTrancheSafe/juniorTrancheSidecar` —
   deployer-added; `addSilo` does NOT enforce these), reservoir borrow-vault `governorAdmin() == timelock` (CTR-06a),
   and the `addSilo` 6-clause pre-flight (so the Timelock `addSilo` can't revert `SiloMiswired`).
 - **9. Return** the `Silo` handle (first 9 fields → `SiloConfig`; trailing `depositModule`/`warehouseRoles`/`hook` for
@@ -63,7 +63,7 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
 
 ## Wiring — cross-component (who points at whom)
 - **→ shared hub (inputs, never built/re-pointed here):** `timelock`, `controller`, `oracleRegistry`, `zipUSD`,
-  `rateOracle`, `repaySink` (the ONE shared `ZipRedemptionQueue` — every silo's warehouse funds it; D5/§6), `erebor`,
+  `rateOracle`, `redemptionBox` (the ONE shared `ZipRedemptionQueue` — every silo's warehouse funds it; D5/§6), `erebor`,
   `forwarder`, `polIchiVault`/`polGauge`, `EVC`/`EVAULT_FACTORY`.
 - **← the Timelock D2 runbook** consumes the returned handle: (1) `zipUSD.setCapacity(silo.depositModule, max)`,
   (2) `siloRegistry.addSilo(siloId, SiloConfig{handle})`, (3) `siloRegistry.setCurrentSilo(siloId)`.

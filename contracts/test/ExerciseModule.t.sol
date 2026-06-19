@@ -211,7 +211,7 @@ contract ExerciseModuleUnitTest is Test {
     function test_setUp_wires_storage() public view {
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
-        assertEq(m.engineSafe(), address(safe));
+        assertEq(m.juniorTrancheEngine(), address(safe));
         assertEq(m.avatar(), address(safe));
         assertEq(m.target(), address(safe));
         assertEq(m.oHYDX(), address(oToken));
@@ -249,7 +249,7 @@ contract ExerciseModuleUnitTest is Test {
 
     function test_setUp_rejects_zero_in_each_of_four() public {
         _expectZero(abi.encode(address(0), address(safe), operator, address(oToken))); // owner
-        _expectZero(abi.encode(owner, address(0), operator, address(oToken))); // engineSafe
+        _expectZero(abi.encode(owner, address(0), operator, address(oToken))); // juniorTrancheEngine
         _expectZero(abi.encode(owner, address(safe), address(0), address(oToken))); // operator
         _expectZero(abi.encode(owner, address(safe), operator, address(0))); // oHYDX
     }
@@ -286,7 +286,7 @@ contract ExerciseModuleUnitTest is Test {
     function test_mastercopy_inert() public {
         ExerciseModule mc = _cloneExerciseModule();
         assertEq(mc.operator(), address(0));
-        assertEq(mc.engineSafe(), address(0));
+        assertEq(mc.juniorTrancheEngine(), address(0));
         assertEq(mc.oHYDX(), address(0));
         assertEq(mc.paymentToken(), address(0));
         vm.prank(operator);
@@ -329,7 +329,7 @@ contract ExerciseModuleUnitTest is Test {
         assertEq(safe.callCount(), 3, "exercise = 3 execs");
         // (1) approve(oHYDX, maxPayment)
         _assertCall(0, address(usdc), abi.encodeWithSelector(IERC20.approve.selector, address(oToken), maxPayment));
-        // (2) exercise(amount, maxPayment, engineSafe, deadline)
+        // (2) exercise(amount, maxPayment, juniorTrancheEngine, deadline)
         _assertCall(
             1, address(oToken), abi.encodeCall(IOptionToken.exercise, (amount, maxPayment, address(safe), deadline))
         );
@@ -342,7 +342,7 @@ contract ExerciseModuleUnitTest is Test {
             abi.decode(_slice(data, 4), (uint256, uint256, address, uint256));
         assertEq(a, amount, "amount arg");
         assertEq(mp, maxPayment, "maxPayment arg");
-        assertEq(recipient, address(safe), "exercise recipient == engineSafe");
+        assertEq(recipient, address(safe), "exercise recipient == juniorTrancheEngine");
         assertEq(dl, deadline, "deadline arg");
 
         // decode the reset-approve args (spender == oHYDX, amount == 0).
@@ -432,7 +432,7 @@ contract ExerciseModuleUnitTest is Test {
         assertEq(ret, payment, "return == paymentReturn");
         assertEq(lusdc.allowance(address(lsafe), address(lo)), 0, "residual allowance reset to 0");
         assertEq(balBefore - lusdc.balanceOf(address(lsafe)), payment, "exactly paymentAmount USDC pulled");
-        assertEq(lo.lastRecipient(), address(lsafe), "recipient pinned to engineSafe on the live path");
+        assertEq(lo.lastRecipient(), address(lsafe), "recipient pinned to juniorTrancheEngine on the live path");
     }
 
     // ----------------------------------------------------------------- view (quoteStrike = max)
@@ -516,29 +516,29 @@ contract ExerciseModuleForkTest is ForkConfig, SummonSubstrate {
         _selectBaseFork();
     }
 
-    function _summonAndEnable(ExerciseModule m) internal returns (address mainSafe) {
+    function _summonAndEnable(ExerciseModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
-        mainSafe = s.mainSafe;
+        juniorTrancheSafe = s.juniorTrancheSafe;
         bytes memory enableMod = abi.encodeWithSelector(ISafe.enableModule.selector, address(m));
         bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(team))), bytes32(0), uint8(1));
         vm.prank(team);
-        ISafe(mainSafe).execTransaction(mainSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
+        ISafe(juniorTrancheSafe).execTransaction(juniorTrancheSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
-    function _deploy() internal returns (ExerciseModule m, address engineSafe) {
+    function _deploy() internal returns (ExerciseModule m, address juniorTrancheEngine) {
         m = _cloneExerciseModule();
-        engineSafe = _summonAndEnable(m);
-        m.setUp(abi.encode(owner, engineSafe, operator, BaseAddresses.OHYDX));
+        juniorTrancheEngine = _summonAndEnable(m);
+        m.setUp(abi.encode(owner, juniorTrancheEngine, operator, BaseAddresses.OHYDX));
     }
 
-    function _fundOHYDX(address engineSafe, uint256 amount) internal {
-        try this.tryDeal(BaseAddresses.OHYDX, engineSafe, amount) {
-            if (IERC20(BaseAddresses.OHYDX).balanceOf(engineSafe) >= amount) return;
+    function _fundOHYDX(address juniorTrancheEngine, uint256 amount) internal {
+        try this.tryDeal(BaseAddresses.OHYDX, juniorTrancheEngine, amount) {
+            if (IERC20(BaseAddresses.OHYDX).balanceOf(juniorTrancheEngine) >= amount) return;
         } catch {}
         vm.prank(OHYDX_WHALE);
-        IERC20(BaseAddresses.OHYDX).transfer(engineSafe, amount);
+        IERC20(BaseAddresses.OHYDX).transfer(juniorTrancheEngine, amount);
     }
 
     function tryDeal(address token, address to, uint256 amount) external {
@@ -569,17 +569,17 @@ contract ExerciseModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- real exercise (the model)
 
     function test_fork_real_exercise() public {
-        (ExerciseModule m, address engineSafe) = _deploy();
+        (ExerciseModule m, address juniorTrancheEngine) = _deploy();
 
         uint256 amount = 10e18;
-        _fundOHYDX(engineSafe, amount);
+        _fundOHYDX(juniorTrancheEngine, amount);
         uint256 quoteBefore = m.quoteStrike(amount); // read in the SAME block as the exercise below (no warp between)
         uint256 maxPayment = quoteBefore * 2; // generous cushion (8-B11 sizes it tight in prod)
-        deal(BaseAddresses.USDC, engineSafe, maxPayment * 2); // ample USDC for the strike
+        deal(BaseAddresses.USDC, juniorTrancheEngine, maxPayment * 2); // ample USDC for the strike
 
-        uint256 oBefore = IERC20(BaseAddresses.OHYDX).balanceOf(engineSafe);
-        uint256 uBefore = IERC20(BaseAddresses.USDC).balanceOf(engineSafe);
-        uint256 hBefore = IERC20(BaseAddresses.HYDX).balanceOf(engineSafe);
+        uint256 oBefore = IERC20(BaseAddresses.OHYDX).balanceOf(juniorTrancheEngine);
+        uint256 uBefore = IERC20(BaseAddresses.USDC).balanceOf(juniorTrancheEngine);
+        uint256 hBefore = IERC20(BaseAddresses.HYDX).balanceOf(juniorTrancheEngine);
 
         vm.recordLogs();
         vm.prank(operator);
@@ -589,10 +589,10 @@ contract ExerciseModuleForkTest is ForkConfig, SummonSubstrate {
         assertLe(paymentAmount, maxPayment, "paymentAmount <= maxPayment");
         // EVIDENCE for the self-quote question: does the view == the actual same-block charge?
         assertEq(paymentAmount, quoteBefore, "exercise charges exactly quoteStrike read in the same block");
-        assertEq(oBefore - IERC20(BaseAddresses.OHYDX).balanceOf(engineSafe), amount, "exactly `amount` oHYDX burned");
-        assertEq(uBefore - IERC20(BaseAddresses.USDC).balanceOf(engineSafe), paymentAmount, "exactly paymentAmount USDC paid");
-        assertGt(IERC20(BaseAddresses.HYDX).balanceOf(engineSafe), hBefore, "HYDX minted to the Safe");
-        assertEq(IERC20(BaseAddresses.USDC).allowance(engineSafe, BaseAddresses.OHYDX), 0, "approval reset to 0 (no standing approval)");
+        assertEq(oBefore - IERC20(BaseAddresses.OHYDX).balanceOf(juniorTrancheEngine), amount, "exactly `amount` oHYDX burned");
+        assertEq(uBefore - IERC20(BaseAddresses.USDC).balanceOf(juniorTrancheEngine), paymentAmount, "exactly paymentAmount USDC paid");
+        assertGt(IERC20(BaseAddresses.HYDX).balanceOf(juniorTrancheEngine), hBefore, "HYDX minted to the Safe");
+        assertEq(IERC20(BaseAddresses.USDC).allowance(juniorTrancheEngine, BaseAddresses.OHYDX), 0, "approval reset to 0 (no standing approval)");
 
         // the Exercised event fired with the returned paymentAmount.
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -611,15 +611,15 @@ contract ExerciseModuleForkTest is ForkConfig, SummonSubstrate {
     // ----------------------------------------------------------------- maxPayment-too-low / deadline reverts
 
     function test_fork_maxPayment_too_low_reverts_state_unchanged() public {
-        (ExerciseModule m, address engineSafe) = _deploy();
+        (ExerciseModule m, address juniorTrancheEngine) = _deploy();
         uint256 amount = 10e18;
-        _fundOHYDX(engineSafe, amount);
-        deal(BaseAddresses.USDC, engineSafe, 1e6);
+        _fundOHYDX(juniorTrancheEngine, amount);
+        deal(BaseAddresses.USDC, juniorTrancheEngine, 1e6);
 
         IERC20 oToken = IERC20(BaseAddresses.OHYDX);
         IERC20 hydx = IERC20(BaseAddresses.HYDX);
-        uint256 oBefore = oToken.balanceOf(engineSafe);
-        uint256 hBefore = hydx.balanceOf(engineSafe);
+        uint256 oBefore = oToken.balanceOf(juniorTrancheEngine);
+        uint256 hBefore = hydx.balanceOf(juniorTrancheEngine);
 
         // maxPayment = 1 (far below the real strike) -> the oHYDX slippage guard reverts, bubbled through _exec.
         vm.prank(operator);
@@ -627,17 +627,17 @@ contract ExerciseModuleForkTest is ForkConfig, SummonSubstrate {
         m.exercise(amount, 1, block.timestamp + 1 hours);
 
         // the atomic revert rolled back exec #1's approve -> no dangling approval, no partial burn/mint.
-        assertEq(IERC20(BaseAddresses.USDC).allowance(engineSafe, BaseAddresses.OHYDX), 0, "no dangling approval");
-        assertEq(oToken.balanceOf(engineSafe), oBefore, "no oHYDX burned");
-        assertEq(hydx.balanceOf(engineSafe), hBefore, "no HYDX minted");
+        assertEq(IERC20(BaseAddresses.USDC).allowance(juniorTrancheEngine, BaseAddresses.OHYDX), 0, "no dangling approval");
+        assertEq(oToken.balanceOf(juniorTrancheEngine), oBefore, "no oHYDX burned");
+        assertEq(hydx.balanceOf(juniorTrancheEngine), hBefore, "no HYDX minted");
     }
 
     function test_fork_past_deadline_reverts() public {
-        (ExerciseModule m, address engineSafe) = _deploy();
+        (ExerciseModule m, address juniorTrancheEngine) = _deploy();
         uint256 amount = 10e18;
-        _fundOHYDX(engineSafe, amount);
+        _fundOHYDX(juniorTrancheEngine, amount);
         uint256 maxPayment = m.quoteStrike(amount) * 2;
-        deal(BaseAddresses.USDC, engineSafe, maxPayment * 2);
+        deal(BaseAddresses.USDC, juniorTrancheEngine, maxPayment * 2);
 
         vm.warp(block.timestamp + 100);
         vm.prank(operator);
