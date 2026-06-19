@@ -51,6 +51,17 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     address public erebor;
     /// @notice The no-borrow base USDC market at the EE supply-queue head that `fund` withdraws from.
     address public baseUsdcMarket;
+    /// @notice The reservoir USDC borrow vault (`ReservoirMarketDeployer.deploy`'s `borrowVault`) — an enabled,
+    ///         NON-supply-queue EE market (acceptCap'd at deploy). `fundReservoir`/`defundReservoir` reallocate
+    ///         resting USDC in/out of it just-in-time so it holds ≈0 at rest (§4.5.1 reservoir loop).
+    address public reservoirVault;
+    /// @notice The sole authority that may call `fundReservoir`/`defundReservoir`. Two-key separation (§4.5.1, do-NOT):
+    ///         this MUST be set to an identity DISTINCT from the `ReservoirLoopModule.operator` that drives
+    ///         `borrow`/`repay`, so funding the reservoir and borrowing from it require different keys (draining idle
+    ///         USDC needs BOTH). The distinctness is a DEPLOY invariant — there is no on-chain handle on the loop
+    ///         module to assert it, so the gate proof is that the loop `operator` key (lacking this role) reverts
+    ///         `NotReservoirAllocator`.
+    address public reservoirAllocator;
 
     /// @notice Per-line record. `lineRef` = the borrow vault address.
     struct Line {
@@ -78,6 +89,8 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     /// @notice `openLine` aborts early: the EE pool's timelock is non-zero, so the same-tx `submitCap`+`acceptCap`
     ///         onboarding (`afterTimelock`) would revert mid-origination — fail loud BEFORE any line state is built.
     error EulerEarnTimelockNonZero();
+    /// @notice `fundReservoir`/`defundReservoir` caller is not the wired `reservoirAllocator` (two-key separation).
+    error NotReservoirAllocator();
 
     // ----- events -----
     /// @notice Emitted when an owner (Timelock) re-points a wiring slot (build phase, §17).
@@ -85,6 +98,14 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
 
     modifier onlyController() {
         if (msg.sender != controller) revert NotController();
+        _;
+    }
+
+    /// @notice Gate for the reservoir fund/defund path. The `reservoirAllocator` is a DISTINCT key from the
+    ///         `ReservoirLoopModule.operator` (two-key separation, §4.5.1) — funding the reservoir and borrowing from
+    ///         it require different identities.
+    modifier onlyReservoirAllocator() {
+        if (msg.sender != reservoirAllocator) revert NotReservoirAllocator();
         _;
     }
 
@@ -182,6 +203,22 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         if (baseUsdcMarket_ == address(0)) revert ZeroAddress();
         baseUsdcMarket = baseUsdcMarket_;
         emit WiringSet("baseUsdcMarket", baseUsdcMarket_);
+    }
+
+    /// @notice Re-point `reservoirVault` (build phase, §17). onlyOwner (Timelock). The reservoir borrow vault the
+    ///         JIT fund/defund path moves resting USDC in/out of.
+    function setReservoirVault(address reservoirVault_) external onlyOwner {
+        if (reservoirVault_ == address(0)) revert ZeroAddress();
+        reservoirVault = reservoirVault_;
+        emit WiringSet("reservoirVault", reservoirVault_);
+    }
+
+    /// @notice Re-point `reservoirAllocator` (build phase, §17). onlyOwner (Timelock). DEPLOY INVARIANT: set this to
+    ///         an identity DISTINCT from the `ReservoirLoopModule.operator` (two-key separation, §4.5.1).
+    function setReservoirAllocator(address reservoirAllocator_) external onlyOwner {
+        if (reservoirAllocator_ == address(0)) revert ZeroAddress();
+        reservoirAllocator = reservoirAllocator_;
+        emit WiringSet("reservoirAllocator", reservoirAllocator_);
     }
 
     /// @notice Struct getter (a public mapping of a struct returns a tuple, not the struct).
@@ -458,6 +495,44 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
 
         L.open = false; // keep the record readable so post-close observeDebt == 0 stays queryable
         emit LineClosed(lineRef);
+    }
+
+    // --- reservoir JIT fund/defund (adapter-LOCAL; NOT on IZipcodeVenue — the venue interface stays line-only) ---
+
+    /// @notice Move `amount` resting USDC into the reservoir borrow vault so a junior strike-financing harvest has
+    ///         lendable cash (§4.5.1). The reservoir holds ≈0 at rest; the CRE calls this JUST-IN-TIME pre-borrow,
+    ///         then `defundReservoir` re-absorbs it after the junior repays — so idle USDC is never standing-borrowable
+    ///         (the rejected "combined" topology) and senior-redemption liquidity stays in the no-borrow resting market.
+    ///         Mirrors `fund` exactly: an ABSOLUTE-target, zero-sum two-item reallocate sized off the EE's TRACKED
+    ///         supplied position (`_eeSupplyAssets` = `previewRedeem(config.balance)`, security L9/SEC-11) — NOT
+    ///         `convertToAssets(balanceOf(EE))`, which a direct share donation skews into `InconsistentReallocation`.
+    ///         Withdraw `amount` from baseUsdcMarket, supply it to the reservoir vault (withdraw leg first, so the
+    ///         single in-order reallocate pass has cash before it deposits). `onlyReservoirAllocator` — a DISTINCT key
+    ///         from the `ReservoirLoopModule.operator` (two-key separation): both are needed to move idle USDC out.
+    function fundReservoir(uint256 amount) external onlyReservoirAllocator {
+        uint256 base = _eeSupplyAssets(baseUsdcMarket);
+        uint256 res = _eeSupplyAssets(reservoirVault);
+
+        MarketAllocation[] memory allocs = new MarketAllocation[](2);
+        allocs[0] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: base - amount});
+        allocs[1] = MarketAllocation({id: IOZERC4626(reservoirVault), assets: res + amount});
+        eulerEarn.reallocate(allocs);
+    }
+
+    /// @notice The inverse of `fundReservoir`: re-absorb `amount` USDC from the reservoir vault back to the resting
+    ///         market after the junior repays, restoring resting liquidity and returning the reservoir to ≈0 at rest
+    ///         (§4.5.1). Sized off `_eeSupplyAssets` like `closeLine`'s defund (donation-immune). Withdraw the reservoir
+    ///         leg first, then supply to base. A `defundReservoir` issued while the reservoir's cash is still borrowed
+    ///         out (no repay yet) REVERTS — the EVK withdraw leg has no cash (`E_InsufficientCash`); this is the
+    ///         JIT/redemption-isolation discipline, NOT a silent under-defund. `onlyReservoirAllocator`.
+    function defundReservoir(uint256 amount) external onlyReservoirAllocator {
+        uint256 res = _eeSupplyAssets(reservoirVault);
+        uint256 base = _eeSupplyAssets(baseUsdcMarket);
+
+        MarketAllocation[] memory allocs = new MarketAllocation[](2);
+        allocs[0] = MarketAllocation({id: IOZERC4626(reservoirVault), assets: res - amount});
+        allocs[1] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: base + amount});
+        eulerEarn.reallocate(allocs);
     }
 
     /// @inheritdoc IZipcodeVenue

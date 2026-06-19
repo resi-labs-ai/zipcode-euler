@@ -12,10 +12,14 @@ import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
 import {ReservoirBorrowGuard} from "../src/supply/szipUSD/ReservoirBorrowGuard.sol";
 import {ReservoirMarketDeployer} from "../script/ReservoirMarketDeployer.sol";
 
+import {EulerVenueAdapter} from "../src/venue/EulerVenueAdapter.sol";
+
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault, IBorrowing} from "evk/EVault/IEVault.sol";
 import {EulerRouter} from "euler-price-oracle/EulerRouter.sol";
 import {IEVC} from "evc/interfaces/IEthereumVaultConnector.sol";
+import {IEulerEarn, MarketAllocation} from "euler-earn/interfaces/IEulerEarn.sol";
+import {IERC4626 as IOZERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Errors as PriceErrors} from "euler-price-oracle/lib/Errors.sol";
 import {Errors as EvkErrors} from "evk/EVault/shared/Errors.sol";
@@ -140,6 +144,288 @@ contract ZeroIRM {
     }
 }
 
+/// @notice A recording IEulerEarn mock — only the surface the adapter touches. EulerEarn pins solc 0.8.26 so it
+///         cannot be `new`-ed under 0.8.24; the adapter imports only the interface, so a focused recording mock
+///         suffices for the unit/fork test (the live EE path is the audit S9/L4 integration). Ported verbatim from
+///         `EulerVenueAdapter.t.sol` so CTR-07's reservoir fund/defund reallocate runs against the same faithful EE.
+contract MockEulerEarn {
+    // Mirror the real EulerEarn supply-queue cap so the H2 brick (SEC-06) is reproducible at the unit level.
+    uint256 internal constant MAX_QUEUE_LENGTH = 30; // ConstantsLib.MAX_QUEUE_LENGTH
+
+    error MaxQueueLengthExceeded();
+    /// @dev Mirrors EulerEarn's `afterTimelock` (reference EulerEarn.sol:185-189,507): a same-tx `acceptCap` after a
+    ///      `submitCap` that set `validAt = now + timelock` reverts while `timelock != 0`. SEC-08's openLine precheck
+    ///      fires BEFORE this — so without the fix, openLine builds all line proxies, THEN reverts here (orphaned).
+    error TimelockNotElapsed();
+    /// @dev Mirrors EulerEarn.reallocate's terminal invariant (reference EulerEarn.sol:441): the zero-sum check
+    ///      `if (totalWithdrawn != totalSupplied) revert InconsistentReallocation()`. This is the exact revert
+    ///      the L9/SEC-11 donation grief triggers when `fund` sizes targets off the donation-skewed live balance
+    ///      while reallocate measures positions off the unskewed TRACKED `config.balance`.
+    error InconsistentReallocation();
+    /// @dev Mirrors EulerEarn.reallocate's per-market gate (reference EulerEarn.sol:390).
+    error MarketNotEnabled(address id);
+    /// @dev Mirrors EulerEarn.updateWithdrawQueue's removal guard (reference EulerEarn.sol:362): a market whose cap is
+    ///      not yet zeroed cannot be removed from the withdraw queue. CTR-04's closeLine zeroes the cap (submitCap 0)
+    ///      BEFORE the prune, so it never trips; a removal without the cap-zero would.
+    error InvalidMarketRemovalNonZeroCap(address id);
+    /// @dev Mirrors EulerEarn.updateWithdrawQueue's removal guard (reference EulerEarn.sol:366): a non-empty market
+    ///      can only be removed after its removableAt timelock elapses. closeLine defunds to zero first, so the
+    ///      removed market is empty and this never bites; modeled for faithfulness.
+    error InvalidMarketRemovalNonZeroSupply(address id);
+
+    /// @notice The pool asset (USDC) the mock moves between markets during a faithful reallocate.
+    address public immutable asset;
+
+    // ----- EE-tracked per-market config (security L9/SEC-11) -----
+    // The crux of the donation bug: EE tracks each market's supplied SHARE balance INTERNALLY (`config.balance`),
+    // updated ONLY through the deposits/redeems EE itself performs. A direct share transfer into the pool inflates
+    // the market vault's live `balanceOf(EE)` but NOT this tracked balance (reference IEulerEarn.sol:69,73 "ignores
+    // direct shares transfer"). reallocate measures every position as `previewRedeem(config.balance)` — NOT
+    // `convertToAssets(balanceOf)` — so a target sized off the live balance diverges from EE's own accounting and
+    // breaks the zero-sum check. This mock mirrors that: `cfgBalance` is bumped only inside `reallocate`/`seedConfig`.
+    mapping(address => uint112) public cfgBalance; // EE-tracked share balance per market
+    mapping(address => bool) public cfgEnabled; // a market is reallocate-eligible once its cap is accepted
+    // CTR-04: per-market cap (reference _setCap :801 sets `marketConfig.cap = supplyCap`). openLine submits
+    // type(uint136).max so a line's cap is max until closeLine's submitCap(0). A cap DECREASE (incl. ->0) applies
+    // immediately (reference :298-299 / _setCap decrease branch). The withdraw-queue removal guard (reference :362)
+    // requires this to be 0 before a market drops. NOT the hardcoded max the old config() returned.
+    mapping(address => uint136) public cfgCap;
+
+    /// @notice The EE pool timelock (SEC-08). Default 0 (immediate cap config); a test raises it as the EE owner.
+    uint256 public timelock;
+    /// @notice The EE pool's factory (SEC-08); `SzipPerspectiveProbe` reaches it via `creator()` to gate the probe.
+    address public creator;
+
+    address[] public submittedCaps;
+    address[] public acceptedCaps;
+    IOZERC4626[] internal _queue;
+    // CTR-04: the WITHDRAW queue — the array whose hard MAX_QUEUE_LENGTH cap (reference _setCap :785) actually
+    // bricks origination. Independent of the supply queue (`_queue`). Pushed once on a market's first enable, and
+    // pruned by updateWithdrawQueue on closeLine.
+    IOZERC4626[] internal _withdrawQueue;
+
+    // last-reallocate recording
+    address[] public lastReallocIds;
+    uint256[] public lastReallocAssets;
+    uint256 public reallocCount;
+
+    constructor(address asset_) {
+        asset = asset_;
+    }
+
+    function submitCap(IOZERC4626 id, uint256 cap) external {
+        submittedCaps.push(address(id));
+        // CTR-04: record the per-market cap. A decrease (incl. ->0, closeLine's revoke) is IMMEDIATE — matching
+        // _setCap's decrease branch (reference :298-299,801), no timelock. openLine submits type(uint136).max so a
+        // line's cap reads max until close. The withdraw-queue removal guard reads this (must be 0 to remove).
+        cfgCap[address(id)] = uint136(cap);
+    }
+
+    function acceptCap(IOZERC4626 id) external {
+        if (timelock != 0) revert TimelockNotElapsed(); // faithful afterTimelock: same-tx accept fails while > 0
+        acceptedCaps.push(address(id));
+        _enableMarket(address(id)); // faithful: accepting a cap enables the market + pushes the withdraw-queue slot
+    }
+
+    /// @dev CTR-04: faithful first-enable path (reference _setCap :782-794). Called by BOTH acceptCap (the line
+    ///      onboarding path) and the base/reservoir seedConfig enable path. On a market's FIRST enable it pushes the
+    ///      market onto the WITHDRAW queue and enforces the hard MAX_QUEUE_LENGTH (30) cap (reference :783-785) — the
+    ///      BINDING cap that bricks the ~29th lifetime openLine absent CTR-04's reclaim. Guarded against double-push
+    ///      (an already-enabled market re-onboarded does not re-push), like _setCap's `if (!marketConfig.enabled)`.
+    function _enableMarket(address id) internal {
+        if (cfgEnabled[id]) return; // already enabled -> no re-push (reference _setCap :782 guard)
+        _withdrawQueue.push(IOZERC4626(id));
+        if (_withdrawQueue.length > MAX_QUEUE_LENGTH) revert MaxQueueLengthExceeded(); // reference :785
+        cfgEnabled[id] = true;
+    }
+
+    /// @dev The EE-tracked config getter the L9/SEC-11 `_eeSupplyAssets` helper reads. ABI-identical to the real
+    ///      `IEulerEarn.config(IERC4626)` (struct `MarketConfig memory` — encodes the same as this 4-tuple).
+    ///      CTR-04: `cap` now reports the TRACKED per-market cap (max for an open line, 0 after closeLine's
+    ///      submitCap(0)) rather than a hardcoded max — the withdraw-queue removal guard reads it. `removableAt`
+    ///      stays 0 (no per-market timelock in the mock); `.balance`/`.enabled` remain load-bearing as before.
+    function config(IOZERC4626 id) external view returns (uint112 balance, uint136 cap, bool enabled, uint64 removableAt) {
+        return (cfgBalance[address(id)], cfgCap[address(id)], cfgEnabled[address(id)], 0);
+    }
+
+    /// @dev Test helper: seed the EE-tracked position for a market the test funded DIRECTLY (bypassing reallocate,
+    ///      e.g. `_fundBaseMarket`/`_supplyToLine`). Records `shares` as legitimately-tracked supply + enables the
+    ///      market. A donation, by contrast, transfers shares to the EE address WITHOUT calling this — so
+    ///      `balanceOf(EE) > cfgBalance`, which is exactly the L9 skew.
+    function seedConfig(address market, uint256 shares) external {
+        cfgBalance[market] += uint112(shares);
+        // CTR-04: the base/reservoir enable path also takes a withdraw-queue slot on first enable (faithful to
+        // _setCap's first-enable push), via the SAME guarded helper acceptCap uses — so re-seeding an already-enabled
+        // market does not re-push, and a freshly-seeded base market occupies one slot exactly like the real EE.
+        _enableMarket(market);
+    }
+
+    /// @dev SEC-08 test hook: the external EE owner raises the timelock post-deploy.
+    function setTimelock(uint256 t) external {
+        timelock = t;
+    }
+
+    /// @dev SEC-08 test hook: point the probe at a given factory (the live EE factory, or a mock that rejects).
+    function setCreator(address c) external {
+        creator = c;
+    }
+
+    function setSupplyQueue(IOZERC4626[] calldata q) external {
+        // Faithful to EulerEarn.setSupplyQueue (reference :328): reject a queue past the hard cap. This is the
+        // exact revert SEC-06's prune prevents — without the prune the queue grows unboundedly to this bound.
+        if (q.length > MAX_QUEUE_LENGTH) revert MaxQueueLengthExceeded();
+        delete _queue;
+        for (uint256 i; i < q.length; ++i) {
+            _queue.push(q[i]);
+        }
+    }
+
+    /// @dev test helper: is `market` present in the current supply queue?
+    function queueContains(address market) external view returns (bool) {
+        for (uint256 i; i < _queue.length; ++i) {
+            if (address(_queue[i]) == market) return true;
+        }
+        return false;
+    }
+
+    function supplyQueueLength() external view returns (uint256) {
+        return _queue.length;
+    }
+
+    function supplyQueue(uint256 i) external view returns (IOZERC4626) {
+        return _queue[i];
+    }
+
+    // ----- CTR-04: withdraw-queue surface (the BINDING queue) -----
+
+    function withdrawQueueLength() external view returns (uint256) {
+        return _withdrawQueue.length;
+    }
+
+    function withdrawQueue(uint256 i) external view returns (IOZERC4626) {
+        return _withdrawQueue[i];
+    }
+
+    /// @dev test helper: is `market` present in the current withdraw queue?
+    function withdrawQueueContains(address market) external view returns (bool) {
+        for (uint256 i; i < _withdrawQueue.length; ++i) {
+            if (address(_withdrawQueue[i]) == market) return true;
+        }
+        return false;
+    }
+
+    /// @dev Faithful to EulerEarn.updateWithdrawQueue (reference EulerEarn.sol:340-380): KEEP-indexes semantics — the
+    ///      caller passes the indexes to retain; every current index NOT listed is removed. For each removed market the
+    ///      removal guards (reference :362-371) run: cap must be 0 (else InvalidMarketRemovalNonZeroCap), and a NON-empty
+    ///      market needs its removableAt timelock elapsed (the mock has no per-market removableAt, so a non-empty
+    ///      removal reverts InvalidMarketRemovalNonZeroSupply — closeLine defunds first, so the removed line is empty
+    ///      and removes freely). Removed markets have their config cleared (`delete config[id]` :373); the queue is
+    ///      rebuilt from the kept indexes. closeLine passes the surviving indexes by ADDRESS, dropping only lineRef.
+    function updateWithdrawQueue(uint256[] calldata indexes) external {
+        uint256 currLength = _withdrawQueue.length;
+        bool[] memory seen = new bool[](currLength);
+        IOZERC4626[] memory newQueue = new IOZERC4626[](indexes.length);
+
+        for (uint256 i; i < indexes.length; ++i) {
+            uint256 prevIndex = indexes[i]; // out-of-bounds reverts natively, like the reference
+            newQueue[i] = _withdrawQueue[prevIndex];
+            seen[prevIndex] = true;
+        }
+
+        for (uint256 i; i < currLength; ++i) {
+            if (!seen[i]) {
+                address id = address(_withdrawQueue[i]);
+                // reference :362 — a non-zeroed cap blocks removal (closeLine's submitCap(0) clears this).
+                if (cfgCap[id] != 0) revert InvalidMarketRemovalNonZeroCap(id);
+                // reference :365-366 — a non-empty market can only drop after its (here-absent) removableAt; closeLine
+                // defunds to zero first, so expectedSupplyAssets(id) == previewRedeem(0) == 0 and this is skipped.
+                if (expectedSupplyAssets(IOZERC4626(id)) != 0) revert InvalidMarketRemovalNonZeroSupply(id);
+                // reference :373 — clear the removed market's config.
+                cfgEnabled[id] = false;
+                cfgCap[id] = 0;
+                cfgBalance[id] = 0;
+            }
+        }
+
+        delete _withdrawQueue;
+        for (uint256 i; i < newQueue.length; ++i) {
+            _withdrawQueue.push(newQueue[i]);
+        }
+    }
+
+    /// @dev reference EulerEarn.sol:492 — expectedSupplyAssets(id) = previewRedeem(config.balance). Identical to the
+    ///      adapter's `_eeSupplyAssets`; the withdraw-queue removal guard sizes the empty-market check off it.
+    function expectedSupplyAssets(IOZERC4626 id) public view returns (uint256) {
+        return IEVault(address(id)).previewRedeem(cfgBalance[address(id)]);
+    }
+
+    /// @dev Faithful to EulerEarn.reallocate (reference EulerEarn.sol:383-442): ABSOLUTE-target, zero-sum, sized off
+    ///      the TRACKED `config.balance` (NOT live `balanceOf`). Single-pass in allocation order, mirroring the
+    ///      reference exactly so both the SEC-07 strand/reclaim AND the L9/SEC-11 donation-grief are reproducible:
+    ///      per market, `supplyAssets = previewRedeem(config.balance)`; if `target < supplyAssets` it withdraws the
+    ///      difference (or, when `target == 0`, redeems ALL tracked shares — the reference's :397-402
+    ///      "donations can be withdrawn" full-redeem branch); else it supplies `target - supplyAssets`; finally the
+    ///      `totalWithdrawn != totalSupplied -> InconsistentReallocation` invariant (reference :441). `cfgBalance`
+    ///      is updated on every move (reference :415,:431) so the tracked balance stays the source of truth — a
+    ///      direct share donation never touches it. Callers (`fund`, `closeLine` defund) order withdraw-before-supply
+    ///      so the single in-order pass has cash before it deposits. Real USDC moves between the real EVK vaults.
+    function reallocate(MarketAllocation[] calldata allocs) external {
+        delete lastReallocIds;
+        delete lastReallocAssets;
+        uint256 totalSupplied;
+        uint256 totalWithdrawn;
+        for (uint256 i; i < allocs.length; ++i) {
+            lastReallocIds.push(address(allocs[i].id));
+            lastReallocAssets.push(allocs[i].assets);
+            address id = address(allocs[i].id);
+            if (!cfgEnabled[id]) revert MarketNotEnabled(id);
+            IEVault v = IEVault(id);
+
+            uint256 supplyShares = cfgBalance[id];
+            uint256 supplyAssets = v.previewRedeem(supplyShares);
+            uint256 target = allocs[i].assets;
+            uint256 withdrawn = supplyAssets > target ? supplyAssets - target : 0;
+
+            if (withdrawn > 0) {
+                uint256 shares;
+                if (target == 0) {
+                    // reference :397-402: target 0 redeems ALL shares (sweeps any donation), withdrawn reset to 0.
+                    shares = supplyShares;
+                    withdrawn = 0;
+                }
+                uint256 withdrawnAssets;
+                uint256 withdrawnShares;
+                if (shares == 0) {
+                    withdrawnAssets = withdrawn;
+                    withdrawnShares = v.withdraw(withdrawn, address(this), address(this));
+                } else {
+                    withdrawnAssets = v.redeem(shares, address(this), address(this));
+                    withdrawnShares = shares;
+                }
+                cfgBalance[id] = uint112(supplyShares - withdrawnShares);
+                totalWithdrawn += withdrawnAssets;
+            } else {
+                uint256 suppliedAssets = target > supplyAssets ? target - supplyAssets : 0;
+                if (suppliedAssets == 0) continue;
+                IERC20(asset).approve(id, suppliedAssets);
+                uint256 suppliedShares = v.deposit(suppliedAssets, address(this));
+                cfgBalance[id] = uint112(supplyShares + suppliedShares);
+                totalSupplied += suppliedAssets;
+            }
+        }
+        if (totalWithdrawn != totalSupplied) revert InconsistentReallocation();
+        reallocCount++;
+    }
+
+    function submittedCapsLength() external view returns (uint256) {
+        return submittedCaps.length;
+    }
+
+    function lastReallocLength() external view returns (uint256) {
+        return lastReallocIds.length;
+    }
+}
+
 /// @notice A deployer harness that deliberately mis-wires the wire-check against the WRONG LP token, so the (W3)
 ///         WireMismatch invariant is reachable — model `MisWiringAdapter`.
 contract MisWiringDeployer is ReservoirMarketDeployer {
@@ -175,6 +461,8 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     address internal rando = makeAddr("rando");
     address internal team = makeAddr("teamMultisig");
     address internal supplier = makeAddr("usdcSupplier");
+    // CTR-07: the reservoir-fund allocator — a DISTINCT key from `operator` (two-key separation, §4.5.1).
+    address internal allocatorKey = makeAddr("reservoirAllocator");
 
     uint256 internal constant BORROW_CAP = 1_000_000e6; // 1,000,000 USDC aggregate cap
     uint256 internal constant VALIDITY = 1 days; // generous engine-cadence window
@@ -917,6 +1205,192 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m.setUp(abi.encode(owner, engineSafe, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
         _seedBorrowVault(bv, 500_000e6);
         lp.mint(engineSafe, 1000e18);
+    }
+
+    // =================================================================== CTR-07 reservoir fund/defund (fork)
+    // The EE side does NOT exist in the borrow-leg fixture above; CTR-07 layers it on. The reservoir vault `bv` is a
+    // real EVK USDC vault with an OP_BORROW-only hook (the deployer's `setHookConfig(guard, OP_BORROW)`), so the EE's
+    // reallocate deposit/withdraw legs into `bv` are UN-hooked and net — the load-bearing fund-path invariant.
+
+    /// @dev A live base USDC resting market (no-borrow holding vault) the reservoir funds OUT OF / re-absorbs INTO —
+    ///      ported verbatim from `EulerVenueAdapter.t.sol`. Set once by `_ee07Setup`.
+    address internal baseUsdcMarket;
+    MockEulerEarn internal ee;
+    EulerVenueAdapter internal adapter;
+
+    /// @dev Seed the EE mock's tracked position in the base resting market so `fundReservoir`'s `base - amount` has
+    ///      cash to withdraw — ported verbatim from `EulerVenueAdapter.t.sol:_fundBaseMarket`. Deposit as the EE, then
+    ///      record the minted shares as EE-tracked config.balance (security L9/SEC-11): a legitimate supply IS tracked
+    ///      (unlike a donation). Seeding the ACTUAL shares minted (not usdcAmount) keeps cfgBalance == balanceOf(EE).
+    function _fundBaseMarket(uint256 usdcAmount) internal {
+        deal(USDC, address(this), usdcAmount);
+        IERC20(USDC).approve(baseUsdcMarket, usdcAmount);
+        uint256 shares = IEVault(baseUsdcMarket).deposit(usdcAmount, address(ee));
+        ee.seedConfig(baseUsdcMarket, shares);
+    }
+
+    /// @dev Stand up the full CTR-07 fixture on top of the existing reservoir borrow leg: summon + enable the loop
+    ///      module, deploy the reservoir market, mint a fresh $1 LP mark, wire a real `EulerVenueAdapter` (line-side
+    ///      ctor args are real-but-unused placeholders — CTR-07 opens no lines), seed the base resting market, enable
+    ///      the reservoir vault on the EE mock at ZERO balance (submitCap+acceptCap — NOT seeded with shares, so it
+    ///      holds ≈0 at rest), and wire the reservoir vault + allocator (allocatorKey ≠ operator).
+    function _ee07Setup(uint256 baseUsdc)
+        internal
+        returns (ReservoirLoopModule m, address engineSafe, address ev, address bv, SzipReservoirLpOracle o)
+    {
+        m = _cloneReservoirLoopModule();
+        o = _deployOracle(address(lp));
+        engineSafe = _summonAndEnable(m);
+        _pushMark(o, 1e6); // $1/share, before the deployer's setLTV reads getQuote
+        address router;
+        (ev, bv, router) = _deployMarket(engineSafe, address(o), 0.7e4, 0.8e4);
+        router;
+        m.setUp(abi.encode(owner, engineSafe, operator, address(evc), bv, ev, address(lp), USDC, BORROW_CAP));
+        lp.mint(engineSafe, 1000e18);
+
+        // EE side: a fresh faithful mock + a live base resting market (no-borrow holding vault).
+        ee = new MockEulerEarn(USDC);
+        baseUsdcMarket = factory.createProxy(address(0), false, abi.encodePacked(USDC, address(0), address(0)));
+        IEVault(baseUsdcMarket).setHookConfig(address(0), 0);
+        IEVault(baseUsdcMarket).setGovernorAdmin(address(0));
+
+        // Real adapter (10-arg ctor; line-side args are real-but-unused placeholders). The test contract is the owner.
+        adapter = new EulerVenueAdapter(
+            address(this), // controller (unused by CTR-07)
+            address(evc),
+            address(ee),
+            address(factory),
+            address(0xDEAD), // oracleRegistry (unused)
+            address(0xBEEF), // gatingHook (unused)
+            address(irm),
+            USDC,
+            address(0xE6E6), // erebor (unused)
+            baseUsdcMarket
+        );
+
+        // Seed the EE supply queue with the base market ONLY (the reservoir vault stays a NON-supply-queue market).
+        IOZERC4626[] memory q = new IOZERC4626[](1);
+        q[0] = IOZERC4626(baseUsdcMarket);
+        ee.setSupplyQueue(q);
+
+        // Seed the base resting position so fundReservoir has cash to withdraw.
+        _fundBaseMarket(baseUsdc);
+
+        // Enable the reservoir vault on the EE mock at ZERO balance (mirrors DeployLocal submitCap+acceptCap) — NOT
+        // seeded with shares, so it is reallocate-eligible (enabled, cap != 0) but holds ≈0 at rest.
+        ee.submitCap(IOZERC4626(bv), type(uint136).max);
+        ee.acceptCap(IOZERC4626(bv));
+
+        // Wire the reservoir slots. allocatorKey is DISTINCT from operator (two-key separation).
+        adapter.setReservoirVault(bv);
+        adapter.setReservoirAllocator(allocatorKey);
+    }
+
+    function test_ctr07_roundtrip_restores_resting() public {
+        (ReservoirLoopModule m, address engineSafe, , address bv, SzipReservoirLpOracle o) = _ee07Setup(1_000_000e6);
+        uint256 X = 100e6; // $100 funded into the reservoir
+        uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket));
+
+        // fund: base -X, reservoir == X.
+        vm.prank(allocatorKey);
+        adapter.fundReservoir(X);
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket)), baseBefore - X, "base debited X");
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), X, "reservoir holds X");
+
+        // a real borrow leg < X through the loop operator ($50 against $100 LP collateral, inside 0.7 LTV).
+        o; // mark already $1 from setup; the validity window is generous
+        uint256 strike = 50e6;
+        vm.prank(operator);
+        m.postCollateral(100e18);
+        vm.prank(operator);
+        m.borrow(strike);
+        assertEq(m.outstandingDebt(), strike, "borrowed out of the reservoir");
+        // repay (give the Safe the USDC, as production from sale proceeds).
+        deal(USDC, engineSafe, strike);
+        vm.prank(operator);
+        m.repay(strike);
+        assertEq(m.outstandingDebt(), 0, "repaid in full");
+
+        // defund: base restored, reservoir == 0.
+        vm.prank(allocatorKey);
+        adapter.defundReservoir(X);
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket)), baseBefore, "resting restored after full cycle");
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), 0, "reservoir back to 0");
+    }
+
+    function test_ctr07_defund_reverts_when_lent_out() public {
+        (ReservoirLoopModule m,, , address bv,) = _ee07Setup(1_000_000e6);
+        bv;
+        uint256 X = 100e6;
+        vm.prank(allocatorKey);
+        adapter.fundReservoir(X);
+
+        // borrow out of the reservoir WITHOUT repaying — the reservoir EVK vault now lacks the cash for a withdraw.
+        vm.prank(operator);
+        m.postCollateral(100e18);
+        vm.prank(operator);
+        m.borrow(50e6);
+
+        // a defund of the full X reverts: the withdraw leg has no cash (redemption-isolation / JIT discipline).
+        vm.prank(allocatorKey);
+        vm.expectRevert(EvkErrors.E_InsufficientCash.selector);
+        adapter.defundReservoir(X);
+    }
+
+    function test_ctr07_operator_cannot_fund() public {
+        _ee07Setup(1_000_000e6);
+        uint256 X = 100_000e6;
+        // the loop hot key (operator), lacking the allocator role, cannot fund OR defund.
+        vm.prank(operator);
+        vm.expectRevert(EulerVenueAdapter.NotReservoirAllocator.selector);
+        adapter.fundReservoir(X);
+        vm.prank(operator);
+        vm.expectRevert(EulerVenueAdapter.NotReservoirAllocator.selector);
+        adapter.defundReservoir(X);
+    }
+
+    function test_ctr07_donation_noop_on_sizing() public {
+        (, , , address bv,) = _ee07Setup(1_000_000e6);
+        uint256 X = 100_000e6;
+
+        // A donor mints reservoir-vault shares then RAW-transfers them to the EE — inflating balanceOf(ee) but NOT the
+        // tracked cfgBalance. Sizing off the tracked balance (`_eeSupplyAssets`), fund/defund still net.
+        address donor = makeAddr("donor");
+        deal(USDC, donor, 250_000e6);
+        vm.startPrank(donor);
+        IERC20(USDC).approve(bv, 250_000e6);
+        uint256 donatedShares = IEVault(bv).deposit(250_000e6, donor);
+        IEVault(bv).transfer(address(ee), donatedShares); // raw share donation
+        vm.stopPrank();
+        assertGt(IEVault(bv).balanceOf(address(ee)), ee.cfgBalance(bv), "donation skews live, not tracked");
+
+        // fund + defund still net (no InconsistentReallocation), because sizing is off cfgBalance not balanceOf.
+        uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket));
+        vm.prank(allocatorKey);
+        adapter.fundReservoir(X);
+        vm.prank(allocatorKey);
+        adapter.defundReservoir(X);
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket)), baseBefore, "donation-immune round-trip nets");
+    }
+
+    function test_ctr07_reservoir_zero_at_rest() public {
+        (ReservoirLoopModule m, address engineSafe, , address bv,) = _ee07Setup(1_000_000e6);
+        uint256 X = 100e6;
+        uint256 strike = 50e6;
+
+        vm.prank(allocatorKey);
+        adapter.fundReservoir(X);
+        vm.prank(operator);
+        m.postCollateral(100e18);
+        vm.prank(operator);
+        m.borrow(strike);
+        deal(USDC, engineSafe, strike);
+        vm.prank(operator);
+        m.repay(strike);
+        vm.prank(allocatorKey);
+        adapter.defundReservoir(X);
+
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), 0, "reservoir == 0 at rest after a full cycle");
     }
 }
 

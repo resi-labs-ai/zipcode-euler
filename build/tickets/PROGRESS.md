@@ -37,10 +37,10 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   test; deps 06a+06b both DONE — now unblocked). Index + pinned hub/silo decomposition + open decisions D1–D5:
   `build/tickets/contracts/CTR-06-silo-deployer.md`. **CTR-06a + CTR-06b both landed 2026-06-19** (notes below; D1+D5
   ratified by the reviewer). **CTR-06c landed 2026-06-19** (note below) — the re-scoped CTR-06 is now COMPLETE
-  (06a+06b+06c). So the next of that workstream = **CTR-07** (slot-2 reservoir fund/defund, fully independent —
-  recommended for a clean forge gate now) or **CTR-08** (structure-2 revolving line; dep 02/03, composes 07/09) or
-  **CTR-09** (0.1%-per-revolution fee; dep 03, composes 08) — reviewer picks. See "Credit-warehouse scaling +
-  federation" below.
+  (06a+06b+06c). **CTR-07 landed 2026-06-19** (note below) — the slot-2 reservoir fund/defund is now revolving;
+  finding 3 RESOLVED. So the next of that workstream = **CTR-08** (structure-2 revolving line; dep 02/03, composes
+  07/09 — now unblocked, 07 done) or **CTR-09** (0.1%-per-revolution fee; dep 03, composes 08) — reviewer picks. See
+  "Credit-warehouse scaling + federation" below.
 
 ---
 
@@ -76,8 +76,9 @@ lines (structure 1, the safe HELOC-warehouse standard) and insurance-underwritte
    reap step was needed — the `EulerEarn.sol:362` two-step path is dead code for an empty market.
 2. The **0.1%-per-revolution fee is unimplemented** on-chain (grep `contracts/src`: only EE yield fee, buy-burn
    discount, oracle bands). **→ CTR-09.**
-3. Slot-2 revolving is half-wired: the reservoir borrow/repay cycles, but no `reallocate` funds it from resting or
-   re-absorbs after repay. **→ CTR-07.**
+3. **RESOLVED 2026-06-19 (CTR-07, below).** Slot-2 revolving was half-wired: the reservoir borrow/repay cycled, but
+   no `reallocate` funded it from resting or re-absorbed after repay. CTR-07 added `fundReservoir`/`defundReservoir`
+   (`onlyReservoirAllocator`) — the per-line `fund`/`closeLine` reallocate pattern generalized to the reservoir.
 4. Reservoir borrow is pinned to `engineSafe` (`ReservoirBorrowGuard.sol:91-92`) + capped (`borrowCap`, Timelock)
    — not externally exploitable; residual is internal contention vs senior redemption liquidity (informs CTR-07).
 5. Structure-1's per-lien oracle is an n→∞ keyed cache; structure-2 keys the line to a borrower → one persistent
@@ -104,7 +105,8 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
     `CreditWarehouseDeployer`; excludes `OffRampModule` per D5). **DONE 2026-06-19** (note below; D1+D5 ratified). *(was dep CTR-06a)*
   - **CTR-06c** `SiloDeployer` orchestrator + feasible mock-EE two-silo routing test (D3/D4). **DONE 2026-06-19** (note
     below). *(dep CTR-06a + CTR-06b, both DONE)* — the re-scoped CTR-06 is now COMPLETE (06a+06b+06c all landed).
-- **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
+- **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). **DONE 2026-06-19** (note below).
+  *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). *(dep 03; composes 08)*
 - **CTR-10** federation generalization — `ISeniorPool` + a non-Euler adapter. *(LATER / P5; dep 02..09)*
@@ -113,6 +115,46 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-07 — Slot-2 reservoir fund/defund: the revolving junior yield facility — DONE 2026-06-19.** Discharges
+> **finding 3**. Modified `contracts/src/venue/EulerVenueAdapter.sol` + `contracts/test/ReservoirLoopModule.t.sol`
+> (no new files → no `COVERAGE.md` row change, no regression on untouched contracts). Added two adapter-LOCAL methods
+> `fundReservoir(uint256)` / `defundReservoir(uint256)` (`onlyReservoirAllocator`) — the per-line `fund`/`closeLine`
+> reallocate pattern generalized to move idle USDC resting↔reservoir JIT, so the reservoir holds ≈0 at rest (split-slot
+> decision). Each is a two-item absolute-target zero-sum `eulerEarn.reallocate` between `baseUsdcMarket` and a new
+> `reservoirVault` slot, sized off `_eeSupplyAssets` (donation-immune, NOT `balanceOf`). Plus two Timelock-settable
+> wiring slots `reservoirVault`+`reservoirAllocator` (`setX`+`WiringSet`), a `NotReservoirAllocator` error, and the
+> `onlyReservoirAllocator` modifier. NOT on `IZipcodeVenue` (venue interface stays line-only). **Harness loop ran:** 4
+> critics (junior-dev/spec-fidelity/reference-verifier/contract-binding). The contract-binding critic CONFIRMED **ZERO
+> back-pressure** — the mechanism binds entirely to surfaces that exist today: (a) the reservoir vault is already an
+> enabled NON-supply-queue EE market (`DeployLocal.s.sol:140-141` acceptCap's it; supply queue = `[baseUsdcMarket]`
+> only), so it is reallocate-eligible; (b) its hook is **OP_BORROW-only**, so EE's reallocate deposit/withdraw legs
+> into it are un-hooked and don't trip `ReservoirBorrowGuard` (the critical check — fundReservoir does NOT brick); (c)
+> withdraw-while-lent-out reverts `E_InsufficientCash` (JIT discipline is EVK-enforced, not assumed); (d)
+> `previewRedeem` is flat under a zero-rate borrow so the round-trip sizing nets post-repay. spec-fidelity confirmed
+> invention-free + §17-faithful (the "split slot 2" topology is a PROGRESS session decision, not spec text — its
+> spec-doc-sync is forward-deferred per the §-sync note, NOT a precondition). All other critic findings were **ticket
+> gaps** (test-fixture under-specification), ALL fixed in the ticket BEFORE cold-build: the EE side does not exist in
+> the reservoir suite, so the ticket now pins the full port/merge (copy the faithful `MockEulerEarn` — which moves
+> REAL USDC between real EVK vaults — from `EulerVenueAdapter.t.sol`; add the `IOZERC4626`/`{IEulerEarn,
+> MarketAllocation}`/adapter imports; build the base resting market + `_fundBaseMarket`; enable the reservoir at ZERO
+> balance via `submitCap`+`acceptCap`; wire a real adapter with placeholder line-side ctor args; read tracked balances
+> via the mock's public `expectedSupplyAssets`; name `E_InsufficientCash` + `NotReservoirAllocator` revert selectors;
+> pin the donation = mint-shares-then-raw-transfer). **Two-key separation** is a documented DEPLOY invariant
+> (`reservoirAllocator` ≠ `ReservoirLoopModule.operator`) — the adapter holds no loop-module handle, so the on-chain
+> proof is the operator key reverting `NotReservoirAllocator` (no fabricated cross-contract coupling). Test home =
+> `ReservoirLoopModule.t.sol` (it already stands up the live reservoir borrow leg), reusing
+> `test_full_loop_revolves_twice`'s fixture. Gate green (verified by my own re-run, not just the cold-build's): `forge
+> build` exit 0 + `forge test --match-path test/ReservoirLoopModule.t.sol` = **40 passed / 0 failed** (35 pre-existing
+> all still green + 5 new: roundtrip-restores-resting, defund-reverts-when-lent-out, operator-cannot-fund,
+> donation-noop-on-sizing, reservoir-zero-at-rest). Cold-build returned ZERO load-bearing guesses (only test-fixture
+> sizing choices — X=$100/strike=$50 matching the existing fork fixture's scale — and a faithful tuple-read idiom).
+> Ticket: `build/tickets/contracts/CTR-07-slot2-reservoir-fund-defund.md`. **Doc-sync:** modified contract → backward
+> wire `docs/wires/WOOF-04.md` (new "reservoir fund-defund" method entry + the OP_BORROW-only load-bearing invariant +
+> the adapter↔reservoir-loop two-key cross-component row + the allocator-role note now covers reallocate-for-reservoir
+> + the CTR-07 gotchas test note). No `claude-zipcode.md` edit (the federation/split-slot-2 §-sync is forward-deferred,
+> per the federation-section §-sync note; CTR-07 invents no mechanism — it generalizes the existing reallocate one).
+> **Unblocks CTR-08** (structure-2 revolving lines reuse this reallocate-funded-revolving pattern).
 
 > **CTR-06c — `SiloDeployer` (the silo orchestrator) — DONE 2026-06-19.** Third + FINAL built child of the re-scoped
 > CTR-06; the re-scoped CTR-06 is now COMPLETE (06a+06b+06c). Added `contracts/script/SiloDeployer.s.sol` +
