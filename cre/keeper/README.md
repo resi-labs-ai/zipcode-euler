@@ -36,8 +36,28 @@ See [`.env.example`](.env.example). Summary:
 | `KEEPER_GAS_BUFFER_BPS` | gas-LIMIT buffer in bps (3000 ⇒ ×1.30) | `3000` |
 | `KEEPER_FEE_CAP_MULTIPLIER` | base-fee headroom (`maxFee = baseFee*MULT + tip`) | `2` |
 | `KEEPER_CONFIRM_TIMEOUT` | receipt-wait timeout | `60s` |
+| `KEEPER_MIN_BURN_AMOUNT` | BurnJob floor (base-10; 0 = any fill) | `0` |
+| `KEEPER_CUSHION_BPS` | StrikeLoop slippage/min-floor cushion, bps | `200` |
+| `KEEPER_AMBER_FRACTION_BPS` | StrikeLoop amber-band taper fraction, bps | `5000` |
+| `KEEPER_RECYCLE_FRACTION_BPS` | StrikeLoop fraction of floor surplus to recycle, bps | `10000` |
+| `KEEPER_HALT_PRICE_USDC` | StrikeLoop halt-below HYDX price (USDC 6dp) | `15000` |
+| `KEEPER_AMBER_PRICE_USDC` | StrikeLoop taper-below HYDX price (USDC 6dp) | `18000` |
+| `KEEPER_DEADLINE_BUFFER` | StrikeLoop exercise/sell deadline buffer | `300s` |
+| `KEEPER_TWAP_PERIOD` | ICHI TWAP window for `ZipToShares` | `3600s` |
+| `KEEPER_MAX_BORROW_PER_CYCLE` | StrikeLoop per-cycle borrow ceiling (USDC 6dp) | — (**required** for StrikeLoop) |
 | `KEEPER_ADDR_<NAME>` | address book entry (re-pointable, §17) | — |
 | `KEEPER_CONFIG_FILE` | optional JSON overlay (env wins) | — |
+
+The **StrikeLoopJob** (KEEPER-01b) is the auto-compounder harvest loop: one
+ordered `chain.Plan` (claim → borrow → exercise → sell → repay → credit →
+[recycle → addLiquidity → stake]) driving the six engine modules
+(`HarvestVoteModule`, `ReservoirLoopModule`, `ExerciseModule`, `SellModule`,
+`RecycleModule`, `LpStrategyModule`) with scalar amounts only. It is a pure
+stateless poll (no EMA/state store); the price/share floors come from an
+injectable `Quoter` seam (`internal/quote`) that binds to the Algebra HYDX/USDC
+pool `globalState()` and the ICHI vault deposit math. `KEEPER_ADDR_*` for the six
+modules + `KEEPER_ADDR_HydxUsdcPool` are required; the LP pool is read off the
+vault.
 
 The **private key is never** in `Config`, never logged, never in an error string —
 logs show only the derived address.

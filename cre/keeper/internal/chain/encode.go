@@ -25,3 +25,28 @@ func PackUintCall(sig string, v *big.Int) []byte {
 	enc, _ := abi.Arguments{{Type: uint256T}}.Pack(v)
 	return append(selector(sig), enc...)
 }
+
+// PackCall builds calldata for a no-arg call: just the 4-byte selector(sig).
+// Used by StrikeLoopJob for claimReward().
+func PackCall(sig string) []byte {
+	return selector(sig)
+}
+
+// PackUintsCall builds write calldata for an N-uint256-arg call:
+// selector(sig) ++ abi.encode(uint256 v0, uint256 v1, …). It is the multi-arg
+// companion to PackUintCall, used by StrikeLoopJob for the 3-uint256 legs
+// exercise(uint256,uint256,uint256) / sellHydx(uint256,uint256,uint256) /
+// addLiquidity(uint256,uint256,uint256). The signature returns NO error by
+// design (same rationale as PackUintCall: a *big.Int packed into a uint256 arg
+// cannot fail), mirroring the abi.Arguments.Pack idiom in
+// cre/buyburn-bid/workflow.go:248-252.
+func PackUintsCall(sig string, vs ...*big.Int) []byte {
+	args := make(abi.Arguments, len(vs))
+	vals := make([]interface{}, len(vs))
+	for i, v := range vs {
+		args[i] = abi.Argument{Type: uint256T}
+		vals[i] = v
+	}
+	enc, _ := args.Pack(vals...)
+	return append(selector(sig), enc...)
+}

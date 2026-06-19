@@ -32,6 +32,23 @@ type Config struct {
 	// not round-trip cleanly through it). Default 0 = burn any non-zero fill;
 	// unlike the scalar knobs, an explicit 0 is VALID here (no Validate rule).
 	MinBurnAmount *big.Int `json:"-"`
+
+	// ---- StrikeLoopJob knobs (KEEPER-01b, §8.7; TUNABLE / C4 reviewer-flagged) ----
+	// Pinned M1 defaults applied before env+Validate; an explicit env 0 is rejected
+	// for the bps/price knobs (mirrors the GasBufferBps rule).
+	CushionBps         uint64        `json:"cushion_bps"`          // slippage/min-floor cushion in bps (200 = 2%)
+	AmberFractionBps   uint64        `json:"amber_fraction_bps"`   // taper fraction in the amber band (5000 = 50%)
+	RecycleFractionBps uint64        `json:"recycle_fraction_bps"` // fraction of the floor surplus to recycle (10000 = all)
+	HaltPriceUsdc      uint64        `json:"halt_price_usdc"`      // halt below this HYDX price (USDC 6dp; 15000 = $0.015)
+	AmberPriceUsdc     uint64        `json:"amber_price_usdc"`     // taper below this HYDX price (USDC 6dp; 18000 = $0.018)
+	DeadlineBuffer     time.Duration `json:"deadline_buffer"`      // exercise/sell deadline = now + this (default 300s)
+	TwapPeriod         time.Duration `json:"twap_period"`          // ICHI TWAP window for ZipToShares (default 3600s)
+
+	// MaxBorrowPerCycle is the per-cycle borrow ceiling (KEEPER_MAX_BORROW_PER_CYCLE,
+	// base-10 USDC 6dp). REQUIRED env (no safe default — it bounds per-cycle
+	// exposure). env-only `json:"-"` (a *big.Int does not round-trip the JSON
+	// overlay cleanly).
+	MaxBorrowPerCycle *big.Int `json:"-"`
 }
 
 // defaults returns a Config seeded with the documented default values. Defaults
@@ -45,6 +62,16 @@ func defaults() Config {
 		ConfirmTimeout:   60 * time.Second,
 		Modules:          map[string]common.Address{},
 		MinBurnAmount:    big.NewInt(0), // 0 = burn any non-zero fill (explicit 0 is valid)
+
+		// StrikeLoopJob M1 defaults (TUNABLE, C4).
+		CushionBps:         200,
+		AmberFractionBps:   5000,
+		RecycleFractionBps: 10000,
+		HaltPriceUsdc:      15000,
+		AmberPriceUsdc:     18000,
+		DeadlineBuffer:     300 * time.Second,
+		TwapPeriod:         3600 * time.Second,
+		// MaxBorrowPerCycle has NO default (required env) — left nil so Validate fires.
 	}
 }
 
@@ -134,6 +161,49 @@ func overlayEnv(cfg *Config) error {
 		cfg.MinBurnAmount = n
 	}
 
+	// ---- StrikeLoopJob scalar knobs (uint bps/price; explicit 0 rejected by Validate) ----
+	for _, kv := range []struct {
+		env string
+		dst *uint64
+	}{
+		{"KEEPER_CUSHION_BPS", &cfg.CushionBps},
+		{"KEEPER_AMBER_FRACTION_BPS", &cfg.AmberFractionBps},
+		{"KEEPER_RECYCLE_FRACTION_BPS", &cfg.RecycleFractionBps},
+		{"KEEPER_HALT_PRICE_USDC", &cfg.HaltPriceUsdc},
+		{"KEEPER_AMBER_PRICE_USDC", &cfg.AmberPriceUsdc},
+	} {
+		if v := os.Getenv(kv.env); v != "" {
+			n, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				return fmt.Errorf("config: %s %q: %w", kv.env, v, err)
+			}
+			*kv.dst = n
+		}
+	}
+	if v := os.Getenv("KEEPER_DEADLINE_BUFFER"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: KEEPER_DEADLINE_BUFFER %q: %w", v, err)
+		}
+		cfg.DeadlineBuffer = d
+	}
+	if v := os.Getenv("KEEPER_TWAP_PERIOD"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("config: KEEPER_TWAP_PERIOD %q: %w", v, err)
+		}
+		cfg.TwapPeriod = d
+	}
+	// MaxBorrowPerCycle: REQUIRED env, base-10 *big.Int (USDC 6dp). Set only if
+	// present; Validate rejects a nil/zero value.
+	if v := os.Getenv("KEEPER_MAX_BORROW_PER_CYCLE"); v != "" {
+		n, ok := new(big.Int).SetString(v, 10)
+		if !ok {
+			return fmt.Errorf("config: KEEPER_MAX_BORROW_PER_CYCLE %q is not a base-10 integer", v)
+		}
+		cfg.MaxBorrowPerCycle = n
+	}
+
 	if cfg.Modules == nil {
 		cfg.Modules = map[string]common.Address{}
 	}
@@ -180,7 +250,46 @@ func (c *Config) Validate() error {
 	if c.ConfirmTimeout <= 0 {
 		return fmt.Errorf("config: ConfirmTimeout must be > 0 (KEEPER_CONFIRM_TIMEOUT)")
 	}
+
+	// ---- StrikeLoopJob scalar knobs (always checked; defaults make bare env valid) ----
+	// bps knobs must be in (0, 10000] — an explicit 0 is rejected (mirrors GasBufferBps).
+	if c.CushionBps == 0 || c.CushionBps > 10000 {
+		return fmt.Errorf("config: CushionBps must be in (0,10000] (KEEPER_CUSHION_BPS)")
+	}
+	if c.AmberFractionBps == 0 || c.AmberFractionBps > 10000 {
+		return fmt.Errorf("config: AmberFractionBps must be in (0,10000] (KEEPER_AMBER_FRACTION_BPS)")
+	}
+	if c.RecycleFractionBps == 0 || c.RecycleFractionBps > 10000 {
+		return fmt.Errorf("config: RecycleFractionBps must be in (0,10000] (KEEPER_RECYCLE_FRACTION_BPS)")
+	}
+	// price thresholds: 0 < haltPriceUsdc < amberPriceUsdc.
+	if c.HaltPriceUsdc == 0 {
+		return fmt.Errorf("config: HaltPriceUsdc must be > 0 (KEEPER_HALT_PRICE_USDC)")
+	}
+	if c.HaltPriceUsdc >= c.AmberPriceUsdc {
+		return fmt.Errorf("config: require 0 < HaltPriceUsdc(%d) < AmberPriceUsdc(%d) (KEEPER_HALT_PRICE_USDC/KEEPER_AMBER_PRICE_USDC)", c.HaltPriceUsdc, c.AmberPriceUsdc)
+	}
+	if c.DeadlineBuffer <= 0 {
+		return fmt.Errorf("config: DeadlineBuffer must be > 0 (KEEPER_DEADLINE_BUFFER)")
+	}
+	if c.TwapPeriod <= 0 {
+		return fmt.Errorf("config: TwapPeriod must be > 0 (KEEPER_TWAP_PERIOD)")
+	}
+	// MaxBorrowPerCycle is NOT checked here — it is a StrikeLoopJob precondition,
+	// enforced lazily by MustMaxBorrowPerCycle at job wiring (the same lazy pattern
+	// as MustAddr: the spine + a BurnJob-only deploy never reference it).
 	return nil
+}
+
+// MustMaxBorrowPerCycle returns the required per-cycle borrow ceiling, erroring
+// if it was not set (KEEPER_MAX_BORROW_PER_CYCLE unset/empty) or is zero. The
+// StrikeLoopJob wiring calls this — lazy validation parallel to MustAddr, so a
+// BurnJob-only deployment that never references it is unaffected.
+func (c *Config) MustMaxBorrowPerCycle() (*big.Int, error) {
+	if c.MaxBorrowPerCycle == nil || c.MaxBorrowPerCycle.Sign() <= 0 {
+		return nil, fmt.Errorf("config: MaxBorrowPerCycle is required and must be > 0 (set KEEPER_MAX_BORROW_PER_CYCLE, USDC 6dp)")
+	}
+	return new(big.Int).Set(c.MaxBorrowPerCycle), nil
 }
 
 // MustAddr returns the address registered under name, erroring loudly if a

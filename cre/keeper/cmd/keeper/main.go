@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
 
@@ -17,6 +18,7 @@ import (
 	"cre-keeper/internal/config"
 	"cre-keeper/internal/job"
 	"cre-keeper/internal/keymgr"
+	"cre-keeper/internal/quote"
 )
 
 func main() {
@@ -49,23 +51,80 @@ func run(log *slog.Logger) error {
 	c := chain.NewChain(client, chainID, signer, cfg)
 
 	// 3. build the identity check list from config (re-pointable addresses, §17).
-	reservoir, err := cfg.MustAddr("ReservoirLoopModule")
-	if err != nil {
-		return err
-	}
 	exitGate, err := cfg.MustAddr("ExitGate")
 	if err != nil {
 		return err
 	}
+	// The six StrikeLoopJob engine modules (KEEPER-01b). Each exposes operator()
+	// and is driven state-changingly by the harvest loop — a wrong key fails fast
+	// at startup (§8.7).
+	harvest, err := cfg.MustAddr("HarvestVoteModule")
+	if err != nil {
+		return err
+	}
+	reservoir, err := cfg.MustAddr("ReservoirLoopModule")
+	if err != nil {
+		return err
+	}
+	exerciseMod, err := cfg.MustAddr("ExerciseModule")
+	if err != nil {
+		return err
+	}
+	sellMod, err := cfg.MustAddr("SellModule")
+	if err != nil {
+		return err
+	}
+	recycleMod, err := cfg.MustAddr("RecycleModule")
+	if err != nil {
+		return err
+	}
+	lpMod, err := cfg.MustAddr("LpStrategyModule")
+	if err != nil {
+		return err
+	}
 	checks := []job.IdentityCheck{
-		{Name: "ReservoirLoopModule", Addr: reservoir, AdminSig: "operator()"},
 		{Name: "ExitGate", Addr: exitGate, AdminSig: "windowController()"},
+		{Name: "HarvestVoteModule", Addr: harvest, AdminSig: "operator()"},
+		{Name: "ReservoirLoopModule", Addr: reservoir, AdminSig: "operator()"},
+		{Name: "ExerciseModule", Addr: exerciseMod, AdminSig: "operator()"},
+		{Name: "SellModule", Addr: sellMod, AdminSig: "operator()"},
+		{Name: "RecycleModule", Addr: recycleMod, AdminSig: "operator()"},
+		{Name: "LpStrategyModule", Addr: lpMod, AdminSig: "operator()"},
 	}
 	identity := job.NewIdentityJob(signer.Address(), checks)
 
 	// Burn job: retire szipUSD the engine Safe bought below NAV (8-B14). ExitGate
 	// addr reused from MustAddr above; floor from cfg.MinBurnAmount (0 = any fill).
 	burn := job.NewBurnJob(exitGate, cfg.MinBurnAmount)
+
+	// Strike-loop job (KEEPER-01b): the auto-compounder harvest loop — the new
+	// primary job, registered AFTER the burn. The HYDX/USDC pool address comes from
+	// config (KEEPER_ADDR_HydxUsdcPool); the LP vault's pool is read off the vault.
+	hydxUsdcPool, err := cfg.MustAddr("HydxUsdcPool")
+	if err != nil {
+		return err
+	}
+	maxBorrow, err := cfg.MustMaxBorrowPerCycle()
+	if err != nil {
+		return err
+	}
+	quoter := quote.NewProdQuoter(c, hydxUsdcPool, uint32(cfg.TwapPeriod/time.Second))
+	strikeLoop := job.NewStrikeLoopJob(job.StrikeLoopConfig{
+		Harvest:            harvest,
+		Reservoir:          reservoir,
+		Exercise:           exerciseMod,
+		Sell:               sellMod,
+		Recycle:            recycleMod,
+		Lp:                 lpMod,
+		Quoter:             quoter,
+		CushionBps:         cfg.CushionBps,
+		AmberFractionBps:   cfg.AmberFractionBps,
+		RecycleFractionBps: cfg.RecycleFractionBps,
+		HaltPriceUsdc:      cfg.HaltPriceUsdc,
+		AmberPriceUsdc:     cfg.AmberPriceUsdc,
+		DeadlineBuffer:     cfg.DeadlineBuffer,
+		MaxBorrowPerCycle:  maxBorrow,
+	})
 
 	// SIGINT/SIGTERM → graceful stop.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -76,10 +135,14 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	log.Info("startup identity assertion passed",
-		"ReservoirLoopModule", reservoir.Hex(), "ExitGate", exitGate.Hex())
+		"ExitGate", exitGate.Hex(), "HarvestVoteModule", harvest.Hex(),
+		"ReservoirLoopModule", reservoir.Hex(), "ExerciseModule", exerciseMod.Hex(),
+		"SellModule", sellMod.Hex(), "RecycleModule", recycleMod.Hex(),
+		"LpStrategyModule", lpMod.Hex())
 
-	// 5. register the jobs (IdentityJob heartbeat first, then BurnJob) and run the loop.
-	runner := job.NewRunner(c, []job.Job{identity, burn}, cfg.PollInterval, log)
+	// 5. register the jobs (IdentityJob heartbeat first, then BurnJob, then the
+	//    StrikeLoopJob harvest loop) and run the loop.
+	runner := job.NewRunner(c, []job.Job{identity, burn, strikeLoop}, cfg.PollInterval, log)
 	runner.Run(ctx)
 	return nil
 }
