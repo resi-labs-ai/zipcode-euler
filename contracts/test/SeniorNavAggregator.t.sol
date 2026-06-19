@@ -38,10 +38,10 @@ contract MockCoordinator {
 }
 
 contract MockAdapter {
-    address public eulerEarn;
+    address public seniorPool;
 
     constructor(address eePool_) {
-        eulerEarn = eePool_;
+        seniorPool = eePool_;
     }
 }
 
@@ -193,6 +193,37 @@ contract SeniorNavAggregatorTest is Test {
 
         assertEq(agg.seniorBacking(), before, "donation moved seniorBacking");
         assertEq(agg.illiquidSeniorValue(), illiqBefore, "donation moved illiquid");
+    }
+
+    // ============================================================== CTR-10b: non-Euler venue plugs in donation-immune
+    /// @dev The federation plug-in proof. `_addSilo` admits a silo whose adapter (`MockAdapter`) exposes ONLY the
+    ///      venue-neutral `seniorPool()` getter and has NO `eulerEarn()` — i.e. a NON-Euler venue stand-in. That
+    ///      admission SUCCEEDS is itself the proof the host seam is venue-agnostic (the registry dereferences
+    ///      `ISeniorVenue.seniorPool()`, never an Euler-specific getter; CTR-10b). The aggregator then reads its
+    ///      senior surface through `ISeniorPool` exactly as for an Euler silo, donation-immune.
+    function test_ctr10b_nonEuler_venue_plugs_in() public {
+        Silo memory a = _addSilo("nonEuler"); // adapter has no eulerEarn() — admission proves venue-neutrality
+
+        // the adapter exposes the venue-neutral getter and NOT the Euler-specific one
+        (bool okSenior,) = a_adapter(a.id).staticcall(abi.encodeWithSignature("seniorPool()"));
+        (bool okEuler,) = a_adapter(a.id).staticcall(abi.encodeWithSignature("eulerEarn()"));
+        assertTrue(okSenior, "non-Euler adapter exposes seniorPool()");
+        assertFalse(okEuler, "non-Euler adapter has NO eulerEarn(): genuinely not an Euler venue");
+
+        a.ee.setPosition(a.warehouseSafe, 1, 2_000e6, 800e6);
+        uint256 expected = 2_000e6 * 1e12;
+        assertEq(agg.seniorBacking(), expected, "non-Euler silo aggregates");
+        assertEq(agg.illiquidSeniorValue(), (2_000e6 - 800e6) * 1e12, "non-Euler illiquid aggregates");
+
+        // donation-immune just like Euler: a stray donation to the senior surface moves nothing
+        uint256 before = agg.seniorBacking();
+        a.ee.donateShares(address(a.ee), 5_000_000);
+        assertEq(agg.seniorBacking(), before, "non-Euler silo donation-immune");
+    }
+
+    /// @dev The admitted silo's adapter address (the venue seam `venueOf` returns).
+    function a_adapter(bytes32 id) internal view returns (address) {
+        return reg.venueOf(id);
     }
 
     // ============================================================== retired silo: counted in seniorBacking, not active

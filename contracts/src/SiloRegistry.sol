@@ -27,10 +27,13 @@ interface INavWriter {
     function navOracle() external view returns (address);
 }
 
-/// @notice `EulerVenueAdapter.eulerEarn()` (`contracts/src/venue/EulerVenueAdapter.sol:39`,
-///         `IEulerEarn public eulerEarn` — cast to `address`).
-interface IAdapter {
-    function eulerEarn() external view returns (address);
+/// @notice The venue-neutral senior-surface getter every `IZipcodeVenue` adapter exposes (CTR-10b): the address
+///         that satisfies `ISeniorPool` for this silo. `EulerVenueAdapter.seniorPool()` returns
+///         `address(eulerEarn)` (the EE pool IS the senior surface); a non-Euler adapter returns its own pool or a
+///         thin `ISeniorPool` wrapper. This is the ONE getter the admission gate dereferences to stay
+///         venue-agnostic — `IZipcodeVenue` itself carries no senior-surface method (§4.7).
+interface ISeniorVenue {
+    function seniorPool() external view returns (address);
 }
 
 /// @title SiloRegistry
@@ -54,6 +57,20 @@ interface IAdapter {
 ///      inside `acceptCap` BEFORE this registry's `SiloFull` would ever trip. `decrementLineCount` is correct
 ///      *registry* accounting and builds standalone, but the concurrent-capacity model is only fully sound once CTR-03
 ///      wires increment/decrement AND CTR-04 makes `closeLine` reclaim the withdraw-queue slot.
+///
+/// @dev VENUE-AGNOSTIC ADMISSION (CTR-10b — the federation plug-in seam). The admission gate dereferences NO
+///      Euler-specific surface: the adapter clause asserts the venue-neutral `ISeniorVenue.seniorPool()` and the
+///      freeze clauses assert the venue-neutral `ISeniorPool` slot (`IFreeze.eulerEarn()`, name retained), so a
+///      NON-Euler venue plugs in with NO change to this registry. The recipe to add a venue once its adapter is
+///      built (none beyond Euler exists today — CTR-10b reference adapter is deferred, P5):
+///        1. Write `FooVenueAdapter is IZipcodeVenue` exposing `seniorPool()` → its `ISeniorPool` surface.
+///        2. If the venue is not natively 4626, deploy a thin `ISeniorPool` wrapper over its senior shares.
+///        3. Deploy a `DurationFreezeModule` whose `eulerEarn` slot = that senior surface (its `setUp`).
+///        4. `addSilo(SiloConfig{adapter: fooAdapter, eePool: <the ISeniorPool surface>, freeze: fooFreeze, ...})`.
+///      The gate then proves `adapter.seniorPool() == eePool` and `freeze.eulerEarn() == eePool` — the silo reads
+///      ONE self-consistent senior surface. `IZipcodeVenue` stays senior-surface-free (the getter lives on the
+///      concrete adapter, never the seam). The donation-immunity of a real non-Euler surface is the venue's own
+///      property and must be proven against THAT venue (it cannot be proven by a mock).
 contract SiloRegistry is Ownable {
     // --------------------------------------------------------------------- constants
     /// @notice The per-silo concurrent-line cap. Derived: `MAX_QUEUE_LENGTH (30) − resting-USDC market (1) −
@@ -63,9 +80,10 @@ contract SiloRegistry is Ownable {
     // --------------------------------------------------------------------- records
     /// @notice The stored silo record. `lineCount`/`active` are registry-managed (never caller-supplied).
     struct Silo {
-        address adapter; // EulerVenueAdapter (the IZipcodeVenue seam — what venueOf returns)
-        address warehouseSafe; // CreditWarehouse Safe (EE-share + USDC custodian)
-        address eePool; // EulerEarn senior pool
+        address adapter; // the IZipcodeVenue adapter (the seam venueOf returns); for config one, EulerVenueAdapter
+        address warehouseSafe; // CreditWarehouse Safe (senior-share + USDC custodian)
+        address eePool; // the silo's ISeniorPool senior-read surface (CTR-10b): the EE pool for an Euler silo, a
+            // venue pool / thin wrapper for a non-Euler silo. The aggregator + freeze read it via ISeniorPool.
         address juniorBasket; // junior tranche / NAV basket (routing+aggregation only; NOT topology-asserted)
         address escrow; // LienXAlphaEscrow (first-loss bond custody)
         address defaultCoordinator; // DefaultCoordinator (loss orchestrator; escrow.coordinator + navOracle writer)
@@ -161,7 +179,7 @@ contract SiloRegistry is Ownable {
                 || IFreeze(cfg.freeze).navOracle() != cfg.navOracle
                 || IEscrow(cfg.escrow).coordinator() != cfg.defaultCoordinator
                 || INavWriter(cfg.defaultCoordinator).navOracle() != cfg.navOracle
-                || IAdapter(cfg.adapter).eulerEarn() != cfg.eePool
+                || ISeniorVenue(cfg.adapter).seniorPool() != cfg.eePool
         ) revert SiloMiswired();
 
         silos[siloId] = Silo({

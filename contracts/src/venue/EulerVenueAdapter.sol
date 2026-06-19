@@ -477,6 +477,17 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         return IEVault(lineRef).debtOf(lines[lineRef].borrowAccount);
     }
 
+    /// @notice The silo's senior-read surface — the address that satisfies `ISeniorPool` (the donation-immune
+    ///         `{balanceOf, convertToAssets, maxWithdraw}` read the `SeniorNavAggregator`/`DurationFreezeModule` use)
+    ///         and that the `SiloRegistry` admission gate asserts against `SiloConfig.eePool` (CTR-10b). For this
+    ///         Euler venue the senior surface IS the EulerEarn pool itself (4626 satisfies `ISeniorPool` directly), so
+    ///         this returns `address(eulerEarn)`. A non-Euler venue adapter returns its own `ISeniorPool` surface
+    ///         (the venue's pool if 4626, else a thin wrapper) — that is the ONE getter the registry needs to be
+    ///         venue-agnostic; `IZipcodeVenue` itself stays senior-surface-free (§4.7).
+    function seniorPool() external view returns (address) {
+        return address(eulerEarn);
+    }
+
     /// @inheritdoc IZipcodeVenue
     function closeLine(address lineRef) external onlyController {
         Line storage L = lines[lineRef];

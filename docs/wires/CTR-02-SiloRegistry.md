@@ -23,7 +23,7 @@ curator gets senior backing only by registering a SELF-CONSISTENT silo.
 | Contract / interface | What it does |
 |---|---|
 | `SiloRegistry` (`is Ownable`) | The catalog. `addSilo` (admission + the 6-clause topology assert), `retireSilo`/`setActive`/`setCurrentSilo` (governed lifecycle), `incrementLineCount`/`decrementLineCount` (`onlyController` slot accounting, cap `MAX_LINES_PER_SILO = 28`), views (`venueOf`/`getSilo`/`allSiloIds`/`siloCount`), Timelock-settable `controller` wiring (`setController` + `WiringSet`). |
-| `IFreeze` / `IEscrow` / `INavWriter` / `IAdapter` (local interfaces in the same file) | Minimal `address`-returning getters the admission assert dereferences: `DurationFreezeModule.{eulerEarn,warehouse,navOracle}()`, `LienXAlphaEscrow.coordinator()`, `DefaultCoordinator.navOracle()`, `EulerVenueAdapter.eulerEarn()`. The GPL silo contracts are not imported; the `ISzipNavOracle`/`IEulerEarn`-typed returns are read as `address` for comparison. |
+| `IFreeze` / `IEscrow` / `INavWriter` / `ISeniorVenue` (local interfaces in the same file) | Minimal `address`-returning getters the admission assert dereferences: `DurationFreezeModule.{eulerEarn,warehouse,navOracle}()`, `LienXAlphaEscrow.coordinator()`, `DefaultCoordinator.navOracle()`, and the venue-neutral `ISeniorVenue.seniorPool()` (CTR-10b — replaced the Euler-specific `IAdapter.eulerEarn()`; `EulerVenueAdapter.seniorPool()` returns `address(eulerEarn)`, a non-Euler adapter returns its own `ISeniorPool` surface). The GPL silo contracts are not imported; the `ISzipNavOracle`/`IEulerEarn`-typed returns are read as `address` for comparison. |
 
 ## Wiring — internal
 - **`constructor(address controller_)` / `Ownable(msg.sender)`.** Seeds the `controller` slot (may be re-pointed
@@ -42,10 +42,14 @@ curator gets senior backing only by registering a SELF-CONSISTENT silo.
   3. `IFreeze(cfg.freeze).navOracle()  == cfg.navOracle`
   4. `IEscrow(cfg.escrow).coordinator() == cfg.defaultCoordinator`
   5. `INavWriter(cfg.defaultCoordinator).navOracle() == cfg.navOracle`
-  6. `IAdapter(cfg.adapter).eulerEarn() == cfg.eePool`
+  6. `ISeniorVenue(cfg.adapter).seniorPool() == cfg.eePool`  *(CTR-10b: venue-neutral — was `IAdapter.eulerEarn()`)*
   This transitively binds adapter ↔ eePool ↔ freeze ↔ warehouseSafe ↔ navOracle ↔ defaultCoordinator ↔ escrow, so
   a silo pointing at a sibling's pool/safe/oracle/coordinator cannot be admitted (it cannot slash a sibling or skew
-  the aggregate). `curator` and `juniorBasket` are carried for routing/aggregation only — NOT topology-asserted
+  the aggregate). **`eePool` is the silo's `ISeniorPool` senior-read SURFACE** (CTR-10b): the EE pool for an Euler
+  silo, a venue pool / thin `ISeniorPool` wrapper for a non-Euler silo. Clauses 1 + 6 compare both the freeze's and
+  the adapter's senior getter to it, so the gate is venue-agnostic — a non-Euler venue plugs in (its adapter
+  exposing `seniorPool()`) with NO registry change; see the contract NatSpec "VENUE-AGNOSTIC ADMISSION" recipe.
+  `curator` and `juniorBasket` are carried for routing/aggregation only — NOT topology-asserted
   (no getter to cross-check; only the non-zero-address check applies). The standalone `WarehouseAdminModule` assert
   the draft ticket proposed was DROPPED: `freeze.warehouse()`/`freeze.eulerEarn()` already pin `warehouseSafe`/
   `eePool`, so a `WarehouseAdminModule` address field would be redundant for self-consistency.

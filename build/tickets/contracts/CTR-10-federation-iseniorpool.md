@@ -6,16 +6,24 @@
 > - **CTR-10a — `ISeniorPool` extract + no-op re-type. DONE 2026-06-19.** The buildable, zero-guess half:
 >   the structural senior-read generalization. Ticket: `CTR-10a-iseniorpool-extract.md`. (Full 919-test suite
 >   green, byte-identical for the Euler silo.) This IS the §4.7 generalization CTR-10 set out to make.
-> - **CTR-10b — the reference non-Euler venue adapter + wrapper + `addSilo` hardening + fork test. BACK-PRESSURE
->   / DEFERRED (this file below).** Blocked on a concrete venue choice + a real bindable senior surface that
->   does not exist on the Base fork today; plus an undecided struct-plumbing decision. Stays P5/LATER.
+> - **CTR-10b — the federation HOST SEAM (venue-agnostic admission). DONE 2026-06-19.** The `addSilo` hardening
+>   half: a venue-neutral `ISeniorVenue.seniorPool()` getter (added to `EulerVenueAdapter`, asserted by the
+>   registry in place of the Euler-specific `eulerEarn()`), the `eePool` field re-cast as the generic
+>   `ISeniorPool` senior-read surface, and a plug-in recipe + proof test (a non-Euler venue stand-in with NO
+>   `eulerEarn()` admits + aggregates donation-immune). RESOLVES obligation #3 (the plumbing decision — resolved
+>   by REUSING `eePool` as the read surface; no new struct field, zero `SiloConfig` caller churn). A future venue
+>   adapter now plugs in with NO registry change. Ticket: `CTR-10b-federation-host-seam.md`.
+> - **CTR-10c — the reference non-Euler adapter + `ISeniorPool` wrapper + fork test. BACK-PRESSURE / DEFERRED
+>   (P5).** The actual `IZipcodeVenue` implementation for a real venue. Still blocked on obligations #1/#2/#4
+>   below (no bindable senior surface on the Base fork; venue unchosen; donation-immunity needs a real deployed
+>   venue, not a mock). Build only when a second venue is actually wanted.
 >
 > Contract-track change (EXPANSION, deferred). The last step that turns multi-pool sharding into a true federation:
 > a non-Euler venue (Aave v4, MetaMorpho, an orderbook matcher) as a silo under the same zipUSD, reading its
 > senior surface through the now-extracted `ISeniorPool` (CTR-10a). Build only when a second venue is actually
 > wanted. Spec: `claude-zipcode.md` §4.7. **Spec extension owed**: the federation §.
 
-## BACK-PRESSURE (verified 2026-06-19 — the obligations that block CTR-10b)
+## BACK-PRESSURE (verified 2026-06-19 — obligations #1/#2/#4 still block CTR-10c; #3 RESOLVED by CTR-10b)
 1. **No bindable non-Euler senior surface on the Base fork (block 47096000).** `BaseAddresses.sol` has zero
    Aave/Morpho/MetaMorpho/Centrifuge addresses. Reference clones are un-deployed (`moneymarket-contracts` USD3
    is 4626 source but no Base deployment), async (`centrifuge`/`erc7540-reference` — request/claim, not a
@@ -26,14 +34,15 @@
    orderbook" — three mutually-exclusive integrations (Aave v4 isn't live; MetaMorpho is 4626; an orderbook is
    neither). Picking one is itself a load-bearing decision the ticket defers (P5: "build only after a second
    venue is actually wanted").
-3. **Senior-surface plumbing decision unresolved (load-bearing).** A non-4626 venue needs a wrapper at a
-   DIFFERENT address than its real pool, but `SiloRegistry.Silo`/`SiloConfig` has only ONE senior slot
-   (`eePool`), and `addSilo`'s assert hardcodes `IAdapter(adapter).eulerEarn() == eePool` (`SiloRegistry.sol:164`,
-   + `IFreeze(freeze).eulerEarn()` at `:160`). Two incompatible options (wrapper occupies `eePool` slot vs. add a
-   new `seniorRead` field + a second assert clause + a new adapter `seniorPool()` getter on a new local interface
-   — NOT on `IZipcodeVenue`, which must not change). CTR-10b must pick option B (new field) and spell out the
-   getter + clause; that ripples into the CTR-02 struct, the `addSilo` writer, the `ZeroAddress` check, and the
-   six aggregator call sites.
+3. **~~Senior-surface plumbing decision unresolved~~ — RESOLVED 2026-06-19 (CTR-10b).** Resolved by REUSING
+   `eePool` as the generic `ISeniorPool` senior-read surface (NOT adding a new field — that would have rippled
+   into the CTR-02 struct, the `addSilo` writer/`ZeroAddress` check, and every `SiloConfig` caller). The
+   `addSilo` adapter clause was generalized from `IAdapter(adapter).eulerEarn()` to the venue-neutral
+   `ISeniorVenue(adapter).seniorPool()` (`EulerVenueAdapter.seniorPool()` returns `address(eulerEarn)`); the
+   freeze clause already compared the freeze's senior getter to `eePool`, so it generalized for free. A non-4626
+   venue sets `eePool` = its `ISeniorPool` wrapper and exposes `seniorPool()` returning the same — no struct
+   change, zero `SiloConfig` caller churn. The `seniorPool()` getter lives on the concrete adapter, NOT on
+   `IZipcodeVenue` (the seam stays senior-surface-free). See `CTR-10b-federation-host-seam.md`.
 4. **Donation-immunity is a property of the real venue, not the interface.** Key-req #1 ("tested per venue")
    cannot be proven by a mock (a mock hardcodes immunity, proving nothing about the real venue's
    `convertToAssets`/`maxWithdraw` skewability). The Done-when "fork test" therefore genuinely needs a chosen,

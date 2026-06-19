@@ -237,10 +237,10 @@ contract MockCoordinator {
 }
 
 contract MockAdapter {
-    address public eulerEarn;
+    address public seniorPool;
 
     constructor(address ee) {
-        eulerEarn = ee;
+        seniorPool = ee;
     }
 }
 

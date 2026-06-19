@@ -167,14 +167,14 @@ contract ZeroIRM {
     }
 }
 
-/// @dev A minimal venue adapter stand-in: the registry topology assert reads `IAdapter(adapter).eulerEarn() ==
-///      eePool` (clause 6, the warehouse-side input CTR-06c supplies). The real EulerVenueAdapter exposes the same
-///      getter; this stand-in models that side without building the full venue spine.
+/// @dev A minimal venue adapter stand-in: the registry topology assert reads `ISeniorVenue(adapter).seniorPool() ==
+///      eePool` (clause 6, the warehouse-side input CTR-06c supplies; CTR-10b made it venue-neutral). The real
+///      EulerVenueAdapter exposes the same getter; this stand-in models that side without building the full venue spine.
 contract MockAdapter {
-    address public eulerEarn;
+    address public seniorPool;
 
     constructor(address eePool_) {
-        eulerEarn = eePool_;
+        seniorPool = eePool_;
     }
 }
 
@@ -368,7 +368,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
         SiloRegistry registry = new SiloRegistry(creOperator);
         registry.transferOwnership(address(timelock));
 
-        // the warehouse-side adapter (clause 6) — CTR-06c's input: IAdapter(adapter).eulerEarn() == eePool.
+        // the warehouse-side adapter (clause 6) — CTR-06c's input: ISeniorVenue(adapter).seniorPool() == eePool.
         MockAdapter adapter = new MockAdapter(address(ee));
 
         SiloRegistry.SiloConfig memory cfg = SiloRegistry.SiloConfig({

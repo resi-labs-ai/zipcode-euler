@@ -40,12 +40,12 @@ contract MockCoordinator {
     }
 }
 
-/// @dev Stub for `EulerVenueAdapter.eulerEarn()`.
+/// @dev Stub for the venue adapter's venue-neutral `ISeniorVenue.seniorPool()` (CTR-10b).
 contract MockAdapter {
-    address public eulerEarn;
+    address public seniorPool;
 
     constructor(address eePool_) {
-        eulerEarn = eePool_;
+        seniorPool = eePool_;
     }
 }
 
@@ -222,7 +222,7 @@ contract SiloRegistryTest is Test {
         reg.addSilo(id, cfg);
     }
 
-    /// @dev Clause 6: adapter.eulerEarn() != eePool.
+    /// @dev Clause 6: adapter.seniorPool() != eePool.
     function test_addSilo_miswired_adapterEePool_reverts() public {
         bytes32 id = keccak256("mw6");
         SiloRegistry.SiloConfig memory cfg = _wiredConfig();

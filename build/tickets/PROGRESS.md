@@ -40,15 +40,18 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   (06a+06b+06c). **CTR-07 landed 2026-06-19** (note below) — the slot-2 reservoir fund/defund is now revolving;
   finding 3 RESOLVED. **CTR-08 landed 2026-06-19** (note below) — structure-2 revolving lines proved as an operating
   MODE over the as-built stack with ZERO contract change (test + doc only). **CTR-09 landed 2026-06-19** (note below)
-  — the 0.1%-per-revolution draw fee; finding 2 RESOLVED. **CTR-10 was RE-SCOPED 2026-06-19** (a 4-critic fan-out
-  found it can't cold-build as one ticket — same pattern as CTR-06): **CTR-10a** (`ISeniorPool` extract + no-op
-  re-type) **landed 2026-06-19** (note below) — the structural §4.7 senior-read generalization; **CTR-10b** (the
-  reference non-Euler adapter + wrapper + `addSilo` hardening + fork test) is **BACK-PRESSURE / DEFERRED (P5)** —
-  blocked on a concrete venue choice + a real bindable non-Euler senior surface (none deployed on the Base fork)
-  + an undecided `Silo.seniorRead`-field plumbing decision (4 obligations logged in
-  `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). So the scaling/federation contract workstream has
-  NO near-term cold-buildable item left (CTR-10b waits on a 2nd venue actually being wanted). (CTR-11/CTR-12/CTR-13
-  are independent loss-side / IRM tickets, separate from the scaling ledger.)
+  — the 0.1%-per-revolution draw fee; finding 2 RESOLVED. **CTR-10 was RE-SCOPED 2026-06-19 into a 3-way split**
+  (a 4-critic fan-out found it can't cold-build as one ticket — same pattern as CTR-06): **CTR-10a** (`ISeniorPool`
+  extract + no-op re-type) **landed 2026-06-19** — the structural §4.7 senior-read generalization; **CTR-10b** (the
+  federation HOST SEAM — venue-agnostic `addSilo` admission + the `seniorPool()` getter + plug-in recipe + proof
+  test) **landed 2026-06-19** (notes below) — RESOLVES obligation #3, so a future non-Euler venue adapter plugs in
+  with NO registry change; **CTR-10c** (the actual reference non-Euler adapter + wrapper + fork test) is
+  **BACK-PRESSURE / DEFERRED (P5)** — still blocked on a concrete venue choice + a real bindable non-Euler senior
+  surface (none deployed on the Base fork) + donation-immunity needing a real deployed venue (obligations #1/#2/#4
+  logged in `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). So the scaling/federation contract
+  workstream has NO near-term cold-buildable item left (CTR-10c waits on a 2nd venue actually being wanted; the
+  host is now READY for it). (CTR-11/CTR-12/CTR-13 are independent loss-side / IRM tickets, separate from the
+  scaling ledger.)
 
 - **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
   needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
@@ -192,14 +195,18 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
   *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). **DONE 2026-06-19** (note below). *(dep 03; composes 08)*
-- **CTR-10** federation generalization — **RE-SCOPED 2026-06-19 into a 2-way split** (4-critic fan-out: can't
+- **CTR-10** federation generalization — **RE-SCOPED 2026-06-19 into a 3-way split** (4-critic fan-out: can't
   cold-build as one ticket). Children:
   - **CTR-10a** `ISeniorPool` extract + no-op re-type of the senior read (`SeniorNavAggregator` +
     `DurationFreezeModule`). **DONE 2026-06-19** (note below). *(dep CTR-05)* — the structural §4.7 generalization.
-  - **CTR-10b** reference non-Euler venue adapter + `ISeniorPool` wrapper + `addSilo` per-venue-type hardening +
-    fork test. **BACK-PRESSURE / DEFERRED (P5)** — no bindable non-Euler senior surface on the Base fork, venue
-    unchosen, `Silo.seniorRead`-field plumbing undecided (4 obligations in
-    `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). *(dep CTR-10a; LATER / P5)*
+  - **CTR-10b** the federation HOST SEAM — venue-agnostic `addSilo` admission (`ISeniorVenue.seniorPool()` getter
+    + `eePool` re-cast as the generic `ISeniorPool` surface + plug-in recipe + proof test). **DONE 2026-06-19**
+    (note below). *(dep CTR-10a)* — RESOLVES obligation #3 (reuse `eePool`, no new field). A future venue adapter
+    now plugs in with NO registry change.
+  - **CTR-10c** the reference non-Euler adapter + `ISeniorPool` wrapper + fork test. **BACK-PRESSURE / DEFERRED
+    (P5)** — no bindable non-Euler senior surface on the Base fork, venue unchosen, donation-immunity needs a real
+    deployed venue (obligations #1/#2/#4 in `build/tickets/contracts/CTR-10-federation-iseniorpool.md`). *(dep
+    CTR-10b; LATER / P5)*
 
 **Spec sync (forward, NOT a precondition):** each ticket is the complete, self-sufficient build instruction (it
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
@@ -229,6 +236,36 @@ owed to the spec before CTR-02 can run.
 > `CTR-05-SeniorNavAggregator.md` + `DurationFreezeModule.md` (read now via `ISeniorPool`). No `claude-zipcode.md`
 > edit (invisible at the spec level — no mechanism change). **Unblocks CTR-10b** (a non-Euler venue's senior
 > surface now reads/wraps to `ISeniorPool`).
+
+> **CTR-10b — Federation host seam: venue-agnostic admission (the plug-in point) — DONE 2026-06-19.** The
+> host-side half of CTR-10 — makes `SiloRegistry` admission + the senior-read path venue-agnostic so a FUTURE
+> non-Euler venue adapter plugs in with NO host change. RESOLVES CTR-10 obligation #3 (the senior-surface
+> plumbing decision). Modified `contracts/src/venue/EulerVenueAdapter.sol` (+`seniorPool()` view returning
+> `address(eulerEarn)`), `contracts/src/SiloRegistry.sol` (renamed local `IAdapter`→`ISeniorVenue { seniorPool() }`;
+> the `addSilo` adapter clause now asserts `ISeniorVenue(adapter).seniorPool() == eePool` instead of the
+> Euler-specific `eulerEarn()`; `eePool` re-documented as the generic `ISeniorPool` senior-read surface; added a
+> "VENUE-AGNOSTIC ADMISSION" plug-in recipe to the NatSpec), and 4 test mock-adapter stubs (`eulerEarn`→`seniorPool`
+> in `SiloRegistry.t.sol`/`SeniorNavAggregator.t.sol`/`SiloDeployer.t.sol`/`JuniorTrancheDeployer.t.sol` — the
+> `MockFreeze` stubs keep `eulerEarn()`, the freeze clause is unchanged). **The obligation-#3 decision: REUSE
+> `eePool` as the read surface — NOT a new `seniorRead` field** (the critics' "Option B" would have rippled into
+> the CTR-02 struct, the `addSilo` writer, the `ZeroAddress` check, and every `SiloConfig` caller; reusing `eePool`
+> is zero struct change / zero caller churn — a non-4626 venue sets `eePool` = its wrapper, the freeze clause
+> already compares to `eePool`, the aggregator already reads it via `ISeniorPool` from CTR-10a). The `seniorPool()`
+> getter lives on the concrete adapter, NOT on `IZipcodeVenue` (the seam stays senior-surface-free, §4.7). **Built
+> directly with full-suite verification** (I already had the 4-critic grounding from the CTR-10 fan-out; every
+> binding was confirmed against live source this window — the only genuinely venue-specific piece, the actual
+> `IZipcodeVenue` adapter for a real venue, is correctly deferred to CTR-10c). New proof test
+> `test_ctr10b_nonEuler_venue_plugs_in` (`SeniorNavAggregator.t.sol`): a venue stand-in with `seniorPool()` and NO
+> `eulerEarn()` admits + aggregates donation-immune (the admission SUCCEEDING is the venue-neutrality proof; a
+> staticcall confirms the adapter has no `eulerEarn()`). Gate green (my own full-suite re-run): `forge build` exit 0
+> + `forge test` = **920 passed / 0 failed / 3 skipped (56 suites)** (the +1 vs CTR-10a is the new test); the 6
+> silo/aggregator/deployer suites = 140/140. **Doc-sync:** modified contracts → backward wires `docs/wires/WOOF-04.md`
+> (new `seniorPool()` view entry) + `docs/wires/CTR-02-SiloRegistry.md` (the `ISeniorVenue` local interface row,
+> clause-6 rewrite, the `eePool`-as-senior-surface note + the plug-in recipe). No `COVERAGE.md` row change (no new
+> file). No `claude-zipcode.md` edit (the host seam removes an Euler hardcode — invents no mechanism; the federation
+> §-sync stays forward-deferred for CTR-10c). Ticket: `build/tickets/contracts/CTR-10b-federation-host-seam.md`.
+> **Unblocks CTR-10c** (a real non-Euler adapter now plugs in with no host change; still gated on a chosen/deployed
+> second venue).
 
 > **CTR-07 — Slot-2 reservoir fund/defund: the revolving junior yield facility — DONE 2026-06-19.** Discharges
 > **finding 3**. Modified `contracts/src/venue/EulerVenueAdapter.sol` + `contracts/test/ReservoirLoopModule.t.sol`
