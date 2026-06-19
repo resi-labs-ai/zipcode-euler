@@ -12,7 +12,10 @@ added `SeniorNavAggregator.sol` — the donation-immune Σ senior par-backing vi
 scaling/federation workstream), updated 2026-06-19 (CTR-06b added `script/JuniorTrancheDeployer.s.sol` — the reusable
 per-junior tranche deployer, the per-silo analogue of `CreditWarehouseDeployer`, + its fork test), updated 2026-06-19
 (CTR-06c added `script/SiloDeployer.s.sol` — the silo orchestrator that composes the four sub-deployers + the per-silo
-venue front into one complete silo, the final child of the re-scoped CTR-06, + its fork test): **39 product
+venue front into one complete silo, the final child of the re-scoped CTR-06, + its fork test), updated 2026-06-19
+(CTR-08 added the behavior note `CTR-08-structure-2-revolving.md` — structure-2 revolving lines as an operating mode
+over the as-built stack, ZERO contract change; the 5 revolving tests + the CTR-04 withdraw-queue mock regression fix
+land in the existing `test/ZipcodeController.t.sol`): **39 product
 contracts + 11 scripts + 31 interface shims + 34 test/helper files**, plus a **demo/fork-only addendum** (section E): **2
 showcase contracts + 1 demo interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody
 forgotten.
@@ -130,7 +133,7 @@ component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" 
 | `test/LienToken.t.sol` | `WOOF-01.md` |
 | `test/ZipcodeOracleRegistry.t.sol` | `WOOF-02.md` |
 | `test/EulerVenueAdapter.t.sol` | `WOOF-04.md` |
-| `test/ZipcodeController.t.sol` | `WOOF-05.md` |
+| `test/ZipcodeController.t.sol` | `WOOF-05.md` (+ `CTR-08-structure-2-revolving.md` — the revolving-mode section + the CTR-04 mock regression fix) |
 | `test/ZipcodeDeployIdentityGate.t.sol` | `WOOF-10a.md` |
 | `test/ZipDepositModule.t.sol` | `WOOF-06.md` |
 | `test/SummonSubstrate.t.sol` | `8-B1.md` |

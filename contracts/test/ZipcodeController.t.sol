@@ -23,6 +23,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {Errors as EVKErrors} from "evk/EVault/shared/Errors.sol";
+import {Errors as PriceErrors} from "euler-price-oracle/lib/Errors.sol";
 
 /// @notice The seedPrice face, for vm.mockCall selector use in the reentrancy isolation test.
 interface IZipcodeOracleRegistrySeed {
@@ -51,6 +52,17 @@ contract MockEulerEarn {
     uint256[] public lastReallocAssets;
     uint256 public reallocCount;
 
+    // CTR-04: per-market cap (the withdraw-queue removal guard reads it; openLine submits type(uint136).max, and
+    // closeLine's submitCap(0) clears it before the prune).
+    mapping(address => uint136) public cfgCap;
+    // CTR-04: the BINDING withdraw queue — pushed once on a market's first acceptCap, pruned by closeLine's
+    // updateWithdrawQueue. Independent of the supply queue (`_queue`).
+    IOZERC4626[] internal _withdrawQueue;
+
+    /// @dev CTR-04: withdraw-queue removal guards (faithful to EulerEarn.updateWithdrawQueue :362,:366).
+    error InvalidMarketRemovalNonZeroCap(address id);
+    error InvalidMarketRemovalNonZeroSupply(address id);
+
     constructor(address usdc_) {
         usdc = usdc_;
     }
@@ -60,8 +72,20 @@ contract MockEulerEarn {
         return 0;
     }
 
-    function submitCap(IOZERC4626, uint256) external {}
-    function acceptCap(IOZERC4626) external {}
+    /// @dev CTR-04: record the per-market cap. A decrease (incl. ->0, closeLine's revoke) is IMMEDIATE; the
+    ///      withdraw-queue removal guard requires this to be 0 before a market drops.
+    function submitCap(IOZERC4626 id, uint256 cap) external {
+        cfgCap[address(id)] = uint136(cap);
+    }
+
+    /// @dev CTR-04: on a market's FIRST enable push it onto the WITHDRAW queue (a contains-guard prevents a
+    ///      re-accept from double-pushing) — faithful to _setCap's first-enable push.
+    function acceptCap(IOZERC4626 id) external {
+        for (uint256 i; i < _withdrawQueue.length; ++i) {
+            if (address(_withdrawQueue[i]) == address(id)) return; // already enabled -> no re-push
+        }
+        _withdrawQueue.push(id);
+    }
 
     /// @dev SEC-11 (L9): `fund`/`closeLine` now size off the EE-tracked `previewRedeem(config.balance)`. This
     ///      controller-integration mock has NO donation path (no raw share transfers into the pool), so the tracked
@@ -88,8 +112,63 @@ contract MockEulerEarn {
         return _queue[i];
     }
 
-    /// @dev MOCK-RECORDED allocation args; the actual deposit into the LINE vault (item 1) is the LIVE leg that
-    ///      gives the borrow vault cash. We compute the incremental supply = target - current and deposit it.
+    // ----- CTR-04: withdraw-queue surface (the BINDING queue closeLine reclaims) -----
+
+    function withdrawQueueLength() external view returns (uint256) {
+        return _withdrawQueue.length;
+    }
+
+    function withdrawQueue(uint256 i) external view returns (IOZERC4626) {
+        return _withdrawQueue[i];
+    }
+
+    /// @dev test helper: is `market` present in the current withdraw queue?
+    function withdrawQueueContains(address market) external view returns (bool) {
+        for (uint256 i; i < _withdrawQueue.length; ++i) {
+            if (address(_withdrawQueue[i]) == market) return true;
+        }
+        return false;
+    }
+
+    /// @dev CTR-04: KEEP-index semantics (faithful to EulerVenueAdapter.t.sol's mock / EulerEarn.updateWithdrawQueue
+    ///      :340-380). The caller passes the indexes to RETAIN; every current index NOT listed is removed. A removed
+    ///      market must have cfgCap == 0 (else InvalidMarketRemovalNonZeroCap) and be empty
+    ///      (previewRedeem(balanceOf(this)) == 0, else InvalidMarketRemovalNonZeroSupply). cfgCap is cleared on
+    ///      removal; the queue is rebuilt from the kept indexes.
+    function updateWithdrawQueue(uint256[] calldata indexes) external {
+        uint256 currLength = _withdrawQueue.length;
+        bool[] memory seen = new bool[](currLength);
+        IOZERC4626[] memory newQueue = new IOZERC4626[](indexes.length);
+
+        for (uint256 i; i < indexes.length; ++i) {
+            uint256 prevIndex = indexes[i]; // out-of-bounds reverts natively, like the reference
+            newQueue[i] = _withdrawQueue[prevIndex];
+            seen[prevIndex] = true;
+        }
+
+        for (uint256 i; i < currLength; ++i) {
+            if (!seen[i]) {
+                address id = address(_withdrawQueue[i]);
+                if (cfgCap[id] != 0) revert InvalidMarketRemovalNonZeroCap(id);
+                // This mock has no donation path, so live balanceOf == EE-tracked balance (the defund above
+                // emptied the line). previewRedeem(balanceOf) == 0 confirms the market is empty.
+                if (IEVault(id).previewRedeem(IEVault(id).balanceOf(address(this))) != 0) {
+                    revert InvalidMarketRemovalNonZeroSupply(id);
+                }
+                cfgCap[id] = 0;
+            }
+        }
+
+        delete _withdrawQueue;
+        for (uint256 i; i < newQueue.length; ++i) {
+            _withdrawQueue.push(newQueue[i]);
+        }
+    }
+
+    /// @dev MOCK-RECORDED allocation args; the actual move into the LINE vault is the LIVE leg that gives the borrow
+    ///      vault cash. ITERATE EVERY allocation (CTR-04): a `target == 0` leg REDEEMS all of that market's shares
+    ///      (closeLine's defund empties the line so the removal guard passes); a `target > current` leg deposits the
+    ///      delta (the original fund leg); otherwise no-op (0 < target < current — e.g. fund's untouched base leg).
     function reallocate(MarketAllocation[] calldata allocs) external {
         delete lastReallocIds;
         delete lastReallocAssets;
@@ -99,14 +178,21 @@ contract MockEulerEarn {
         }
         reallocCount++;
 
-        // item[1] is the line vault with the new ABSOLUTE target. Deposit the delta so cash() rises (LIVE).
-        address lineVault = address(allocs[1].id);
-        uint256 target = allocs[1].assets;
-        uint256 current = IOZERC4626(lineVault).convertToAssets(IOZERC4626(lineVault).balanceOf(address(this)));
-        if (target > current) {
-            uint256 delta = target - current;
-            IERC20(usdc).approve(lineVault, delta);
-            IOZERC4626(lineVault).deposit(delta, address(this));
+        for (uint256 i; i < allocs.length; ++i) {
+            address id = address(allocs[i].id);
+            uint256 target = allocs[i].assets;
+            if (target == 0) {
+                // closeLine defund: empty the line so the withdraw-queue removal guard's previewRedeem == 0.
+                IOZERC4626(id).redeem(IOZERC4626(id).balanceOf(address(this)), address(this), address(this));
+            } else {
+                uint256 current = IOZERC4626(id).convertToAssets(IOZERC4626(id).balanceOf(address(this)));
+                if (target > current) {
+                    uint256 delta = target - current;
+                    IERC20(usdc).approve(id, delta);
+                    IOZERC4626(id).deposit(delta, address(this));
+                }
+                // else (0 < target < current): no-op (do NOT add a withdraw leg — would perturb fund's base leg).
+            }
         }
     }
 }
@@ -985,5 +1071,167 @@ contract ZipcodeControllerTest is ForkConfig {
         _repayAndClose(LIEN_ID);
         assertFalse(controller.getLien(LIEN_ID).open, "closed through real registry");
         assertEq(siloReg.getSilo(SILO_0).lineCount, 0, "real registry decremented");
+    }
+
+    // ============================================================
+    // (6) Structure-2: revolving credit-approval line
+    // ============================================================
+    // A revolving line is an OPERATING MODE over the as-built stack, not new code: the line is opened ONCE, then
+    // borrow -> permissionless repay -> redraw cycles on the SAME open line / oracle key / EE slot. The CRE simply
+    // never files RT_CLOSE until disqualification. Per-revolution the only on-chain gate is LTV x the mark VALUE the
+    // CRE supplies in the draw report (a too-low mark trips E_AccountLiquidity); a STALE mark does NOT block a draw,
+    // because _draw re-seeds a fresh mark before borrowing. Repay is un-hooked and never quotes. See
+    // docs/wires/CTR-08-structure-2-revolving.md.
+
+    /// @dev RT_DRAW on an already-open line (a redraw). Mirrors the existing draw tests: advance the block first so
+    ///      the re-anchor seed clears the registry's strictly-newer-ts guard (SEC-01).
+    function _redraw(bytes32 lienId, uint256 equityMark, uint256 drawAmount) internal {
+        vm.warp(block.timestamp + 1);
+        vm.prank(FORWARDER);
+        controller.onReport("", _drawReport(lienId, equityMark, drawAmount));
+    }
+
+    // (1) Core revolving proof: borrow -> repay -> redraw on ONE open line / key / slot, no new market minted.
+    function test_Revolving_BorrowRepayRedraw_SameSlot() public {
+        _originate(LIEN_ID_2);
+
+        ZipcodeController.LienRecord memory r0 = controller.getLien(LIEN_ID_2);
+        address lineRef = r0.lineRef;
+        address oracleKey = r0.lien;
+        address borrowAccount = _borrowAccountOf(LIEN_ID_2);
+        uint256 supplyLen0 = ee.supplyQueueLength();
+        uint256 withdrawLen0 = ee.withdrawQueueLength();
+
+        // Two full borrow -> permissionless repay -> redraw cycles. Do NOT close (that would make it one-shot).
+        for (uint256 cycle; cycle < 2; ++cycle) {
+            _repay(LIEN_ID_2); // permissionless, zeroes the debt
+            assertEq(adapter.observeDebt(lineRef), 0, "debt zeroed before redraw");
+
+            _redraw(LIEN_ID_2, EQUITY_MARK, DRAW_AMOUNT);
+
+            ZipcodeController.LienRecord memory r = controller.getLien(LIEN_ID_2);
+            assertTrue(r.open, "line still open across the revolution");
+            assertEq(r.lineRef, lineRef, "same lineRef (one slot)");
+            assertEq(r.lien, oracleKey, "same oracle key (persistent token)");
+            assertEq(_borrowAccountOf(LIEN_ID_2), borrowAccount, "same borrow account");
+            assertEq(ee.supplyQueueLength(), supplyLen0, "supply queue unchanged (no new market)");
+            assertEq(ee.withdrawQueueLength(), withdrawLen0, "withdraw queue unchanged (no new slot)");
+            assertEq(IEVault(lineRef).debtOf(borrowAccount), DRAW_AMOUNT, "debt == the redraw amount");
+            assertEq(controller.getLien(LIEN_ID_2).lien, oracleKey, "getLien.lien unchanged");
+        }
+    }
+
+    // (2) Bounded-key contrast: ONE persistent oracle key across N revolutions vs a NEW key per repo open.
+    function test_Revolving_PersistentOracleKey() public {
+        _originate(LIEN_ID_2);
+        address key = controller.getLien(LIEN_ID_2).lien;
+
+        // Across N revolutions the key is CONSTANT and the registry holds ONE entry for it (latest seeded mark).
+        for (uint256 i; i < 3; ++i) {
+            _repay(LIEN_ID_2);
+            _redraw(LIEN_ID_2, EQUITY_MARK, DRAW_AMOUNT);
+            assertEq(controller.getLien(LIEN_ID_2).lien, key, "revolving key is constant across revolutions");
+            assertEq(registry.getQuote(1e18, key, usdc), EQUITY_MARK, "registry resolves the one key to the mark");
+        }
+
+        // Contrast: a repo open mints a DISTINCT token = a distinct oracle key (n->inf for repo, 1 for revolving).
+        _originate(LIEN_ID);
+        address repoKey = controller.getLien(LIEN_ID).lien;
+        assertTrue(repoKey != key, "repo open mints a distinct key (Key-req #4)");
+    }
+
+    // (3) Per-revolution on-chain gate is LTV x mark (the corrected mechanism), in the post-repay context.
+    function test_Revolving_LtvBackstopOnRedraw() public {
+        _originate(LIEN_ID_2);
+        address LIEN_i = controller.getLien(LIEN_ID_2).lien;
+        address lineRef = controller.getLien(LIEN_ID_2).lineRef;
+        address borrowAccount = _borrowAccountOf(LIEN_ID_2);
+
+        _repay(LIEN_ID_2); // zero the debt; do NOT close
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), 0, "debt zeroed");
+
+        uint256 priorQuote = registry.getQuote(1e18, LIEN_i, usdc);
+
+        // A redraw whose mark is too low for the requested amount: 0.8 * 100k = $80k < the $100k draw.
+        uint256 lowMark = 100_000e6;
+        vm.warp(block.timestamp + 1);
+        vm.prank(FORWARDER);
+        vm.expectRevert(EVKErrors.E_AccountLiquidity.selector);
+        controller.onReport("", _drawReport(LIEN_ID_2, lowMark, DRAW_AMOUNT));
+
+        // Rolled back: line stays open, prior mark + (zero) debt unchanged.
+        assertTrue(controller.getLien(LIEN_ID_2).open, "line still open after rolled-back redraw");
+        assertEq(registry.getQuote(1e18, LIEN_i, usdc), priorQuote, "prior mark intact (re-anchor rolled back)");
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), 0, "debt unchanged (still zero)");
+    }
+
+    // (4) The lapse correction: repay + a re-seeding redraw BOTH survive a mark that has gone stale for readers.
+    function test_Revolving_RepayAndRedrawSurviveMarkLapse() public {
+        _originate(LIEN_ID_2);
+        address LIEN_i = controller.getLien(LIEN_ID_2).lien;
+        address lineRef = controller.getLien(LIEN_ID_2).lineRef;
+        address borrowAccount = _borrowAccountOf(LIEN_ID_2);
+
+        // Warp past the 365-day validity window so the mark is stale for EXTERNAL readers.
+        // NOTE: this forge-std's `expectRevert(bytes4)` does a FULL-returndata compare, not selector-only, so the
+        // ticket's bare-selector form does not match a 2-arg error here. The two args are DETERMINISTIC (not
+        // fragile): staleness == 365 days + 1 (the exact warp delta from the originate-time seed), window == the
+        // registry's 365-day validityWindow. Assert them precisely via encodeWithSelector.
+        vm.warp(block.timestamp + 365 days + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(PriceErrors.PriceOracle_TooStale.selector, 365 days + 1, registry.validityWindow())
+        );
+        registry.getQuote(1e18, LIEN_i, usdc);
+
+        // (a) Permissionless repay STILL zeroes the debt (repay is un-hooked, never quotes).
+        _repay(LIEN_ID_2);
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), 0, "repay survives the lapse (un-hooked, no quote)");
+
+        // (b) An RT_DRAW AFTER the lapse STILL succeeds — _draw re-seeds a fresh mark, then borrows. Lapse does NOT
+        //     block a draw (the corrected mechanism).
+        _redraw(LIEN_ID_2, EQUITY_MARK, DRAW_AMOUNT);
+
+        // The mark is refreshed (getQuote resolves again) and the debt rose by the redraw amount.
+        assertEq(registry.getQuote(1e18, LIEN_i, usdc), EQUITY_MARK, "mark refreshed by the re-seeding draw");
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), DRAW_AMOUNT, "debt rose by the redraw amount");
+        assertTrue(controller.getLien(LIEN_ID_2).open, "line open across the lapse");
+    }
+
+    // (5) Coexistence: a repo line (closes + burns, frees its CTR-04 slot) and a revolving line (persists), one pool.
+    function test_Coexistence_RepoAndRevolving_OnePool() public {
+        // Open BOTH into SILO_0 (one EE pool).
+        _originate(LIEN_ID); // repo line
+        _originate(LIEN_ID_2); // revolving line
+
+        ZipcodeController.LienRecord memory repo = controller.getLien(LIEN_ID);
+        ZipcodeController.LienRecord memory rev = controller.getLien(LIEN_ID_2);
+        address repoRef = repo.lineRef;
+        address revRef = rev.lineRef;
+
+        // Both concurrent, each holding one withdraw-queue slot (the base market is seeded directly, never a slot).
+        assertTrue(ee.withdrawQueueContains(repoRef), "repo line holds a slot while concurrent");
+        assertTrue(ee.withdrawQueueContains(revRef), "revolving line holds a slot while concurrent");
+        uint256 wqLenConcurrent = ee.withdrawQueueLength();
+
+        // Revolving: draw -> repay -> redraw, persists open.
+        _repay(LIEN_ID_2);
+        _redraw(LIEN_ID_2, EQUITY_MARK, DRAW_AMOUNT);
+        assertTrue(controller.getLien(LIEN_ID_2).open, "revolving line stays open");
+
+        // Repo: draw -> repay -> RT_CLOSE -> token burned, record closed, AND its slot freed (CTR-04).
+        _repayAndClose(LIEN_ID);
+        assertFalse(controller.getLien(LIEN_ID).open, "repo line closed");
+        assertEq(IERC20(repo.lien).totalSupply(), 0, "repo lien burned");
+        assertEq(ee.withdrawQueueLength(), wqLenConcurrent - 1, "repo slot freed (CTR-04 reclaim)");
+        assertFalse(ee.withdrawQueueContains(repoRef), "repo lineRef no longer in withdraw queue");
+        assertTrue(ee.withdrawQueueContains(revRef), "revolving lineRef still present");
+
+        // The revolving line can still redraw after the repo line closed.
+        _repay(LIEN_ID_2);
+        _redraw(LIEN_ID_2, EQUITY_MARK, DRAW_AMOUNT);
+        assertTrue(controller.getLien(LIEN_ID_2).open, "revolving line still revolves after repo close");
+        assertEq(
+            IEVault(revRef).debtOf(_borrowAccountOf(LIEN_ID_2)), DRAW_AMOUNT, "revolving debt == redraw amount"
+        );
     }
 }

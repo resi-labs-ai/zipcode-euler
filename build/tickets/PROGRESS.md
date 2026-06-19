@@ -38,9 +38,28 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   `build/tickets/contracts/CTR-06-silo-deployer.md`. **CTR-06a + CTR-06b both landed 2026-06-19** (notes below; D1+D5
   ratified by the reviewer). **CTR-06c landed 2026-06-19** (note below) — the re-scoped CTR-06 is now COMPLETE
   (06a+06b+06c). **CTR-07 landed 2026-06-19** (note below) — the slot-2 reservoir fund/defund is now revolving;
-  finding 3 RESOLVED. So the next of that workstream = **CTR-08** (structure-2 revolving line; dep 02/03, composes
-  07/09 — now unblocked, 07 done) or **CTR-09** (0.1%-per-revolution fee; dep 03, composes 08) — reviewer picks. See
-  "Credit-warehouse scaling + federation" below.
+  finding 3 RESOLVED. **CTR-08 landed 2026-06-19** (note below) — structure-2 revolving lines proved as an operating
+  MODE over the as-built stack with ZERO contract change (test + doc only). So the next of that workstream =
+  **CTR-09** (0.1%-per-revolution fee; dep 03, composes 08). See "Credit-warehouse scaling + federation" below.
+
+- **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
+  needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
+  `CREGatingHook` + `LienCollateralToken`) driven in a different MODE — open ONCE, then borrow -> permissionless
+  repay -> redraw on the SAME open line / oracle key / EE slot; the CRE just never files `RT_CLOSE` until
+  disqualification. Corrected disqualification mechanism: the per-revolution on-chain gate is **LTV x the mark VALUE**
+  in the draw report (a too-low mark reverts `E_AccountLiquidity`), NOT mark lapse — `_draw` re-seeds a fresh mark
+  before borrowing, so a stale mark cannot block a draw, and un-hooked repay never quotes. Binary disqualification is
+  OFF-CHAIN (CRE declines to file `RT_DRAW`); the optional on-chain per-account hook flag is unbuilt/optional for M1.
+  Shipped: 5 revolving tests in `test/ZipcodeController.t.sol` + a forced precondition fix (extended that file's
+  `MockEulerEarn` with the CTR-04 withdraw-queue surface `closeLine` calls — the 6 close-path tests were RED on main
+  after CTR-04 updated only the faithful mock). Suite now 39/39 green. Doc: `docs/wires/CTR-08-structure-2-revolving.md`.
+  **Regression confirmed ISOLATED:** of the 3 suites exercising the `closeLine` withdraw-queue path, the other two
+  were already green (`EulerVenueAdapter.t.sol` 39/39 — CTR-04 updated its faithful mock; `ReservoirLoopModule.t.sol`
+  41/41 — CTR-07 ported that mock); only `ZipcodeController.t.sol` (its own simpler `MockEulerEarn`) was the casualty.
+  **Process lesson:** a per-match-path Conclude gate that verifies only the OWN suite can leave another suite's
+  homegrown mock stale + RED uncaught (CTR-04 verified `EulerVenueAdapter.t.sol`, not the controller suite). When a
+  `src/` contract gains a new external-call surface, grep ALL suites with a homegrown mock of the called contract and
+  re-run them, not just the touched suite.
 
 ---
 
