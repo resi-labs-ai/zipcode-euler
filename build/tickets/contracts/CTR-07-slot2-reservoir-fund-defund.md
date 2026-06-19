@@ -50,12 +50,13 @@ error + an `onlyReservoirAllocator` modifier:
 - Do NOT size the reallocate off `convertToAssets(balanceOf(EE))` (donation-skewable → `InconsistentReallocation`);
   use `_eeSupplyAssets` like `fund`/`closeLine`.
 - Do NOT touch the line fund/close paths.
-- **LOAD-BEARING DEPLOY INVARIANT (record, do not change):** the reservoir vault's hook config must stay
-  **OP_BORROW-only** (`ReservoirMarketDeployer` installs `setHookConfig(guard, OP_BORROW)`). `fundReservoir`/
-  `defundReservoir` work *because* the EE's `reallocate` deposit/withdraw legs into `bv` are un-hooked. If a future
-  governor (the Timelock retains the borrow-vault governor, CTR-06a) ever widens the hooked-op mask to include
-  `OP_DEPOSIT`/`OP_WITHDRAW`, `fundReservoir` silently bricks with `NotEngineSafe` — note this in the wire, do not
-  defend against it in code (it is a governed footgun, like the other §17 Timelock-trusted invariants).
+- **LOAD-BEARING INVARIANT — fail-fast ENFORCED at wiring:** the reservoir vault's hook must not cover the EE
+  reallocate legs (`ReservoirMarketDeployer` installs `setHookConfig(guard, OP_BORROW)` only, so deposit/withdraw are
+  un-hooked and fund/defund work). `setReservoirVault` reads `IEVault(v).hookConfig()` and reverts
+  `ReservoirHookBlocksReallocate` if `hookedOps & REALLOC_OPS != 0` (`REALLOC_OPS = OP_DEPOSIT|OP_MINT|OP_WITHDRAW|
+  OP_REDEEM`) — so a mis-hooked vault can't be wired in. The narrow residual: the Timelock can still re-hook an
+  ALREADY-wired vault afterward (a governed §17 invariant, outside the adapter's reach) — that part stays documented,
+  not code-defended.
 
 ## Key requirements
 1. **Round-trips to resting.** A fund→borrow→repay→defund cycle leaves the resting market's balance restored (a

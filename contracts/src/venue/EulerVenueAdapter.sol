@@ -24,8 +24,16 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///         imported — evk-periphery is un-remapped).
 contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     // ----- EVK op bitmask constants (§3 line 133) -----
+    uint32 internal constant OP_DEPOSIT = 1 << 0;
+    uint32 internal constant OP_MINT = 1 << 1;
+    uint32 internal constant OP_WITHDRAW = 1 << 2;
+    uint32 internal constant OP_REDEEM = 1 << 3;
     uint32 internal constant OP_BORROW = 1 << 6;
     uint32 internal constant OP_LIQUIDATE = 1 << 11;
+    /// @notice The ops an EE `reallocate` leg invokes on a market: supply = deposit/mint, withdraw = withdraw/redeem.
+    ///         If the reservoir vault hooks ANY of these, `fundReservoir`/`defundReservoir` brick (the hook reverts the
+    ///         reallocate leg) — `setReservoirVault` refuses to wire such a vault (CTR-07).
+    uint32 internal constant REALLOC_OPS = OP_DEPOSIT | OP_MINT | OP_WITHDRAW | OP_REDEEM;
 
     // ----- wiring (constructor-seeded; §9/item 10 grants roles separately) -----
     // NOTE (build phase, §17 2026-06-09): every cross-component / external-infra address below is plain MUTABLE
@@ -91,6 +99,9 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     error EulerEarnTimelockNonZero();
     /// @notice `fundReservoir`/`defundReservoir` caller is not the wired `reservoirAllocator` (two-key separation).
     error NotReservoirAllocator();
+    /// @notice `setReservoirVault` rejected a vault whose hook would block the EE reallocate legs (deposit/withdraw),
+    ///         which would brick `fundReservoir`/`defundReservoir` (CTR-07 fail-fast).
+    error ReservoirHookBlocksReallocate();
 
     // ----- events -----
     /// @notice Emitted when an owner (Timelock) re-points a wiring slot (build phase, §17).
@@ -209,6 +220,13 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     ///         JIT fund/defund path moves resting USDC in/out of.
     function setReservoirVault(address reservoirVault_) external onlyOwner {
         if (reservoirVault_ == address(0)) revert ZeroAddress();
+        // Fail-fast (CTR-07): the EE reallocate legs DEPOSIT/MINT into and WITHDRAW/REDEEM out of this vault, so if any
+        // of those ops is hooked the guard reverts and `fundReservoir`/`defundReservoir` brick. The reservoir vault is
+        // purpose-built hooked OP_BORROW-only (`ReservoirMarketDeployer`); refuse to wire any vault whose hook would
+        // block reallocate. (Catches a mis-wire at SET time; the Timelock can still re-hook an already-wired vault
+        // later — that remains a governed §17 invariant, outside this adapter's reach.)
+        (, uint32 hookedOps) = IEVault(reservoirVault_).hookConfig();
+        if (hookedOps & REALLOC_OPS != 0) revert ReservoirHookBlocksReallocate();
         reservoirVault = reservoirVault_;
         emit WiringSet("reservoirVault", reservoirVault_);
     }

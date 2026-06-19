@@ -155,6 +155,12 @@ owed to the spec before CTR-02 can run.
 > + the CTR-07 gotchas test note). No `claude-zipcode.md` edit (the federation/split-slot-2 §-sync is forward-deferred,
 > per the federation-section §-sync note; CTR-07 invents no mechanism — it generalizes the existing reallocate one).
 > **Unblocks CTR-08** (structure-2 revolving lines reuse this reallocate-funded-revolving pattern).
+> **Follow-up (reviewer-requested, same day):** the OP_BORROW-only hook invariant is now **fail-fast ENFORCED** —
+> `setReservoirVault` reverts `ReservoirHookBlocksReallocate` if the wired vault hooks any reallocate leg
+> (`hookedOps & (OP_DEPOSIT|OP_MINT|OP_WITHDRAW|OP_REDEEM) != 0`), so a mis-hooked vault can't be wired in (a fresh
+> negative test `test_ctr07_setReservoirVault_rejects_reallocate_blocking_hook` simulates the governor widening the
+> mask). Gate re-run: **41 passed / 0 failed**. The only residual (a Timelock re-hooking an already-wired vault) stays
+> a documented §17 governed invariant — outside the adapter's reach. WOOF-04 + the ticket Do-NOT updated to match.
 
 > **CTR-06c — `SiloDeployer` (the silo orchestrator) — DONE 2026-06-19.** Third + FINAL built child of the re-scoped
 > CTR-06; the re-scoped CTR-06 is now COMPLETE (06a+06b+06c). Added `contracts/script/SiloDeployer.s.sol` +

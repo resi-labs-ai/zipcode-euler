@@ -1392,6 +1392,20 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
         assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), 0, "reservoir == 0 at rest after a full cycle");
     }
+
+    /// @dev CTR-07 fail-fast: `setReservoirVault` refuses a vault whose hook would block the EE reallocate legs. The
+    ///      reservoir vault is purpose-built OP_BORROW-only; here the governor (Timelock) widens its mask to ALSO hook
+    ///      deposits (the §17 footgun) — re-wiring it must now revert `ReservoirHookBlocksReallocate` rather than
+    ///      silently accept a vault `fundReservoir` would brick on.
+    function test_ctr07_setReservoirVault_rejects_reallocate_blocking_hook() public {
+        (, , , address bv,) = _ee07Setup(1_000_000e6);
+        (address hookTarget,) = IEVault(bv).hookConfig();
+        // OP_BORROW (1<<6) | OP_DEPOSIT (1<<0): keep the borrow guard, but now also hook deposits.
+        vm.prank(owner);
+        IEVault(bv).setHookConfig(hookTarget, uint32((1 << 6) | (1 << 0)));
+        vm.expectRevert(EulerVenueAdapter.ReservoirHookBlocksReallocate.selector);
+        adapter.setReservoirVault(bv);
+    }
 }
 
 /// @notice A minimal borrow-vault stub for the unit exec-discipline + atomicity tests: `debtOf` returns 0 so the cap
