@@ -24,9 +24,11 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
-- **CTR-02 — `SiloRegistry`** (NEW contracts workstream — credit-warehouse scaling + federation). The first item
-  of the CTR-02..CTR-10 ledger below; beats the 30-market/pool cap, carries both line structures, and is the
-  federation substrate. **NEXT of that workstream = CTR-02.** See "Credit-warehouse scaling + federation" below.
+- **CTR-03 / CTR-04** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry`
+  is DONE** (2026-06-18, below). NEXT of that workstream = **CTR-03** (`ZipcodeController` siloId routing, dep
+  CTR-02) per build order — but **CTR-04** (`closeLine` withdraw-queue reclaim, leaf) is now a strong companion:
+  CTR-02's concurrent slot accounting is only fully SOUND once both land (CTR-04 makes close free the real
+  withdraw-queue slot; see the CTR-02 DONE note + Gotcha). See "Credit-warehouse scaling + federation" below.
 
 ---
 
@@ -73,9 +75,10 @@ CTR-08/09 compose with CTR-03/07; CTR-10 on CTR-02..09. **Deploy-wiring:** every
 warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != juniorSafe`, `warehouseSafe != juniorSafe`).
 
 **Ledger (build order):**
-- **CTR-02** `SiloRegistry` — silo set + admission gate + slot accounting. **NEXT.** *(leaf)*
-- **CTR-03** `ZipcodeController` siloId routing over the registry. *(dep CTR-02)*
-- **CTR-04** `closeLine` withdraw-queue reclaim (finding 1). *(independent; pairs with CTR-03 decrement)*
+- **CTR-02** `SiloRegistry` — silo set + admission gate + slot accounting. **DONE 2026-06-18** (below). *(leaf)*
+- **CTR-03** `ZipcodeController` siloId routing over the registry. **NEXT.** *(dep CTR-02)*
+- **CTR-04** `closeLine` withdraw-queue reclaim (finding 1). *(independent; pairs with CTR-03 decrement — elevated:
+  CTR-02 slot-accounting soundness depends on it, see CTR-02 DONE note)*
 - **CTR-05** `SeniorNavAggregator` (donation-immune Σ). *(dep CTR-02)*
 - **CTR-06** `SiloDeployer` (stamp + register a silo; opens the 29th concurrent line across two silos). *(dep 02/03/05)*
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
@@ -87,6 +90,35 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-02 — `SiloRegistry` (multi-pool/federation silo catalog + admission gate) — DONE 2026-06-18.** First
+> contract of the scaling/federation workstream. Added `contracts/src/SiloRegistry.sol` + `contracts/test/
+> SiloRegistry.t.sol`. A plain OZ `Ownable` (v5, Timelock owner — NOT a Zodiac module/EVK hook) catalog of silos
+> `{adapter, warehouseSafe, eePool, juniorBasket, escrow, defaultCoordinator, navOracle, freeze, curator,
+> lineCount, active}` keyed by a caller-chosen `bytes32 siloId`: `addSilo` (onlyOwner admission + a load-bearing
+> **6-clause topology assert** that the silo points only at its OWN components — `freeze.{eulerEarn==eePool,
+> warehouse==warehouseSafe, navOracle==navOracle}`, `escrow.coordinator()==defaultCoordinator`,
+> `defaultCoordinator.navOracle()==navOracle`, `adapter.eulerEarn()==eePool`), `retireSilo`/`setActive`/
+> `setCurrentSilo` (governed lifecycle; retire keeps the record), `incrementLineCount`/`decrementLineCount`
+> (`onlyController`, cap `MAX_LINES_PER_SILO = 28 = 30−2`), views (`venueOf`→adapter, `getSilo`, `allSiloIds`,
+> `siloCount`), Timelock-settable `controller` (`setController`+`WiringSet`). **Harness loop ran:** 4 critics
+> (junior-dev/spec-fidelity/reference-verifier/contract-binding) converged on TWO load-bearing findings, both fixed
+> in the ticket BEFORE cold-build: (1) the draft `Silo` struct lacked `defaultCoordinator` + `freeze` fields the
+> topology assert dereferences → added both, dropped the redundant `WarehouseAdminModule` assert; (2) `lineCount`
+> is concurrent but the EE cap is LIFETIME until CTR-04 (closeLine doesn't free the withdraw-queue slot) →
+> documented as a cross-ticket capacity dependency (CTR-02 builds standalone but concurrency is sound only once
+> CTR-03+CTR-04 land). Plus: caller can't seed `lineCount`/`active` (admission takes a `SiloConfig` addresses-only
+> view); `bytes32(0)` reserved as the `currentSilo` sentinel; `venueOf` returns the adapter. Gate green: `forge
+> build` exit 0 + `forge test --match-path test/SiloRegistry.t.sol` = **28 passed / 0 failed** (happy-path, zero-id,
+> dup, per-field zero-address, ≥2 broken topology clauses, increment-to-cap→SiloFull, decrement + zero-guard,
+> onlyController/onlyOwner gating, retire-stops-routing-keeps-record). Cold-build returned only non-load-bearing
+> defensive choices (constructor accepts zero `controller_` per deploy-later order, `UnknownSilo` guard,
+> `adapter!=0` existence sentinel). Ticket: `build/tickets/contracts/CTR-02-silo-registry.md`. **Doc-sync:** NEW
+> contract → new wire `docs/wires/CTR-02-SiloRegistry.md` + `docs/wires/COVERAGE.md` rows (37→38 product, +test).
+> No existing contract changed → no backward wire edit owed. No `claude-zipcode.md` edit (federation § is forward
+> doc-sync, not a precondition). NOTE on git: a mid-session commit `0350d5a` (author rootdraws) checkpointed the
+> pre-existing dirty tree (the CTR-02..12 *draft* tickets + earlier doc edits) — it does NOT contain this window's
+> work; CTR-02's built code + rewritten ticket + this sync are the new commit.
 
 > **KEEPER-01a — buy-burn fill-detect → `burnFor` job — DONE 2026-06-17.** The first live (K) write job + the burn
 > half of the hybrid buy-burn cycle (`CRE-OPS-ROUTING.md`): a CoW fill lands szipUSD in the engine Safe; `BurnJob`
