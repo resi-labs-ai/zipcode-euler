@@ -5,6 +5,7 @@ import {ForkConfig} from "./ForkConfig.sol";
 import {BaseAddresses} from "../script/BaseAddresses.sol";
 
 import {ZipcodeController} from "../src/ZipcodeController.sol";
+import {SiloRegistry} from "../src/SiloRegistry.sol";
 import {EulerVenueAdapter} from "../src/venue/EulerVenueAdapter.sol";
 import {IZipcodeVenue} from "../src/venue/IZipcodeVenue.sol";
 import {CREGatingHook} from "../src/CREGatingHook.sol";
@@ -139,6 +140,97 @@ contract ReentrantVenue is IZipcodeVenue {
     function liquidate(address) external {}
 }
 
+/// @notice A no-op recording IZipcodeVenue that records the lien it was opened with and returns a deterministic
+///         lineRef/oracleKey — for isolating which venue instance the controller routed to.
+contract RecordingVenue is IZipcodeVenue {
+    address public immutable lineRef;
+    address public immutable oracleKey;
+    uint256 public openCount;
+    uint256 public closeCount;
+    bytes32 public lastLienId;
+
+    constructor(address lineRef_, address oracleKey_) {
+        lineRef = lineRef_;
+        oracleKey = oracleKey_;
+    }
+
+    function openLine(bytes32 lienId, address, uint256) external returns (address, address) {
+        openCount++;
+        lastLienId = lienId;
+        return (lineRef, oracleKey);
+    }
+
+    function setLineLimits(address, uint16, uint16, uint256) external {}
+    function fund(address, uint256) external {}
+    function draw(address, uint256, address) external {}
+    function observeDebt(address) external pure returns (uint256) {
+        return 0;
+    }
+
+    function closeLine(address) external {
+        closeCount++;
+    }
+
+    function liquidate(address) external {}
+}
+
+/// @notice A 3-method SiloRegistry stand-in for isolating the controller's routing branches (the real registry's
+///         admission/topology is exhaustively covered by SiloRegistry.t.sol). Mirrors the controller's inline
+///         ISiloRegistry: venueOf + increment/decrement. Tracks a per-siloId concurrent-line counter.
+contract MockSiloRegistry {
+    mapping(bytes32 => address) public venues;
+    mapping(bytes32 => uint256) public lineCount;
+
+    function setVenue(bytes32 siloId, address venue) external {
+        venues[siloId] = venue;
+    }
+
+    function venueOf(bytes32 siloId) external view returns (address) {
+        return venues[siloId];
+    }
+
+    function incrementLineCount(bytes32 siloId) external {
+        lineCount[siloId] += 1;
+    }
+
+    function decrementLineCount(bytes32 siloId) external {
+        lineCount[siloId] -= 1;
+    }
+}
+
+/// @notice Minimal self-consistent topology stub for the REAL SiloRegistry's 6-clause admission assert. The adapter
+///         is the real EulerVenueAdapter (adapter.eulerEarn() == ee), so eePool == address(ee). The freeze stub
+///         returns {eulerEarn=ee, warehouse=warehouseSafe, navOracle=navOracle}.
+contract StubFreeze {
+    address public eulerEarn;
+    address public warehouse;
+    address public navOracle;
+
+    constructor(address ee_, address warehouse_, address navOracle_) {
+        eulerEarn = ee_;
+        warehouse = warehouse_;
+        navOracle = navOracle_;
+    }
+}
+
+/// @notice Escrow stub: escrow.coordinator() == defaultCoordinator.
+contract StubEscrow {
+    address public coordinator;
+
+    constructor(address coordinator_) {
+        coordinator = coordinator_;
+    }
+}
+
+/// @notice Coordinator stub: coordinator.navOracle() == navOracle.
+contract StubCoordinator {
+    address public navOracle;
+
+    constructor(address navOracle_) {
+        navOracle = navOracle_;
+    }
+}
+
 contract ZipcodeControllerTest is ForkConfig {
     // -- live Base deployments --
     IEVC internal evc;
@@ -153,6 +245,7 @@ contract ZipcodeControllerTest is ForkConfig {
     MockEulerEarn internal ee;
     EulerVenueAdapter internal adapter;
     ZipcodeController internal controller;
+    SiloRegistry internal siloReg;
     address internal baseUsdcMarket;
 
     // EOAs
@@ -163,6 +256,7 @@ contract ZipcodeControllerTest is ForkConfig {
     bytes32 internal constant LIEN_ID = bytes32(uint256(0xA11CE));
     bytes32 internal constant LIEN_ID_2 = bytes32(uint256(0xB0B));
     bytes32 internal constant PROOF_REF = bytes32(uint256(0xDEAD));
+    bytes32 internal constant SILO_0 = bytes32(uint256(0x5170));
 
     uint256 internal constant EQUITY_MARK = 200_000e6; // $200k
     uint16 internal constant BORROW_LTV = 0.8e4;
@@ -179,7 +273,8 @@ contract ZipcodeControllerTest is ForkConfig {
         address lineRef,
         bytes32 proofRef,
         uint256 equityMark,
-        uint256 drawAmount
+        uint256 drawAmount,
+        bytes32 siloId
     );
     event LienReleased(bytes32 indexed lienId);
     event LienDrawn(bytes32 indexed lienId, uint256 equityMark, uint256 drawAmount);
@@ -235,6 +330,35 @@ contract ZipcodeControllerTest is ForkConfig {
         // Wire the registry's set-once seed authority to the controller.
         registry.setController(address(controller));
 
+        // ---- CTR-03: deploy + wire the REAL SiloRegistry, registering SILO_0 -> adapter ----
+        // Self-consistent topology stubs so addSilo's 6-clause assert passes. The adapter is the REAL
+        // EulerVenueAdapter (adapter.eulerEarn() == ee), so eePool == address(ee).
+        address warehouseSafe = makeAddr("warehouseSafe");
+        address navOracle = makeAddr("navOracle");
+        address juniorBasket = makeAddr("juniorBasket");
+        address curator = makeAddr("curator");
+        StubCoordinator coord = new StubCoordinator(navOracle);
+        StubEscrow escrow = new StubEscrow(address(coord));
+        StubFreeze freeze = new StubFreeze(address(ee), warehouseSafe, navOracle);
+
+        siloReg = new SiloRegistry(address(this)); // ctor controller_ placeholder; re-pointed below
+        siloReg.addSilo(
+            SILO_0,
+            SiloRegistry.SiloConfig({
+                adapter: address(adapter),
+                warehouseSafe: warehouseSafe,
+                eePool: address(ee),
+                juniorBasket: juniorBasket,
+                escrow: address(escrow),
+                defaultCoordinator: address(coord),
+                navOracle: navOracle,
+                freeze: address(freeze),
+                curator: curator
+            })
+        );
+        controller.setRegistry(address(siloReg));
+        siloReg.setController(address(controller));
+
         // Seed the EE supply queue with the base market.
         IOZERC4626[] memory q = new IOZERC4626[](1);
         q[0] = IOZERC4626(baseUsdcMarket);
@@ -258,8 +382,22 @@ contract ZipcodeControllerTest is ForkConfig {
         uint256 drawAmount,
         uint256 cap
     ) internal pure returns (bytes memory) {
+        // CTR-03: route the default fleet of pre-existing tests through SILO_0 (the N=1 identity silo).
+        return _origReportSilo(lienId, equityMark, borrowLTV, liqLTV, drawAmount, cap, SILO_0);
+    }
+
+    /// @dev CTR-03: the RT_ORIGINATION payload gains a TRAILING `bytes32 siloId`.
+    function _origReportSilo(
+        bytes32 lienId,
+        uint256 equityMark,
+        uint16 borrowLTV,
+        uint16 liqLTV,
+        uint256 drawAmount,
+        uint256 cap,
+        bytes32 siloId
+    ) internal pure returns (bytes memory) {
         return abi.encode(
-            uint8(1), abi.encode(lienId, PROOF_REF, equityMark, borrowLTV, liqLTV, drawAmount, cap)
+            uint8(1), abi.encode(lienId, PROOF_REF, equityMark, borrowLTV, liqLTV, drawAmount, cap, siloId)
         );
     }
 
@@ -352,7 +490,7 @@ contract ZipcodeControllerTest is ForkConfig {
         emit RegistryPriceSeed(predictedLien, EQUITY_MARK);
         // lineRef unknown ahead of time -> check topics (lienId, lien) + don't match all data.
         vm.expectEmit(true, true, false, false, address(controller));
-        emit LienOriginated(LIEN_ID, predictedLien, address(0), PROOF_REF, EQUITY_MARK, DRAW_AMOUNT);
+        emit LienOriginated(LIEN_ID, predictedLien, address(0), PROOF_REF, EQUITY_MARK, DRAW_AMOUNT, SILO_0);
 
         vm.prank(FORWARDER);
         controller.onReport("", _origReport(LIEN_ID, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP));
@@ -684,6 +822,12 @@ contract ZipcodeControllerTest is ForkConfig {
             new ZipcodeController(FORWARDER, address(rv), address(lienFactory), address(registry), EREBOR);
         rv.setController(address(c2));
 
+        // c2 needs a routable registry too (the real registry's topology can't admit ReentrantVenue). A 3-method
+        // MockSiloRegistry pointing SILO_0 -> rv is fine (increment/decrement just bump a counter).
+        MockSiloRegistry mockReg = new MockSiloRegistry();
+        mockReg.setVenue(SILO_0, address(rv));
+        c2.setRegistry(address(mockReg));
+
         // c2 is not the registry's controller; mock seedPrice so the outer batch completes deterministically and we
         // isolate the reentrancy behavior (the lien token create is real and caller-bound to c2).
         vm.mockCall(address(registry), abi.encodeWithSelector(IZipcodeOracleRegistrySeed.seedPrice.selector), bytes(""));
@@ -695,5 +839,151 @@ contract ZipcodeControllerTest is ForkConfig {
         c2.onReport("", _origReport(lid, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP));
 
         assertFalse(rv.reentered(), "reentrant onReport was rejected (Forwarder gate)");
+    }
+
+    // ============================================================
+    // (10) CTR-03 — siloId routing over the registry
+    // ============================================================
+
+    bytes32 internal constant SILO_A = bytes32(uint256(0xA));
+    bytes32 internal constant SILO_B = bytes32(uint256(0xB));
+    bytes32 internal constant SILO_UNKNOWN = bytes32(uint256(0xDEAD0));
+
+    /// @dev Stand up a fresh controller routed through a MockSiloRegistry, with seedPrice mocked so origination
+    ///      through a no-op RecordingVenue completes deterministically (isolating routing from venue mechanics).
+    function _freshRoutedController() internal returns (ZipcodeController c, MockSiloRegistry mr) {
+        c = new ZipcodeController(FORWARDER, address(adapter), address(lienFactory), address(registry), EREBOR);
+        mr = new MockSiloRegistry();
+        c.setRegistry(address(mr));
+        // seedPrice is the only real-registry call in the no-op-venue path; mock it (the lien create is real,
+        // caller-bound to `c`).
+        vm.mockCall(address(registry), abi.encodeWithSelector(IZipcodeOracleRegistrySeed.seedPrice.selector), bytes(""));
+    }
+
+    // (a) origination routes to the venue named by siloId
+    function test_CTR03_Origination_RoutesToNamedVenue() public {
+        (ZipcodeController c, MockSiloRegistry mr) = _freshRoutedController();
+        RecordingVenue vA = new RecordingVenue(address(0xA11), address(0xA12));
+        RecordingVenue vB = new RecordingVenue(address(0xB11), address(0xB12));
+        mr.setVenue(SILO_A, address(vA));
+        mr.setVenue(SILO_B, address(vB));
+
+        vm.prank(FORWARDER);
+        c.onReport("", _origReportSilo(LIEN_ID, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP, SILO_A));
+
+        assertEq(vA.openCount(), 1, "SILO_A venue opened");
+        assertEq(vB.openCount(), 0, "SILO_B venue NOT touched");
+        ZipcodeController.LienRecord memory r = c.getLien(LIEN_ID);
+        assertEq(r.siloId, SILO_A, "record stores routed siloId");
+        assertEq(r.lineRef, address(0xA11), "lineRef from SILO_A venue");
+
+        // A second lien routed to SILO_B hits the OTHER venue.
+        vm.prank(FORWARDER);
+        c.onReport("", _origReportSilo(LIEN_ID_2, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP, SILO_B));
+        assertEq(vB.openCount(), 1, "SILO_B venue opened for second lien");
+        assertEq(c.getLien(LIEN_ID_2).siloId, SILO_B, "second record stores SILO_B");
+    }
+
+    // (b) draw/close re-resolve from r.siloId — even after the silo's currentSilo/active state changes.
+    function test_CTR03_DrawClose_ReResolveFromStoredSiloId() public {
+        (ZipcodeController c, MockSiloRegistry mr) = _freshRoutedController();
+        RecordingVenue vA = new RecordingVenue(address(0xA11), address(0xA12));
+        mr.setVenue(SILO_A, address(vA));
+
+        vm.prank(FORWARDER);
+        c.onReport("", _origReportSilo(LIEN_ID, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP, SILO_A));
+
+        // Draw re-resolves SILO_A -> vA (no separate venue pointer on the report).
+        vm.prank(FORWARDER);
+        c.onReport("", _drawReport(LIEN_ID, EQUITY_MARK, 1e6));
+
+        // Close re-resolves SILO_A -> vA and burns; the controller still holds the 1e18 (no-op openLine never pulled it).
+        vm.prank(FORWARDER);
+        c.onReport("", _closeReport(LIEN_ID));
+        assertEq(vA.closeCount(), 1, "close routed to the stored silo's venue");
+        assertFalse(c.getLien(LIEN_ID).open, "record closed");
+    }
+
+    /// @dev The integration-level proof that a line still closes after its silo's `currentSilo`/`active` state
+    ///      changes (uses the REAL SiloRegistry from setUp; SILO_0 -> the real adapter).
+    function test_CTR03_OpenLine_ClosesAfterSiloRetired() public {
+        _originate(LIEN_ID); // routes through SILO_0 (real registry, real adapter)
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 1, "line counted");
+
+        // Retire SILO_0 (clears currentSilo, sets active=false). venueOf still returns the adapter (Key req 1).
+        siloReg.retireSilo(SILO_0);
+        assertEq(siloReg.currentSilo(), bytes32(0), "currentSilo cleared on retire");
+        assertEq(siloReg.venueOf(SILO_0), address(adapter), "venueOf survives retire");
+
+        // The open line still closes — re-resolved from r.siloId, not currentSilo.
+        _repayAndClose(LIEN_ID);
+        assertFalse(controller.getLien(LIEN_ID).open, "open line closed after silo retire");
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 0, "count decremented on close");
+    }
+
+    // (c) line count increments on origination + decrements on close (via the registry's count/getSilo).
+    function test_CTR03_LineCount_IncrementsAndDecrements() public {
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 0, "count starts 0");
+        _originate(LIEN_ID);
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 1, "incremented on origination");
+        _originate(LIEN_ID_2);
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 2, "incremented on second origination");
+        _repayAndClose(LIEN_ID);
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 1, "decremented on close");
+        _repayAndClose(LIEN_ID_2);
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 0, "decremented back to 0");
+    }
+
+    // (d) SiloFull rolls an origination fully back (no orphan).
+    function test_CTR03_SiloFull_RollsBackOrigination() public {
+        // Force the real registry's SILO_0 to the cap so the FINAL incrementLineCount reverts SiloFull. We pump the
+        // count to MAX-1 via real originations would be 28 opens (expensive); instead drive the count to the cap by
+        // pranking the controller directly against the registry (the registry's onlyController gate).
+        uint16 max = siloReg.MAX_LINES_PER_SILO();
+        vm.startPrank(address(controller));
+        for (uint256 i = 0; i < max; ++i) {
+            siloReg.incrementLineCount(SILO_0);
+        }
+        vm.stopPrank();
+        assertEq(siloReg.getSilo(SILO_0).lineCount, max, "registry at cap");
+
+        // An origination now reverts SiloFull at the final increment — and rolls the WHOLE batch back (no orphan).
+        vm.prank(FORWARDER);
+        vm.expectRevert(abi.encodeWithSelector(SiloRegistry.SiloFull.selector, SILO_0));
+        controller.onReport("", _origReport(LIEN_ID, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP));
+        _assertNoOrphan(LIEN_ID);
+    }
+
+    // (e) venueOf(unknownSilo) == 0 reverts SiloUnrouted.
+    function test_CTR03_UnknownSilo_RevertsSiloUnrouted() public {
+        vm.prank(FORWARDER);
+        vm.expectRevert(abi.encodeWithSelector(ZipcodeController.SiloUnrouted.selector, SILO_UNKNOWN));
+        controller.onReport("", _origReportSilo(LIEN_ID, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP, SILO_UNKNOWN));
+    }
+
+    // (f) registry == 0 reverts RegistryUnset.
+    function test_CTR03_RegistryUnset_Reverts() public {
+        // A fresh controller with NO registry wired (registry starts address(0)).
+        ZipcodeController c =
+            new ZipcodeController(FORWARDER, address(adapter), address(lienFactory), address(registry), EREBOR);
+        assertEq(c.registry(), address(0), "registry starts unset");
+        vm.prank(FORWARDER);
+        vm.expectRevert(ZipcodeController.RegistryUnset.selector);
+        c.onReport("", _origReportSilo(LIEN_ID, EQUITY_MARK, BORROW_LTV, LIQ_LTV, DRAW_AMOUNT, CAP, SILO_0));
+    }
+
+    // Integration: full originate + close through the REAL SiloRegistry (setUp registered SILO_0 -> real adapter).
+    function test_CTR03_RealRegistry_OriginateAndClose() public {
+        // venueOf resolves to the real adapter; origination + increment + close + decrement all bind.
+        assertEq(siloReg.venueOf(SILO_0), address(adapter), "real registry resolves SILO_0 to the adapter");
+        _originate(LIEN_ID);
+        ZipcodeController.LienRecord memory r = controller.getLien(LIEN_ID);
+        assertEq(r.siloId, SILO_0, "record stores SILO_0");
+        assertTrue(r.open, "open");
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 1, "real registry incremented");
+
+        _repayAndClose(LIEN_ID);
+        assertFalse(controller.getLien(LIEN_ID).open, "closed through real registry");
+        assertEq(siloReg.getSilo(SILO_0).lineCount, 0, "real registry decremented");
     }
 }

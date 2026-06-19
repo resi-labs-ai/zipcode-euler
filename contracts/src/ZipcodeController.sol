@@ -24,6 +24,14 @@ interface IZipcodeOracleRegistry {
     function seedPrice(address lien, uint256 price) external;
 }
 
+/// @notice The three faces the controller needs on the `SiloRegistry` (CTR-02/CTR-03): venue resolution + the
+///         concurrent-line slot accounting hooks. Declared inline (mirrors the inline-interface pattern above).
+interface ISiloRegistry {
+    function venueOf(bytes32 siloId) external view returns (address);
+    function incrementLineCount(bytes32 siloId) external;
+    function decrementLineCount(bytes32 siloId) external;
+}
+
 /// @title ZipcodeController (§4.4)
 /// @notice The portable core's orchestrator: the CRE receiver (inbound gated on the Timelock-pinned Forwarder), the
 ///         report decode + per-`reportType` decision logic, and the lien-token mint/burn authority. It is the
@@ -55,6 +63,17 @@ contract ZipcodeController is ReceiverTemplate {
     address public oracleRegistry;
     /// @notice The ONLY legal draw receiver — the Erebor off-ramp (the venue backstops `receiver == erebor`, F2). Timelock-settable.
     address public erebor;
+    /// @notice The `SiloRegistry` (CTR-02) the controller routes per-origination venue resolution + slot accounting
+    ///         through (CTR-03). NOT seeded in the ctor — starts `address(0)`, wired post-deploy via `setRegistry`
+    ///         (symmetric to the oracle registry's `setController`). MANDATORY for the report paths: a `0` registry
+    ///         fails closed (`RegistryUnset`) rather than falling back to the `venue` slot — eliminating the
+    ///         brick/decrement-underflow hazards of a dual-mode resolver.
+    /// @dev CTR-04 capacity caveat: `decrementLineCount` corrects the registry counter on close, but the as-built
+    ///      `EulerVenueAdapter.closeLine` frees only the SUPPLY queue, NOT the binding WITHDRAW-queue slot. Until
+    ///      CTR-04 lands, a pool's true capacity is ~28 *lifetime* opens, not concurrent — the decrement does NOT
+    ///      free the underlying slot. CTR-03 is correct registry accounting; concurrent capacity is fully sound only
+    ///      once both CTR-03 (this) AND CTR-04 land.
+    address public registry;
 
     /// @notice Per-lien state. `lien` = LIEN_i (collateral token / oracle key); `lineRef` = the opaque venue line
     ///         handle returned by `openLine`. The controller stores no borrowAccount/subId — the per-line borrow
@@ -63,6 +82,7 @@ contract ZipcodeController is ReceiverTemplate {
         address lien;
         address lineRef;
         bool open;
+        bytes32 siloId; // CTR-03: the silo this line was originated into; draws/closes re-resolve the venue from it.
     }
 
     /// @notice lienId => LienRecord. Public for cheap reads; the struct getter `getLien` returns the struct.
@@ -75,6 +95,8 @@ contract ZipcodeController is ReceiverTemplate {
     error PrecomputeMismatch();
     error DebtOutstanding();
     error UnsupportedReportType(uint8 reportType);
+    error RegistryUnset();
+    error SiloUnrouted(bytes32 siloId);
 
     // ----- events -----
     event LienOriginated(
@@ -83,7 +105,8 @@ contract ZipcodeController is ReceiverTemplate {
         address lineRef,
         bytes32 proofRef,
         uint256 equityMark,
-        uint256 drawAmount
+        uint256 drawAmount,
+        bytes32 siloId
     );
     event LienDrawn(bytes32 indexed lienId, uint256 equityMark, uint256 drawAmount);
     event LienReleased(bytes32 indexed lienId);
@@ -142,6 +165,22 @@ contract ZipcodeController is ReceiverTemplate {
         emit WiringSet("erebor", erebor_);
     }
 
+    /// @notice Wire `registry` (the `SiloRegistry`, CTR-03; build phase, §17). onlyOwner (Timelock). NOT in the ctor
+    ///         — starts `address(0)` and is wired post-deploy (symmetric to the oracle registry's `setController`).
+    function setRegistry(address registry_) external onlyOwner {
+        if (registry_ == address(0)) revert ZeroAddress();
+        registry = registry_;
+        emit WiringSet("registry", registry_);
+    }
+
+    /// @notice Resolve the venue a `siloId` routes to, fail-closed (CTR-03). Reverts `RegistryUnset` if the registry
+    ///         is unwired, `SiloUnrouted` if the siloId resolves to the zero address (unknown/un-routed silo).
+    function _venueFor(bytes32 siloId) private view returns (address v) {
+        if (registry == address(0)) revert RegistryUnset();
+        v = ISiloRegistry(registry).venueOf(siloId);
+        if (v == address(0)) revert SiloUnrouted(siloId);
+    }
+
     /// @notice Struct getter (the public mapping auto-getter returns a tuple, not a struct).
     function getLien(bytes32 lienId) external view returns (LienRecord memory) {
         return liens[lienId];
@@ -178,8 +217,13 @@ contract ZipcodeController is ReceiverTemplate {
             uint16 borrowLTV,
             uint16 liqLTV,
             uint256 drawAmount,
-            uint256 cap
-        ) = abi.decode(payload, (bytes32, bytes32, uint256, uint16, uint16, uint256, uint256));
+            uint256 cap,
+            bytes32 siloId
+        ) = abi.decode(payload, (bytes32, bytes32, uint256, uint16, uint16, uint256, uint256, bytes32));
+
+        // 0: resolve the routing venue for this silo (fail-closed: RegistryUnset / SiloUnrouted). Local name `venue_`
+        //    — do NOT shadow the `venue` state var; the report paths route EXCLUSIVELY via the registry (CTR-03).
+        address venue_ = _venueFor(siloId);
 
         // 1: clean dup guard (the factory also reverts FailedDeployment on a re-used slot).
         if (liens[lienId].lien != address(0)) revert LienExists(lienId);
@@ -190,25 +234,30 @@ contract ZipcodeController is ReceiverTemplate {
         if (lien != predicted) revert PrecomputeMismatch();
 
         // 3: custody approve — exactly 1e18 (no standing allowance left, F-7).
-        ILienToken(lien).approve(venue, FULL_LIEN);
+        ILienToken(lien).approve(venue_, FULL_LIEN);
 
         // 4: open the line with the FULL lien (the venue backstops != 1e18); oracleKey == lien by construction.
-        (address lineRef, address oracleKey) = IZipcodeVenue(venue).openLine(lienId, lien, FULL_LIEN);
+        (address lineRef, address oracleKey) = IZipcodeVenue(venue_).openLine(lienId, lien, FULL_LIEN);
 
         // 5: seed the Proof-of-Value mark on the openLine-returned oracleKey, after openLine + before draw.
         IZipcodeOracleRegistry(oracleRegistry).seedPrice(oracleKey, equityMark);
 
         // 6: set limits (1e4-scale LTVs; raw cap).
-        IZipcodeVenue(venue).setLineLimits(lineRef, borrowLTV, liqLTV, cap);
+        IZipcodeVenue(venue_).setLineLimits(lineRef, borrowLTV, liqLTV, cap);
 
         // 7: fund + draw. The draw's on-chain LTV/cap bound (the EVK account-status check) is the only gate — the
         //    controller does NOT pre-check it. The borrow is authorized because the adapter is the line's operator.
-        IZipcodeVenue(venue).fund(lineRef, drawAmount);
-        IZipcodeVenue(venue).draw(lineRef, drawAmount, erebor);
+        IZipcodeVenue(venue_).fund(lineRef, drawAmount);
+        IZipcodeVenue(venue_).draw(lineRef, drawAmount, erebor);
 
         // 8: store + event (the liens write is LAST — last-write reentrancy safety, F-10).
-        liens[lienId] = LienRecord({lien: lien, lineRef: lineRef, open: true});
-        emit LienOriginated(lienId, lien, lineRef, proofRef, equityMark, drawAmount);
+        liens[lienId] = LienRecord({lien: lien, lineRef: lineRef, open: true, siloId: siloId});
+        emit LienOriginated(lienId, lien, lineRef, proofRef, equityMark, drawAmount, siloId);
+
+        // 9: bump the registry slot count as the FINAL statement (fail-closed — a SiloFull revert rolls back the
+        //    whole atomic origination incl. the CREATE2 deploys; F-10 is preserved because the registry is trusted
+        //    and makes NO callback into the controller).
+        ISiloRegistry(registry).incrementLineCount(siloId);
     }
 
     /// @dev Draw branch (a') — additional draw on an open line: re-anchor seed -> fund -> draw.
@@ -219,11 +268,15 @@ contract ZipcodeController is ReceiverTemplate {
         LienRecord storage r = liens[lienId];
         if (!r.open) revert UnknownLien(lienId);
 
+        // Re-resolve the SAME venue from the stored siloId (NEVER from a global pointer — a re-pointed/retired silo
+        // cannot strand an open line in the wrong venue, Key req 1).
+        address venue_ = _venueFor(r.siloId);
+
         // Re-anchor a fresh Proof-of-Value mark (also refreshes the cache timestamp, §4.4a'/§4.1).
         IZipcodeOracleRegistry(oracleRegistry).seedPrice(r.lien, equityMark);
 
-        IZipcodeVenue(venue).fund(r.lineRef, drawAmount);
-        IZipcodeVenue(venue).draw(r.lineRef, drawAmount, erebor);
+        IZipcodeVenue(venue_).fund(r.lineRef, drawAmount);
+        IZipcodeVenue(venue_).draw(r.lineRef, drawAmount, erebor);
 
         emit LienDrawn(lienId, equityMark, drawAmount);
         proofRef; // proofRef is carried for off-chain indexing; not stored on-chain.
@@ -236,15 +289,22 @@ contract ZipcodeController is ReceiverTemplate {
         LienRecord storage r = liens[lienId];
         if (!r.open) revert UnknownLien(lienId);
 
-        if (IZipcodeVenue(venue).observeDebt(r.lineRef) != 0) revert DebtOutstanding();
+        // Re-resolve the SAME venue from the stored siloId (Key req 1 — an open line always re-resolves to its
+        // original adapter and can close even after its silo is retired; venueOf ignores `active`).
+        address venue_ = _venueFor(r.siloId);
+
+        if (IZipcodeVenue(venue_).observeDebt(r.lineRef) != 0) revert DebtOutstanding();
 
         // closeLine reclaims the 1e18 lien back to the controller (operator-routed EVC.call redeem) — so the
         // reclaim happens BEFORE burn (else burn reverts ERC20InsufficientBalance, WOOF-01 obligation 1).
-        IZipcodeVenue(venue).closeLine(r.lineRef);
+        IZipcodeVenue(venue_).closeLine(r.lineRef);
         ILienToken(r.lien).burn(FULL_LIEN);
 
         // Keep r.lien set (single-use lienId forever, F-12); only flip open.
         r.open = false;
         emit LienReleased(lienId);
+
+        // Decrement the registry slot count as the FINAL statement (trusted no-callback registry).
+        ISiloRegistry(registry).decrementLineCount(r.siloId);
     }
 }

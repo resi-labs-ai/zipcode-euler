@@ -488,7 +488,7 @@ as required; no contract change.
 
 | reportType | Receiver | payload ABI (on-chain decode, exact) | Producing workflow (§) | CRE ticket |
 |---|---|---|---|---|
-| `1` Origination | `ZipcodeController` | `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint16 borrowLTV, uint16 liqLTV, uint256 drawAmount, uint256 cap)` | Underwriting/origination (§8.1) | CRE-01 |
+| `1` Origination | `ZipcodeController` | `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint16 borrowLTV, uint16 liqLTV, uint256 drawAmount, uint256 cap, bytes32 siloId)` | Underwriting/origination (§8.1) | CRE-01 |
 | `2` Draw | `ZipcodeController` | `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount)` | Draw (§8.1) | CRE-01 |
 | `3` Revaluation | `ZipcodeOracleRegistry` | `(address[] liens, uint256[] prices, uint32 ts)` | Revaluation, gas-bounded sharded (§8.1) | CRE-01 |
 | `4` Close | `ZipcodeController` | `(bytes32 lienId)` | Close/release (§8.1) | CRE-01 |
@@ -505,6 +505,12 @@ as required; no contract change.
 the SAME numerals as the controller's `Origination`/`Draw`, but `reportType` is **per-`(receiver, type)`** — a
 report names exactly one `Receiver`, so a `1` to the controller and a `1` to the buy-burn module never collide.
 8-B14 is the deliberate **§8.7 exception** (below): the operator-path engine module made ALSO report-drivable.
+
+**siloId routing (CTR-03, 2026-06-18):** the RT_ORIGINATION payload carries a **trailing `bytes32 siloId`** — the
+controller resolves `venue = SiloRegistry.venueOf(siloId)` per origination (multi-pool sharding, §4.7) and stores
+`siloId` on the lien. RT_DRAW/RT_CLOSE payloads are **unchanged** — those branches re-resolve the same venue from
+the stored `r.siloId`, so the CRE producer does NOT re-send it. The CRE composer (CRE-01) picks `siloId` (the
+current fill target); the registry backstops with a fail-closed `SiloFull` cap (28 lines/silo).
 
 `equityMark` = the Proof-of-Value mark (home value − senior debt, §4.1); `proofRef` = a commitment to the Proof
 attestation bundle (lien-perfected + value + insurance); the lien/insurance **gates** are off-chain

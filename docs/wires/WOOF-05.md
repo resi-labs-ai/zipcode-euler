@@ -6,6 +6,13 @@
 > it points at. (Build-phase doctrine note, §17/2026-06-09: the cross-component pointers below are now
 > **Timelock-settable**, not immutable, and ownership is **transferred to the Timelock**, not renounced — the
 > ticket/spec older "immutable via renounce" wording is reconciled against the code throughout.)
+>
+> **CTR-03 (2026-06-18) — siloId routing over `SiloRegistry`.** The controller is now multi-pool: the report
+> paths resolve `venue` per origination from `SiloRegistry.venueOf(siloId)` (CTR-02) instead of the single
+> `venue` pointer. Added: a `registry` wiring slot (NOT in ctor — wired post-deploy via `setRegistry`), an inline
+> `ISiloRegistry` interface, errors `RegistryUnset`/`SiloUnrouted`, `LienRecord.siloId`, a trailing `siloId` on
+> `LienOriginated` + the RT_ORIGINATION payload, and the `incrementLineCount`/`decrementLineCount` slot hooks. The
+> `venue` slot/`setVenue`/ctor are RETAINED (deploy-cycle compat) but no longer route. Sections below reflect this.
 
 ## Role
 The CRE-gated **origination/close orchestrator** — `contract ZipcodeController is ReceiverTemplate` (§4.4). It
@@ -27,6 +34,7 @@ calls EVC.
 | `ILienTokenFactory` (`lienFactory`, inline iface) | `create(lienId)` (caller-bound CREATE2) + `computeAddress(lienId, controller)`. |
 | `ILienToken` (the minted `LIEN_i`, inline iface) | `approve(spender, amount)` + controller-only `burn(amount)`. |
 | `IZipcodeOracleRegistry` (`oracleRegistry`, inline iface) | `seedPrice(lien, price)` — the controller-gated origination/draw seed. |
+| `ISiloRegistry` (`registry`, inline iface, CTR-03) | `venueOf(siloId)→adapter` (per-origination venue resolution) + `incrementLineCount`/`decrementLineCount` (the concurrent-line slot hooks, `onlyController` on the registry). |
 | `erebor` (EOA/off-ramp) | The only legal `venue.draw` receiver (the adapter backstops `receiver == its own erebor`, WOOF-04 F2). |
 
 ## Wiring — internal
@@ -53,6 +61,13 @@ constructor(
   lock-down deferred to pre-prod.
 - There is **no EVC parameter, no EVC immutable, no EVC import** — the central subtraction of the borrower-model
   re-author.
+- **`registry` is NOT a ctor arg (CTR-03).** It starts `address(0)` and is wired post-deploy via `setRegistry`
+  (`onlyOwner`, `ZeroAddress`-checked, `emit WiringSet("registry", …)`) — symmetric to the oracle registry's
+  `setController`. It is **MANDATORY for the report paths**: `_origination`/`_draw`/`_close` resolve venue
+  EXCLUSIVELY through `registry` via the private `_venueFor(siloId)` and revert `RegistryUnset` if it is unwired
+  (no fallback to the `venue` slot — that dual-mode is a deliberate non-feature; it would let a line opened
+  pre-registry become un-closeable post-registry). `_venueFor` also reverts `SiloUnrouted(siloId)` if
+  `venueOf(siloId) == address(0)`.
 
 ### The onReport identity gate (inherited, not overridden)
 `onReport(bytes metadata, bytes report)` is concrete + **non-virtual** in `ReceiverTemplate` and is the only
@@ -83,8 +98,11 @@ immutability is a deploy-time concern (identity-set → `transferOwnership(timel
 
 ### The atomic origination batch (`_origination`)
 Payload `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint16 borrowLTV, uint16 liqLTV, uint256
-drawAmount, uint256 cap)`. Sequence (any revert rolls back the whole branch incl. the CREATE2 deploys — no
-orphan lien/market):
+drawAmount, uint256 cap, bytes32 siloId)` (CTR-03: trailing `siloId`). Sequence (any revert rolls back the whole
+branch incl. the CREATE2 deploys — no orphan lien/market):
+0. **Resolve venue (CTR-03):** `address venue_ = _venueFor(siloId)` (fail-closed: `RegistryUnset`/`SiloUnrouted`).
+   Steps 3–7 below route through this local `venue_`, NOT the `venue` state var (which is no longer the routing
+   source). Resolved first so a bad `siloId` reverts before any CREATE2 deploy.
 1. **Dup guard:** `if (liens[lienId].lien != address(0)) revert LienExists(lienId)`.
 2. **Precompute + create + assert:** `predicted = ILienTokenFactory(lienFactory).computeAddress(lienId,
    address(this))` then `lien = ILienTokenFactory(lienFactory).create(lienId)`; `if (lien != predicted) revert
@@ -105,25 +123,37 @@ orphan lien/market):
 7. **Fund + draw:** `IZipcodeVenue(venue).fund(lineRef, drawAmount)` then `IZipcodeVenue(venue).draw(lineRef,
    drawAmount, erebor)`. The controller does **not** pre-check the LTV/cap bound — it is enforced on-chain by the
    EVK account-status check the adapter's borrow triggers; a bad report reverts here and rolls the branch back.
-8. **Store LAST + event:** `liens[lienId] = LienRecord({lien, lineRef, open: true})` (last-write reentrancy
-   safety, F-10); `emit LienOriginated(lienId, lien, lineRef, proofRef, equityMark, drawAmount)`.
+8. **Store LAST + event:** `liens[lienId] = LienRecord({lien, lineRef, open: true, siloId})` (last-write
+   reentrancy safety, F-10); `emit LienOriginated(lienId, lien, lineRef, proofRef, equityMark, drawAmount, siloId)`.
+9. **Bump the slot count (CTR-03, FINAL statement):** `ISiloRegistry(registry).incrementLineCount(siloId)` — the
+   genuinely-last call. A `SiloFull` revert (registry cap = 28) rolls back the WHOLE atomic origination. F-10 is
+   preserved despite the post-`liens`-write call because the registry is trusted and makes NO callback into the
+   controller (no untrusted reentry surface).
 
 So the ordering is the spec-mandated **create → openLine → seed → setLineLimits → fund → draw** (WOOF-02 obl. 3;
-seed before draw).
+seed before draw), now bracketed by **resolve-venue (step 0)** and **increment-count (step 9)**.
 
 ### Draw branch (`_draw`)
 Payload `(bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount)`. `LienRecord storage r =
-liens[lienId]; if (!r.open) revert UnknownLien(lienId)`. Re-anchor `seedPrice(r.lien, equityMark)` (fresh mark +
-refreshed cache timestamp), then `fund(r.lineRef, drawAmount)` → `draw(r.lineRef, drawAmount, erebor)` → `emit
-LienDrawn`. `proofRef` is carried for off-chain indexing, not stored.
+liens[lienId]; if (!r.open) revert UnknownLien(lienId)`. **Re-resolve the SAME venue from the stored siloId
+(CTR-03):** `address venue_ = _venueFor(r.siloId)` (NEVER from a global/`currentSilo` pointer — a re-pointed or
+retired silo cannot strand the line in the wrong venue). Re-anchor `seedPrice(r.lien, equityMark)` (fresh mark +
+refreshed cache timestamp), then `venue_.fund(r.lineRef, drawAmount)` → `venue_.draw(r.lineRef, drawAmount,
+erebor)` → `emit LienDrawn`. `proofRef` is carried for off-chain indexing, not stored.
 
 ### Close branch (`_close`) — reclaim 1e18 before burn
-Payload `(bytes32 lienId)`. `if (!r.open) revert UnknownLien(lienId)`; `if
-(IZipcodeVenue(venue).observeDebt(r.lineRef) != 0) revert DebtOutstanding()`. Then
-`IZipcodeVenue(venue).closeLine(r.lineRef)` — the adapter redeems the escrowed `1e18` `LIEN_i` back to the
+Payload `(bytes32 lienId)`. `if (!r.open) revert UnknownLien(lienId)`. **Re-resolve the SAME venue from the stored
+siloId (CTR-03):** `address venue_ = _venueFor(r.siloId)` (`venueOf` ignores `active`, so an open line closes even
+after its silo is retired). `if (IZipcodeVenue(venue_).observeDebt(r.lineRef) != 0) revert DebtOutstanding()`. Then
+`IZipcodeVenue(venue_).closeLine(r.lineRef)` — the adapter redeems the escrowed `1e18` `LIEN_i` back to the
 controller via the operator-routed `EVC.call`, so the controller holds it **before** `ILienToken(r.lien).burn(
 FULL_LIEN)` (else `burn` reverts `ERC20InsufficientBalance` — the WOOF-01 reclaim-before-burn obligation).
-`r.open = false` (keep `r.lien` set — single-use `lienId` forever, F-12); `emit LienReleased(lienId)`.
+`r.open = false` (keep `r.lien` set — single-use `lienId` forever, F-12); `emit LienReleased(lienId)`. **FINAL
+statement (CTR-03):** `ISiloRegistry(registry).decrementLineCount(r.siloId)` (trusted no-callback registry).
+**CTR-04 capacity caveat:** the decrement corrects the *registry* counter only; the as-built
+`EulerVenueAdapter.closeLine` frees the SUPPLY queue but NOT the binding WITHDRAW-queue slot — so until CTR-04
+lands a pool's true ceiling is ~28 *lifetime* opens, not concurrent. CTR-03 accounting is correct standalone;
+concurrent capacity is fully sound only once CTR-03 + CTR-04 both land.
 
 ### Lien ↔ escrow custody (summary)
 The controller **holds the `1e18`** from `create`, **`approve`s the adapter** (`venue`) for exactly `1e18` so
@@ -141,6 +171,14 @@ before `burn`**. It never holds the lien outside an origination/close call windo
   `setController(c)` is `onlyOwner` (the Timelock), Timelock-settable in the build phase (re-pointable, not a
   hard `AlreadyWired` set-once in the kept code), called at deploy **S6** to point the registry at this
   controller. The controller is the registry's only `seedPrice` caller (origination + draw re-anchor).
+- **controller → siloRegistry (CTR-03).** The `registry` pointer (the `SiloRegistry`, CTR-02). The controller
+  reads `venueOf(siloId)` to route each origination and re-resolves draw/close from the stored `r.siloId`, and is
+  the registry's **`incrementLineCount`/`decrementLineCount` caller** — both `onlyController` on the registry,
+  gated on `SiloRegistry.controller == this`. The reverse pin: the deploy MUST call
+  `siloRegistry.setController(controller)` (and `controller.setRegistry(siloRegistry)`) before the first
+  origination, else every origination reverts `NotController` at the increment step (and every close at the
+  decrement). Symmetric to the `oracleRegistry.setController` step; assert `siloRegistry.controller() ==
+  address(controller)` post-deploy.
 - **controller → lienFactory.** The `lienFactory` pointer; `create(lienId)` is **caller-bound** — the new
   `LIEN_i`'s controller becomes the calling `ZipcodeController`. The controller precomputes via
   `computeAddress(lienId, address(this))` and asserts equality (`PrecomputeMismatch`).
@@ -205,3 +243,12 @@ The controller's deploy/wiring is **item-10 (§9)**:
 - **`reportType 3` is rejected, not handled** — revaluation goes direct to the registry (§4.1); branch 3 falls
   through to `UnsupportedReportType(3)`. `venue.liquidate` is never called (branches 5/6 emit status markers
   only).
+- **`registry` is mandatory for report paths; the `venue` slot no longer routes (CTR-03).** All three report
+  branches resolve venue via `_venueFor(siloId)` against `SiloRegistry`; an unwired registry reverts
+  `RegistryUnset`. `venue`/`setVenue`/the ctor arg are RETAINED only for the deploy-cycle compat (silo #0's
+  adapter is expected to equal the ctor `venue` seed; `controller.venue() == adapter` still holds), NOT consulted
+  at runtime. Do NOT reintroduce a `registry == 0 → use venue` fallback (a line opened pre-registry would become
+  un-closeable post-registry — the deliberate non-feature).
+- **draw/close re-resolve from `r.siloId`, never `currentSilo` (CTR-03).** This is what lets a re-pointed
+  `currentSilo` or a retired silo NOT strand an open line — the stored siloId pins the line to its origin venue
+  for its whole life (`venueOf` ignores `active`).

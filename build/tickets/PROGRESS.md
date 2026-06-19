@@ -24,11 +24,13 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
-- **CTR-03 / CTR-04** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry`
-  is DONE** (2026-06-18, below). NEXT of that workstream = **CTR-03** (`ZipcodeController` siloId routing, dep
-  CTR-02) per build order — but **CTR-04** (`closeLine` withdraw-queue reclaim, leaf) is now a strong companion:
-  CTR-02's concurrent slot accounting is only fully SOUND once both land (CTR-04 makes close free the real
-  withdraw-queue slot; see the CTR-02 DONE note + Gotcha). See "Credit-warehouse scaling + federation" below.
+- **CTR-04** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` + CTR-03
+  controller siloId routing are DONE** (2026-06-18, below). NEXT of that workstream = **CTR-04** (`closeLine`
+  withdraw-queue reclaim, leaf, finding 1): CTR-02/03's concurrent slot accounting is only fully SOUND once this
+  lands — CTR-03's `decrementLineCount` corrects the registry counter, but `closeLine` still doesn't free the
+  binding withdraw-queue slot, so a pool's true ceiling is ~28 *lifetime* opens until CTR-04. After CTR-04:
+  **CTR-05** (`SeniorNavAggregator`, dep CTR-02) / **CTR-06** (`SiloDeployer`, dep 02/03/05). See "Credit-warehouse
+  scaling + federation" below.
 
 ---
 
@@ -76,9 +78,10 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 
 **Ledger (build order):**
 - **CTR-02** `SiloRegistry` — silo set + admission gate + slot accounting. **DONE 2026-06-18** (below). *(leaf)*
-- **CTR-03** `ZipcodeController` siloId routing over the registry. **NEXT.** *(dep CTR-02)*
-- **CTR-04** `closeLine` withdraw-queue reclaim (finding 1). *(independent; pairs with CTR-03 decrement — elevated:
-  CTR-02 slot-accounting soundness depends on it, see CTR-02 DONE note)*
+- **CTR-03** `ZipcodeController` siloId routing over the registry. **DONE 2026-06-18** (below). *(dep CTR-02)*
+- **CTR-04** `closeLine` withdraw-queue reclaim (finding 1). **NEXT.** *(independent; pairs with CTR-03 decrement —
+  elevated: CTR-02/03 concurrent slot-accounting soundness depends on it — CTR-03's `decrementLineCount` corrects
+  the registry counter but does NOT free the binding withdraw-queue slot until this lands, see CTR-03 DONE note)*
 - **CTR-05** `SeniorNavAggregator` (donation-immune Σ). *(dep CTR-02)*
 - **CTR-06** `SiloDeployer` (stamp + register a silo; opens the 29th concurrent line across two silos). *(dep 02/03/05)*
 - **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). *(independent)*
@@ -90,6 +93,37 @@ warehouse). **§11 non-commingling assert** at silo deploy (`repaySink != junior
 cold-builds from the ticket alone). `build/claude-zipcode.md` is the intent reference; it gets a Conclude-step
 doc-sync to *reflect* the federation / structure-2 / fee design once built (like the `wires/` sync) — nothing is
 owed to the spec before CTR-02 can run.
+
+> **CTR-03 — `ZipcodeController` siloId routing over the registry — DONE 2026-06-18.** Second contract of the
+> scaling/federation workstream; makes the controller multi-pool. Modified `contracts/src/ZipcodeController.sol` +
+> `contracts/test/ZipcodeController.t.sol` (no new files). The report paths now resolve `venue` per origination
+> from `SiloRegistry.venueOf(siloId)` (CTR-02) instead of the single `venue` pointer: added a `registry` wiring
+> slot (NOT in ctor — `setRegistry`, `WiringSet`, §17), an inline `ISiloRegistry` 3-method interface, errors
+> `RegistryUnset`/`SiloUnrouted`, a private `_venueFor(siloId)` fail-closed resolver, `LienRecord.siloId`
+> (appended), a trailing `siloId` on `LienOriginated` + the RT_ORIGINATION payload, and the
+> `incrementLineCount`/`decrementLineCount` slot hooks (each the FINAL statement of origination/close → a
+> `SiloFull` revert rolls the whole atomic origination back; F-10 preserved — trusted no-callback registry).
+> Draw/close **re-resolve from the stored `r.siloId`** (never `currentSilo`), so a re-pointed/retired silo can't
+> strand an open line. **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/reference-verifier/contract-
+> binding) converged on ONE load-bearing design fix applied to the ticket BEFORE cold-build: the draft's
+> dual-mode `venue` fallback (route via `venue` when `registry==0`) is a silent line-bricking hazard (a line
+> opened pre-registry becomes un-closeable post-registry) → **registry made MANDATORY** for report paths
+> (`RegistryUnset` fail-closed; no fallback), with `venue`/`setVenue`/ctor RETAINED only for deploy-cycle compat.
+> Plus precision fixes: `siloId` appended LAST (matches the lienId-first §8.0 convention) not first; explicit
+> inline `ISiloRegistry`; `registry.setController(controller)` made a Key requirement + deploy obligation; N=1
+> identity defined concretely (the full pre-existing suite routed through a registered `SILO_0 → adapter`); the
+> CTR-04 lifetime-vs-concurrent caveat carried into the NatSpec + wire. One agent misread filtered (a critic cited
+> the test's `registry.setController` at `:236` as a SiloRegistry wire — verified it's the `ZipcodeOracleRegistry`;
+> there was no SiloRegistry in the test). Gate green: `forge build` exit 0 + `forge test --match-path
+> test/ZipcodeController.t.sol` = **34 passed / 0 failed** (26 pre-existing routed through the registry = the N=1
+> identity proof, + 8 new: routes-to-named-venue, draw/close re-resolve, closes-after-retire, count
+> increment/decrement, SiloFull-rolls-back-no-orphan, unknown-silo→SiloUnrouted, registry-0→RegistryUnset, and a
+> real-`SiloRegistry` integration test with self-consistent topology stubs). Cold-build returned ZERO load-bearing
+> guesses. Ticket: `build/tickets/contracts/CTR-03-controller-silo-routing.md`. **Doc-sync:** modified contract →
+> backward wire `docs/wires/WOOF-05.md` updated (registry slot, `_venueFor`, the origination step-0/step-9 hooks,
+> draw/close re-resolve, gotchas, cross-component pin, CTR-04 caveat); forward spec `claude-zipcode.md` §8.0
+> RT_ORIGINATION row gains trailing `siloId` + a routing note. No new contract → no `COVERAGE.md` row change.
+> **Deploy obligation logged** under Open obligations (setRegistry/setController wiring + assert).
 
 > **CTR-02 — `SiloRegistry` (multi-pool/federation silo catalog + admission gate) — DONE 2026-06-18.** First
 > contract of the scaling/federation workstream. Added `contracts/src/SiloRegistry.sol` + `contracts/test/
@@ -413,6 +447,14 @@ track on it.
   `entities.json`) and the deployer entry can be dropped. **FE interim (shipped):** FE-07 declares the live deployer
   address so the reservoir market verifies in the UI today; `0x77C2Cb…` is nonce-derived, so re-read `governorAdmin()`
   and update `entities.json` after any redeploy that moves it.
+- **DEPLOY OBLIGATION (raised 2026-06-18, CTR-03) — wire the controller↔SiloRegistry pair before the first
+  origination.** The `ZipcodeController` now resolves venue + slot-accounting through `SiloRegistry`. The deploy
+  MUST: (a) `controller.setRegistry(siloRegistry)`; (b) `siloRegistry.setController(controller)` (its
+  `incrementLineCount`/`decrementLineCount` are `onlyController`); (c) register silo #0 (`addSilo`) whose `adapter`
+  equals the controller's ctor `venue` seed; (d) assert `siloRegistry.controller() == address(controller)`
+  post-deploy. Until (a)+(b), every origination reverts `RegistryUnset`/`NotController` (and every close at the
+  decrement). Symmetric to the existing `oracleRegistry.setController` step (WOOF-05 item-10 S6). Folds into the
+  CTR-06 `SiloDeployer` runbook. Not a contract change owed; a deploy-wiring step.
 - **CRE report ABI seam.** Every CRE report payload must `abi.decode` to the §4.4 layout the filed
   `ZipcodeController` / `ZipcodeOracleRegistry` expect (reportTypes 1/2/4/5/6 → controller, 3 → registry).
 - **Subgraph blocked** until item-10 freezes the §9 event signatures.
