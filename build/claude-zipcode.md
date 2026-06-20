@@ -403,7 +403,8 @@ There are **three pricing inputs**, all CRE-mediated (same DON push-cache trust 
    (NAV is **no longer display-only**). See below.
 
 **`SzipNavOracle` — the szipUSD share price (the issuance/exit primitive).** A `ReceiverTemplate`-based hybrid: the
-CRE pushes **only** the prices it cannot read on Base (the xALPHA `alphaUSD` leg; HYDX if thin); the contract **reads
+CRE pushes **only** the prices it cannot read on Base (the xALPHA `alphaUSD` leg; HYDX/USD — as-built pushed
+unconditionally, the "if thin" conditionality is deferred intent, see §8.6); the contract **reads
 all quantities on-chain** (balances across the main + juniorTrancheSidecar Safes incl. the **staked** ICHI LP read off the gauge),
 composes the basket NAV, and maintains an **on-chain cumulative TWAP accumulator** on `navPerShare`. Consumers read
 the **time-weighted** share price over a governed window **`W ≈ 4h`** (§17). **(Precise:** the
@@ -744,7 +745,11 @@ cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
   prices, uint32 ts)` with `legs ∈ {LEG_ALPHA_USD=0, LEG_HYDX_USD=1}` (`:43/:45`). The workflow pushes the
   **xALPHA `alphaUSD` leg** (leg 0 — the subnet TAO/alpha AMM TWAP × TAO/USD, two-layer mark per §7/input 2;
   the on-chain `xAlpha.exchangeRate()` is read trustlessly and multiplied in, `:345`) and **HYDX/USD** (leg 1,
-  pushed only if the pool is thin; the contract derives oHYDX intrinsic from it, `:350`). **All quantities and
+  the contract derives oHYDX intrinsic from it, `:350`). **As-built (CRE-03, contract wins, §1): leg 1 is pushed
+  UNCONDITIONALLY every epoch** — `SzipNavOracle` has no on-chain HYDX read and `navEntry`/`fresh` REQUIRE leg 1
+  fresh for issuance, so a "skip when the pool is deep" producer would brick minting. The "push HYDX only if the
+  pool is thin" framing (here and §7) is **deferred intent** pending an on-chain HYDX TWAP read the contract does
+  not yet have; until that lands the producer always pushes leg 1. **All quantities and
   every on-chain leg (zipUSD/USDC=$1, the staked-ICHI-LP reserves, the LST exchange rate) are read on-chain —
   never pushed.** On-chain guards the producer must respect: equal `legs`/`prices` lengths (`LengthMismatch`),
   `ts<=now` (`FutureTimestamp`), non-zero prices (`ZeroPrice`), and a per-push **deviation circuit-break**
@@ -1291,7 +1296,7 @@ custodies over a **Baal/Moloch-v3 Safe basket** (zipUSD + xALPHA + the zipUSD/xA
 `SzipNavOracle` (`is ReceiverTemplate`, §7) computes `navPerShare = basketNAV / szipUSD.totalSupply()`
 **on-chain**: it **reads all quantities on-chain** (balances across the main + juniorTrancheSidecar Safes incl. the
 **staked** ICHI LP), CRE-**pushes only** the off-chain leg prices it cannot read on Base (the xALPHA
-`alphaUSD` leg; HYDX if thin), and maintains an **on-chain cumulative TWAP accumulator** (window `W ≈ 4h`,
+`alphaUSD` leg; HYDX/USD — as-built pushed unconditionally, §8.6), and maintains an **on-chain cumulative TWAP accumulator** (window `W ≈ 4h`,
 §17). Issuance prices at `navEntry = max(spot, twap)`, exit at `navExit = min(spot, twap)` (protecting resident
 holders both directions). The Gate's exit is the **CoW book**: the treasury's buyback bids at **`navExit×(1−d)`**
 and burns the fill (§6.4) — **NAV drives the exit price** via the bid; the protocol **never reads the szipUSD CoW

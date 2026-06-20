@@ -1172,6 +1172,18 @@ track on it.
   fail-closed), but the "AND material move" clause is carried here so it isn't lost. When built it reuses the
   same node-mode observe → DON-mode reads → coherent compose → two-WriteReport path; only the trigger differs.
 
+- **SEAM-2 — the xALPHA RATE producer (`cre/szalpha-rate`, 8x-02) is BLOCKED + UNTRACKED-until-now.** CRE-03 was
+  narrowed to NAV_LEG + LP_MARK (the APR is on-chain-derived, §8.8; the raw RATE push, reportType 8 →
+  `SzAlphaRateOracle`, is a SEPARATE producer). That producer exists only as a **pre-CRE-00 stub** at
+  `cre/szalpha-rate/main.go` (stale local encoders + `WriteReportRequest` form; an unimplemented `readExchangeRate`).
+  It is **blocked on R-1**: proving a CRE wasip1 workflow can read the Subtensor-964 `0x805` StakingV2 precompile
+  via `exchangeRate()` (the "8x exception" says a typed call may never reach it). It is ALSO downstream of 8x-01's
+  lane being live (until then it points at the 18-dp xALPHA stand-in). **Owed work when unblocked:** rewrite it to
+  the CRE-00 idiom — import `cre/zipreport.Rate` (the encoder already exists, rt8 `(uint256 rate, uint48 ts)`),
+  the `cre/buyburn-bid` read idiom, the `WriteCreReportRequest` write — i.e. the same modernization CRE-03 did for
+  the NAV/LP feeds. **Not cold-buildable now** (R-1 is a real external unknown). Logged here so the de-scope from
+  CRE-03 doesn't lose it; it is NOT a near-term build item.
+
 - **CRE-02b — redemption funding automation (TICKETED 2026-06-20, `build/tickets/cre/CRE-02b-redemption-funding.md`).**
   CRE-02's (K) `RedemptionJob` is REACTIVE (settles/claims what's there, never funds). Funding = the (R) warehouse
   **REDEEM→REPAY** (`cre/warehouse`, CRE-04, BUILT) — a transport the keeper can't emit. CRE-02b is the off-chain
