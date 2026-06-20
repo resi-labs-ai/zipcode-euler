@@ -13,6 +13,44 @@
 
 ---
 
+## RATIFIED 2026-06-19 (reviewer-driven) — the strike-loop core slice is now UNBLOCKED
+
+The cheapest-first-slice set (A1–A4 + C4, plus the B3 quick-win) is decided. The **strike-loop core**
+(claim → borrow → exercise → sell → credit/recycle → restake, M1-constant slippage, **no** regime gate / vote /
+rotation) is fully specified and buildable as one ordered multi-leg Job. Lifted into `claude-zipcode.md` §8.7.
+
+- **A1 — `sellHydx` `minOut` = live quote − A2 cushion. NOT a 2h-TWAP.** A TWAP sits *above* spot in a declining
+  market (the whole thesis: HYDX bleeds to ~$0.015), so a TWAP-derived floor would revert the sell exactly when
+  selling is needed; in a rising market the lagging TWAP sets `minOut` too loose and donates value to MEV. The
+  keeper eth_call's an **Algebra QuoterV2 `quoteExactInputSingle`** on the HYDX/USDC pool (`0x51f0B932...`) at
+  decision time and floors at `quote × (1 − A2)`. **The 2h-TWAP "never sell faster than it follows" steer is
+  RELOCATED to C5** — it is a per-epoch *volume/cadence* governor, not a single-swap price floor.
+  *Build-time verify (not a blocker for ratification): the exact Algebra QuoterV2 address (the hydrex table lists
+  only SwapRouter `0x6f4bE24d...` / NFPM `0xC63E96...`) — resolve it, or read pool `globalState` sqrtPrice + tick
+  liquidity. This is the one binding the cold-build must confirm.*
+- **A2 — per-order cushion = 200 bps (2%).** ONE M1 constant applied to A1 `minOut`, A3 `minShares`, A4 `maxPayment`.
+  Conservative end of the §9.3 ≤2–3% band.
+- **A3 — DERIVED (no separate decision).** `addLiquidity` ratio computed from ICHI `getTotalAmounts()`; `minShares`
+  = expected × (1 − A2).
+- **A4 — DERIVED (no separate decision).** `exercise` `maxPayment` = on-chain `quoteStrike(amount)` × (1 + A2).
+  `quoteStrike` already exists on-chain; only the cushion (A2) was open.
+- **C4 — fixed M1 Config constants (TUNABLE).** Per-cycle borrow size + recycle-vs-reserve split are hardcoded
+  config values mirroring CRE-05a's `harvestReserve`/`safetyBuffer` clamp pattern. **Reviewer flagged these WILL
+  need adjustment** with observed performance — they are explicitly tunable M1 constants, and a dynamic-from-LP-
+  collateral policy is a documented later swap. The fixed per-cycle borrow inherently bounds the core-slice sell
+  volume (each cycle sells only what its borrowed USDC exercised), so C5's per-epoch volume cap is partially
+  subsumed for M1 (the on-chain `maxSellHydx` backstop already exists).
+- **B3 — LIFTED verbatim (was already user-ratified 2026-06-08).** Taper auto-sell from $0.033 → begin shrinking
+  loop size at the ~$0.018 amber tier → fully halt `exercise` at the $0.015 profitability cutoff (accrue oHYDX
+  below it). This is a **level check on the A1 live price** — no EMA / state store needed, so it ships in the core
+  slice.
+
+**STILL OPEN (own slices, NOT this unblock):** B1 (regime price source + EMA params), B2 (keeper STATE store —
+infra decision), C1–C3 (vote weights / lock-vs-sell split / `claimRebase` set), C5 (the explicit per-epoch volume
+cap + epoch definition — now also home to A1's relocated TWAP-cadence steer), D1 (rotation → KEEPER-01c).
+
+---
+
 ## A. Execution / slippage floors (the args the legs REQUIRE; source = "CRE policy")
 | # | Undecided knob | Leg | Candidate (source) | Blocks |
 |---|---|---|---|---|

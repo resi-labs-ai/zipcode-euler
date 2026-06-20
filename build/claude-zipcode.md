@@ -769,14 +769,32 @@ deferred to the treasury module, §17); no additional on-chain mechanism is inve
 junior's pay + self-insurance** (the loop vamps net-new USDC, compounding the basket = "frozen but earning",
 waterfall leg (e), §11). It is bounded — TVL-capped, front-loaded, trailing-realized (`hydrex.md`).
 
-> **The off-chain orchestrator's policy is NOT yet pinned (the build gate for KEEPER-01b).** The execution floors
-> (`minOut`/`maxPayment`/`minShares`), regime params + price source, vote weights, sizing/caps, and the
-> main↔juniorTrancheSidecar rotation are enumerated as a decision-needed agenda in
-> `build/tickets/cre/KEEPER-01b-OPEN-POLICY.md` (candidate values live in `pending-docs/hydrex.md` §9.2/§9.3, never
-> lifted here). The harvest orchestrator (KEEPER-01b) is **policy-blocked** until those are ratified; the
-> strike-loop core slice is buildable once the execution floors + sizing constants (A1–A4 + C4 there) are set.
-> `KEEPER-00` (the spine) + `KEEPER-01a` (buy-burn `burnFor`) shipped; rotation stays with the freeze rebuild
-> (`KEEPER-01c`, `DurationFreezeModule` premise under review).
+> **Strike-loop core-slice policy RATIFIED 2026-06-19** (the build gate for KEEPER-01b's first slice;
+> full record + rationale in `build/tickets/cre/KEEPER-01b-OPEN-POLICY.md`). The execution floors + sizing
+> constants are pinned:
+> - **`sellHydx` `minOut` = a LIVE quote − cushion, NOT a 2h-TWAP.** The keeper eth_call's an Algebra QuoterV2
+>   `quoteExactInputSingle` on the HYDX/USDC pool at decision time and floors at `quote × (1 − cushion)`. A TWAP
+>   floor is *wrong* for an exit-biased seller — in HYDX's declining regime the 2h-TWAP sits above spot and would
+>   revert the sell exactly when selling is needed. The 2h-TWAP keeps its job as the per-epoch **volume/cadence**
+>   governor ("never sell faster than the TWAP follows"), not a single-swap price floor.
+> - **cushion = 200 bps (2%)** — one constant on `minOut` / `maxPayment` / `minShares` (§9.3 ≤2–3% band).
+> - `addLiquidity` ratio from ICHI `getTotalAmounts()`, `minShares = expected × (1 − cushion)`; `exercise`
+>   `maxPayment = quoteStrike(amount) × (1 + cushion)` (`quoteStrike` is the existing on-chain read).
+> - **borrow size + recycle/reserve split = fixed, TUNABLE M1 config constants** (mirror CRE-05a's
+>   `harvestReserve`/`safetyBuffer`); a dynamic-from-collateral policy is a later swap.
+> - **price taper/halt** (user-ratified 2026-06-08): taper from $0.033 → shrink loop at the ~$0.018 amber tier →
+>   halt `exercise` at the $0.015 profitability cutoff (accrue oHYDX below it) — a level check on the live price,
+>   so no EMA/state store is needed for the core slice.
+>
+> So the **strike-loop core** (claim → borrow → exercise → sell → credit/recycle → restake; **no** regime gate,
+> vote, or rotation) is buildable now. **STILL policy-blocked / own later slices:** the regime classifier + EMA
+> params, the keeper STATE store (an infra decision), the vote/allocation weights (§17-deferred), the explicit
+> per-epoch volume cap, and the main↔sidecar rotation (→ `KEEPER-01c`, `DurationFreezeModule` premise under
+> review). `KEEPER-00` (the spine) + `KEEPER-01a` (buy-burn `burnFor`) + the **strike-loop core slice
+> (KEEPER-01b, BUILT 2026-06-19** — `cre/keeper/internal/job/strike_loop_job.go`: the ordered
+> claim→borrow→exercise→sell→repay→creditFreeValue→recycle→addLiquidity→stake Plan, stateless, conservative
+> floors; `minShares` from the exact canonical ICHI deposit formula, the HYDX price from the pool `globalState()`)
+> shipped. **Own-later:** B1/B2/C1–C3/C5 + the restake token1-side generalization (PROGRESS).
 
 ### 8.8 xALPHA exchange-rate Base oracle + the DERIVED APR (8x-02)
 **The one fact that lives only on Bittensor is the xALPHA `exchangeRate()`** (`staked alpha ÷ supply`, StakingV2

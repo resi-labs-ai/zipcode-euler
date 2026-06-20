@@ -10,16 +10,18 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**Reviewer to release.** KEEPER-00 (spine) + KEEPER-01a (burn job) are DONE (below). **KEEPER-01 was split into
-three** (its sub-systems differ in size + maturity): **01a** fill-detect→`burnFor` (DONE), **01b** the engine
-harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds to the INCOMPLETE
+**Reviewer to release.** KEEPER-00 (spine) + KEEPER-01a (burn job) + **KEEPER-01b core slice (strike-loop harvest
+Job) — DONE 2026-06-19** (note below) are landed. **KEEPER-01 was split into three** (its sub-systems differ in
+size + maturity): **01a** fill-detect→`burnFor` (DONE), **01b** the engine harvest orchestrator (core slice DONE;
+own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (deferred — binds to the INCOMPLETE
 `DurationFreezeModule`). Candidate NEXT items (reviewer picks):
-- **KEEPER-01b — the engine harvest orchestrator** (8-B5…8-B10 `onlyOperator` legs + regime/split/cap policy, as
-  `Job`s on the spine). The large remaining (K) item. **POLICY-BLOCKED** — its execution floors / regime+state /
-  vote / sizing knobs are undecided (contracts push them off-chain; §17 defers the economic ones). Agenda written
-  2026-06-17: `build/tickets/cre/KEEPER-01b-OPEN-POLICY.md` (+ §8.7 pointer). *Ratify A1–A4 + C4 there → the
-  strike-loop core slice unblocks (claim→borrow→exercise→sell→recycle→restake, M1-constant slippage, no regime/vote/
-  rotation).* Rotation → KEEPER-01c (freeze rebuild).
+- **KEEPER-01b own-later slices** (the policy-deferred remainder, each its own slice): **B1** regime classifier +
+  EMA price source, **B2** keeper STATE store (an infra decision — required by any stateful policy), **C1–C3**
+  vote/allocation weights + lock-vs-sell split + `claimRebase` set (§17-deferred economic knobs), **C5** explicit
+  per-epoch volume cap + epoch definition (+ A1's relocated 2h-TWAP cadence steer). Plus one **follow-up on the
+  built core slice:** generalize the restake leg to the token1-side case (the core slice assumes the recycled
+  zipUSD is the vault's token0 — see the KEEPER-01b note's known-limitation; fail-safe today, but the restake is
+  skipped if zipUSD deploys as token1). Rotation → KEEPER-01c (freeze rebuild).
 - **CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package; then the **(R)** workflows
   **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
@@ -53,6 +55,49 @@ harvest orchestrator, **01c** freeze-`commit`-on-shortfall (deferred — binds t
   host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
   cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
   CTR-10c second-venue integration.)
+
+- **KEEPER-01b core slice note (2026-06-19) — the strike-loop harvest Job (the bulk of the remaining CRE-05).**
+  The (K) keeper-track Job that drives the auto-compounder engine's `onlyOperator` legs (8-B5…8-B10) as ONE
+  ordered `chain.Plan` on the `cre/keeper/` spine. Built per `build/tickets/cre/KEEPER-01b-strike-loop-job.md`.
+  Leg order (load-bearing): `claimReward → borrow → exercise → sell → repay → creditFreeValue → [recycle →
+  addLiquidity → stake]` (the bracketed deployment legs skip together when the recycle split is 0). Stateless
+  single-Plan sizing — every scalar pre-computed from current reads + live quotes, NO cross-tick state (B2
+  deferred); later legs use the deterministic effect of earlier ones (claim adds `pendingReward` oHYDX; exercise
+  mints `amount` HYDX 1:1; recycle mints `usdc·1e12` zipUSD). Conservative floors throughout: `maxPayment =
+  quoteStrike·1.02`, `minOut = liveQuote·0.98`, `minShares = ICHIformula·0.98`, `creditFreeValue` gets the
+  guaranteed floor `minOut − maxPayment` (realized surplus ≥ it). No-op (empty Plan, fail-safe) on: unwired Safe,
+  zero oHYDX, `P < haltPrice`, zero exercise room, `maxPayment > maxBorrowPerCycle`, or the profit gate `minOut ≤
+  maxPayment`. **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/reference-verifier/keeper-binding).
+  spec-fidelity = FAITHFUL (repay is a necessary cycle-close for the free-value-only invariant, not an invention;
+  all A1–A4/B3/C4 constants match; own-later items B1/B2/C1–C3/C5/D1 correctly excluded). The fan-out's one
+  load-bearing find was the `addLiquidity` `minShares` binding: the real ICHI `deposit()` share formula is NOT in
+  the repo (only an interface stub) and the protocol deliberately treats `getTotalAmounts()` as manipulable
+  (`IchiAlgebraFairReserves` uses TWAP). **RESOLVED** by reading the canonical `ICHIVault.deposit` source: the
+  keeper replicates it EXACTLY (`shares = deposit·min(spot,twap)·totalSupply / (pool·max(spot,twap) + pool1)`),
+  spot from the LP pool `globalState()`, TWAP-mean tick via the oracle plugin `getTimepoints` (the repo's
+  `IchiAlgebraFairReserves._meanTick` logic), `getSqrtRatioAtTick` ported from `ConcentratedLiquidity.sol` and
+  unit-tested against UniV3 vectors — a true conservative floor, zero guess. The HYDX price (A1) uses the pool
+  `globalState()` sqrtPrice directly (`out = in·sqrtP²/2¹⁹²`, 6dp) — **no Algebra QuoterV2 address needed**, so the
+  PROGRESS "build-time verify the QuoterV2 address" item is MOOT. **Built:** `cre/keeper/internal/quote/`
+  (`Quoter` seam + `ProdQuoter` + ported TickMath), `internal/job/strike_loop_job.go`, additions to
+  `internal/chain/{encode,read}.go` (multi-uint packer + `globalState`/two-uint decoders) + `internal/config`
+  (StrikeLoop knobs, `MustMaxBorrowPerCycle`) + `cmd/keeper/main.go` (register after BurnJob; 6-module startup
+  identity check). **Gate green (my own re-run, not just the cold-build's):** `cd cre/keeper && go build ./... &&
+  go vet ./... && go test ./...` = all pass (44 tests; chain/config/job/keymgr/quote). Tests are non-vacuous: the
+  table-driven `strike_loop_job_test.go` (12 funcs) decodes every leg's calldata and asserts the scalar args +
+  ordered labels (9-leg happy path, 6-leg recycle-skipped, each no-op gate, maxSell cap, amber taper, profit
+  gate, P==amber boundary, minShares==0); `quote_test.go` asserts the price/share math (TickMath vectors,
+  decimals-correct `HydxToUsdc`, `ZipToShares` worse/better selection); a combined recorder probe
+  (`StrikeLoopProbe.sol`, forge/solc 0.8.24, bytecode const) runs the full Job through the `Runner` and asserts
+  the ordered `(selector,args)` of all 9 legs over a real EVM. Cold-build returned ZERO load-bearing guesses.
+  Committed to `cre/keeper` (16f15cc) — code only; no `build/`/`docs/`/`contracts/` staged. **KNOWN LIMITATION
+  (logged as the follow-up in NEXT):** the restake leg hardcodes the recycled zipUSD as the vault's **token0**
+  (`addLiquidity(deposit0=zip, 0, minShares)`); if zipUSD deploys as token1 the `addLiquidity` leg fail-safe
+  reverts (recycle + all extraction legs still land, freeValueAccrued spent, zipUSD sits backed in the Safe) —
+  liveness-only, never unsafe. Generalize to the token1-side branch in the own-later restake follow-up.
+  **Doc-sync:** NO contract changed this window → no backward `wires/` edit owed; `claude-zipcode.md` §8.7 gains a
+  one-line "(core slice BUILT — KEEPER-01b)" note; the ratified policy record + §8.7 block (the reviewer's
+  2026-06-19 ratification) land in the same docs commit.
 
 - **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
   needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
