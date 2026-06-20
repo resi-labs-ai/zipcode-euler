@@ -10,6 +10,57 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
+- **CRE-02b note (2026-06-20) — the reserve-gated redemption-funding leg, folded into `cre/warehouse` (default-OFF).**
+  The (R) funding twin of CRE-02's reactive (K) `RedemptionJob`: it sizes + fires the warehouse REDEEM→REPAY so the
+  redemption→buyback cycle runs without a human POSTing events. **Off-chain Go only — NO contract changed** (no
+  backward `wires/` edit owed). Committed at `cre/warehouse/` (`74b6c5c`, 4 files: `funding.go` + `funding_test.go`
+  new, `workflow.go` + `go.mod` touched). **The open fork is RESOLVED → (b) fold-in, and FORCED:** a 4-critic
+  fan-out + my own source read confirmed `WarehouseAdminModule` (a `ReceiverTemplate`) pins exactly ONE
+  `expectedWorkflowId` (`out/ReceiverTemplate.sol/ReceiverTemplate.json` — `getExpectedWorkflowId`/
+  `setExpectedWorkflowId`), so a SEPARATE CRE-02b workflow could never `WriteReport` to the warehouse (wrong
+  workflow id → rejected). Only the pinned `cre/warehouse` binary can write, so the sizing must live in it — exactly
+  the hook CRE-04's `observe` docstring anticipated. Built as a SECOND default-OFF `cron` handler (`onFundingTick`)
+  added to `initFn` alongside the UNCHANGED http `onWarehouseOp` (two handlers, one binary, one pinned id — the
+  `cre/buyburn-bid` two-handler precedent, `workflow.go:75-79`). **Each tick (reactive/stateless, §17 live reads):**
+  resolve `warehouseSafe`/`eePool`/`usdc`/`queue` off the warehouse adapter (re-pointable; `queue == redemptionBox`,
+  deploy seam #6); `shortfall = max(0, totalPending/scaleUp − (usdc.balanceOf(queue) − reservedAssets))`; **REPAY**
+  `min(safeUsdc, shortfall)` to the queue **un-gated** (moves already-held cash, not reservoir backing — safe under
+  a coverage breach); **REDEEM** tops the Safe up to `min(shortfall − repay, floor)` where `floor = covered() ?
+  clamp(maxWithdraw(SAFE) − harvestReserve − safetyBuffer, 0, maxRedeemPerTick) : 0`, sizing
+  `redeemShares = redeemAssets·balanceOf(SAFE)/convertToAssets(balanceOf(SAFE))` (conservative integer floor — never
+  over-redeems); REPAY-then-REDEEM order; two sequential `writeReport`s reusing CRE-04's encode/write path (no
+  re-implemented handshake). **Resolves the "verify the exact U getter" item:** there is NO bespoke utilization
+  getter — `U` is captured by `maxWithdraw` through the reserve math (§8.2 `U = 1 − maxWithdraw/convertToAssets(balanceOf)`
+  read via the coverage surface), and a separate knob would fight the freeze over the same cash (the load-bearing
+  caution honored). **Harness loop ran:** 4 critics (junior-dev / spec-fidelity / reference-verifier / cre-binding).
+  **spec-fidelity = FAITHFUL** (confirmed the §8.2 `U` definition makes the no-bespoke-getter reading literal; the
+  REPAY-ungated/REDEEM-gated split is the spec-correct treatment of which leg touches the reservoir; (b) is forced;
+  funding correctly on the (R) side per CRE-OPS-ROUTING). **cre-binding = byte-exact + dimensionally sound, NO
+  mismatches** (REDEEM `(uint256 shares)` / REPAY `(address dest, uint256 amount)` still match `_processReport`
+  `:171-182`; `scaleUp=1e12`, `totalPending` 18-dp zipUSD ⇒ `pending/scaleUp` 6-dp USDC; the share ratio's units
+  cancel through the ERC-4626 rate, floor = conservative; two-report routing clean). **reference-verifier = all
+  bindings resolve** (adapter getters, queue getters, `maxWithdraw`/`convertToAssets`/`balanceOf` live-bound per the
+  buyburn-bid precedent, `covered()` zero⇒true idiom; 3 non-blocking flags — add the `scheduler/cron` require+replace
+  to go.mod, `readAddr` is new not a clone, the builders take the string-field `WarehouseOp` — all folded into the
+  ticket's P1–P9 pins before cold-build). **Ticket tightened pre-cold-build** with P1–P9 (the two-handler/one-id
+  proof, the cron go.mod add, default-OFF returns-before-any-read, cloned-helpers-not-keeper-pkg, the new `readAddr`,
+  the units pins, the P8 mock-selector list, the P9 envelope decode). **Gate green (my own `-count=1` re-run, not
+  just the cold-build's):** `cd cre/warehouse && go build ./... && go vet ./... && GOOS=wasip1 GOARCH=wasm go build
+  ./... && go test -count=1 ./...` — all pass (34 test cases; the 8 new funding-sizing cases each decode the captured
+  report bytes to op + sized scalars across the six "Done when" cases + scaleUp==0 + starved-reservoir; CRE-04's
+  http-path tests unchanged + still green). **Cold-build returned ZERO load-bearing guesses** (verified by my own
+  gate re-run + code read; it caught + fixed a tautological assert in its own test draft via `go vet`). Committed —
+  code only; HEAD verified as the single 4-file commit, nothing under `build/`/`docs/`/`contracts/` staged; wasip1
+  binary + `*.wasm` already gitignored. **Doc-sync:** no contract changed → no backward `wires/` edit; forward
+  `claude-zipcode.md` §8.5/§8.6 boundary gains a "(BUILT — CRE-02b funding leg, default-OFF)" note. **NEXT:**
+  reviewer picks — remaining CRE work is **CRE-02c** (cross-silo redemption solver, the multi-warehouse
+  generalization, ticketed) + **SEAM-1** (CRE-03's material-move http trigger, additive own-later).
+  ⚠️ **FLAG for reviewer (not mine, not committed):** the working tree carries session-fresh uncommitted changes
+  UNRELATED to CRE-02b (off-chain Go) — a 24-line add to `contracts/test/SzipBuyBurnModule.t.sol` (a CTR-01
+  `expectedAuthor`-mismatch test) + new x-ray `.md` files (`WarehouseAdminModule.md`, `CloneReportReceiver.md`,
+  `DurationFreezeModule.md`, `lib/x-ray/`) + the `audit/` dir. These look like parallel audit-prep test-gap-fills /
+  doc generation; I left them untouched + unstaged. Decide whether to commit or discard.
+
 **Reviewer to release.** KEEPER-00 (spine) + KEEPER-01a (burn job) + **KEEPER-01b core slice (strike-loop harvest
 Job) — DONE 2026-06-19** (note below) are landed. **KEEPER-01 was split into three** (its sub-systems differ in
 size + maturity): **01a** fill-detect→`burnFor` (DONE), **01b** the engine harvest orchestrator (core slice DONE;
@@ -1184,15 +1235,18 @@ track on it.
   the NAV/LP feeds. **Not cold-buildable now** (R-1 is a real external unknown). Logged here so the de-scope from
   CRE-03 doesn't lose it; it is NOT a near-term build item.
 
-- **CRE-02b — redemption funding automation (TICKETED 2026-06-20, `build/tickets/cre/CRE-02b-redemption-funding.md`).**
-  CRE-02's (K) `RedemptionJob` is REACTIVE (settles/claims what's there, never funds). Funding = the (R) warehouse
-  **REDEEM→REPAY** (`cre/warehouse`, CRE-04, BUILT) — a transport the keeper can't emit. CRE-02b is the off-chain
-  glue that sizes + fires it: a **utilization-driven resting floor** that actively refills (the funding twin of
-  CRE-05a's bid), derived **through the existing reserve gate** (`covered()`/`harvestReserve`/`safetyBuffer` — NOT
-  a separate knob, or it fights the freeze over the same cash). **Open fork** captured in the ticket: separate
-  orchestrator vs. fold the sizing into `cre/warehouse`'s production `observe` (the hook CRE-04 left). **Ships
-  default-OFF / unactivated** (flip on after more testing + real exit data); manual ops POSTs are the M1 path.
-  Not blocking; the cycle is idempotent/self-healing.
+- **CRE-02b — redemption funding automation — BUILT (default-OFF) 2026-06-20** (`74b6c5c`; ticket
+  `build/tickets/cre/CRE-02b-redemption-funding.md`). CRE-02's (K) `RedemptionJob` is REACTIVE (settles/claims
+  what's there, never funds). Funding = the (R) warehouse **REDEEM→REPAY** (`cre/warehouse`, CRE-04) — a transport
+  the keeper can't emit. CRE-02b sizes + fires it: a reserve-gated floor that actively refills (the funding twin of
+  CRE-05a's bid), derived **through the existing reserve gate** (`covered()`/`harvestReserve`/`safetyBuffer`).
+  **Open fork RESOLVED → (b) fold into `cre/warehouse`, and it is FORCED:** `WarehouseAdminModule` (a
+  `ReceiverTemplate`) pins ONE `expectedWorkflowId`, so only the pinned workflow can `WriteReport` to it — a
+  separate orchestrator can never get write authority; the sizing must live in the same binary (CRE-04's own
+  `observe` docstring anticipated this hook). **Built** as a second default-OFF `cron` handler (`onFundingTick`)
+  alongside CRE-04's unchanged http path — see the window note below. **Ships default-OFF** (`fundingEnabled=false`
+  ⇒ zero reports); manual ops POSTs are the M1 path. Idempotent/self-healing. The cross-silo chooser is the still-
+  owed **CRE-02c** (below).
 - **CRE-02c — cross-silo redemption solver (TICKETED 2026-06-20, `build/tickets/cre/CRE-02c-redemption-solver.md`).**
   The mutualized senior has ONE shared queue but N warehouses (one EE pool per silo). Funding a redemption must
   CHOOSE which pool(s) to REDEEM from + the split, respecting each pool's free liquidity + coverage gate (never

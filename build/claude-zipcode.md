@@ -724,6 +724,21 @@ on-chain NAV sizing (`EE_POOL.convertToAssets(balanceOf(SAFE))`) is the document
 build's mock `observe` (the magnitudes arrive pre-sized on the trigger), exactly the mock-feed posture CRE-01a/01c
 took. All four ops are built (incl. REDEEM) so **CRE-02 reuses this package** for its (R) REDEEM→REPAY funding.
 
+**BUILT — CRE-02b funding leg (`cre/warehouse`, default-OFF, 2026-06-20):** the production NAV-sizing hook above is
+realized as a SECOND, default-OFF `cron` handler (`onFundingTick`) folded INTO `cre/warehouse` alongside the
+unchanged http path — forced by the `ReceiverTemplate` single-`expectedWorkflowId` pin (only the pinned workflow
+can `WriteReport` to the warehouse, so the sizing must live in the same binary; the open fork resolved to "fold-in",
+not a separate producer). Each tick (reactive/stateless, §17 live reads): `shortfall = max(0, totalPending/scaleUp −
+(usdc.balanceOf(queue) − reservedAssets))`; **REPAY** drains `min(safeUsdc, shortfall)` to the queue (= the
+deploy-pinned `redemptionBox`), **un-gated** (it moves cash already held, not reservoir backing); **REDEEM** tops
+the Safe up to `min(shortfall − repay, floor)` where `floor = covered() ? clamp(maxWithdraw(SAFE) − harvestReserve −
+safetyBuffer, 0, maxRedeemPerTick) : 0`, and `redeemShares = redeemAssets·balanceOf(SAFE)/convertToAssets(balanceOf(SAFE))`
+(conservative integer floor). **Utilization is captured by `maxWithdraw` through the reserve math — no bespoke `U`
+getter (that would fight the freeze over the same cash); this is the §8.2 `U = 1 − maxWithdraw/convertToAssets(balanceOf)`
+relationship read via the coverage surface, the load-bearing caution honored.** Ships inert (`fundingEnabled=false`
+⇒ zero reports; manual ops POSTs remain the M1 path). The cross-silo chooser (which pool to REDEEM from) is the
+still-owed CRE-02c solver.
+
 ### 8.6 szipUSD share-price feeds (NAV legs + LP mark — the push-cache producers)
 > **BUILT — CRE-03 (`cre/sharefeeds/`, 2026-06-20).** The two feeds below ship as ONE wasip1 producer: an
 > engine-epoch `cron` → node-mode identical consensus on the two off-chain marks (`alphaUSD`, `HYDX/USD`; §8.9
