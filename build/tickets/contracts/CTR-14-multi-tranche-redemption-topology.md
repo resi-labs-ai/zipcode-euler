@@ -47,6 +47,15 @@ Recommendation to weigh: **(a) for M1** (serialize; it's treasury-internal, low-
 guard is a feature, not a bug, at this scale), revisit (b) when a second product's redemption cadence actually
 contends. Pin which at scoping.
 
+## Status — option (a) keeper-half PREPARED (2026-06-20, CRE-02-R1)
+The keeper side of (a) is built ahead of federation: `RedemptionJob`'s escrow leg now reads
+`queue.pendingRequester()` and fires only when the queue is free for its Safe (`pendingRequester == 0 || ==
+rqSafe`) — so when a second junior Safe shares the one queue, each keeper waits its turn gracefully instead of
+emitting a `MultipleRequesters`-reverting `requestRedeem`. No-op today (one Safe), no behavior change. settle/claim
+stay ungated. **Remaining for (a):** the contract-side decision is still (a) vs (b) vs (c) — if (a) stands, all
+that's left is the deploy runbook (one OffRampModule clone per junior Safe; serialize their escrow) + a
+fork-level assert that a 2nd Safe's escrow during open pending reverts cleanly. No contract change needed for (a).
+
 ## Binds to (verified this session)
 - `OffRampModule.sol` — clone, `avatar=target=juniorTrancheSafe` fixed in `setUp` (one per Safe).
 - `ZipRedemptionQueue.sol` — single `pendingRequester` + `MultipleRequesters` revert (`:181-185`); single

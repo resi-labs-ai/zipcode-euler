@@ -1140,7 +1140,10 @@ track on it.
   the federation admits N silos with (plausibly) N junior Safes. So multiple products can't concurrently use the
   one shared queue — they serialize. Throughput/liveness limit, NOT fund-safety. Open fork: (a) serialize through
   one queue [M1 rec], (b) one queue per tranche, (c) multi-requester queue rebuild. Decision owed before a 2nd
-  product's redemption cadence contends.
+  product's redemption cadence contends. **Option (a) keeper-half PREPARED 2026-06-20 (CRE-02-R1, `499f811`):**
+  `RedemptionJob`'s escrow leg now waits its turn via `queue.pendingRequester()` (no-op today, graceful when a 2nd
+  Safe arrives). Remaining for (a) = the contract-side fork decision + the per-Safe-clone deploy runbook + a revert
+  assert; no contract change.
 - **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
   The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
   while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
