@@ -58,6 +58,7 @@ func TestStrikeLoop_SimEndToEnd(t *testing.T) {
 		priceUsdc:   big.NewInt(20000),
 		usdcPerHydx: bigStr("1000000"),
 		shares:      bigStr("50000000000000000000"),
+		zipIsToken0: true, // sim asserts token0-side addLiquidity(expectedZip, 0, minShares)
 	}
 	j := NewStrikeLoopJob(StrikeLoopConfig{
 		Harvest: probe, Reservoir: probe, Exercise: probe, Sell: probe, Recycle: probe, Lp: probe,

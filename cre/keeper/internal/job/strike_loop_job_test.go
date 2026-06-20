@@ -98,6 +98,7 @@ type fakeQuoter struct {
 	priceUsdc   *big.Int // HydxPriceUsdc
 	usdcPerHydx *big.Int // HydxToUsdc returns amountIn * usdcPerHydx / 1e18
 	shares      *big.Int // ZipToShares returns this verbatim
+	zipIsToken0 bool     // ZipToShares returns this verbatim (deposit-side flag)
 	err         error
 }
 
@@ -116,11 +117,11 @@ func (f *fakeQuoter) HydxPriceUsdc(ctx context.Context) (*big.Int, error) {
 	}
 	return f.priceUsdc, nil
 }
-func (f *fakeQuoter) ZipToShares(ctx context.Context, vault common.Address, depositZip *big.Int) (*big.Int, error) {
+func (f *fakeQuoter) ZipToShares(ctx context.Context, recycle, vault common.Address, depositZip *big.Int) (*big.Int, bool, error) {
 	if f.err != nil {
-		return nil, f.err
+		return nil, false, f.err
 	}
-	return f.shares, nil
+	return f.shares, f.zipIsToken0, nil
 }
 
 // ---- helpers ----
@@ -226,6 +227,7 @@ func TestStrikeLoop_HappyPath_NineLegs(t *testing.T) {
 		priceUsdc:   big.NewInt(20000),              // $0.02 (≥ amber 18000) → full
 		usdcPerHydx: bigStr("1000000"),              // $1.00 per HYDX (6dp)
 		shares:      bigStr("50000000000000000000"), // 50e18 ICHI shares
+		zipIsToken0: true,                           // token0-side restake
 	}
 	r := baseReader()
 	j := newSLJob(q)
@@ -300,6 +302,49 @@ func TestStrikeLoop_HappyPath_NineLegs(t *testing.T) {
 		t.Errorf("addLiquidity args = %v, want [%s 0 %s]", got, expectedZip, minShares)
 	}
 	// stake(minShares)
+	a, _ = actionByLabel(plan, "stake")
+	if got := decodeUint256Args(t, a.Data, 1); got[0].Cmp(minShares) != 0 {
+		t.Errorf("stake arg = %s, want %s", got[0], minShares)
+	}
+}
+
+// ============================ token1-side restake (9 legs) ============================
+
+// TestStrikeLoop_HappyPath_Token1Side: identical to the happy path EXCEPT the
+// quoter reports zipIsToken0=false (zipUSD is the vault's token1). The plan must
+// build addLiquidity(0, expectedZip, minShares) — deposit on the token1 side —
+// and stake(minShares); same 9 ordered labels, all other scalars unchanged.
+func TestStrikeLoop_HappyPath_Token1Side(t *testing.T) {
+	q := &fakeQuoter{
+		priceUsdc:   big.NewInt(20000),
+		usdcPerHydx: bigStr("1000000"),
+		shares:      bigStr("50000000000000000000"),
+		zipIsToken0: false, // token1-side restake
+	}
+	r := baseReader()
+	j := newSLJob(q)
+
+	plan, err := j.Evaluate(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	want := []string{"claimReward", "borrow", "exercise", "sellHydx", "repay", "creditFreeValue", "recycle", "addLiquidity", "stake"}
+	if !eqLabels(labels(plan), want) {
+		t.Fatalf("labels = %v, want %v", labels(plan), want)
+	}
+
+	// Same scalars as the token0 happy path.
+	recycleAmt := big.NewInt(97490000)
+	expectedZip := new(big.Int).Mul(recycleAmt, bigStr("1000000000000"))
+	minShares := bigStr("49000000000000000000")
+
+	// addLiquidity(0, expectedZip, minShares) — recycled zipUSD on the token1 side.
+	a, _ := actionByLabel(plan, "addLiquidity")
+	got := decodeUint256Args(t, a.Data, 3)
+	if got[0].Sign() != 0 || got[1].Cmp(expectedZip) != 0 || got[2].Cmp(minShares) != 0 {
+		t.Errorf("addLiquidity args = %v, want [0 %s %s] (token1 side)", got, expectedZip, minShares)
+	}
+	// stake(minShares) unchanged.
 	a, _ = actionByLabel(plan, "stake")
 	if got := decodeUint256Args(t, a.Data, 1); got[0].Cmp(minShares) != 0 {
 		t.Errorf("stake arg = %s, want %s", got[0], minShares)

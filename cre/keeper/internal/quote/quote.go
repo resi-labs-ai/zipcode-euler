@@ -32,8 +32,12 @@ type Quoter interface {
 	HydxPriceUsdc(ctx context.Context) (*big.Int, error)
 	// ZipToShares returns the expected ICHI shares for depositing depositZip on
 	// the zipUSD side of the vault (single-sided), per the EXACT canonical
-	// ICHIVault.deposit formula. Used for addLiquidity minShares.
-	ZipToShares(ctx context.Context, vault common.Address, depositZip *big.Int) (*big.Int, error)
+	// ICHIVault.deposit formula, AND which side of the vault the recycled zipUSD
+	// is (zipIsToken0). The production impl resolves zipUSD off the recycle module
+	// (recycle.zipDepositModule().zipUSD()) and compares it to vault.token0(); the
+	// Job uses the flag to build addLiquidity on the correct side. Used for
+	// addLiquidity minShares + deposit-side routing.
+	ZipToShares(ctx context.Context, recycle, vault common.Address, depositZip *big.Int) (shares *big.Int, zipIsToken0 bool, err error)
 }
 
 // ProdQuoter binds the Quoter methods to live pools + ICHI vault views via a
@@ -72,8 +76,9 @@ func (q *ProdQuoter) HydxPriceUsdc(ctx context.Context) (*big.Int, error) {
 }
 
 // ZipToShares replicates the canonical ICHIVault.deposit single-sided share math
-// EXACTLY (binding #2). For a single-sided deposit on the zipUSD side, deposit1
-// (the other side) = 0, totalSupply > 0:
+// EXACTLY (binding #2) and resolves which vault side is the recycled zipUSD so the
+// Job can route the single-sided deposit correctly. For a single-sided deposit on
+// the zipUSD side, the OTHER side's deposit = 0, totalSupply > 0:
 //
 //	spotTick = the LP pool globalState() current tick
 //	meanTick = the LP pool TWAP-mean tick over twapWindow (the _meanTick logic
@@ -81,58 +86,74 @@ func (q *ProdQuoter) HydxPriceUsdc(ctx context.Context) (*big.Int, error) {
 //	price = getQuoteAtTick(spotTick, 1e18, token0, token1)  // token1 per 1e18 token0
 //	twap  = getQuoteAtTick(meanTick, 1e18, token0, token1)
 //	(pool0, pool1) = ICHIVault.getTotalAmounts()
-//	depositPricedIn1 = depositZip(side0) * min(price,twap) / 1e18
-//	shares           = depositPricedIn1 * totalSupply / (pool0*max(price,twap)/1e18 + pool1)
+//	numerator        = depositZip * min(price,twap) / 1e18   if zipUSD == token0
+//	                 = depositZip                             if zipUSD == token1 (already in token1 terms)
+//	shares           = numerator * totalSupply / (pool0*max(price,twap)/1e18 + pool1)
 //
-// The keeper reads token0()/token1() off the vault and routes the single-sided
-// deposit to whichever side is the recycled zipUSD. depositZip is ALWAYS the
-// token0-side amount here: LpStrategyModule.addLiquidity is called with
-// (deposit0=depositZip, deposit1=0) — the recycled zipUSD is token0 of the
-// zipUSD/xALPHA vault by construction. To stay generic the formula below is
-// written for "the deposited side is side0", which is the addLiquidity shape the
-// Job builds (deposit0=expectedZip, deposit1=0); getQuoteAtTick is computed in
-// token0->token1 terms regardless of address order.
-func (q *ProdQuoter) ZipToShares(ctx context.Context, vault common.Address, depositZip *big.Int) (*big.Int, error) {
-	// token0 / token1 off the vault (for the getQuoteAtTick address-order direction).
+// Side determination (§17 re-pointable, read each tick, never cached): zipUSD is
+// resolved off the recycle module — recycle.zipDepositModule() → zdm.zipUSD() —
+// then zipIsToken0 = (zipUSD == vault.token0()). price/twap are ALWAYS computed in
+// token0->token1 terms regardless of which side is deposited; only the numerator
+// (whether the deposit is priced by min(price,twap)) depends on the side. If
+// zipUSD matches NEITHER vault token the vault is not the zipUSD/xALPHA vault (a
+// bad re-point) and a descriptive error is returned.
+func (q *ProdQuoter) ZipToShares(ctx context.Context, recycle, vault common.Address, depositZip *big.Int) (*big.Int, bool, error) {
+	// Resolve the recycled zipUSD off the recycle module: recycle.zipDepositModule() → zdm.zipUSD().
+	zdm, err := chain.CallAddress(ctx, q.r, recycle, "zipDepositModule()")
+	if err != nil {
+		return nil, false, fmt.Errorf("quote: zipDepositModule() on recycle %s: %w", recycle.Hex(), err)
+	}
+	zipUSD, err := chain.CallAddress(ctx, q.r, zdm, "zipUSD()")
+	if err != nil {
+		return nil, false, fmt.Errorf("quote: zipUSD() on zipDepositModule %s: %w", zdm.Hex(), err)
+	}
+
+	// token0 / token1 off the vault (for the getQuoteAtTick address-order direction AND the side flag).
 	token0, err := chain.CallAddress(ctx, q.r, vault, "token0()")
 	if err != nil {
-		return nil, fmt.Errorf("quote: token0() on vault %s: %w", vault.Hex(), err)
+		return nil, false, fmt.Errorf("quote: token0() on vault %s: %w", vault.Hex(), err)
 	}
 	token1, err := chain.CallAddress(ctx, q.r, vault, "token1()")
 	if err != nil {
-		return nil, fmt.Errorf("quote: token1() on vault %s: %w", vault.Hex(), err)
+		return nil, false, fmt.Errorf("quote: token1() on vault %s: %w", vault.Hex(), err)
+	}
+	// Side determination: zipUSD must be one of the vault's two tokens.
+	zipIsToken0 := zipUSD == token0
+	if !zipIsToken0 && zipUSD != token1 {
+		return nil, false, fmt.Errorf("quote: recycled zipUSD %s matches neither token0 %s nor token1 %s on vault %s (not the zipUSD/xALPHA vault — bad re-point)",
+			zipUSD.Hex(), token0.Hex(), token1.Hex(), vault.Hex())
 	}
 	// The LP pool the vault provides liquidity to (the spot/TWAP source).
 	pool, err := chain.CallAddress(ctx, q.r, vault, "pool()")
 	if err != nil {
-		return nil, fmt.Errorf("quote: pool() on vault %s: %w", vault.Hex(), err)
+		return nil, false, fmt.Errorf("quote: pool() on vault %s: %w", vault.Hex(), err)
 	}
 	// totalSupply + getTotalAmounts off the vault.
 	totalSupply, err := chain.CallUint(ctx, q.r, vault, "totalSupply()")
 	if err != nil {
-		return nil, fmt.Errorf("quote: totalSupply() on vault %s: %w", vault.Hex(), err)
+		return nil, false, fmt.Errorf("quote: totalSupply() on vault %s: %w", vault.Hex(), err)
 	}
 	pool0, pool1, err := chain.CallTwoUints(ctx, q.r, vault, "getTotalAmounts()")
 	if err != nil {
-		return nil, fmt.Errorf("quote: getTotalAmounts() on vault %s: %w", vault.Hex(), err)
+		return nil, false, fmt.Errorf("quote: getTotalAmounts() on vault %s: %w", vault.Hex(), err)
 	}
 
 	// spot tick from the LP pool globalState() (2nd return field).
 	_, spotTickBig, err := chain.CallGlobalState(ctx, q.r, pool)
 	if err != nil {
-		return nil, fmt.Errorf("quote: globalState() on LP pool %s: %w", pool.Hex(), err)
+		return nil, false, fmt.Errorf("quote: globalState() on LP pool %s: %w", pool.Hex(), err)
 	}
 	// TWAP-mean tick via the pool's oracle plugin getTimepoints — the _meanTick logic.
 	meanTickBig, err := q.meanTick(ctx, pool)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	baseLess := token0.Cmp(token1) < 0 // baseToken(token0) < quoteToken(token1)?
 	price := getQuoteAtTick(spotTickBig.Int64(), precision, baseLess)
 	twap := getQuoteAtTick(meanTickBig.Int64(), precision, baseLess)
 
-	return ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, twap), nil
+	return ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, twap, zipIsToken0), zipIsToken0, nil
 }
 
 // meanTick ports IchiAlgebraFairReserves._meanTick
@@ -203,24 +224,36 @@ func callGetTimepoints(ctx context.Context, r chain.Reader, plugin common.Addres
 }
 
 // ichiSingleSidedShares is the pure share-math kernel (no I/O) so it can be
-// unit-tested directly. depositSide0 is the deposit on the token0 side
-// (deposit1 = 0). price/twap are getQuoteAtTick(tick, 1e18) (token1 per 1e18
-// token0). Returns 0 if the denominator is 0 (degenerate empty pool — the Job
-// then skips restake on minShares==0).
-func ichiSingleSidedShares(depositSide0, totalSupply, pool0, pool1, price, twap *big.Int) *big.Int {
+// unit-tested directly. depositZip is the single-sided deposit of the recycled
+// zipUSD; zipIsToken0 says which vault side it is (the OTHER side's deposit = 0).
+// price/twap are getQuoteAtTick(tick, 1e18) (token1 per 1e18 token0), ALWAYS
+// token0->token1 regardless of the deposit side. The numerator is the deposit
+// expressed in token1 terms: when zipUSD is token0 it is priced at the WORSE
+// (min) price; when zipUSD is token1 it is ALREADY in token1 terms so it is taken
+// raw (NOT priced). The denominator (pool valued at the BETTER price) is
+// side-independent. Returns 0 if the denominator is 0 (degenerate empty pool —
+// the Job then skips restake on minShares==0).
+func ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, twap *big.Int, zipIsToken0 bool) *big.Int {
 	// ICHI values the deposit at the WORSE price (min) and the pool at the BETTER (max).
 	worse := minBig(price, twap)
 	better := maxBig(price, twap)
 
-	// depositPricedIn1 = depositSide0 * min(price,twap) / 1e18
-	depositPricedIn1 := mulDiv(depositSide0, worse, precision)
+	// numerator (deposit in token1 terms):
+	//   zipUSD == token0 (deposit1 = 0): depositZip * min(price,twap) / 1e18
+	//   zipUSD == token1 (deposit0 = 0): depositZip raw (already token1 terms)
+	var numerator *big.Int
+	if zipIsToken0 {
+		numerator = mulDiv(depositZip, worse, precision)
+	} else {
+		numerator = new(big.Int).Set(depositZip)
+	}
 	// denom = pool0 * max(price,twap) / 1e18 + pool1
 	denom := new(big.Int).Add(mulDiv(pool0, better, precision), pool1)
 	if denom.Sign() == 0 {
 		return big.NewInt(0)
 	}
-	// shares = depositPricedIn1 * totalSupply / denom  (deposit1 = 0 single-sided)
-	return mulDiv(depositPricedIn1, totalSupply, denom)
+	// shares = numerator * totalSupply / denom  (the other side's deposit = 0, single-sided)
+	return mulDiv(numerator, totalSupply, denom)
 }
 
 func minBig(a, b *big.Int) *big.Int {

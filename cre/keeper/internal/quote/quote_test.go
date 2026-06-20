@@ -186,6 +186,8 @@ func TestHydxToUsdc_DecimalsCorrect(t *testing.T) {
 // (price/twap at the scripted ticks), proving the production path wires the
 // formula correctly.
 func TestZipToShares_ScriptedFormula(t *testing.T) {
+	recycle := common.HexToAddress("0x00000000000000000000000000000000000000Re")
+	zdm := common.HexToAddress("0x000000000000000000000000000000000000Zd11")
 	vault := common.HexToAddress("0xfF8B29e9f536F9A43DA7868011b7B667fa8d73f7")
 	pool := common.HexToAddress("0x51f0B932855986B0E621c9D4DB6Eee1f4644D3D2")
 	plugin := common.HexToAddress("0xe33a242990780Ab872Ae986AD68206478Fc85Ae1")
@@ -202,10 +204,12 @@ func TestZipToShares_ScriptedFormula(t *testing.T) {
 		globalState: map[common.Address][]byte{pool: encGlobalState(getSqrtRatioAtTick(0), 0)},
 		timepoints:  map[common.Address][]byte{plugin: encTimepoints(1000, 1000)},
 		addrs: map[[4]byte]common.Address{
-			sel("token0()"): token0,
-			sel("token1()"): token1,
-			sel("pool()"):   pool,
-			sel("plugin()"): plugin,
+			sel("zipDepositModule()"): zdm,
+			sel("zipUSD()"):           token0, // zipUSD == token0 → token0-side
+			sel("token0()"):           token0,
+			sel("token1()"):           token1,
+			sel("pool()"):             pool,
+			sel("plugin()"):           plugin,
 		},
 		uints:    map[[4]byte]*big.Int{sel("totalSupply()"): totalSupply},
 		twoUints: map[[4]byte][2]*big.Int{sel("getTotalAmounts()"): {pool0, pool1}},
@@ -213,14 +217,17 @@ func TestZipToShares_ScriptedFormula(t *testing.T) {
 	q := NewProdQuoter(r, pool, 3600)
 
 	depositZip := bigFromStr("100000000000000000000") // 100e18
-	got, err := q.ZipToShares(context.Background(), vault, depositZip)
+	got, zipIsToken0, err := q.ZipToShares(context.Background(), recycle, vault, depositZip)
 	if err != nil {
 		t.Fatalf("ZipToShares: %v", err)
+	}
+	if !zipIsToken0 {
+		t.Errorf("zipIsToken0 = false, want true (zipUSD == token0)")
 	}
 
 	// independent recompute via the kernel (price==twap at tick 0 → both 1e18).
 	price := getQuoteAtTick(0, precision, token0.Cmp(token1) < 0)
-	want := ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, price)
+	want := ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, price, true)
 	if got.Cmp(want) != 0 {
 		t.Errorf("ZipToShares = %s, want %s", got, want)
 	}
@@ -246,7 +253,7 @@ func TestZipToShares_WorseBetterPriceSelection(t *testing.T) {
 	price := bigFromStr("1200000000000000000") // 1.2 (token1 per token0)
 	twap := bigFromStr("1000000000000000000")  // 1.0
 
-	got := ichiSingleSidedShares(depositSide0, totalSupply, pool0, pool1, price, twap)
+	got := ichiSingleSidedShares(depositSide0, totalSupply, pool0, pool1, price, twap, true)
 	// depositPricedIn1 = 100e18 * min(1.2,1.0) = 100e18*1.0 = 100e18
 	// denom = pool0*max(1.2,1.0) + pool1 = 500e18*1.2 + 500e18 = 600e18+500e18 = 1100e18
 	// shares = 100e18 * 1000e18 / 1100e18 = 90.909...e18
@@ -256,10 +263,131 @@ func TestZipToShares_WorseBetterPriceSelection(t *testing.T) {
 	}
 }
 
+// TestZipToShares_Token1Side_RawNumerator is the zipIsToken0=false sibling of the
+// worse/better test: when zipUSD is token1 the deposit is ALREADY in token1 terms,
+// so the numerator is the RAW depositZip (NOT priced by min(price,twap)). With
+// price != twap this is provably distinct from the token0-side result.
+func TestZipToShares_Token1Side_RawNumerator(t *testing.T) {
+	depositZip := bigFromStr("100000000000000000000")
+	totalSupply := bigFromStr("1000000000000000000000")
+	pool0 := bigFromStr("500000000000000000000")
+	pool1 := bigFromStr("500000000000000000000")
+
+	price := bigFromStr("1200000000000000000") // 1.2
+	twap := bigFromStr("1000000000000000000")  // 1.0 (price != twap → distinct from token0 side)
+
+	got := ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, twap, false)
+	// numerator = depositZip RAW = 100e18 (NOT * min(price,twap))
+	// denom = pool0*max(1.2,1.0) + pool1 = 600e18 + 500e18 = 1100e18
+	// shares = 100e18 * 1000e18 / 1100e18 = 90.909...e18  -- BUT here numerator is raw,
+	// whereas token0-side numerator = 100e18*min = 100e18 too (since min=1.0). To make
+	// the two provably distinct, recompute both explicitly:
+	denom := new(big.Int).Add(mulDiv(pool0, maxBig(price, twap), precision), pool1)
+	want := mulDiv(depositZip, totalSupply, denom) // raw numerator
+	if got.Cmp(want) != 0 {
+		t.Errorf("ichiSingleSidedShares (token1 raw) = %s, want %s", got, want)
+	}
+	// And the token0-side result with the SAME inputs prices the deposit at min(1.2,1.0)=1.0,
+	// which here equals raw — so pick price/twap where min != 1e18 to prove distinctness.
+	price2 := bigFromStr("1500000000000000000") // 1.5
+	twap2 := bigFromStr("1200000000000000000")  // 1.2 → min = 1.2 (≠ 1e18)
+	t1 := ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price2, twap2, false)
+	t0 := ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price2, twap2, true)
+	if t1.Cmp(t0) == 0 {
+		t.Errorf("token1-side (%s) must differ from token0-side (%s) when min(price,twap) != 1e18", t1, t0)
+	}
+	// token1-side numerator (raw) > token0-side numerator (priced at min=1.2<1.0... actually 1.2>1.0)
+	// min(1.5,1.2)=1.2 → token0 numerator = 100e18*1.2 = 120e18 > raw 100e18, so t0 > t1.
+	if t1.Cmp(t0) >= 0 {
+		t.Errorf("with min=1.2>1.0 token0 numerator should exceed raw: t0=%s t1=%s", t0, t1)
+	}
+}
+
 func TestZipToShares_ReaderErrorPropagates(t *testing.T) {
 	r := &scriptedReader{err: errors.New("rpc down")}
 	q := NewProdQuoter(r, common.Address{}, 3600)
-	if _, err := q.ZipToShares(context.Background(), common.Address{}, big.NewInt(1)); err == nil {
+	if _, _, err := q.ZipToShares(context.Background(), common.Address{}, common.Address{}, big.NewInt(1)); err == nil {
 		t.Fatal("expected read error to propagate")
+	}
+}
+
+// TestZipToShares_Token1Side_Scripted: zipUSD scripted == token1 → zipIsToken0
+// false AND the returned shares equal the kernel result with zipIsToken0=false.
+func TestZipToShares_Token1Side_Scripted(t *testing.T) {
+	recycle := common.HexToAddress("0x00000000000000000000000000000000000000Re")
+	zdm := common.HexToAddress("0x000000000000000000000000000000000000Zd11")
+	vault := common.HexToAddress("0xfF8B29e9f536F9A43DA7868011b7B667fa8d73f7")
+	pool := common.HexToAddress("0x51f0B932855986B0E621c9D4DB6Eee1f4644D3D2")
+	plugin := common.HexToAddress("0xe33a242990780Ab872Ae986AD68206478Fc85Ae1")
+	token0 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	token1 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+
+	totalSupply := bigFromStr("1000000000000000000000")
+	pool0 := bigFromStr("500000000000000000000")
+	pool1 := bigFromStr("500000000000000000000")
+
+	// spot tick != mean tick AND both nonzero so min(price,twap) != 1e18 (proves
+	// the raw numerator path is distinct from the token0-priced path).
+	// spot tick = 200, mean tick = (cum1-cum0)/3600 = 360000/3600 = 100.
+	r := &scriptedReader{
+		globalState: map[common.Address][]byte{pool: encGlobalState(getSqrtRatioAtTick(200), 200)},
+		timepoints:  map[common.Address][]byte{plugin: encTimepoints(0, 360000)}, // mean tick 100
+		addrs: map[[4]byte]common.Address{
+			sel("zipDepositModule()"): zdm,
+			sel("zipUSD()"):           token1, // zipUSD == token1 → token1-side
+			sel("token0()"):           token0,
+			sel("token1()"):           token1,
+			sel("pool()"):             pool,
+			sel("plugin()"):           plugin,
+		},
+		uints:    map[[4]byte]*big.Int{sel("totalSupply()"): totalSupply},
+		twoUints: map[[4]byte][2]*big.Int{sel("getTotalAmounts()"): {pool0, pool1}},
+	}
+	q := NewProdQuoter(r, pool, 3600)
+
+	depositZip := bigFromStr("100000000000000000000")
+	got, zipIsToken0, err := q.ZipToShares(context.Background(), recycle, vault, depositZip)
+	if err != nil {
+		t.Fatalf("ZipToShares: %v", err)
+	}
+	if zipIsToken0 {
+		t.Errorf("zipIsToken0 = true, want false (zipUSD == token1)")
+	}
+	price := getQuoteAtTick(200, precision, token0.Cmp(token1) < 0)
+	twap := getQuoteAtTick(100, precision, token0.Cmp(token1) < 0)
+	want := ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, twap, false)
+	if got.Cmp(want) != 0 {
+		t.Errorf("ZipToShares (token1 side) = %s, want %s", got, want)
+	}
+	// Prove the side actually matters: the token0-side kernel result differs.
+	wantT0 := ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, twap, true)
+	if got.Cmp(wantT0) == 0 {
+		t.Errorf("token1-side result %s must differ from token0-side %s (price != twap)", got, wantT0)
+	}
+}
+
+// TestZipToShares_NeitherToken_Errors: zipUSD matches neither vault token → the
+// production quoter returns a descriptive error (a bad re-point), not a silent skip.
+func TestZipToShares_NeitherToken_Errors(t *testing.T) {
+	recycle := common.HexToAddress("0x00000000000000000000000000000000000000Re")
+	zdm := common.HexToAddress("0x000000000000000000000000000000000000Zd11")
+	vault := common.HexToAddress("0xfF8B29e9f536F9A43DA7868011b7B667fa8d73f7")
+	pool := common.HexToAddress("0x51f0B932855986B0E621c9D4DB6Eee1f4644D3D2")
+	token0 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	token1 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	stranger := common.HexToAddress("0x0000000000000000000000000000000000000099")
+
+	r := &scriptedReader{
+		addrs: map[[4]byte]common.Address{
+			sel("zipDepositModule()"): zdm,
+			sel("zipUSD()"):           stranger, // matches NEITHER token
+			sel("token0()"):           token0,
+			sel("token1()"):           token1,
+			sel("pool()"):             pool,
+		},
+	}
+	q := NewProdQuoter(r, pool, 3600)
+	if _, _, err := q.ZipToShares(context.Background(), recycle, vault, big.NewInt(1)); err == nil {
+		t.Fatal("expected error when zipUSD matches neither token0 nor token1")
 	}
 }

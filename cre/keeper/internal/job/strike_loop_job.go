@@ -29,19 +29,10 @@ var scaleUp = func() *big.Int { v, _ := new(big.Int).SetString("1000000000000", 
 // keeper supplies ONLY scalar amounts (never addresses/calldata) — blast radius
 // bounded (§8.7).
 //
-// ⚠️ KNOWN LIMITATION (restake leg, logged in PROGRESS.md "KEEPER-01b own-later"):
-// the restake assumes the recycled zipUSD is the LP vault's token0 — it builds
-// addLiquidity(deposit0=expectedZip, deposit1=0) and ZipToShares prices the
-// token0 side. Pool token0/token1 slotting is by ADDRESS SORT (lower address =
-// token0), fixed at pool creation, NOT chosen by us — so this holds only if
-// zipUSD's deployed address sorts below xALPHA's. If zipUSD deploys as token1,
-// this leg is malformed (it asks the vault to pull token0=xALPHA, which the Safe
-// lacks) and addLiquidity REVERTS — fail-safe: every prior leg (claim → borrow →
-// exercise → sell → repay → creditFreeValue → recycle) has already mined, so the
-// harvest completes and the recycled zipUSD sits backed in the Safe; only the
-// final LP-stake is skipped. Never unsafe, but the compounding doesn't close.
-// FOLLOW-UP: read token0()/token1() off the vault and branch to
-// addLiquidity(0, expectedZip, …) (pricing the token1 side) when zipUSD == token1.
+// The restake leg's deposit side follows the live token0()/token1() slotting: the
+// quoter resolves which vault side is the recycled zipUSD each tick and the Job
+// builds addLiquidity on that side (deposit0=expectedZip when token0, else
+// deposit1=expectedZip).
 type StrikeLoopJob struct {
 	// the six engine module addresses (re-pointable; from cfg.MustAddr).
 	harvest   common.Address // HarvestVoteModule — claimReward / pendingReward / oHYDX
@@ -248,7 +239,7 @@ func (j *StrikeLoopJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	if recycleAmount.Sign() != 0 {
 		// expectedZip = recycleAmount · scaleUp (6dp→18dp; scaleUp = 1e12, no deposit fee).
 		expectedZip := new(big.Int).Mul(recycleAmount, scaleUp)
-		expectedShares, err := j.quoter.ZipToShares(ctx, vault, expectedZip)
+		expectedShares, zipIsToken0, err := j.quoter.ZipToShares(ctx, j.recycle, vault, expectedZip)
 		if err != nil {
 			return chain.Plan{}, err
 		}
@@ -264,11 +255,17 @@ func (j *StrikeLoopJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 		} else {
 			// stakeAmount = minShares (conservative: addLiquidity guarantees shares ≥ minShares).
 			stakeAmount := new(big.Int).Set(minShares)
-			// ⚠️ token0-side assumption — see the KNOWN LIMITATION at the top of this
-			// file. deposit0=expectedZip presumes zipUSD == the vault's token0.
+			// Deposit the recycled zipUSD on whichever side the live token0()/token1()
+			// slotting puts it: (expectedZip, 0) when zipUSD is token0, else (0, expectedZip).
+			var deposit0, deposit1 *big.Int
+			if zipIsToken0 {
+				deposit0, deposit1 = expectedZip, big.NewInt(0)
+			} else {
+				deposit0, deposit1 = big.NewInt(0), expectedZip
+			}
 			actions = append(actions,
 				chain.Action{Label: "recycle", To: j.recycle, Data: chain.PackUintCall("recycle(uint256)", recycleAmount)},
-				chain.Action{Label: "addLiquidity", To: j.lp, Data: chain.PackUintsCall("addLiquidity(uint256,uint256,uint256)", expectedZip, big.NewInt(0), minShares)},
+				chain.Action{Label: "addLiquidity", To: j.lp, Data: chain.PackUintsCall("addLiquidity(uint256,uint256,uint256)", deposit0, deposit1, minShares)},
 				chain.Action{Label: "stake", To: j.lp, Data: chain.PackUintCall("stake(uint256)", stakeAmount)},
 			)
 		}
