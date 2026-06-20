@@ -1119,13 +1119,15 @@ track on it.
 
 ## Open obligations / seams
 
-- **CRE-02b — the redemption cross-transport orchestration glue (owed, raised 2026-06-20 by CRE-02).** CRE-02's
-  (K) `RedemptionJob` is REACTIVE: it settles + claims whatever USDC the queue already holds, but it does NOT fund
-  the queue. Funding the queue is the (R) warehouse **REDEEM→REPAY** (`cre/warehouse`, CRE-04, BUILT) — a wasip1
-  report transport the keeper cannot emit. **Owed:** the off-chain orchestration that decides WHEN + HOW MUCH to
-  REDEEM→REPAY (sized off the §8.2 reserve = the CRE-06 `harvestReserve`/`safetyBuffer` config) and POSTs the op
-  event to `cre/warehouse`'s `http.Trigger` ahead of the keeper's `settleEpoch`. Until CRE-02b lands, the funding
-  half is driven manually/by ops. Not blocking; the (K) settle/claim half is complete + safe.
+- **CRE-02b — redemption funding automation (TICKETED 2026-06-20, `build/tickets/cre/CRE-02b-redemption-funding.md`).**
+  CRE-02's (K) `RedemptionJob` is REACTIVE (settles/claims what's there, never funds). Funding = the (R) warehouse
+  **REDEEM→REPAY** (`cre/warehouse`, CRE-04, BUILT) — a transport the keeper can't emit. CRE-02b is the off-chain
+  glue that sizes + fires it: a **utilization-driven resting floor** that actively refills (the funding twin of
+  CRE-05a's bid), derived **through the existing reserve gate** (`covered()`/`harvestReserve`/`safetyBuffer` — NOT
+  a separate knob, or it fights the freeze over the same cash). **Open fork** captured in the ticket: separate
+  orchestrator vs. fold the sizing into `cre/warehouse`'s production `observe` (the hook CRE-04 left). **Ships
+  default-OFF / unactivated** (flip on after more testing + real exit data); manual ops POSTs are the M1 path.
+  Not blocking; the cycle is idempotent/self-healing.
 - **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
   The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
   while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
