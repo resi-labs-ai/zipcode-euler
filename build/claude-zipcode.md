@@ -705,6 +705,13 @@ resolved against the built adapter (EulerEarn `redeem(shares, receiver, owner)` 
 Safe-then-REPAY, not direct-to-sink; APPROVE exact-amount with `spender` pinned). CRE-04 builds against THIS table +
 the built `WarehouseAdminModule` decode; the warehouse adapter uses a **distinct Forwarder identity / workflowId**
 from the controller/registry/oracle receivers.
+**BUILT — CRE-04 (`cre/warehouse`, 2026-06-20):** the (R) producer for this op family is built — an `http.Trigger`
+op event → identical consensus on a string-only carrier → op-discriminant dispatch (`supply`/`approve`/`redeem`/
+`repay` → opType 1/2/3/4) → per-op validation (all four magnitudes `> 0`; REPAY `dest` carried + validated
+non-zero, on-chain `WrongRedemptionBox` is the backstop) → one `WriteReport` via `cre/zipreport`. The §8.5
+on-chain NAV sizing (`EE_POOL.convertToAssets(balanceOf(SAFE))`) is the documented production replacement of the
+build's mock `observe` (the magnitudes arrive pre-sized on the trigger), exactly the mock-feed posture CRE-01a/01c
+took. All four ops are built (incl. REDEEM) so **CRE-02 reuses this package** for its (R) REDEEM→REPAY funding.
 
 ### 8.6 szipUSD share-price feeds (NAV legs + LP mark — the push-cache producers)
 The szipUSD share price and the engine's LP-collateral price are **hybrid push-cache oracles** (§7): the
@@ -895,12 +902,13 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 | `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1) **— BUILT 2026-06-19** (`cre/revaluation`); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate) **— BUILT 2026-06-19** (`cre/controller`); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4) **— BUILT 2026-06-20** (`cre/coordinator`). **CRE-01 family COMPLETE** (01a/01b/01c). Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
 | `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
-| `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REPAY** ops via the Roles adapter (§8.5) | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) |
+| `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REDEEM/REPAY** ops via the Roles adapter (§8.5) **— BUILT 2026-06-20** (`cre/warehouse`; http op-discriminant producer → `WarehouseAdminModule` opType 1/2/3/4 via `cre/zipreport`; all four ops incl. REDEEM so CRE-02 reuses the package; gate green). | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) — DONE |
 | `CRE-05` | Engine strategy-admin **operator** orchestrator (§8.7). **SPLIT:** exit half = **CRE-05a (DONE)**; the harvest loop (8-B5…8-B10) + main↔juniorTrancheSidecar rotation = **KEEPER-01b/01c** on the (K) keeper track (POLICY-BLOCKED/deferred). Live status in PROGRESS. | operator / (K) | none (operator-trusted; engine modules built) |
 
 **Discharged this window:** the WOOF-05 report-ABI envelope per-type table (§8.0) and the WOOF-02 gas-bounded
-revaluation sharding (§8.1). **Open before the live CRE-01 build:** DEC-01 (§8.9). **Open before CRE-04
-finalizes:** the 8-Bw `WarehouseAdminModule` decode reconcile (§8.5).
+revaluation sharding (§8.1). **Open before the live CRE-01 build:** DEC-01 (§8.9) — RESOLVED. **CRE-04
+finalized 2026-06-20** — the 8-Bw `WarehouseAdminModule` decode reconcile (§8.5) is DONE and the producer
+(`cre/warehouse`) is BUILT against it.
 
 ---
 

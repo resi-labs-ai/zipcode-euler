@@ -36,13 +36,15 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   CTR-03 `siloId`) — **DONE 2026-06-19** (note below); **CRE-01c** default/recovery → DefaultCoordinator
   (rt8 action family; LOCK/RELEASE M1-live, DEFAULT/RECOVERY/RESOLVE/WRITEOFF go live with the M2 demo, §8.4) —
   **DONE 2026-06-20** (note below). **The CRE-01 family is now COMPLETE** (01a registry / 01b controller / 01c
-  coordinator); there is no further CRE-01 slice. Remaining (R) backlog: CRE-03 (feeds) / CRE-04 (warehouse ops);
-  CRE-02 (R+K hybrid) is blocked on CRE-04.
+  coordinator); there is no further CRE-01 slice. **CRE-04 (warehouse ops) — DONE 2026-06-20** (note below);
+  this **UNBLOCKS CRE-02** (it reuses the `cre/warehouse` op package for the (R) REDEEM→REPAY funding). Remaining
+  (R) backlog: **CRE-03 (feeds)** + **CRE-02 (R+K hybrid, now unblocked)**.
   ~~**Strong NEXT candidate: CRE-01**~~ (split) (origination/draw/close/status → controller; revaluation → registry,
   gas-bounded sharded; rt8 default/recovery → DefaultCoordinator) — the largest (R) producer, now that the
   encode handshake is a tested library.
-- **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
-  `CRE-OPS-ROUTING.md`.
+- **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04 (**DONE 2026-06-20**) — now
+  **UNBLOCKED**. Reuses `cre/warehouse` for the (R) REDEEM→REPAY funding; sequences `OffRampModule` +
+  `ZipRedemptionQueue.settleEpoch/claim` via (K). Confirm the (R)/(K) split per `CRE-OPS-ROUTING.md`.
 - **CTR-06c / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
   CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` +
   CTR-06a reservoir borrow-vault governor handoff + CTR-06b `JuniorTrancheDeployer` are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
@@ -72,6 +74,55 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
   cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
   CTR-10c second-venue integration.)
+
+- **CRE-04 note (2026-06-20) — the senior-warehouse op producer (opType 1/2/3/4 → `WarehouseAdminModule`/8-Bw).**
+  A pure (R) producer through the EXISTING `WarehouseAdminModule` receiver (CRE-OPS-ROUTING: CRE-04 is pure (R);
+  no new contract, off-chain Go only → **NO backward `wires/` edit owed**). A committed wasip1 workflow at
+  **`cre/warehouse/`** (monorepo `cre/`). One `http.Trigger` carries an off-chain warehouse-op event; the workflow
+  reaches **identical consensus** on a string-only `WarehouseOp` carrier (4 fields: op/amount/shares/dest),
+  normalizes + **dispatches on the lowercase op discriminant** (`supply`→1 / `approve`→2 / `redeem`→3 /
+  `repay`→4), validates the per-op required fields, and emits **one `WriteReport`** to the warehouse adapter via
+  the shared `cre/zipreport` encoders (`WhSupplyReport`/`WhApproveReport`/`WhRedeemReport`/`WhRepayReport`; no
+  re-implemented handshake). **All four magnitudes require `> 0`** (unlike CRE-01c's recovery/resolve/writeoff
+  which tolerate 0): `deposit(0)` reverts EE `ZeroShares`, `redeem(0)` is a wasted no-op, a 0 approve/transfer is
+  meaningless. **REPAY `dest` is carried in the event** (§8.5: the one producer-carried field), validated non-zero;
+  the on-chain `WrongRedemptionBox` self-check + the Roles `EqualTo(redemptionBox)` scope are the backstops (the
+  producer does NOT read on-chain to pre-check — "surface, don't pre-check", the CRE-01c posture). **NO Proof gate**
+  — the `WarehouseAdminModule` exposes no on-chain boolean gate surface (its decode is `(opType, payload)` → one
+  pinned Roles-forwarded call); the real security boundary is the Zodiac Roles scope (param-pinning, Call-only) +
+  the distinct Forwarder/workflow identity, so the identical consensus over the mocked-via-trigger op facts IS the
+  §8.9 attestation (the CRE-01a/01c posture). The §8.5 on-chain NAV sizing
+  (`eePool.convertToAssets(balanceOf(SAFE))`) is the documented production replacement of the mock `observe` (the
+  magnitudes arrive pre-sized on the trigger). Fail-safe no-op on unset Warehouse; unknown/empty-op +
+  missing/unparseable-required-field errors propagate. **Includes REDEEM** (op 3) even though CRE-OPS-ROUTING's
+  shorthand names CRE-04 "SUPPLY/APPROVE/REPAY" — the package must carry REDEEM so **CRE-02 reuses it** for the (R)
+  REDEEM→REPAY funding (CRE-OPS-ROUTING line 120); spec-fidelity confirmed excluding it would break that reuse
+  contract. **Harness loop ran:** 4 critics (junior-dev / spec-fidelity / reference-verifier / cre-binding).
+  **cre-binding = BYTE-EXACT** (all four ops: envelope `(uint8 opType, bytes)` ↔ `WarehouseAdminModule._processReport`
+  `:158`; per-op payload tuples ↔ the contract decode sites — SUPPLY/APPROVE/REDEEM `(uint256)` `:164/:168/:172`,
+  REPAY `(address,uint256)` order `:176`; opType bytes ↔ contract consts `:25-31` ↔ `zipreport.Wh*` consts
+  `:118-123`; the `> 0` rules + `WrongRedemptionBox`/`UnsupportedOpType` reverts verified against
+  `WarehouseAdminModule.t.sol` incl. `deposit(0)` revert + `redeem(0)` no-op-success). **spec-fidelity = FAITHFUL**
+  (the four ops/tuples/producer-sizes-policy-pins split verbatim §8.5 lines 690-707; the all-four-ops incl. REDEEM
+  reading is the CORRECT one per CRE-OPS-ROUTING 120; the no-Proof-gate + mock-sizing posture consistent with
+  CRE-01a/01c; §17 honored — nothing hardcoded, REPAY dest carried not Config-sourced to avoid re-point drift).
+  **reference-verifier = ALL ~20 cited file:line refs resolve exactly** (no stale refs; the four `Wh*RoundTrip`
+  tests exist at `report_test.go:420/431/442/453`; `parseAddress`/`parsePositiveBig` clone sources exact;
+  `parseBytes32`/`parseNonNegBig` correctly dropped). **Ticket tightened pre-cold-build** from the one borderline
+  junior-dev nit: the handler return type `(struct{}, error)` pinned inline in K3. **Gate green (my own re-run,
+  `-count=1`, not just the cold-build's):** `cd cre/warehouse && go build ./... && go vet ./...` (host) +
+  `GOOS=wasip1 GOARCH=wasm go build ./...` exit 0 + `go test -count=1 ./...` = PASS, **non-vacuous** (4 per-op
+  handshake tests each independently `abi.Unpack` the captured bytes to the exact contract tuple — NOT trusting
+  `zipreport` — asserting opType against BOTH the constant and the literal + decoded scalars==input incl. REPAY
+  dest+amount; the full `RunInNodeMode` + `ConsensusIdenticalAggregation[WarehouseOp]` path runs, **proving the
+  string-only carrier Wraps**; op normalization; 18 validation-error⇒0-write subcases; unset-Warehouse no-op;
+  `parseAddress` unit test). **Cold-build returned ZERO load-bearing guesses** (verified by my own gate re-run +
+  code/test read). Committed to `cre/warehouse` — code only (11 files); host build artifact (`/cre-warehouse`) +
+  `*.wasm` gitignored; no `build/`/`docs/`/`contracts/` staged in the code commit; HEAD verified (no rogue commit).
+  Ticket: `build/tickets/cre/CRE-04-warehouse-ops.md`. **Doc-sync:** no contract changed → no backward `wires/`
+  edit; forward spec §8.5 gains a "(BUILT — CRE-04)" producer note + §8.11's CRE-04 row marks BUILT + the
+  "Open before CRE-04 finalizes" reconcile line marked DONE. **NEXT:** reviewer picks among the remaining (R)
+  backlog — CRE-03 (NAV/LP/xALPHA-APR feeds) or CRE-02 (redemption-settle, now unblocked).
 
 - **CRE-01c note (2026-06-20) — the loss-action producer (reportType 8 → `DefaultCoordinator`).** The THIRD and
   LAST of the three CRE-01 (R) slices — **the CRE-01 family is now COMPLETE.** A committed wasip1 workflow at
