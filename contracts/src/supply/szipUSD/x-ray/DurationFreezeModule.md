@@ -83,7 +83,7 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
   oracle: a sidecar LP donation raises coverage by *exactly one* mark (`pathLockedLpEquity` is main-only, so the
   sidecar LP isn't double-counted), and `test_SEC02_floor_breach_covered_flips_false` proves the pre-fix
   double-count *would* have falsely reported `covered()`.
-- **The double-squeeze (documented, fail-closed by design)** — `covered():323-329` documents that a reservoir borrow
+- **The double-squeeze (documented, fail-closed by design)** — `covered():323-329` documents that a farm utility borrow
   against the fenced LP pushes **both** sides the wrong way at once: the numerator drops (`pathLockedLpEquity`
   subtracts strike debt) **and** the floor rises (the borrow draws senior cash → `maxWithdraw` falls →
   `illiquidSeniorValue` rises). The two do **not** cancel. This is **self-DoS**: the borrower can only freeze its own

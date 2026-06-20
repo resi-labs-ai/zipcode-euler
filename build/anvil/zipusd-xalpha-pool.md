@@ -4,8 +4,8 @@ Built on the local anvil Base fork in two phases:
 - `zipusd-xalpha-pool.sh` — the real Algebra Integral pool + a full-range LP position (the substrate).
 - `zipusd-xalpha-ichi-vault.sh` — the **real single-sided-zipUSD ICHI YieldIQ vault** over that pool
   (8-B6, DEC-03), which mints the **fungible ERC20 LP share** — the token usable as **collateral in
-  the reservoir EVK market** (the whole point: an NFT position can't be collateral, an ICHI vault
-  share can, exactly the pattern the existing reservoir uses with the WETH/USDC ICHI vault behind
+  the farm utility EVK market** (the whole point: an NFT position can't be collateral, an ICHI vault
+  share can, exactly the pattern the existing farm utility uses with the WETH/USDC ICHI vault behind
   escrow vault `0x8A5F…`).
 
 ## What exists on the fork now
@@ -72,7 +72,7 @@ Built here:
 Still skipped:
 - [ ] A Hydrex **gauge** for the vault share + staking it (earns oHYDX; bare LP earns only fees).
 - [ ] Posting the LP share as **EVK collateral**: deploy an escrow collateral vault over
-      `0x4731d24b…` and add it to the reservoir borrow market (mirrors the live WETH/USDC ICHI →
+      `0x4731d24b…` and add it to the farm utility borrow market (mirrors the live WETH/USDC ICHI →
       escrow `0x8A5F…` pattern).
 - [ ] Wiring into `SzipNavOracle.setLpPosition(ichiVault, gauge)` — the oracle currently points
       `ichiVault` at a real Base WETH/USDC ICHI vault (`0x07e72E46…`) as a valuation stand-in, NOT
@@ -86,7 +86,7 @@ backing is real and single-sided, just not yet range-placed.
 ## Remaining steps to "where we need to be"
 
 1. **Collateral**: deploy an escrow collateral EVK vault over the LP share `0x4731d24b…` and add it to
-   the reservoir borrow market (so a borrower can post LP shares and draw against them).
+   the farm utility borrow market (so a borrower can post LP shares and draw against them).
 2. (optional) Create + stake into a Hydrex gauge to farm oHYDX.
 3. `SzipNavOracle.setLpPosition(0x4731d24b…, <gauge>)` so the junior basket prices OUR LP instead of
    the WETH/USDC stand-in.

@@ -51,7 +51,7 @@ See [`.env.example`](.env.example). Summary:
 The **StrikeLoopJob** (KEEPER-01b) is the auto-compounder harvest loop: one
 ordered `chain.Plan` (claim → borrow → exercise → sell → repay → credit →
 [recycle → addLiquidity → stake]) driving the six engine modules
-(`HarvestVoteModule`, `ReservoirLoopModule`, `ExerciseModule`, `SellModule`,
+(`HarvestVoteModule`, `FarmUtilityLoopModule`, `ExerciseModule`, `SellModule`,
 `RecycleModule`, `LpStrategyModule`) with scalar amounts only. It is a pure
 stateless poll (no EMA/state store); the price/share floors come from an
 injectable `Quoter` seam (`internal/quote`) that binds to the Algebra HYDX/USDC
@@ -78,12 +78,12 @@ cd cre/keeper
 export KEEPER_OPERATOR_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 export KEEPER_RPC_URL=http://127.0.0.1:8545
 export KEEPER_CHAIN_ID=8453
-export KEEPER_ADDR_ReservoirLoopModule=0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4
+export KEEPER_ADDR_FarmUtilityLoopModule=0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4
 export KEEPER_ADDR_ExitGate=0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e
 go run ./cmd/keeper
 ```
 Expected: the startup identity assertion passes — `operator()` on
-ReservoirLoopModule == `0x3C44…93BC`, `windowController()` on ExitGate ==
+FarmUtilityLoopModule == `0x3C44…93BC`, `windowController()` on ExitGate ==
 `0x3C44…93BC`, and `owner()` != the operator (the live `owner()` is the Timelock
 `0x89ae…`). The `IdentityJob` heartbeat then logs OK each tick. **No write tx is
 sent against anvil this window.**

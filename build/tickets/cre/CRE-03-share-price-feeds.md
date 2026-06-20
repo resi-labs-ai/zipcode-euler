@@ -25,7 +25,7 @@ composes **one coherent computation**, and emits **two `WriteReport`s**:
 1. **NAV_LEG → `SzipNavOracle`** — `abi.encode(uint8 reportType=7, abi.encode(uint8[] legs, uint256[] prices,
    uint32 ts))`, `legs = [LEG_ALPHA_USD=0, LEG_HYDX_USD=1]`, `prices = [alphaUSD_18dp, hydxUsd_18dp]` (both
    `1e18 = $1`). Encoded via `zipreport.NavLegReport`.
-2. **LP_MARK → `SzipReservoirLpOracle`** — `abi.encode(uint8 reportType=7, abi.encode(uint256 mark, uint32 ts))`,
+2. **LP_MARK → `SzipFarmUtilityLpOracle`** — `abi.encode(uint8 reportType=7, abi.encode(uint256 mark, uint32 ts))`,
    `mark` = the per-LP-share value in **quote-native USDC 6-dp** (`$1000/share == 1_000e6`). Encoded via
    `zipreport.LpMarkReport`.
 
@@ -89,13 +89,13 @@ tick. The two feeds converge together; they never diverge mid-move.
   "HYDX if thin"; the as-built contract has no thin-pool fallback read → contract wins → always push. See
   FINDING-1.)
 
-### B. Receiver 2 — `SzipReservoirLpOracle` (the LP_MARK decode site)
-- **`contracts/src/supply/SzipReservoirLpOracle.sol:106-121`** `_processReport`: `abi.decode(report, (uint8,
+### B. Receiver 2 — `SzipFarmUtilityLpOracle` (the LP_MARK decode site)
+- **`contracts/src/supply/SzipFarmUtilityLpOracle.sol:106-121`** `_processReport`: `abi.decode(report, (uint8,
   bytes))`; requires `reportType == LP_MARK (7)` (`:28,108`); then `abi.decode(payload, (uint256 mark, uint32
   ts))` (`:109`); `_writePrice` guards: `mark == 0` → `PriceOracle_InvalidAnswer` (`:116`); `mark >
   type(uint208).max` → `PriceOracle_Overflow` (`:117`); `ts > now` → `FutureTimestamp` (`:118`); `ts <=
   cache.timestamp` → `StaleReport` (`:119`, strictly-newer; first write `timestamp==0` passes).
-- **`mark` UNITS — load-bearing, confirmed by the contract's own test** (`contracts/test/SzipReservoirLpOracle.t.sol:34-48`:
+- **`mark` UNITS — load-bearing, confirmed by the contract's own test** (`contracts/test/SzipFarmUtilityLpOracle.t.sol:34-48`:
   pushes `_push(1_000e6, ts)`, asserts the cached `price == 1_000e6`). The scale is `calcScale(LP_DECIMALS=18,
   quoteDecimals=6, feedDecimals=6)` (`:78`), quote = USDC. So **`mark` = (USD per 1.0 LP share) × 1e6** —
   quote-native 6-dp. **The producer computes per-share USD at 18-dp then divides by 1e12** to land 6-dp:
@@ -108,7 +108,7 @@ tick. The two feeds converge together; they never diverge mid-move.
   - `mark_6dp = perShare_18dp / 1e12`. If `mark_6dp == 0` (empty/unseeded vault) → **no-op the LP push** (the
     contract would revert `PriceOracle_InvalidAnswer`); NAV_LEG may still push.
 - **No deviation band on this receiver** (only `!=0`, `<=uint208.max`, `ts<=now`, strictly-newer). Liveness-only:
-  a stale mark fails the reservoir borrow CLOSED (`_getQuote` reverts → EVC account-status reverts, `:127-142`),
+  a stale mark fails the farm utility borrow CLOSED (`_getQuote` reverts → EVC account-status reverts, `:127-142`),
   never opens an unsafe borrow. So the producer's sole obligation is to re-push within `validityWindow`.
 
 ### C. On-chain reads (DON-mode `eth_call`, Base) — the quantities the producer reads, never pushes
@@ -172,7 +172,7 @@ tick. The two feeds converge together; they never diverge mid-move.
   producer to model (http trigger → node-mode consensus → §8.9 mock observe → DON ts → encode → WriteReport).
 - `cre/szalpha-rate` exists but is a PRE-CRE-00 stub (local encoders, stale `WriteReportRequest`, R-1-blocked
   964 read) — DO NOT model its encode/write idiom; model `cre/revaluation`. It is a SEPARATE track (out of scope).
-- Both receivers are filed + fork-tested (`SzipNavOracle.t.sol`, `SzipReservoirLpOracle.t.sol`). No contract change.
+- Both receivers are filed + fork-tested (`SzipNavOracle.t.sol`, `SzipFarmUtilityLpOracle.t.sol`). No contract change.
 
 ## Do NOT
 - Do NOT push the RATE (reportType 8) / xALPHA exchange rate or any APR — that is `cre/szalpha-rate` (8x-02,

@@ -91,8 +91,8 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   rebasing/FoT concern.
 - **The `SzipNavOracle` views it relies on** — `committedValue() = _grossValueOf(juniorTrancheSidecar)`,
   `freeValue() = _grossValueOf(juniorTrancheSafe)`, and `pathLockedLpEquity()` (the fenced LP across all states net
-  reservoir debt). `grossBasketValue`/`_grossValueOf` now COUNT the escrow-collateralized LP + SUBTRACT the
-  reservoir strike debt (LP path-lock, 2026-06-13) — so they are no longer "unchanged", but the module still
+  farm utility debt). `grossBasketValue`/`_grossValueOf` now COUNT the escrow-collateralized LP + SUBTRACT the
+  farm utility strike debt (LP path-lock, 2026-06-13) — so they are no longer "unchanged", but the module still
   never moves the LP, so `grossBasketValue` stays rotation-invariant under a `commit`/`release` (which only
   move the 5 plain legs). The coverage numerator the floor checks is `coverageValue() = committedValue() +
   pathLockedLpEquity()`; `requiredCommittedValue()` is the debt-pinned floor (FLOOR note above) —
@@ -192,7 +192,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   2. **The LP-unreachable / unsatisfiable-floor problem is GONE — by counting, not moving.** Resolution =
      NONE of the old candidate fixes (don't whitelist the LP, don't make `commit` unwind it, don't trust the
      CRE to keep zipUSD un-LP'd). Instead: the LP stays fenced in place (NOT movable) and is COUNTED toward
-     the floor via the oracle's `pathLockedLpEquity()` (LP across loose+gauge+escrow states, net reservoir
+     the floor via the oracle's `pathLockedLpEquity()` (LP across loose+gauge+escrow states, net farm utility
      debt). The coverage numerator is `coverageValue() = committedValue() + pathLockedLpEquity()`, so the
      floor is satisfiable from the productive LP without hoarding it idle in the juniorTrancheSidecar. The LP's only
      dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated to the excess, so it can't be

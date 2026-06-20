@@ -118,7 +118,7 @@ contract MockEulerEarn {
     }
 
     /// @dev CTR-04: faithful first-enable path (reference _setCap :782-794). Called by BOTH acceptCap (the line
-    ///      onboarding path) and the base/reservoir seedConfig enable path. On a market's FIRST enable it pushes the
+    ///      onboarding path) and the base/farm utility seedConfig enable path. On a market's FIRST enable it pushes the
     ///      market onto the WITHDRAW queue and enforces the hard MAX_QUEUE_LENGTH (30) cap (reference :783-785) — the
     ///      BINDING cap that bricks the ~29th lifetime openLine absent CTR-04's reclaim. Guarded against double-push
     ///      (an already-enabled market re-onboarded does not re-push), like _setCap's `if (!marketConfig.enabled)`.
@@ -144,7 +144,7 @@ contract MockEulerEarn {
     ///      `balanceOf(EE) > cfgBalance`, which is exactly the L9 skew.
     function seedConfig(address market, uint256 shares) external {
         cfgBalance[market] += uint112(shares);
-        // CTR-04: the base/reservoir enable path also takes a withdraw-queue slot on first enable (faithful to
+        // CTR-04: the base/farm utility enable path also takes a withdraw-queue slot on first enable (faithful to
         // _setCap's first-enable push), via the SAME guarded helper acceptCap uses — so re-seeding an already-enabled
         // market does not re-push, and a freshly-seeded base market occupies one slot exactly like the real EE.
         _enableMarket(market);
@@ -331,7 +331,7 @@ contract MisWiringAdapter is EulerVenueAdapter {
         address irm_,
         address usdc_,
         address erebor_,
-        address baseUsdcMarket_,
+        address usdcReservoir_,
         address wrongLien_
     )
         EulerVenueAdapter(
@@ -344,7 +344,7 @@ contract MisWiringAdapter is EulerVenueAdapter {
             irm_,
             usdc_,
             erebor_,
-            baseUsdcMarket_
+            usdcReservoir_
         )
     {
         wrongLien = wrongLien_;
@@ -376,7 +376,7 @@ contract EulerVenueAdapterTest is ForkConfig {
     ZeroIRM internal irm;
     MockEulerEarn internal ee;
     EulerVenueAdapter internal adapter;
-    address internal baseUsdcMarket;
+    address internal usdcReservoir;
 
     LienCollateralToken internal LIEN_A;
     LienCollateralToken internal LIEN_B;
@@ -412,10 +412,10 @@ contract EulerVenueAdapterTest is ForkConfig {
         ee = new MockEulerEarn(usdc);
 
         // A live base USDC market (no-borrow holding vault) that fund() withdraws from.
-        baseUsdcMarket =
+        usdcReservoir =
             factory.createProxy(address(0), false, abi.encodePacked(usdc, address(0), address(0)));
-        IEVault(baseUsdcMarket).setHookConfig(address(0), 0);
-        IEVault(baseUsdcMarket).setGovernorAdmin(address(0));
+        IEVault(usdcReservoir).setHookConfig(address(0), 0);
+        IEVault(usdcReservoir).setGovernorAdmin(address(0));
 
         // The adapter must be deployed BEFORE the hook so the hook's borrowDriver == the adapter. The adapter
         // address is independent of the hook, so deploy adapter with a placeholder? No — adapter ctor needs the
@@ -435,13 +435,13 @@ contract EulerVenueAdapterTest is ForkConfig {
             address(irm),
             usdc,
             erebor,
-            baseUsdcMarket
+            usdcReservoir
         );
         assertEq(address(adapter), predictedAdapter, "adapter address prediction must hold");
 
         // Seed the EE supply queue with the base market (M1 head).
         IOZERC4626[] memory q = new IOZERC4626[](1);
-        q[0] = IOZERC4626(baseUsdcMarket);
+        q[0] = IOZERC4626(usdcReservoir);
         ee.setSupplyQueue(q);
 
         // Controller approves the adapter to pull the lien (origination-batch obligation 1c).
@@ -470,9 +470,9 @@ contract EulerVenueAdapterTest is ForkConfig {
     ///      keeps cfgBalance == balanceOf(EE) so the no-donation path nets exactly.
     function _fundBaseMarket(uint256 usdcAmount) internal {
         deal(usdc, address(this), usdcAmount);
-        IERC20(usdc).approve(baseUsdcMarket, usdcAmount);
-        uint256 shares = IEVault(baseUsdcMarket).deposit(usdcAmount, address(ee));
-        ee.seedConfig(baseUsdcMarket, shares);
+        IERC20(usdc).approve(usdcReservoir, usdcAmount);
+        uint256 shares = IEVault(usdcReservoir).deposit(usdcAmount, address(ee));
+        ee.seedConfig(usdcReservoir, shares);
     }
 
     /// @dev Supply USDC cash into a line's borrow vault so a draw has liquidity (mirrors what fund() does on a
@@ -775,7 +775,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         _fundBaseMarket(1_000_000e6);
 
         uint256 baseBal =
-            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee)));
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee)));
         uint256 lineBal = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee)));
         uint256 amount = 200_000e6;
 
@@ -783,7 +783,7 @@ contract EulerVenueAdapterTest is ForkConfig {
 
         assertEq(ee.reallocCount(), 1, "reallocate called once");
         assertEq(ee.lastReallocLength(), 2, "two-item allocation");
-        assertEq(ee.lastReallocIds(0), baseUsdcMarket, "item0 = baseUsdcMarket (withdraw)");
+        assertEq(ee.lastReallocIds(0), usdcReservoir, "item0 = usdcReservoir (withdraw)");
         assertEq(ee.lastReallocAssets(0), baseBal - amount, "item0 absolute target = base - amount");
         assertEq(ee.lastReallocIds(1), lineRef, "item1 = lineRef (supply)");
         assertEq(ee.lastReallocAssets(1), lineBal + amount, "item1 absolute target = line + amount");
@@ -817,23 +817,23 @@ contract EulerVenueAdapterTest is ForkConfig {
         _fundBaseMarket(1_000_000e6);
 
         // Donate 1 USDC of base-market shares into the pool: live balance now EXCEEDS the EE-tracked balance.
-        uint256 donated = _donateBaseShares(baseUsdcMarket, 1e6);
+        uint256 donated = _donateBaseShares(usdcReservoir, 1e6);
         assertGt(donated, 0, "donation minted base-market shares");
         assertGt(
-            IEVault(baseUsdcMarket).balanceOf(address(ee)),
-            ee.cfgBalance(baseUsdcMarket),
+            IEVault(usdcReservoir).balanceOf(address(ee)),
+            ee.cfgBalance(usdcReservoir),
             "live balanceOf(EE) > EE-tracked cfgBalance after donation (the L9 skew)"
         );
 
         uint256 amount = 200_000e6;
-        uint256 baseTrackedBefore = IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket));
+        uint256 baseTrackedBefore = IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir));
         uint256 lineTrackedBefore = IEVault(lineRef).previewRedeem(ee.cfgBalance(lineRef));
 
         adapter.fund(lineRef, amount); // post-fix: succeeds despite the donation
 
         // EE-TRACKED supplied assets moved by exactly `amount`: base fell, line rose.
         assertEq(
-            IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket)),
+            IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir)),
             baseTrackedBefore - amount,
             "base EE-tracked supplied assets fell by amount"
         );
@@ -861,16 +861,16 @@ contract EulerVenueAdapterTest is ForkConfig {
         _seedRegistry(address(LIEN_A), PRICE_A);
         (address lineRef,) = _openA();
         _fundBaseMarket(1_000_000e6);
-        _donateBaseShares(baseUsdcMarket, 1e6);
+        _donateBaseShares(usdcReservoir, 1e6);
 
         uint256 amount = 200_000e6;
         // PRE-FIX sizing verbatim (the formula SEC-11 replaced): live balance, donation-skewed.
         uint256 baseBalancePreFix =
-            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee)));
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee)));
         uint256 lineBalancePreFix = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee)));
 
         MarketAllocation[] memory allocs = new MarketAllocation[](2);
-        allocs[0] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: baseBalancePreFix - amount});
+        allocs[0] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: baseBalancePreFix - amount});
         allocs[1] = MarketAllocation({id: IOZERC4626(lineRef), assets: lineBalancePreFix + amount});
 
         vm.expectRevert();
@@ -886,10 +886,10 @@ contract EulerVenueAdapterTest is ForkConfig {
         _fundBaseMarket(1_000_000e6);
 
         uint256 amount = 200_000e6;
-        uint256 baseTrackedBefore = IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket));
+        uint256 baseTrackedBefore = IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir));
         // No donation: the live and tracked balances agree.
         assertEq(
-            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee))),
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee))),
             baseTrackedBefore,
             "no skew absent a donation"
         );
@@ -897,7 +897,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         adapter.fund(lineRef, amount);
 
         assertEq(
-            IEVault(baseUsdcMarket).previewRedeem(ee.cfgBalance(baseUsdcMarket)),
+            IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir)),
             baseTrackedBefore - amount,
             "base fell by amount"
         );
@@ -918,7 +918,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(ee.submittedCaps(0), lineRef, "submitCap ONLY for the freshly-minted EVAULT");
         // The supply queue was rebuilt preserving the base head + appending the line.
         assertEq(ee.supplyQueueLength(), 2, "queue = [base, line]");
-        assertEq(address(ee.supplyQueue(0)), baseUsdcMarket, "head preserved");
+        assertEq(address(ee.supplyQueue(0)), usdcReservoir, "head preserved");
         assertEq(address(ee.supplyQueue(1)), lineRef, "line appended");
     }
 
@@ -985,14 +985,14 @@ contract EulerVenueAdapterTest is ForkConfig {
             address(irm),
             usdc,
             erebor,
-            baseUsdcMarket,
+            usdcReservoir,
             address(LIEN_B) // wrong expected lien
         );
         assertEq(address(mw), predicted, "prediction holds");
 
         LIEN_A.approve(address(mw), type(uint256).max);
         IOZERC4626[] memory q = new IOZERC4626[](1);
-        q[0] = IOZERC4626(baseUsdcMarket);
+        q[0] = IOZERC4626(usdcReservoir);
         // mw uses the SAME ee mock; ensure its queue is fine (already set in setUp). Open must trip WireMismatch.
         vm.expectRevert(EulerVenueAdapter.WireMismatch.selector);
         mw.openLine(LIEN_ID_A, address(LIEN_A), 1e18);
@@ -1023,7 +1023,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         // Pre-fix this stays 2 (no prune) and the vault remains in the queue.
         assertEq(ee.supplyQueueLength(), 1, "queue dropped to [base] after close");
         assertFalse(ee.queueContains(lineRef), "closed line pruned from queue");
-        assertTrue(ee.queueContains(baseUsdcMarket), "base market preserved");
+        assertTrue(ee.queueContains(usdcReservoir), "base market preserved");
     }
 
     /// @dev Other open lines untouched: closing one line leaves the other in the queue and still fundable.
@@ -1038,7 +1038,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(ee.supplyQueueLength(), 2, "queue = [base, B] after closing A");
         assertFalse(ee.queueContains(lineA), "A pruned");
         assertTrue(ee.queueContains(lineB), "B retained");
-        assertTrue(ee.queueContains(baseUsdcMarket), "base retained");
+        assertTrue(ee.queueContains(usdcReservoir), "base retained");
 
         // B is still routable: fund() reallocates into it without reverting.
         adapter.fund(lineB, 100_000e6);
@@ -1070,7 +1070,7 @@ contract EulerVenueAdapterTest is ForkConfig {
     ///      and the line vault keeps the stranded USDC; post-fix base is restored and the line is emptied.
     function test_SEC07_CloseLine_DefundsUsdcToBase() public {
         _fundBaseMarket(1_000_000e6);
-        uint256 baseStart = IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee)));
+        uint256 baseStart = IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee)));
         assertEq(baseStart, 1_000_000e6, "base seeded with 1M");
 
         (address lineRef,) = _openA();
@@ -1078,7 +1078,7 @@ contract EulerVenueAdapterTest is ForkConfig {
 
         // After fund: base depressed, line holds the stranded USDC.
         assertApproxEqAbs(
-            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee))),
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee))),
             700_000e6,
             2,
             "base drawn down by the fund"
@@ -1094,7 +1094,7 @@ contract EulerVenueAdapterTest is ForkConfig {
 
         // Post-fix: base restored, line emptied (assets:0 -> redeem all shares).
         assertApproxEqAbs(
-            IEVault(baseUsdcMarket).convertToAssets(IEVault(baseUsdcMarket).balanceOf(address(ee))),
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee))),
             1_000_000e6,
             2,
             "base balance restored by the defund"
@@ -1249,7 +1249,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(ee.withdrawQueueLength(), 2, "withdraw queue = [base, B] after closing A");
         assertFalse(ee.withdrawQueueContains(lineA), "A's withdraw slot reclaimed");
         assertTrue(ee.withdrawQueueContains(lineB), "B's withdraw slot retained");
-        assertTrue(ee.withdrawQueueContains(baseUsdcMarket), "base withdraw slot retained");
+        assertTrue(ee.withdrawQueueContains(usdcReservoir), "base withdraw slot retained");
     }
 
     /// @dev Brick-WITHOUT-reclaim is real: the withdraw queue grows by one per open and is hard-capped at
@@ -1490,7 +1490,7 @@ contract EulerVenueAdapterTest is ForkConfig {
     }
 
     // ============================================================
-    // (Q) CTR-13 — real line APR (~7.5%) via the adapter `irm` slot; reservoir / pre-existing lines stay 0%
+    // (Q) CTR-13 — real line APR (~7.5%) via the adapter `irm` slot; farm utility / pre-existing lines stay 0%
     // ============================================================
 
     /// @dev Units proof (no on-chain call): `BASE_RATE` is the per-second RAY rate; nominal APR = rate * SPY / 1e27.
@@ -1506,10 +1506,10 @@ contract EulerVenueAdapterTest is ForkConfig {
     ///      (c) `setIrm(realIRM)` re-points the slot and a FRESH `openLine` installs the real IRM on its borrow vault;
     ///      (a) that line's `debtOf` accretes by EVK's exact per-second compounding factor at BASE_RATE over a year;
     ///      (b)/roll-off a line opened BEFORE the rate was turned on stays on `ZeroIRM` and accrues ZERO over the SAME
-    ///          span — the same `ZeroIRM` the reservoir borrow vault runs (internal POL), so this is the structural
-    ///          equivalent of "the reservoir borrow accrues 0", and confirms the default roll-off (no forced re-price).
+    ///          span — the same `ZeroIRM` the farm utility borrow vault runs (internal POL), so this is the structural
+    ///          equivalent of "the farm utility borrow accrues 0", and confirms the default roll-off (no forced re-price).
     function test_CTR13_RealLineAccrues7_5pct_While_ZeroIrmLineAccruesZero() public {
-        // A pre-existing line on the setUp default ZeroIRM (models the reservoir / a pre-CTR-13 live line).
+        // A pre-existing line on the setUp default ZeroIRM (models the farm utility / a pre-CTR-13 live line).
         _seedRegistry(address(LIEN_B), PRICE_B);
         (address zeroLine,) = _openB();
         address zeroAcct = adapter.getLine(zeroLine).borrowAccount;
@@ -1542,7 +1542,7 @@ contract EulerVenueAdapterTest is ForkConfig {
         uint256 zeroDebt = IEVault(zeroLine).debtOf(zeroAcct);
         uint256 realDebt = IEVault(realLine).debtOf(realAcct);
 
-        // (b) zero-IRM (reservoir-equivalent) line: ZERO accrual over the year.
+        // (b) zero-IRM (farm utility-equivalent) line: ZERO accrual over the year.
         assertEq(zeroDebt, zeroDraw, "ZeroIRM line accrues nothing over a year");
 
         // (a) real line: debt == draw * EVK's per-second compounding multiplier at BASE_RATE (the exact accrual math).

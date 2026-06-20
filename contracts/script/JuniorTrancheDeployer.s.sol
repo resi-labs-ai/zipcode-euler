@@ -14,7 +14,7 @@ import {ZipDepositModule} from "../src/supply/ZipDepositModule.sol";
 
 // --- engine modules (Zodiac mastercopies; cloned via ModuleProxyFactory) ---
 import {SzipBuyBurnModule} from "../src/supply/szipUSD/SzipBuyBurnModule.sol";
-import {ReservoirLoopModule} from "../src/supply/szipUSD/ReservoirLoopModule.sol";
+import {FarmUtilityLoopModule} from "../src/supply/szipUSD/FarmUtilityLoopModule.sol";
 import {LpStrategyModule} from "../src/supply/szipUSD/LpStrategyModule.sol";
 import {HarvestVoteModule} from "../src/supply/szipUSD/HarvestVoteModule.sol";
 import {ExerciseModule} from "../src/supply/szipUSD/ExerciseModule.sol";
@@ -37,7 +37,7 @@ import {ISafe} from "../src/interfaces/safe/ISafe.sol";
 ///         module + the 8 yield/freeze/buy-burn engine modules + the loss side — and hands every OZ-ownable contract
 ///         to the Timelock and BOTH Baal Safes to the persistent `team` admin multisig (§4.5 two-tier model). It is
 ///         the faithful EXTRACTION of `DeployZipcode`'s inline junior stack (phases P3/P6/P7/P8/P9), parameterized to
-///         point at THIS silo's `eePool`/`warehouseSafe`/reservoir handles and the SHARED hub `zipUSD`/`rateOracle`.
+///         point at THIS silo's `eePool`/`warehouseSafe`/farm utility handles and the SHARED hub `zipUSD`/`rateOracle`.
 ///         CTR-06c calls it once per silo.
 ///
 /// @dev `is SummonSubstrate` (which `is Script`) — we INHERIT `_summon`/`computeMainSafe` + the `Substrate` struct
@@ -92,8 +92,8 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         // -- per-silo handles built upstream by CTR-06c --
         address eePool; // this silo's EulerEarn pool (mock in the D3 test)
         address warehouseSafe; // this silo's warehouse Safe (CreditWarehouseDeployer output)
-        address escrowVault; // this silo's reservoir escrow vault (ReservoirMarketDeployer, CTR-06a-fixed)
-        address borrowVault; // this silo's reservoir borrow vault
+        address escrowVault; // this silo's farm utility escrow vault (FarmUtilityMarketDeployer, CTR-06a-fixed)
+        address borrowVault; // this silo's farm utility borrow vault
         // -- NAV leg tokens (INPUTS, not BaseAddresses constants — the D3 fork test injects mocks) --
         address usdc;
         address xAlphaMirror;
@@ -110,7 +110,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         uint256 tvlCap; // ExitGate
         uint16 dBps; // buy-burn discount
         uint256 buybackCap; // buy-burn
-        uint256 borrowCap; // reservoir loop
+        uint256 borrowCap; // farm utility loop
         uint256 recoveryFloor; // DefaultCoordinator (must be < 1e18)
     }
 
@@ -125,7 +125,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         ZipDepositModule depositModule;
         address durationFreeze;
         address buyBurn;
-        address reservoirLoop;
+        address farmUtilityLoop;
         address lpStrategy;
         address harvestVote;
         address exercise;
@@ -220,9 +220,9 @@ contract JuniorTrancheDeployer is SummonSubstrate {
                 || t.gate.juniorTrancheEngine() != t.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
 
-        // -- 8. ReservoirLoopModule (juniorTrancheEngine).
-        t.reservoirLoop = _cloneModule(
-            address(new ReservoirLoopModule()),
+        // -- 8. FarmUtilityLoopModule (juniorTrancheEngine).
+        t.farmUtilityLoop = _cloneModule(
+            address(new FarmUtilityLoopModule()),
             abi.encode(
                 p.timelock,
                 juniorTrancheEngine,
@@ -312,7 +312,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
 
         // -- 15. NAV final wiring (M1: do NOT setLpTwapWindow — the LP leg uses the CRE-push stand-in).
         t.navOracle.setLpPosition(p.polIchiVault, p.polGauge);
-        t.navOracle.setReservoirLeg(p.escrowVault, p.borrowVault);
+        t.navOracle.setFarmUtilityLeg(p.escrowVault, p.borrowVault);
         t.navOracle.setXAlphaRateOracle(p.rateOracle);
         if (t.navOracle.shareToken() == address(0)) revert SeamNavShareTokenUnset();
 

@@ -26,7 +26,7 @@ use). `DeployLocal` = anvil fork only. `DeployMainnet` = THIS, the live-network 
 - [ ] `SUMMON_SALT_NONCE` — single-use unpredictable nonce (also reused by the sub-deployers)
 
 ### Live LP legs (matched ICHI-vault + ALM gauge pair) — REQUIRED env
-- [ ] `POL_ICHI_VAULT` — the ICHI vault the reservoir market collateralises. Seam: must equal `escrow.asset()`.
+- [ ] `POL_ICHI_VAULT` — the ICHI vault the farm utility market collateralises. Seam: must equal `escrow.asset()`.
 - [ ] `POL_GAUGE`      — MUST be the vault-keyed ALM gauge `Voter.gauges(POL_ICHI_VAULT)`, NOT the per-pool CL gauge
       `Voter.gauges(pool)` (the CL gauge rejects ICHI ALM wrapper shares — reverts 0x87c5d02a).
 - DECISION: for M1 this is either the real zipUSD/xALPHA ICHI vault (if created) or a live stand-in pair (DeployLocal
@@ -37,7 +37,7 @@ use). `DeployLocal` = anvil fork only. `DeployMainnet` = THIS, the live-network 
 - `IRM` — a 0%-rate model (`ZeroIRM`). Set `IRM` env to a real IRM to override; or swap one in later via the Timelock.
 - `XALPHA_MIRROR` — an M1 ERC20 stand-in (no real Base xALPHA exists pre-bridge). Set env to override.
 - `EE_POOL` — a real EulerEarn senior USDC pool off the live factory (owner = team). Set env to reuse an existing one.
-- `BASE_USDC_MARKET` — a real no-borrow USDC EVK proxy (EE supply-queue head). Set env to reuse.
+- `USDC_RESERVOIR` — a real no-borrow USDC EVK proxy (EE supply-queue head). Set env to reuse.
 - EulerEarn curator config runs ONLY when this script created the pool (so it owns it). If you supply your own
   `EE_POOL`, configure its caps/queue/curator yourself.
 

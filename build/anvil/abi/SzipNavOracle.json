@@ -33,12 +33,12 @@
         "internalType": "address"
       },
       {
-        "name": "mainSafe_",
+        "name": "juniorTrancheSafe_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "sidecar_",
+        "name": "juniorTrancheSidecar_",
         "type": "address",
         "internalType": "address"
       },
@@ -153,6 +153,19 @@
   },
   {
     "type": "function",
+    "name": "borrowVault",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "committedValue",
     "inputs": [],
     "outputs": [
@@ -192,7 +205,7 @@
   },
   {
     "type": "function",
-    "name": "engineSafe",
+    "name": "escrowVault",
     "inputs": [],
     "outputs": [
       {
@@ -335,6 +348,45 @@
   },
   {
     "type": "function",
+    "name": "juniorTrancheEngine",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheSafe",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheSidecar",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "lastUpdate",
     "inputs": [],
     "outputs": [
@@ -372,13 +424,32 @@
   },
   {
     "type": "function",
-    "name": "mainSafe",
+    "name": "lpShareValue",
+    "inputs": [
+      {
+        "name": "lpShares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lpTwapWindow",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "address",
-        "internalType": "address"
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -463,6 +534,19 @@
   },
   {
     "type": "function",
+    "name": "obsSpacing",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "observations",
     "inputs": [
       {
@@ -481,6 +565,19 @@
         "name": "cum",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "oldestRequiredLegTs",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
       }
     ],
     "stateMutability": "view"
@@ -518,6 +615,19 @@
   },
   {
     "type": "function",
+    "name": "pathLockedLpEquity",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "poke",
     "inputs": [],
     "outputs": [],
@@ -549,19 +659,6 @@
     "inputs": [
       {
         "name": "dc_",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setEngineSafe",
-    "inputs": [
-      {
-        "name": "engineSafe_",
         "type": "address",
         "internalType": "address"
       }
@@ -610,10 +707,41 @@
   },
   {
     "type": "function",
+    "name": "setFarmUtilityLeg",
+    "inputs": [
+      {
+        "name": "escrowVault_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "borrowVault_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setForwarderAddress",
     "inputs": [
       {
         "name": "_forwarder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setJuniorTrancheEngine",
+    "inputs": [
+      {
+        "name": "juniorTrancheEngine_",
         "type": "address",
         "internalType": "address"
       }
@@ -634,6 +762,19 @@
         "name": "gauge_",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setLpTwapWindow",
+    "inputs": [
+      {
+        "name": "lpTwapWindow_",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -668,19 +809,6 @@
   {
     "type": "function",
     "name": "shareToken",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "sidecar",
     "inputs": [],
     "outputs": [
       {
@@ -856,7 +984,7 @@
     "name": "EngineSafeSet",
     "inputs": [
       {
-        "name": "engineSafe",
+        "name": "juniorTrancheEngine",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -923,6 +1051,25 @@
   },
   {
     "type": "event",
+    "name": "FarmUtilityLegSet",
+    "inputs": [
+      {
+        "name": "escrowVault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "borrowVault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ForwarderAddressUpdated",
     "inputs": [
       {
@@ -980,6 +1127,19 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LpTwapWindowSet",
+    "inputs": [
+      {
+        "name": "window",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -1077,6 +1237,11 @@
   {
     "type": "error",
     "name": "AlreadyWired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadTimepoints",
     "inputs": []
   },
   {
@@ -1203,6 +1368,16 @@
   },
   {
     "type": "error",
+    "name": "LpTwapPluginNotReady",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPlugin",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotDefaultCoordinator",
     "inputs": []
   },
@@ -1230,6 +1405,11 @@
   },
   {
     "type": "error",
+    "name": "RateUnseeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StalePrice",
     "inputs": [
       {
@@ -1242,6 +1422,16 @@
   {
     "type": "error",
     "name": "StaleRate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StaleReport",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "T",
     "inputs": []
   },
   {

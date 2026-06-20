@@ -102,4 +102,4 @@ On-chain: **No** (pool / off-chain config)
 
 ## 4. Economic Invariants
 
-*None in scope.* This is a stateless reconstruction library; the economic invariants (LP collateral valuation, senior NAV marking, liquidation thresholds) live in the consuming oracles and the EVK reservoir market, not here.
+*None in scope.* This is a stateless reconstruction library; the economic invariants (LP collateral valuation, senior NAV marking, liquidation thresholds) live in the consuming oracles and the EVK farm utility market, not here.

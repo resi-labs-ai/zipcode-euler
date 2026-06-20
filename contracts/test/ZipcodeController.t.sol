@@ -332,7 +332,7 @@ contract ZipcodeControllerTest is ForkConfig {
     EulerVenueAdapter internal adapter;
     ZipcodeController internal controller;
     SiloRegistry internal siloReg;
-    address internal baseUsdcMarket;
+    address internal usdcReservoir;
 
     // EOAs
     address internal FORWARDER = makeAddr("forwarder");
@@ -382,9 +382,9 @@ contract ZipcodeControllerTest is ForkConfig {
         deal(usdc, address(ee), 100_000_000e6); // pre-mint the EE so it can supply real cash on reallocate
 
         // A live base USDC market (no-borrow holding vault).
-        baseUsdcMarket = factory.createProxy(address(0), false, abi.encodePacked(usdc, address(0), address(0)));
-        IEVault(baseUsdcMarket).setHookConfig(address(0), 0);
-        IEVault(baseUsdcMarket).setGovernorAdmin(address(0));
+        usdcReservoir = factory.createProxy(address(0), false, abi.encodePacked(usdc, address(0), address(0)));
+        IEVault(usdcReservoir).setHookConfig(address(0), 0);
+        IEVault(usdcReservoir).setGovernorAdmin(address(0));
 
         // Break the controller<->venue<->hook ctor cycle. Deploy order from this test contract:
         //   nonce n   : (CONTROLLER_OWNER deploys) hook
@@ -408,7 +408,7 @@ contract ZipcodeControllerTest is ForkConfig {
             address(irm),
             usdc,
             EREBOR,
-            baseUsdcMarket
+            usdcReservoir
         );
         assertEq(address(adapter), predictedAdapter, "adapter address prediction must hold");
         assertEq(controller.venue(), address(adapter), "controller.venue == adapter");
@@ -447,14 +447,14 @@ contract ZipcodeControllerTest is ForkConfig {
 
         // Seed the EE supply queue with the base market.
         IOZERC4626[] memory q = new IOZERC4626[](1);
-        q[0] = IOZERC4626(baseUsdcMarket);
+        q[0] = IOZERC4626(usdcReservoir);
         ee.setSupplyQueue(q);
 
         // Pre-seed the base USDC market with an EE position so fund()'s `baseBalance - amount` withdraw leg has
         // balance (a §9/item-10 deploy concern; mirrors WOOF-04's _fundBaseMarket). The EE-as-lender deposits.
         vm.startPrank(address(ee));
-        IERC20(usdc).approve(baseUsdcMarket, 50_000_000e6);
-        IEVault(baseUsdcMarket).deposit(50_000_000e6, address(ee));
+        IERC20(usdc).approve(usdcReservoir, 50_000_000e6);
+        IEVault(usdcReservoir).deposit(50_000_000e6, address(ee));
         vm.stopPrank();
     }
 

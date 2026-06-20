@@ -25,7 +25,7 @@ CRE-01/03/04.
 ## Binds to (verified against the FILED contracts — these are the source of truth, not spec prose)
 Envelope (every report receiver): `abi.encode(uint8 reportType, bytes payload)`
 (`ZipcodeController.sol:193`, `ZipcodeOracleRegistry.sol:129`, `SzipNavOracle.sol:301`,
-`SzipReservoirLpOracle.sol:107`, `DefaultCoordinator.sol:182`, `SzAlphaRateOracle.sol:81`,
+`SzipFarmUtilityLpOracle.sol:107`, `DefaultCoordinator.sol:182`, `SzAlphaRateOracle.sol:81`,
 `WarehouseAdminModule.sol:158` — there the first field is named `opType`, same shape).
 
 The complete per-`(receiver, reportType)` decode table — each `zipreport` builder MUST encode to exactly this:
@@ -38,7 +38,7 @@ The complete per-`(receiver, reportType)` decode table — each `zipreport` buil
 | `5` Default / `6` Liquidation | `ZipcodeController.RT_DEFAULT`/`RT_LIQUIDATION` (`:51`/`:52`) | `(bytes32 lienId, uint8 status)` (`:203`) |
 | `3` Revaluation | `ZipcodeOracleRegistry.REVALUATION` (`:29`) | `(address[] liens, uint256[] prices, uint32 ts)` (`:132`) |
 | `7` NavLeg | `SzipNavOracle.NAV_LEG` (`:72`) | `(uint8[] legs, uint256[] prices, uint32 ts)` (`:304`); `legs ∈ {0 LEG_ALPHA_USD, 1 LEG_HYDX_USD}` (`:66/:68`) |
-| `7` LpMark | `SzipReservoirLpOracle.LP_MARK` (`:28`) | `(uint256 mark, uint32 ts)` (`:109`) |
+| `7` LpMark | `SzipFarmUtilityLpOracle.LP_MARK` (`:28`) | `(uint256 mark, uint32 ts)` (`:109`) |
 | `8` Coordinator | `DefaultCoordinator.REPORT_TYPE` (`:49`) | `(uint8 action, bytes data)` (`:185`); action enum `Lock=0,Release=1,Default_=2,Recovery=3,Resolve=4,WriteOff=5` (`:52-58`) |
 | `8` RATE | `SzAlphaRateOracle.RATE` (`:26`) | `(uint256 rate, uint48 ts)` (`:83`) |
 | `1/2/3/4` Warehouse op | `WarehouseAdminModule.SUPPLY/APPROVE/REDEEM/REPAY` (`:25-31`) | per-op (below); first envelope field is `opType` |

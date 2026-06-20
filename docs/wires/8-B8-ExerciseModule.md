@@ -5,7 +5,7 @@
 > `.sol` is final. Every claim below is read off the code; the doc records how the module is wired.
 
 ## Role
-The **fifth engine Zodiac Module** (after the 8-B14 buy-and-burn, the 8-B5 reservoir loop, the 8-B6 LP
+The **fifth engine Zodiac Module** (after the 8-B14 buy-and-burn, the 8-B5 farm utility loop, the 8-B6 LP
 strategy, and the 8-B7 harvest/vote) — the on-chain seam of the **8-B8 paid-exercise leg** (§4.5.1). It owns
 the **PAID exercise of the sell slice**: per harvest the CRE robot (8-B11) finances the ~30% USDC strike via
 the 8-B5 borrow (the USDC is already in the engine Safe), then calls one `onlyOperator`

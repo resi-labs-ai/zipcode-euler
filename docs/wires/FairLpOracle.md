@@ -8,9 +8,9 @@
 
 A trustless, fully on-chain fair-value oracle for an ICHI-vault LP share on an Algebra pool. Realizes the
 TWAP-ring / ring-spacing defense-in-depth (price `spot` itself manipulation-resistantly) and is the trustless
-alternative to `SzipReservoirLpOracle`'s CRE-pushed mark. Serves **two** consumers:
+alternative to `SzipFarmUtilityLpOracle`'s CRE-pushed mark. Serves **two** consumers:
 
-- **EVK reservoir collateral** — a `BaseAdapter`/`IPriceOracle` drop-in the `EulerRouter` resolves the LP
+- **EVK farm utility collateral** — a `BaseAdapter`/`IPriceOracle` drop-in the `EulerRouter` resolves the LP
   collateral through (`govSetConfig(lpToken, USDC, oracle)`). Proven against a live router on a Base fork.
 - **NAV LP leg** — `SzipNavOracle._lpValue` reconstructs reserves via this math when `lpTwapWindow != 0`.
 
@@ -25,8 +25,8 @@ alternative to `SzipReservoirLpOracle`'s CRE-pushed mark. Serves **two** consume
 ## Wiring — cross-component
 
 - **EulerRouter → oracle.** `govSetConfig(lpToken, USDC, AlgebraIchiFairLpOracle)`. In the deploy, gated by
-  `Inputs.lpTwapWindow != 0` in `DeployZipcode._phaseP5` (the `ReservoirMarketDeployer` `lpOracle` param);
-  else the CRE-push `SzipReservoirLpOracle` (the M1 default). The fair oracle is **ownerless** (immutable),
+  `Inputs.lpTwapWindow != 0` in `DeployZipcode._phaseP5` (the `FarmUtilityMarketDeployer` `lpOracle` param);
+  else the CRE-push `SzipFarmUtilityLpOracle` (the M1 default). The fair oracle is **ownerless** (immutable),
   so `_phaseP9` skips `transferOwnership` for it. It resolves immediately on a live Algebra pool (no CRE
   seed needed before `setLTV`).
 - **SzipNavOracle → oracle math.** `_lpValue` calls `IchiAlgebraFairReserves.fairReserves(ichiVault,
@@ -39,7 +39,7 @@ alternative to `SzipReservoirLpOracle`'s CRE-pushed mark. Serves **two** consume
 ## Deploy knob
 
 `LP_TWAP_WINDOW` (`Inputs.lpTwapWindow`, `.env.example`): `0` = CRE-push lpOracle + spot NAV LP (M1
-default, what local/anvil/fork-skeleton use); `>0` (e.g. `3600`) = trustless fair-LP for BOTH the reservoir
+default, what local/anvil/fork-skeleton use); `>0` (e.g. `3600`) = trustless fair-LP for BOTH the farm utility
 collateral and the NAV LP leg. Opt-in once the zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin.
 
 ## Verification
@@ -47,6 +47,6 @@ collateral and the NAV LP leg. Opt-in once the zipUSD/xALPHA LP is a live Algebr
 `test/AlgebraIchiFairLpOracle.t.sol` (Base fork, 5 tests): fair≈spot when calm; live TVL/holder
 cross-check (debank-verifiable, m4ngos.base.eth); **manipulation invariance** (a 300k-USDC in-block swap
 moves the spot split >2% while the fair quote is byte-identical); **resolves through a real `EulerRouter`**
-as LP collateral; and **builds a real reservoir market** via the actual `ReservoirMarketDeployer` (the
+as LP collateral; and **builds a real farm utility market** via the actual `FarmUtilityMarketDeployer` (the
 `lpTwapWindow != 0` P5 path) — wiring + the W3 wire-check resolve with NO CRE seed, since the fair oracle
 prices live.

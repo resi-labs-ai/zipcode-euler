@@ -67,7 +67,7 @@ var (
 
 func identityJob() *IdentityJob {
 	return NewIdentityJob(wantOperator, []IdentityCheck{
-		{Name: "ReservoirLoopModule", Addr: moduleAddr, AdminSig: "operator()"},
+		{Name: "FarmUtilityLoopModule", Addr: moduleAddr, AdminSig: "operator()"},
 	})
 }
 

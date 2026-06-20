@@ -40,7 +40,7 @@ No public/external surface of its own. It contributes the *absence* of a callabl
 
 | ID | Property | On-chain | Proven by |
 |---|---|---|---|
-| I-1 | **mastercopy is locked** — after construction, `setUp` on the bare mastercopy reverts `AlreadyInitialized` | Yes | **9 × `test_SEC14_mastercopy_setUp_reverts`** (Exercise/Harvest/LpStrategy/Freeze/BuyBurn/Sell/Recycle/OffRamp/ReservoirLoop) — each deploys a bare mastercopy and asserts the revert |
+| I-1 | **mastercopy is locked** — after construction, `setUp` on the bare mastercopy reverts `AlreadyInitialized` | Yes | **9 × `test_SEC14_mastercopy_setUp_reverts`** (Exercise/Harvest/LpStrategy/Freeze/BuyBurn/Sell/Recycle/OffRamp/FarmUtilityLoop) — each deploys a bare mastercopy and asserts the revert |
 | I-2 | **clones still init exactly once** — a fresh clone's storage is `_initialized==0`; it `setUp`s once, then reverts | Yes | **9 × `test_mastercopy_inert`/`_init_locked`** (fresh clone reads zero wiring, inert until `setUp`) + each module's `test_setUp_initializer_once` (a second `setUp` reverts) |
 | I-3 | **the lock sidesteps `setUp` validation** — the empty `initializer` body flips the flag without the zero/owner checks (a ctor running `setUp(zeros)` would revert `ZeroAddress`) | Yes (structural) | the constructor compiles + I-1 holds (the mastercopy deploys without reverting, yet is locked) |
 

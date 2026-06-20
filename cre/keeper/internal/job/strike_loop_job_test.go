@@ -17,7 +17,7 @@ import (
 // ---- fixed addresses for the engine modules + tokens ----
 var (
 	slHarvest   = common.HexToAddress("0x0000000000000000000000000000000000000A01")
-	slReservoir = common.HexToAddress("0x0000000000000000000000000000000000000A02")
+	slFarmUtility = common.HexToAddress("0x0000000000000000000000000000000000000A02")
 	slExercise  = common.HexToAddress("0x0000000000000000000000000000000000000A03")
 	slSell      = common.HexToAddress("0x0000000000000000000000000000000000000A04")
 	slRecycle   = common.HexToAddress("0x0000000000000000000000000000000000000A05")
@@ -134,7 +134,7 @@ func fixedClock(unix int64) func() time.Time {
 func newSLJob(q *fakeQuoter) *StrikeLoopJob {
 	j := NewStrikeLoopJob(StrikeLoopConfig{
 		Harvest:            slHarvest,
-		Reservoir:          slReservoir,
+		FarmUtility:          slFarmUtility,
 		Exercise:           slExercise,
 		Sell:               slSell,
 		Recycle:            slRecycle,
@@ -265,8 +265,8 @@ func TestStrikeLoop_HappyPath_NineLegs(t *testing.T) {
 	if got := decodeUint256Args(t, a.Data, 1); got[0].Cmp(maxPayment) != 0 {
 		t.Errorf("borrow arg = %s, want %s", got[0], maxPayment)
 	}
-	if a.To != slReservoir {
-		t.Errorf("borrow To = %s, want reservoir", a.To.Hex())
+	if a.To != slFarmUtility {
+		t.Errorf("borrow To = %s, want farmUtility", a.To.Hex())
 	}
 	// exercise(exerciseAmount, maxPayment, deadline)
 	a, _ = actionByLabel(plan, "exercise")

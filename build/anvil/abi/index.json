@@ -60,8 +60,8 @@
     "kind": "protocol"
   },
   "0x4505dbe66837804e2bFe068A365B68cA707d0D42": {
-    "name": "SzipReservoirLpOracle",
-    "abi": "abi/SzipReservoirLpOracle.json",
+    "name": "SzipFarmUtilityLpOracle",
+    "abi": "abi/SzipFarmUtilityLpOracle.json",
     "kind": "protocol"
   },
   "0x12881a80c4f4eee7430d1c1c53bbbcfc4c92f71b": {
@@ -70,8 +70,8 @@
     "kind": "protocol"
   },
   "0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4": {
-    "name": "ReservoirLoopModule",
-    "abi": "abi/ReservoirLoopModule.json",
+    "name": "FarmUtilityLoopModule",
+    "abi": "abi/FarmUtilityLoopModule.json",
     "kind": "protocol"
   },
   "0xc242eaeb8e0647ef49a97ed827059786446f3c5c": {
@@ -150,17 +150,17 @@
     "kind": "external"
   },
   "0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267": {
-    "name": "reservoir borrow vault (EVault)",
+    "name": "farm utility borrow vault (EVault)",
     "abi": "abi/external/IEVault.json",
     "kind": "external"
   },
   "0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1": {
-    "name": "reservoir escrow vault (EVault)",
+    "name": "farm utility escrow vault (EVault)",
     "abi": "abi/external/IEVault.json",
     "kind": "external"
   },
   "0x5a451fEB2Ef43B3615f1eaFba352B7b363d0629f": {
-    "name": "reservoir EulerRouter",
+    "name": "farm utility EulerRouter",
     "abi": "abi/EulerRouter.json",
     "kind": "external"
   },

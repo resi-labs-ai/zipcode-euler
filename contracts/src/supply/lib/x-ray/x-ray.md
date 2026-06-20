@@ -94,7 +94,7 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 ### Protocol-Type Concerns
 
 **As an oracle/price library:**
-- TWAP windows trade off manipulation resistance (longer = safer) vs responsiveness (longer = staler marks). 1h is the deployed choice; worth confirming it matches the collateral/liquidation cadence on the reservoir market.
+- TWAP windows trade off manipulation resistance (longer = safer) vs responsiveness (longer = staler marks). 1h is the deployed choice; worth confirming it matches the collateral/liquidation cadence on the farm utility market.
 - LP-value oracles are a classic exploit class precisely because of the spot-vs-fair distinction this library exists to close; the fair-reserves approach (value `L` at TWAP) is the correct, well-known mitigation.
 
 ### Composability & Dependency Risks
@@ -117,7 +117,7 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 > - On failure: reverts bubble to the consumer.
 
 **Shared State Exposure:**
-- Feeds both the fair-LP collateral oracle (reservoir borrow market) and the NAV oracle's LP leg — a wrong reconstruction would mis-mark senior NAV *and* LP collateral. The manipulation-invariance + faithfulness tests guard exactly this.
+- Feeds both the fair-LP collateral oracle (farm utility borrow market) and the NAV oracle's LP leg — a wrong reconstruction would mis-mark senior NAV *and* LP collateral. The manipulation-invariance + faithfulness tests guard exactly this.
 
 ---
 

@@ -21,7 +21,7 @@ function _cloneExerciseModule() returns (ExerciseModule) {
 
 // =========================================================================== mocks
 
-/// @notice A recording mock Safe (Zodiac avatar surface) — copied from `HarvestVoteModule.t.sol` / `ReservoirLoopModule.t.sol`.
+/// @notice A recording mock Safe (Zodiac avatar surface) — copied from `HarvestVoteModule.t.sol` / `FarmUtilityLoopModule.t.sol`.
 ///         Records every `(to, value, data, operation)`, optionally performs the call live, can force a specific exec
 ///         index to fail, and returns a settable `_returnData` from the NON-live path (the `paymentAmount` decode).
 contract RecordingSafe {

@@ -9,7 +9,7 @@ import {ISwapRouter} from "../../interfaces/algebra/ISwapRouter.sol";
 
 /// @title SellModule
 /// @notice The on-chain swap seam of the 8-B9 market-sell leg (§4.5.1): the sixth engine Zodiac Module (after the
-///         8-B14 buy-and-burn, the 8-B5 reservoir loop, the 8-B6 LP strategy, the 8-B7 harvest/vote, and the 8-B8
+///         8-B14 buy-and-burn, the 8-B5 farm utility loop, the 8-B6 LP strategy, the 8-B7 harvest/vote, and the 8-B8
 ///         exercise), CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target == juniorTrancheEngine`). It
 ///         owns the SWAP leg of the auto-compounder: per harvest the CRE robot (8-B11) market-sells the exercised HYDX
 ///         (from 8-B8) → USDC immediately so it can then repay the 8-B5 strike-borrow (`debtOf(safe)→0`), and it also
@@ -17,7 +17,7 @@ import {ISwapRouter} from "../../interfaces/algebra/ISwapRouter.sol";
 ///
 /// @dev DISTINCT FROM the siblings: this is the Algebra `SwapRouter.exactInputSingle` market-sell — NO EVC leg, NO
 ///      oracle, NO LP, NO veNFT, NO oHYDX exercise, NO repay (the repay that consumes the proceeds is 8-B5's
-///      `ReservoirLoopModule.repay`, sequenced by the CRE robot AFTER this sell). It is pure swap mechanism.
+///      `FarmUtilityLoopModule.repay`, sequenced by the CRE robot AFTER this sell). It is pure swap mechanism.
 ///
 /// @dev SECURITY BOUNDARY (§10.1, the module's whole reason for shape): the operator supplies ONLY scalars (`amountIn`,
 ///      `minOut`, `deadline`). The module builds ALL calldata to the set-once wired targets (`swapRouter`, the token

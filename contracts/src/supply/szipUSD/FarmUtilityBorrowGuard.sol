@@ -8,9 +8,9 @@ interface IGenericFactory {
     function isProxy(address proxy) external view returns (bool);
 }
 
-/// @title ReservoirBorrowGuard
-/// @notice EVK hook target (§4.3) installed on the reservoir USDC borrow vault at `OP_BORROW` (security F8a). The
-///         reservoir borrow vault IS the warehouse's shared resting USDC (idle depositor cash); without this guard any
+/// @title FarmUtilityBorrowGuard
+/// @notice EVK hook target (§4.3) installed on the farm utility USDC borrow vault at `OP_BORROW` (security F8a). The
+///         farm utility borrow vault IS the warehouse's shared resting USDC (idle depositor cash); without this guard any
 ///         ICHI-LP holder could post the escrow collateral on their OWN EVC account and lever that shared USDC. The
 ///         guard pins `OP_BORROW` to the engine Safe: a borrow is allowed ONLY when the EVK-appended on-behalf account
 ///         `== juniorTrancheEngine` (else revert `NotEngineSafe`). The engine Safe borrows on its own account (no operator,
@@ -20,10 +20,10 @@ interface IGenericFactory {
 /// @dev Replicates `BaseHookTarget` (reference/evk-periphery) logic inline (evk-periphery is not remapped): the
 ///      `isProxy`-guarded `isHookTarget()` and the `isProxy`-guarded `_msgSender()` calldata extraction. Modeled
 ///      verbatim on `src/CREGatingHook.sol` with the gate body swapped.
-contract ReservoirBorrowGuard is IHookTarget {
+contract FarmUtilityBorrowGuard is IHookTarget {
     /// @notice The EVK vault factory; used to validate the caller is a factory proxy (vault).
     IGenericFactory public eVaultFactory;
-    /// @notice The engine Safe — the ONLY account permitted to borrow the reservoir's resting USDC.
+    /// @notice The engine Safe — the ONLY account permitted to borrow the farm utility's resting USDC.
     address public juniorTrancheEngine;
     /// @notice The Timelock admin (build phase, §17). NOT OZ `Ownable` — the inherited `Context._msgSender()` would
     ///         collide with this hook's EVK trailing-data `_msgSender()` decoder; `onlyOwner` checks `msg.sender`
@@ -48,7 +48,7 @@ contract ReservoirBorrowGuard is IHookTarget {
         _;
     }
 
-    /// @param eVaultFactory_ The EVK GenericFactory that deployed the reservoir vaults.
+    /// @param eVaultFactory_ The EVK GenericFactory that deployed the farm utility vaults.
     /// @param juniorTrancheEngine_ The szipUSD engine Safe (the sole legal borrower).
     constructor(address eVaultFactory_, address juniorTrancheEngine_) {
         eVaultFactory = IGenericFactory(eVaultFactory_);

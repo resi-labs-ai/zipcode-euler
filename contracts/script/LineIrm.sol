@@ -20,8 +20,8 @@ import {IRMLinearKink} from "evk/InterestRateModels/IRMLinearKink.sol";
 ///         its own rate constants (`reference/euler-vault-kit/src/Synths/IRMSynth.sol:18`) so the value is
 ///         compiler-derived — there is NO hardcoded magic number to mis-transcribe. Because EVK compounds
 ///         per-second, the effective APY is marginally above the nominal 7.5% (~7.788% = e^0.075 - 1): the
-///         APR-vs-APY nuance. The reservoir borrow vault is left on `ZeroIRM` (internal POL, §4.5.1) — this IRM
-///         is wired ONLY into the adapter `irm` slot, never the reservoir.
+///         APR-vs-APY nuance. The farm utility borrow vault is left on `ZeroIRM` (internal POL, §4.5.1) — this IRM
+///         is wired ONLY into the adapter `irm` slot, never the farm utility.
 library LineIrm {
     /// @dev Matches EVK's `SECONDS_PER_YEAR` exactly (Gregorian calendar; the rational folds to integer 31_556_952).
     uint256 internal constant SECONDS_PER_YEAR = 365.2425 * 86400;

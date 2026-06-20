@@ -61,7 +61,7 @@ func TestStrikeLoop_SimEndToEnd(t *testing.T) {
 		zipIsToken0: true, // sim asserts token0-side addLiquidity(expectedZip, 0, minShares)
 	}
 	j := NewStrikeLoopJob(StrikeLoopConfig{
-		Harvest: probe, Reservoir: probe, Exercise: probe, Sell: probe, Recycle: probe, Lp: probe,
+		Harvest: probe, FarmUtility: probe, Exercise: probe, Sell: probe, Recycle: probe, Lp: probe,
 		Quoter:             q,
 		CushionBps:         200,
 		AmberFractionBps:   5000,

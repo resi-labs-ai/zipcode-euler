@@ -6,11 +6,11 @@ import {ForkConfig} from "./ForkConfig.sol";
 import {BaseAddresses} from "../script/BaseAddresses.sol";
 
 import {JuniorTrancheDeployer} from "../script/JuniorTrancheDeployer.s.sol";
-import {ReservoirMarketDeployer} from "../script/ReservoirMarketDeployer.sol";
+import {FarmUtilityMarketDeployer} from "../script/FarmUtilityMarketDeployer.sol";
 import {SiloRegistry} from "../src/SiloRegistry.sol";
 
 import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
-import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -103,7 +103,7 @@ contract MockEulerEarn {
 }
 
 /// @dev A minimal 18-dp ERC20 stand-in for the ICHI LP share (the §4.5.1 stand-in posture; mirrors
-///      ReservoirLoopModule.t.sol's MockLpToken). ALSO exposes `token0()`/`token1()` — the ICHI-vault legs the
+///      FarmUtilityLoopModule.t.sol's MockLpToken). ALSO exposes `token0()`/`token1()` — the ICHI-vault legs the
 ///      `LpStrategyModule.setUp` reads LIVE off the vault.
 contract MockLpToken {
     string public constant name = "Mock ICHI LP";
@@ -156,7 +156,7 @@ contract MockGauge {
     }
 }
 
-/// @dev A zero-rate IRM (IIRM face) for the reservoir borrow vault — mirrors ReservoirLoopModule.t.sol's ZeroIRM.
+/// @dev A zero-rate IRM (IIRM face) for the farm utility borrow vault — mirrors FarmUtilityLoopModule.t.sol's ZeroIRM.
 contract ZeroIRM {
     function computeInterestRate(address, uint256, uint256) external pure returns (uint256) {
         return 0;
@@ -181,8 +181,8 @@ contract MockAdapter {
 // =========================================================================== test
 
 /// @notice CTR-06b fork test (D3). On `_selectBaseFork()` (live BaalAndVaultSummoner + live EVK/EVC): inject mock NAV
-///         legs + a MockEulerEarn (eePool) + a MockLpToken (polIchiVault) + the reservoir escrow/borrow vaults built
-///         via the REAL `ReservoirMarketDeployer` over the live EVK + mock LP, run `deploy(...)`, and assert: (a) the
+///         legs + a MockEulerEarn (eePool) + a MockLpToken (polIchiVault) + the farm utility escrow/borrow vaults built
+///         via the REAL `FarmUtilityMarketDeployer` over the live EVK + mock LP, run `deploy(...)`, and assert: (a) the
 ///         deploy did not revert closed / the seams hold; (b) every OZ-ownable owner is the Timelock, each engine
 ///         module owner is the Timelock, both Safes owned by `team` and NOT the deployer instance; (c) the returned
 ///         handles satisfy `SiloRegistry.addSilo` topology clauses 1–5 (with a warehouse-side adapter/eePool/
@@ -214,7 +214,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
     MockGauge internal gauge;
     ZeroIRM internal irm;
 
-    // -- reservoir --
+    // -- farm utility --
     address internal escrowVault;
     address internal borrowVault;
 
@@ -240,16 +240,16 @@ contract JuniorTrancheDeployerTest is ForkConfig {
         gauge = new MockGauge(address(ohydx)); // HarvestVoteModule.setUp reads gauge.rewardToken() live
         irm = new ZeroIRM();
 
-        // reservoir market: real ReservoirMarketDeployer over the live EVK + a CRE-fed LP oracle (mark pushed so the
+        // farm utility market: real FarmUtilityMarketDeployer over the live EVK + a CRE-fed LP oracle (mark pushed so the
         // deployer's setLTV getQuote resolves), governor = the Timelock. polIchiVault == escrowVault.asset() (seam #4).
-        SzipReservoirLpOracle lpOracle =
-            new SzipReservoirLpOracle(BaseAddresses.CRE_KEYSTONE_FORWARDER, address(usdc), 1 days, address(lp));
+        SzipFarmUtilityLpOracle lpOracle =
+            new SzipFarmUtilityLpOracle(BaseAddresses.CRE_KEYSTONE_FORWARDER, address(usdc), 1 days, address(lp));
         lpOracle.renounceOwnership();
         _pushLpMark(lpOracle, 1e6); // $1.00 per LP share (6-dp USDC quote)
 
-        ReservoirMarketDeployer dep = new ReservoirMarketDeployer();
+        FarmUtilityMarketDeployer dep = new FarmUtilityMarketDeployer();
         (escrowVault, borrowVault,) = dep.deploy(
-            ReservoirMarketDeployer.Params({
+            FarmUtilityMarketDeployer.Params({
                 factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
                 evc: BaseAddresses.EVC,
                 governor: address(timelock),
@@ -257,14 +257,14 @@ contract JuniorTrancheDeployerTest is ForkConfig {
                 usdc: address(usdc),
                 lpOracle: address(lpOracle),
                 irm: address(irm),
-                juniorTrancheEngine: makeAddr("reservoirEngineSafePlaceholder"),
+                juniorTrancheEngine: makeAddr("farmUtilityEngineSafePlaceholder"),
                 borrowLTV: 0.7e4,
                 liqLTV: 0.8e4
             })
         );
     }
 
-    function _pushLpMark(SzipReservoirLpOracle o, uint256 mark) internal {
+    function _pushLpMark(SzipFarmUtilityLpOracle o, uint256 mark) internal {
         bytes memory report = abi.encode(o.LP_MARK(), abi.encode(mark, uint32(block.timestamp)));
         vm.prank(BaseAddresses.CRE_KEYSTONE_FORWARDER);
         o.onReport("", report);
@@ -341,7 +341,7 @@ contract JuniorTrancheDeployerTest is ForkConfig {
         // engine modules already Timelock-owned from setUp (owner_ == p.timelock).
         assertEq(Ownable(t.durationFreeze).owner(), tl, "freeze owner TL");
         assertEq(Ownable(t.buyBurn).owner(), tl, "buyBurn owner TL");
-        assertEq(Ownable(t.reservoirLoop).owner(), tl, "reservoirLoop owner TL");
+        assertEq(Ownable(t.farmUtilityLoop).owner(), tl, "farmUtilityLoop owner TL");
         assertEq(Ownable(t.lpStrategy).owner(), tl, "lpStrategy owner TL");
         assertEq(Ownable(t.harvestVote).owner(), tl, "harvestVote owner TL");
         assertEq(Ownable(t.exercise).owner(), tl, "exercise owner TL");

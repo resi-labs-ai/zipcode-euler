@@ -32,8 +32,8 @@ introduces.
 ## The ruling — per-module routing table (gates verified in `contracts/src/...`)
 | Module / entrypoint | Gate (verified) | Form | Transport | Why |
 |---|---|---|---|---|
-| `SzipBuyBurnModule.postBid/cancelBid` (8-B14) | `onlyOperator` **+ CTR-01 report socket** | Zodiac clone | **(R) report — SHIPPED (CRE-05a)** | A periodic *computed economic value* (bid size @ `navExit×(1−d)`, clamped to free reservoir) — worth f+1 attestation; a clean data-push, not a trusted tight loop. The one justified socket. |
-| `ReservoirLoopModule.borrow/repay/…` (8-B5) | `onlyOperator` | Zodiac clone | **(K) keeper** | Operator-TRUSTED tight strike loop; borrows the reservoir USDC; LP_MARK-gated (its oracle is the (R) path, CRE-03). DON-per-call latency/cost is wrong. |
+| `SzipBuyBurnModule.postBid/cancelBid` (8-B14) | `onlyOperator` **+ CTR-01 report socket** | Zodiac clone | **(R) report — SHIPPED (CRE-05a)** | A periodic *computed economic value* (bid size @ `navExit×(1−d)`, clamped to free farm utility) — worth f+1 attestation; a clean data-push, not a trusted tight loop. The one justified socket. |
+| `FarmUtilityLoopModule.borrow/repay/…` (8-B5) | `onlyOperator` | Zodiac clone | **(K) keeper** | Operator-TRUSTED tight strike loop; borrows the farm utility USDC; LP_MARK-gated (its oracle is the (R) path, CRE-03). DON-per-call latency/cost is wrong. |
 | `LpStrategyModule.add/stake/unstake` (8-B6) | `onlyOperator` (scalar args, §10.1) | Zodiac clone | **(K) keeper** | Mid-harvest unstake→commit→restake; multi-call; slippage floors computed off-chain. |
 | `HarvestVoteModule.claim/vote` (8-B7) | `onlyOperator` | Zodiac clone | **(K) keeper** | Per-epoch claim+vote; high-frequency; no value to attest. |
 | `ExerciseModule.exercise` (8-B8) | `onlyOperator` | Zodiac clone | **(K) keeper** | Strike-loop leg, sequenced inside the harvest cycle. |

@@ -40,7 +40,7 @@ forgotten.
 | `src/supply/ZipDepositModule.sol` | `WOOF-06.md` |
 | `src/supply/ZipRedemptionQueue.sol` | `9-ZipRedemptionQueue.md` |
 | `src/supply/SzipNavOracle.sol` | `8-B4-SzipNavOracle.md` |
-| `src/supply/SzipReservoirLpOracle.sol` | `8-B5-ReservoirLoop.md` |
+| `src/supply/SzipFarmUtilityLpOracle.sol` | `8-B5-FarmUtilityLoop.md` |
 | `src/supply/CreditWarehouse/WarehouseAdminModule.sol` | `8-Bw-CreditWarehouse.md` |
 | `src/supply/szipUSD/DurationFreezeModule.sol` | `DurationFreezeModule.md` |
 | `src/supply/szipUSD/ExerciseModule.sol` | `8-B8-ExerciseModule.md` |
@@ -49,8 +49,8 @@ forgotten.
 | `src/supply/szipUSD/LpStrategyModule.sol` | `8-B6-LpStrategyModule.md` |
 | `src/supply/szipUSD/OffRampModule.sol` | `OffRampModule.md` |
 | `src/supply/szipUSD/RecycleModule.sol` | `8-B10-RecycleModule.md` |
-| `src/supply/szipUSD/ReservoirBorrowGuard.sol` | `8-B5-ReservoirLoop.md` |
-| `src/supply/szipUSD/ReservoirLoopModule.sol` | `8-B5-ReservoirLoop.md` |
+| `src/supply/szipUSD/FarmUtilityBorrowGuard.sol` | `8-B5-FarmUtilityLoop.md` |
+| `src/supply/szipUSD/FarmUtilityLoopModule.sol` | `8-B5-FarmUtilityLoop.md` |
 | `src/supply/szipUSD/SellModule.sol` | `8-B9-SellModule.md` |
 | `src/supply/szipUSD/SzipBuyBurnModule.sol` | `8-B14-SzipBuyBurnModule.md` |
 | `src/supply/szipUSD/CloneReportReceiver.sol` | `8-B14-SzipBuyBurnModule.md` (CTR-01 — reusable clone-safe CRE report socket) |
@@ -75,7 +75,7 @@ forgotten.
 | `script/BaseAddresses.sol` | `WOOF-00.md` |
 | `script/SummonSubstrate.s.sol` | `8-B1.md` |
 | `script/CreditWarehouseDeployer.sol` | `8-Bw-CreditWarehouse.md` |
-| `script/ReservoirMarketDeployer.sol` | `8-B5-ReservoirLoop.md` |
+| `script/FarmUtilityMarketDeployer.sol` | `8-B5-FarmUtilityLoop.md` |
 | `script/DeploySzAlphaBridge.s.sol` | `8x-01-szALPHA-bridge.md` |
 
 ## C. Interface shims (`src/interfaces/`) — 31 files, cataloged per folder
@@ -144,7 +144,7 @@ component doc named below (the doc's "Wiring internal" + "Item-10 deploy facts" 
 | `test/ZipRedemptionQueue.t.sol` | `9-ZipRedemptionQueue.md` |
 | `test/OffRampModule.t.sol` | `OffRampModule.md` |
 | `test/SzipBuyBurnModule.t.sol` | `8-B14-SzipBuyBurnModule.md` |
-| `test/ReservoirLoopModule.t.sol` | `8-B5-ReservoirLoop.md` |
+| `test/FarmUtilityLoopModule.t.sol` | `8-B5-FarmUtilityLoop.md` |
 | `test/LpStrategyModule.t.sol` | `8-B6-LpStrategyModule.md` |
 | `test/HarvestVoteModule.t.sol` | `8-B7-HarvestVoteModule.md` |
 | `test/ExerciseModule.t.sol` | `8-B8-ExerciseModule.md` |

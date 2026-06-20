@@ -119,7 +119,7 @@ previousOwner, address indexed newOwner)`.
 ## Gotchas
 - **Manual owner, NOT OZ `Ownable`.** The hook deliberately does not inherit `Ownable`/`Context`: OZ's
   `Context._msgSender()` would collide with this hook's EVK trailing-data `_msgSender()` decoder. `onlyOwner`
-  therefore checks `msg.sender` **directly** (§17 note, spec line 2371; same posture as `ReservoirBorrowGuard`).
+  therefore checks `msg.sender` **directly** (§17 note, spec line 2371; same posture as `FarmUtilityBorrowGuard`).
 - **`isProxy` spoof-guard.** `_msgSender()` trusts the appended 20 bytes **only** when
   `eVaultFactory.isProxy(msg.sender)`; otherwise it returns `msg.sender`. So a non-vault EOA that appends a
   fake authorized account is gated against its own (unauthorized) address and reverts — it cannot spoof an

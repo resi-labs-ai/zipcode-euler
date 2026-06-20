@@ -12,7 +12,7 @@
 //
 //	Envelope (every receiver): abi.encode(uint8 reportType, bytes payload)
 //	  ZipcodeController.sol:193, ZipcodeOracleRegistry.sol:129, SzipNavOracle.sol:301,
-//	  SzipReservoirLpOracle.sol:107, DefaultCoordinator.sol:182, SzAlphaRateOracle.sol:81,
+//	  SzipFarmUtilityLpOracle.sol:107, DefaultCoordinator.sol:182, SzAlphaRateOracle.sol:81,
 //	  WarehouseAdminModule.sol:158 (there the first field is named opType — same (uint8, bytes) shape).
 //
 //	reportType  receiver constant @ line                 inner payload tuple (the abi.decode site)
@@ -27,7 +27,7 @@
 //	3 Revaluation ZipcodeOracleRegistry.REVALUATION :29   (address[] liens, uint256[] prices, uint32 ts) :132
 //	7 NavLeg      SzipNavOracle.NAV_LEG             :72   (uint8[] legs, uint256[] prices, uint32 ts) :304
 //	                                                       legs ∈ {0 LEG_ALPHA_USD, 1 LEG_HYDX_USD}  :66/:68
-//	7 LpMark      SzipReservoirLpOracle.LP_MARK     :28   (uint256 mark, uint32 ts)                  :109
+//	7 LpMark      SzipFarmUtilityLpOracle.LP_MARK     :28   (uint256 mark, uint32 ts)                  :109
 //	8 Coordinator DefaultCoordinator.REPORT_TYPE    :49   (uint8 action, bytes data)                 :185
 //	                                                       action: Lock=0,Release=1,Default_=2,Recovery=3,
 //	                                                       Resolve=4,WriteOff=5                       :52-58
@@ -92,7 +92,7 @@ const (
 	LegHydxUsd  uint8 = 1 // LEG_HYDX_USD (:68)
 )
 
-// SzipReservoirLpOracle report type.
+// SzipFarmUtilityLpOracle report type.
 const (
 	LpMark uint8 = 7 // LP_MARK (:28)
 )
@@ -233,9 +233,9 @@ func NavLegReport(legs []uint8, prices []*big.Int, ts uint32) ([]byte, error) {
 	return wrap(NavLeg, args(tU8Arr, tU256Arr, tUint32), legs, prices, ts)
 }
 
-// ──────────────────────────────────────────────────────────────────────── SzipReservoirLpOracle builder
+// ──────────────────────────────────────────────────────────────────────── SzipFarmUtilityLpOracle builder
 
-// LpMarkReport encodes LP_MARK (7): (uint256 mark, uint32 ts) — SzipReservoirLpOracle.sol:109.
+// LpMarkReport encodes LP_MARK (7): (uint256 mark, uint32 ts) — SzipFarmUtilityLpOracle.sol:109.
 //
 // Named LpMarkReport (not LpMark) because LpMark is the reportType constant. Exported for clarity.
 func LpMarkReport(mark *big.Int, ts uint32) ([]byte, error) {

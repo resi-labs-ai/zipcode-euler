@@ -117,7 +117,7 @@ not use the guard.
 
 ## Cross-file invariant — shared LP address
 The POL ICHI vault address is **dynamically created once** and must be the **same address everywhere it
-appears**: the strategy that adds liquidity (8-B5 ReservoirLoop / 8-B6 LpStrategyModule), the NAV oracle
+appears**: the strategy that adds liquidity (8-B5 FarmUtilityLoop / 8-B6 LpStrategyModule), the NAV oracle
 (`SzipNavOracle`), and the gauge wiring. A mismatch silently mis-prices NAV and strands LP. The address
 is not a `BaseAddresses` constant — it is stored on each consumer and must be wired consistently at
 deploy/setup time.

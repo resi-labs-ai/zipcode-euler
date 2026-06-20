@@ -5,21 +5,21 @@ import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
 import {EulerRouter} from "euler-price-oracle/EulerRouter.sol";
 
-import {ReservoirBorrowGuard} from "../src/supply/szipUSD/ReservoirBorrowGuard.sol";
+import {FarmUtilityBorrowGuard} from "../src/supply/szipUSD/FarmUtilityBorrowGuard.sol";
 
-/// @title ReservoirMarketDeployer
-/// @notice One-time wiring of the 8-B5 reservoir EVK market (§4.5.1), modeled on WOOF-04 `openLine` steps 1–3 with two
+/// @title FarmUtilityMarketDeployer
+/// @notice One-time wiring of the 8-B5 farm utility EVK market (§4.5.1), modeled on WOOF-04 `openLine` steps 1–3 with two
 ///         deliberate differences: (1) the GOVERNOR IS RETAINED on both the router and the borrow vault (the §17
 ///         standing-tunable facility — LTV/caps/oracle stay tunable by the Timelock; NOT frozen to `address(0)` like
 ///         WOOF-04's per-line routers), and (2) the deployer CREATES the borrow vault (oracle = the router), resolving
 ///         the router/borrow-vault ordering cycle (the router is built BEFORE the borrow vault). It stands up:
 ///         - the LP escrow collateral vault (bare 1:1 holding box),
-///         - a dedicated `EulerRouter` wired `escrow → lpToken → SzipReservoirLpOracle`,
-///         - the `ReservoirBorrowGuard` (pins `OP_BORROW` to the engine Safe — security F8a),
+///         - a dedicated `EulerRouter` wired `escrow → lpToken → SzipFarmUtilityLpOracle`,
+///         - the `FarmUtilityBorrowGuard` (pins `OP_BORROW` to the engine Safe — security F8a),
 ///         - the USDC borrow vault (oracle = that router; the warehouse resting USDC vault), with the guard installed
 ///           at `OP_BORROW` and `setLTV(escrow, …)` accepting the escrow as collateral.
 ///         Returns `(escrowVault, borrowVault, router)` for the module's `setUp` + the item-10 deploy.
-contract ReservoirMarketDeployer {
+contract FarmUtilityMarketDeployer {
     /// @notice The EVK `OP_BORROW` op bit (`1 << 6`; EVK op bitmask).
     uint32 internal constant OP_BORROW = 1 << 6;
 
@@ -32,7 +32,7 @@ contract ReservoirMarketDeployer {
     /// @param governor The retained governor (the §17 TimelockController) for the router + borrow vault.
     /// @param lpToken The ICHI LP share collateral token (18-dp).
     /// @param usdc USDC (borrow asset + unit-of-account — prices 1:1, no feed).
-    /// @param lpOracle The `SzipReservoirLpOracle` the router resolves the LP collateral through.
+    /// @param lpOracle The `SzipFarmUtilityLpOracle` the router resolves the LP collateral through.
     /// @param irm The interest rate model installed on the borrow vault.
     /// @param juniorTrancheEngine The szipUSD engine Safe (the guard's sole legal borrower).
     /// @param borrowLTV The borrow LTV (1e4 scale) accepting the escrow as collateral.
@@ -50,7 +50,7 @@ contract ReservoirMarketDeployer {
         uint16 liqLTV;
     }
 
-    /// @notice Stand up the reservoir market. Governor RETAINED on the router + borrow vault.
+    /// @notice Stand up the farm utility market. Governor RETAINED on the router + borrow vault.
     function deploy(Params calldata p)
         external
         returns (address escrowVault, address borrowVault, address router)
@@ -71,13 +71,13 @@ contract ReservoirMarketDeployer {
         }
 
         // step 3+4: the borrow guard (pins OP_BORROW to the engine Safe — the shared resting USDC must not be levered)
-        //           then the reservoir USDC borrow vault (oracle = the router; unit-of-account = USDC -> prices 1:1).
+        //           then the farm utility USDC borrow vault (oracle = the router; unit-of-account = USDC -> prices 1:1).
         //           Governor RETAINED so the Timelock can tune LTV/caps. In production the EE supply queue allocates
         //           idle depositor USDC into this vault (so it IS the warehouse resting USDC vault).
         borrowVault = p.factory.createProxy(address(0), false, abi.encodePacked(p.usdc, router, p.usdc));
         IEVault(borrowVault).setInterestRateModel(p.irm);
         IEVault(borrowVault).setHookConfig(
-            address(new ReservoirBorrowGuard(address(p.factory), p.juniorTrancheEngine)), OP_BORROW
+            address(new FarmUtilityBorrowGuard(address(p.factory), p.juniorTrancheEngine)), OP_BORROW
         ); // never hook OP_REPAY
         IEVault(borrowVault).setLTV(escrowVault, p.borrowLTV, p.liqLTV, 0); // 1e4 scale; ramp 0
 

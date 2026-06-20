@@ -246,7 +246,7 @@ func TestNavLegLengthMismatch(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────── SzipReservoirLpOracle
+// ──────────────────────────────────────────────────────────────────────── SzipFarmUtilityLpOracle
 
 func TestLpMarkRoundTrip(t *testing.T) {
 	mark, _ := new(big.Int).SetString("999999999999999999999", 10)

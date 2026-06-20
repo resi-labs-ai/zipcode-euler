@@ -16,7 +16,7 @@ interface ICoverageGate {
 
 /// @title LpStrategyModule
 /// @notice The on-chain seam of the 8-B6 LP strategy (§4.5.1): the third engine Zodiac Module (after the 8-B14
-///         buy-and-burn and the 8-B5 reservoir loop), CRE-operator-gated, enabled on the szipUSD engine Safe
+///         buy-and-burn and the 8-B5 farm utility loop), CRE-operator-gated, enabled on the szipUSD engine Safe
 ///         (`avatar == target == juniorTrancheEngine`). It owns the LP's whole lifecycle: build the zipUSD/xALPHA ICHI LP
 ///         (`addLiquidity` → `IICHIVault.deposit`), gauge-stake it to farm oHYDX (`stake` → `IGauge.deposit`), and
 ///         unstake/re-stake slices for the 8-B5 harvest loop (`unstake` → `IGauge.withdraw`). The LP token IS the

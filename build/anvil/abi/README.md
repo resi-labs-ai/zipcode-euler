@@ -24,12 +24,12 @@ RPC: `http://127.0.0.1:8545` (chainId 8453). Keys/principals are in `../contract
 ## Notes
 - **Engine-module addresses are zodiac proxies** — their ABI is the mastercopy's (e.g. the BuyBurn proxy uses
   `SzipBuyBurnModule.json`). The index already points each proxy address at the right file.
-- **EVault proxies** (reservoir borrow/escrow + base USDC market) all use `external/IEVault.json` — the full EVK
+- **EVault proxies** (farm utility borrow/escrow + base USDC market) all use `external/IEVault.json` — the full EVK
   interface aggregating every vault module. The per-line borrow/escrow vaults minted at origination use the same ABI.
 - **Tokens** (USDC, Loot, Shares) point at `external/ERC20.json` (canonical ERC-20). zipUSD is an EVK `ESynth`
   (`ESynth.json` — full surface incl. minter capacity); szipUSD/xALPHA have their own files.
 - **Safes** (main/sidecar/warehouse) use `external/GnosisSafe.json` (the 1.4.1 L2 singleton ABI the proxies delegate to).
 - **Runtime-minted contracts** have no fixed address yet (resolve at call time): per-line lien tokens use
-  `LienCollateralToken.json`; per-market borrow guards use `ReservoirBorrowGuard.json`.
+  `LienCollateralToken.json`; per-market borrow guards use `FarmUtilityBorrowGuard.json`.
 - Regenerate after a redeploy: `forge inspect <Name> abi --json` for protocol files; the index addresses change with
   the deploy (the catalog is fixed). External ABIs are stable (live Base contracts).

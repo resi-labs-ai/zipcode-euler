@@ -31,12 +31,12 @@ Operator legs (all `onlyOperator`, `msg.sender == operator` = the keeper key):
 - **claim** — `HarvestVoteModule.claimReward()` → claims oHYDX to the Safe (`HarvestVoteModule.sol:198-200`).
   Gate view: `pendingReward() returns(uint256)` = `IGauge.earned(oHYDX, safe)`, claimable oHYDX, 18dp
   (`:239-241`). Getter `oHYDX()` for the oHYDX token address (`setOHYDX` ⇒ public field).
-- **borrow** — `ReservoirLoopModule.borrow(uint256 usdcAmount)` → borrows USDC to the Safe via EVC
+- **borrow** — `FarmUtilityLoopModule.borrow(uint256 usdcAmount)` → borrows USDC to the Safe via EVC
   (`:228-242`). Reverts `CapExceeded` past `borrowCap` (`:231`) and on EVC account-status if the LP_MARK is
   stale (fail-closed). Views `outstandingDebt() returns(uint256)` (`:289-290`), `postedCollateral()`
   (`:294-295`). **Collateral is assumed already posted** (persistent; `postedCollateral() > 0`); the core
   slice does NOT post/withdraw collateral per cycle. `usdc()` getter for the USDC address.
-- **repay** — `ReservoirLoopModule.repay(uint256 usdcAmount)` (`:249`). Closes the cycle's borrow.
+- **repay** — `FarmUtilityLoopModule.repay(uint256 usdcAmount)` (`:249`). Closes the cycle's borrow.
 - **exercise** — `ExerciseModule.exercise(uint256 amount, uint256 maxPayment, uint256 deadline) returns
   (uint256 paymentAmount)` → burns `amount` oHYDX from the Safe, pulls ≤`maxPayment` USDC from the Safe,
   **mints `amount` HYDX 1:1 to the Safe** (`:178-198`, verified: `IOptionToken.exercise(amount, maxPayment,
@@ -200,7 +200,7 @@ the Go port must match), and the confirmed canonical `ICHIVault.deposit` share f
    `twapPeriod`=3600s (the ICHI TWAP window for `ZipToShares`); `recycleFractionBps`=10000 (recycle all of the
    floor; the reserve is the realized−floor surplus left in the Safe). `maxBorrowPerCycle` is **required env**
    (no safe default — it bounds per-cycle exposure). Addresses (re-pointable, `KEEPER_ADDR_*`): the 6 modules
-   `{HarvestVoteModule,ReservoirLoopModule,ExerciseModule,SellModule,RecycleModule,LpStrategyModule}`, the
+   `{HarvestVoteModule,FarmUtilityLoopModule,ExerciseModule,SellModule,RecycleModule,LpStrategyModule}`, the
    `HydxUsdcPool` (for `HydxToUsdc`), and the LP `IchiVault`'s pool is read off the vault (`pool()`), so only
    the vault address is needed — and the keeper reads it off `LpStrategyModule.ichiVault()` (no separate
    config). Validate: each referenced address non-zero (via `MustAddr`); the price thresholds satisfy
@@ -208,7 +208,7 @@ the Go port must match), and the confirmed canonical `ICHIVault.deposit` share f
    injectable `clock` is a Job field, not config. Document each in `.env.example` + `README.md`.
 7. **Registered in `cmd/keeper/main.go`** after the BurnJob (the harvest loop is the new primary job). Extend
    the startup identity check (`job.IdentityCheck`) to assert the keeper key == `operator()` on each of the
-   six modules this Job drives state-changingly: `HarvestVoteModule`, `ReservoirLoopModule`, `ExerciseModule`,
+   six modules this Job drives state-changingly: `HarvestVoteModule`, `FarmUtilityLoopModule`, `ExerciseModule`,
    `SellModule`, `RecycleModule`, `LpStrategyModule` (all expose `operator()`); a wrong key fails fast at
    startup (refuse to run, §8.7).
 

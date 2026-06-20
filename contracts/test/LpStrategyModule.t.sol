@@ -22,7 +22,7 @@ function _cloneLpStrategyModule() returns (LpStrategyModule) {
 
 // =========================================================================== mocks
 
-/// @notice A minimal 18-dp ERC20 (model `MockLpToken` in `ReservoirLoopModule.t.sol`). Real allowance tracking so the
+/// @notice A minimal 18-dp ERC20 (model `MockLpToken` in `FarmUtilityLoopModule.t.sol`). Real allowance tracking so the
 ///         approve/atomicity assertions are meaningful.
 contract MockERC20 {
     string public name = "Mock";
@@ -180,7 +180,7 @@ contract MockGauge {
 
 /// @notice A recording mock Safe (Zodiac avatar surface). Records every `(to, value, data, operation)`, optionally
 ///         performs the call live, and can force a specific exec index to fail. Modeled verbatim on
-///         `ReservoirLoopModule.t.sol` / `SzipBuyBurnModule.t.sol`.
+///         `FarmUtilityLoopModule.t.sol` / `SzipBuyBurnModule.t.sol`.
 contract RecordingSafe {
     struct Recorded {
         address to;
@@ -788,7 +788,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
     }
 
     /// @dev Summon a real substrate + enable the module on its main Safe (team-owner drives the enable). Model
-    ///      `ReservoirLoopModule.t.sol _summonAndEnable`.
+    ///      `FarmUtilityLoopModule.t.sol _summonAndEnable`.
     function _summonAndEnable(LpStrategyModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);

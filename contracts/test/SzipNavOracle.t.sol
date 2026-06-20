@@ -153,7 +153,7 @@ contract MockGauge {
     }
 }
 
-/// @dev The reservoir LP escrow collateral vault — a bare 1:1 box (`convertToAssets(s) == s`).
+/// @dev The farm utility LP escrow collateral vault — a bare 1:1 box (`convertToAssets(s) == s`).
 contract MockEscrowVault {
     mapping(address => uint256) public balanceOf;
 
@@ -166,7 +166,7 @@ contract MockEscrowVault {
     }
 }
 
-/// @dev The reservoir USDC borrow vault — only `debtOf` is read (USDC 6-dp).
+/// @dev The farm utility USDC borrow vault — only `debtOf` is read (USDC 6-dp).
 contract MockBorrowVault {
     mapping(address => uint256) public debtOf;
 
@@ -682,16 +682,16 @@ contract SzipNavOracleTest is Test {
         oracle.grossBasketValue();
     }
 
-    // ----------------------------------------------------------------- reservoir escrow leg + debt (path-lock)
-    function _wireReservoir() internal returns (MockEscrowVault e, MockBorrowVault b) {
+    // ----------------------------------------------------------------- farm utility escrow leg + debt (path-lock)
+    function _wireFarmUtility() internal returns (MockEscrowVault e, MockBorrowVault b) {
         e = new MockEscrowVault();
         b = new MockBorrowVault();
-        oracle.setReservoirLeg(address(e), address(b));
+        oracle.setFarmUtilityLeg(address(e), address(b));
     }
 
-    function test_reservoir_escrow_leg_and_debt() public {
+    function test_farmUtility_escrow_leg_and_debt() public {
         _wireLp(); // 1000 LP supply, reserves 200 zip + 100 xAlpha, xAlphaUSD 2.4
-        (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
+        (MockEscrowVault e, MockBorrowVault b) = _wireFarmUtility();
         // 500 LP posted as escrow collateral (1:1) -> heldShares 500/1000 = half -> 100 zip + 50 xAlpha*2.4 = 220e18
         e.setBalance(juniorTrancheSafe, 500e18);
         b.setDebt(juniorTrancheSafe, 30e6); // 30 USDC strike debt -> 30e18
@@ -699,9 +699,9 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.grossBasketValue(), 220e18 - 30e18, "escrow LP counted, debt subtracted");
     }
 
-    function test_reservoir_nav_invariant_across_post() public {
+    function test_farmUtility_nav_invariant_across_post() public {
         (, MockGauge g) = _wireLp();
-        (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
+        (MockEscrowVault e, MockBorrowVault b) = _wireFarmUtility();
 
         // BEFORE the loop: 500 LP staked in the gauge. gross = 220e18 (the test_lp_marked_through basket).
         g.setBalance(juniorTrancheSafe, 500e18);
@@ -717,16 +717,16 @@ contract SzipNavOracleTest is Test {
         // sanity: the un-fixed oracle would have read 0(escrow unseen) + 30(usdc) = 30e18 here, not 220.
     }
 
-    function test_reservoir_debt_saturates_at_zero() public {
+    function test_farmUtility_debt_saturates_at_zero() public {
         _wireLp();
-        (MockEscrowVault e, MockBorrowVault b) = _wireReservoir();
+        (MockEscrowVault e, MockBorrowVault b) = _wireFarmUtility();
         e.setBalance(juniorTrancheSafe, 100e18); // 100/1000 -> 20 zip + 10 xAlpha*2.4 = 44e18 LP
         b.setDebt(juniorTrancheSafe, 1_000_000e6); // debt far exceeds the basket
         assertEq(oracle.grossBasketValue(), 0, "debt > basket saturates to 0, no underflow");
         assertEq(oracle.pathLockedLpEquity(), 0, "lp equity saturates to 0");
     }
 
-    function test_reservoir_unset_contributes_zero() public {
+    function test_farmUtility_unset_contributes_zero() public {
         _wireLp();
         MockGauge(oracle.gauge()).setBalance(juniorTrancheSafe, 500e18);
         // escrowVault/borrowVault unset -> pathLockedLpEquity is just the LP, no debt; gross unchanged.

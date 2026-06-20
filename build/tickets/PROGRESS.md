@@ -24,6 +24,35 @@ shared `ZipRedemptionQueue`. CRE-02b is the single-pool base to generalize (it r
 tick by design). Adjacent open decision: **CTR-14** (N junior Safes vs the single-requester queue — keeper-half
 prepared, contract fork still open); the solver sequences multi-Safe escrows under option (a).
 
+- **CTR-15 note (2026-06-20) — the "reservoir" → purpose-true rename (monorepo, naming-only, ZERO behavior change).**
+  An interjected naming task (NOT a build-NEXT advance — NEXT stays CRE-02c). Headline: the idle-USDC store
+  `baseUsdcMarket` → **`usdcReservoir`** ("USDC Reservoir"); the strike-loop BORROW vault + its ecosystem
+  `Reservoir*` → **`FarmUtility*`** ("Farm Utility Credit Vault"). The names were inverted vs purpose (the idle
+  store is the real "reservoir"; the borrow vault is JIT-funded, ≈0 at rest). **`freeReservoir` LEFT verbatim**
+  (it reads `EulerEarn.maxWithdraw(warehouse)` = the idle store, so post-rename it is already correct — the
+  highest-risk silent-error carve-out); `escrowVault`/`borrowVault` identifiers LEFT (no "reservoir" token).
+  **Process:** the reviewer ratified all 32 rows + 31b of `CTR-15-reservoir-farmutility-rename.md` one-at-a-time,
+  then approved sweeping src `.sol` comment PROSE (classified) too. Applied across 5 phases on branch
+  `rename/reservoir-to-farmutility` (commit 1 `f8cf6ed` = pre-existing audit work separated out so the rename lands
+  clean; commit 2 = this rename): (1) Solidity files+symbols+importers, (2) deploy scripts+env `BASE_USDC_MARKET`→
+  `USDC_RESERVOIR`, (3) CRE keeper config-key `"ReservoirLoopModule"`→`"FarmUtilityLoopModule"`+env+`reservoir`
+  field, sharefeeds/zipreport comment refs `SzipReservoirLpOracle`→`SzipFarmUtilityLpOracle`, (4) ABI files+regen
+  +index labels/paths, (5) docs/x-ray/test-comment/history sweep by classification rule. File renames:
+  `ReservoirLoopModule`→`FarmUtilityLoopModule`, `ReservoirBorrowGuard`→`FarmUtilityBorrowGuard`,
+  `SzipReservoirLpOracle`→`SzipFarmUtilityLpOracle`, `ReservoirMarketDeployer`→`FarmUtilityMarketDeployer` (+ their
+  `.t.sol`/`.md`/`.json`), `docs/wires/8-B5-ReservoirLoop.md`→`8-B5-FarmUtilityLoop.md`. **Gates green (my own
+  re-runs):** `forge build` + `forge test` (**1001 passed / 0 failed / 3 skipped — IDENTICAL to baseline**, proving
+  zero behavior change); CRE `go build`+`go vet`+`go test -count=1`+`GOOS=wasip1 go build` across keeper/sharefeeds/
+  zipreport/warehouse/buyburn-bid; `index.json` diff = names/paths/labels only. **Self-exclusions (the spec is its
+  own source):** `CTR-15`+`FE-09` tickets keep their old→new tables (a blanket sweep collapses "X → Y"→"Y → Y");
+  the **FE tickets `FE-00/01/05/06/07/08` were restored** (the frontend rename is **FE-09's domain in the layer
+  repo** — `frontend/zipcode-finance-euler/`, its own `.git`, NOT this monorepo); CRE-02b/02c "reservoir" = the
+  idle EE-backing read (LEAVE). **Two follow-ups owed:** (a) **FE-09 must land in the SAME RELEASE** — CTR-15 changed
+  contract getter selectors (`baseUsdcMarket()`→`usdcReservoir()`, the borrow-vault getter→`farmUtilityVault()`) the
+  frontend calls; (b) a **SEPARATE ticket for the `FarmUtilityBorrowGuard.sol:12-13` accuracy discrepancy** ("borrow
+  vault IS resting USDC" — renamed in place, the factual claim deliberately NOT rewritten here). `audit/` (embedded
+  skills clone) left untracked. **NEXT unchanged: CRE-02c.**
+
 - **CRE-02b note (2026-06-20) — the reserve-gated redemption-funding leg, folded into `cre/warehouse` (default-OFF).**
   The (R) funding twin of CRE-02's reactive (K) `RedemptionJob`: it sizes + fires the warehouse REDEEM→REPAY so the
   redemption→buyback cycle runs without a human POSTing events. **Off-chain Go only — NO contract changed** (no
@@ -38,7 +67,7 @@ prepared, contract fork still open); the solver sequences multi-Safe escrows und
   `cre/buyburn-bid` two-handler precedent, `workflow.go:75-79`). **Each tick (reactive/stateless, §17 live reads):**
   resolve `warehouseSafe`/`eePool`/`usdc`/`queue` off the warehouse adapter (re-pointable; `queue == redemptionBox`,
   deploy seam #6); `shortfall = max(0, totalPending/scaleUp − (usdc.balanceOf(queue) − reservedAssets))`; **REPAY**
-  `min(safeUsdc, shortfall)` to the queue **un-gated** (moves already-held cash, not reservoir backing — safe under
+  `min(safeUsdc, shortfall)` to the queue **un-gated** (moves already-held cash, not farm utility backing — safe under
   a coverage breach); **REDEEM** tops the Safe up to `min(shortfall − repay, floor)` where `floor = covered() ?
   clamp(maxWithdraw(SAFE) − harvestReserve − safetyBuffer, 0, maxRedeemPerTick) : 0`, sizing
   `redeemShares = redeemAssets·balanceOf(SAFE)/convertToAssets(balanceOf(SAFE))` (conservative integer floor — never
@@ -117,18 +146,18 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   **CRE-03 DONE 2026-06-20** (note below) — no standalone (R) producer remains.
 - **CTR-06c / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
   CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` +
-  CTR-06a reservoir borrow-vault governor handoff + CTR-06b `JuniorTrancheDeployer` are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
+  CTR-06a farm utility borrow-vault governor handoff + CTR-06b `JuniorTrancheDeployer` are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
   binding withdraw-queue slot on close; a pool churns 28 *concurrent* lines). **CTR-06 was RE-SCOPED 2026-06-18** — a
   4-critic fan-out found the single-ticket `SiloDeployer` can't cold-build to zero guesses (the junior stack is ~30
   deployments collapsed into 5 nouns with no reusable junior deployer; the hub/silo boundary + shared-queue reach were
   undefined; the "29 real concurrent line" fork gate is infeasible — EE can't compile, no fork test ever stood up a
-  real EE pool). Split into **CTR-06a** (`ReservoirMarketDeployer` borrow-vault `setGovernorAdmin` fix — discharges
+  real EE pool). Split into **CTR-06a** (`FarmUtilityMarketDeployer` borrow-vault `setGovernorAdmin` fix — discharges
   FE-07 Finding A; tiny, independent, the only near-term cold-buildable piece — DONE), **CTR-06b** (`JuniorTrancheDeployer` —
   the missing reusable artifact; D1+D5 ratified — DONE 2026-06-19), **CTR-06c** (`SiloDeployer` orchestrator + feasible mock-EE
   test; deps 06a+06b both DONE — now unblocked). Index + pinned hub/silo decomposition + open decisions D1–D5:
   `build/tickets/contracts/CTR-06-silo-deployer.md`. **CTR-06a + CTR-06b both landed 2026-06-19** (notes below; D1+D5
   ratified by the reviewer). **CTR-06c landed 2026-06-19** (note below) — the re-scoped CTR-06 is now COMPLETE
-  (06a+06b+06c). **CTR-07 landed 2026-06-19** (note below) — the slot-2 reservoir fund/defund is now revolving;
+  (06a+06b+06c). **CTR-07 landed 2026-06-19** (note below) — the slot-2 farm utility fund/defund is now revolving;
   finding 3 RESOLVED. **CTR-08 landed 2026-06-19** (note below) — structure-2 revolving lines proved as an operating
   MODE over the as-built stack with ZERO contract change (test + doc only). **CTR-09 landed 2026-06-19** (note below)
   — the 0.1%-per-revolution draw fee; finding 2 RESOLVED. **CTR-10 was RE-SCOPED 2026-06-19 into a 3-way split**
@@ -195,7 +224,7 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
 
 - **CRE-03 note (2026-06-20) — the szipUSD share-price feeds producer (`NAV_LEG`+`LP_MARK`, both rt7 → one
   coherent wasip1 producer).** A pure (R) producer through the two EXISTING `ReceiverTemplate` push-caches
-  (`SzipNavOracle` + `SzipReservoirLpOracle`) — no new contract, off-chain Go only → **NO backward `wires/` edit
+  (`SzipNavOracle` + `SzipFarmUtilityLpOracle`) — no new contract, off-chain Go only → **NO backward `wires/` edit
   owed**. Committed at **`cre/sharefeeds/`** (engine-epoch `cron` → node-mode identical consensus on the two
   off-chain marks {`alphaUSD`, `HYDX/USD`} (§8.9 mock observe, the `cre/revaluation` idiom) → DON-mode `eth_call`
   reads of every on-chain quantity {ICHI `getTotalAmounts`/`totalSupply`/`token0`/`token1`, `exchangeRate()`, the
@@ -551,7 +580,7 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   `MockEulerEarn` with the CTR-04 withdraw-queue surface `closeLine` calls — the 6 close-path tests were RED on main
   after CTR-04 updated only the faithful mock). Suite now 39/39 green. Doc: `docs/wires/CTR-08-structure-2-revolving.md`.
   **Regression confirmed ISOLATED:** of the 3 suites exercising the `closeLine` withdraw-queue path, the other two
-  were already green (`EulerVenueAdapter.t.sol` 39/39 — CTR-04 updated its faithful mock; `ReservoirLoopModule.t.sol`
+  were already green (`EulerVenueAdapter.t.sol` 39/39 — CTR-04 updated its faithful mock; `FarmUtilityLoopModule.t.sol`
   41/41 — CTR-07 ported that mock); only `ZipcodeController.t.sol` (its own simpler `MockEulerEarn`) was the casualty.
   **Process lesson:** a per-match-path Conclude gate that verifies only the OWN suite can leave another suite's
   homegrown mock stale + RED uncaught (CTR-04 verified `EulerVenueAdapter.t.sol`, not the controller suite). When a
@@ -593,7 +622,7 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   (second draw levies again), no-op (feeBps==0/recipient unset → 3-item batch), dust (fee rounds to 0 → no leg),
   setter gating/cap/sentinel/events, F2-intact-with-fee-on). **Cross-suite re-run (CTR-08 process lesson — every suite
   that drives the adapter `draw`):** `ZipcodeController.t.sol` **39/39** (the CTR-08 revolving draws, default-OFF →
-  byte-identical) + `ReservoirLoopModule.t.sol` **41/41** — no regression. Cold-build returned ZERO load-bearing
+  byte-identical) + `FarmUtilityLoopModule.t.sol` **41/41** — no regression. Cold-build returned ZERO load-bearing
   guesses. Ticket: `build/tickets/contracts/CTR-09-per-revolution-fee.md`. **Doc-sync:** modified contract → backward
   wire `docs/wires/WOOF-04.md` (`draw` entry now enumerates the optional 4th fee leg + the financed-fee/F2/hook/
   default-OFF semantics + the fee setters/events). Forward spec `claude-zipcode.md` §5 gains a "Per-revolution draw
@@ -606,10 +635,10 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   WAC ~10.9% (Angel Oak). Since each revolution is a fresh origination (warehouse → secondary take-out → redraw) the
   origination-scale fee is charged per draw; ~6mo secondary-market seasoning bounds velocity to ≤4 turns/yr
   (≤quarterly), so 50 bps ≈ ≤2%/yr of drawn volume. Re-address with observed velocity. **The time-based APR is
-  separate** — built later as CTR-13: the per-line vaults now run a real flat ~7.5% `IRMLinearKink` (the reservoir
+  separate** — built later as CTR-13: the per-line vaults now run a real flat ~7.5% `IRMLinearKink` (the farm utility
   stays `ZeroIRM`). See the CTR-13 DONE note below. Tests made default-robust
   (read `adapter.feeBps()`; dust amount = `10_000/feeBps - 1`) + a `feeBps == 50` default assertion; gate re-run green
-  (adapter 46/46, controller 39/39, reservoir 41/41).
+  (adapter 46/46, controller 39/39, farm utility 41/41).
 
 - **CTR-12 note (2026-06-19) — rename `capitalSink` → `adminSafe` (loss-side recovery destination).** Pure rename,
   ZERO behavior change. The slashed-bond capital-hole destination is now explicitly named the protocol **treasury
@@ -649,7 +678,7 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
 **The problem.** Today is "configuration one": one controller → one `EulerVenueAdapter` → one EulerEarn pool → one
 warehouse → one junior → one zipUSD. A pool caps at `MAX_QUEUE_LENGTH = 30` markets
 (`reference/euler-earn/src/libraries/ConstantsLib.sol:17`, binding on the withdraw queue `EulerEarn.sol:785`); with
-2 permanent non-line markets (resting USDC + reservoir) → **28 concurrent lines/pool**. Goal: scale past one pool
+2 permanent non-line markets (resting USDC + farm utility) → **28 concurrent lines/pool**. Goal: scale past one pool
 AND make the same mechanism a federation substrate under one mutualized senior zipUSD, carrying BOTH repurchase
 lines (structure 1, the safe HELOC-warehouse standard) and insurance-underwritten revolving lines (structure 2).
 
@@ -657,8 +686,8 @@ lines (structure 1, the safe HELOC-warehouse standard) and insurance-underwritte
 - A silo = one full stack `{venue adapter + warehouse + EE pool + junior tranche}`; replicate the silo, keep
   zipUSD/mint/redeem at the hub. Loss is local to a silo's junior; senior is mutualized (only post-junior residual
   reaches zipUSD).
-- **Split slot 2:** no-borrow resting market + separate reservoir vault, funded JIT via a new allocator
-  fund/defund path (re-absorbed on repay). 28 lines/pool; allocator key ≠ reservoir operator key.
+- **Split slot 2:** no-borrow resting market + separate farm utility vault, funded JIT via a new allocator
+  fund/defund path (re-absorbed on repay). 28 lines/pool; allocator key ≠ farm utility operator key.
 - **Accommodate BOTH** line structures; repo is the safe default, revolving is for when an insurance policy exists.
 - **Sequential-fill sharding:** fill the active pool to 28 → deploy next EE vault → route there → register.
 - Open decisions carried into tickets: **A** single controller + registry (chosen) over per-silo (CTR-03);
@@ -675,10 +704,10 @@ lines (structure 1, the safe HELOC-warehouse standard) and insurance-underwritte
    (`borrow(fee, feeRecipient)`, `fee = amount*feeBps/10_000`, default 50 bps = 0.50%, Timelock-settable, capped 5%) —
    the only on-chain-enforceable levy point (controller holds no USDC; drawn USDC crosses to Erebor immediately).
    Financed-fee (debt = `amount + fee`), default OFF until `feeRecipient` wired. Re-fires per draw → per-revolution.
-3. **RESOLVED 2026-06-19 (CTR-07, below).** Slot-2 revolving was half-wired: the reservoir borrow/repay cycled, but
-   no `reallocate` funded it from resting or re-absorbed after repay. CTR-07 added `fundReservoir`/`defundReservoir`
-   (`onlyReservoirAllocator`) — the per-line `fund`/`closeLine` reallocate pattern generalized to the reservoir.
-4. Reservoir borrow is pinned to `juniorTrancheEngine` (`ReservoirBorrowGuard.sol:91-92`) + capped (`borrowCap`, Timelock)
+3. **RESOLVED 2026-06-19 (CTR-07, below).** Slot-2 revolving was half-wired: the farm utility borrow/repay cycled, but
+   no `reallocate` funded it from resting or re-absorbed after repay. CTR-07 added `fundFarmUtility`/`defundFarmUtility`
+   (`onlyFarmUtilityAllocator`) — the per-line `fund`/`closeLine` reallocate pattern generalized to the farm utility.
+4. Farm utility borrow is pinned to `juniorTrancheEngine` (`FarmUtilityBorrowGuard.sol:91-92`) + capped (`borrowCap`, Timelock)
    — not externally exploitable; residual is internal contention vs senior redemption liquidity (informs CTR-07).
 5. Structure-1's per-lien oracle is an n→∞ keyed cache; structure-2 keys the line to a borrower → one persistent
    key (`ZipcodeOracleRegistry` hosts both meanings unchanged). **→ CTR-08.**
@@ -698,13 +727,13 @@ warehouse). **§11 non-commingling assert** at silo deploy (`redemptionBox != ju
 - **CTR-06** `SiloDeployer` — **RE-SCOPED 2026-06-18 into a 3-way split** (could not cold-build to zero guesses as one
   ticket; see the re-scope note in NEXT + the index `CTR-06-silo-deployer.md` with the pinned hub/silo decomposition +
   open decisions D1–D5). Children:
-  - **CTR-06a** `ReservoirMarketDeployer` borrow-vault `setGovernorAdmin` fix (discharges FE-07 Finding A).
+  - **CTR-06a** `FarmUtilityMarketDeployer` borrow-vault `setGovernorAdmin` fix (discharges FE-07 Finding A).
     **DONE 2026-06-19** (note below). *(was independent)*
   - **CTR-06b** `JuniorTrancheDeployer` (the missing reusable per-junior artifact, analogue of
     `CreditWarehouseDeployer`; excludes `OffRampModule` per D5). **DONE 2026-06-19** (note below; D1+D5 ratified). *(was dep CTR-06a)*
   - **CTR-06c** `SiloDeployer` orchestrator + feasible mock-EE two-silo routing test (D3/D4). **DONE 2026-06-19** (note
     below). *(dep CTR-06a + CTR-06b, both DONE)* — the re-scoped CTR-06 is now COMPLETE (06a+06b+06c all landed).
-- **CTR-07** slot-2 reservoir fund/defund (finding 3; the split-slot decision). **DONE 2026-06-19** (note below).
+- **CTR-07** slot-2 farm utility fund/defund (finding 3; the split-slot decision). **DONE 2026-06-19** (note below).
   *(independent)*
 - **CTR-08** structure-2 revolving credit-approval line (finding 5). *(dep 02/03; composes 07/09)*
 - **CTR-09** 0.1%-per-revolution fee (finding 2). **DONE 2026-06-19** (note below). *(dep 03; composes 08)*
@@ -797,49 +826,49 @@ owed to the spec before CTR-02 can run.
 > **Unblocks CTR-10c** (a real non-Euler adapter now plugs in with no host change; still gated on a chosen/deployed
 > second venue).
 
-> **CTR-07 — Slot-2 reservoir fund/defund: the revolving junior yield facility — DONE 2026-06-19.** Discharges
-> **finding 3**. Modified `contracts/src/venue/EulerVenueAdapter.sol` + `contracts/test/ReservoirLoopModule.t.sol`
+> **CTR-07 — Slot-2 farm utility fund/defund: the revolving junior yield facility — DONE 2026-06-19.** Discharges
+> **finding 3**. Modified `contracts/src/venue/EulerVenueAdapter.sol` + `contracts/test/FarmUtilityLoopModule.t.sol`
 > (no new files → no `COVERAGE.md` row change, no regression on untouched contracts). Added two adapter-LOCAL methods
-> `fundReservoir(uint256)` / `defundReservoir(uint256)` (`onlyReservoirAllocator`) — the per-line `fund`/`closeLine`
-> reallocate pattern generalized to move idle USDC resting↔reservoir JIT, so the reservoir holds ≈0 at rest (split-slot
-> decision). Each is a two-item absolute-target zero-sum `eulerEarn.reallocate` between `baseUsdcMarket` and a new
-> `reservoirVault` slot, sized off `_eeSupplyAssets` (donation-immune, NOT `balanceOf`). Plus two Timelock-settable
-> wiring slots `reservoirVault`+`reservoirAllocator` (`setX`+`WiringSet`), a `NotReservoirAllocator` error, and the
-> `onlyReservoirAllocator` modifier. NOT on `IZipcodeVenue` (venue interface stays line-only). **Harness loop ran:** 4
+> `fundFarmUtility(uint256)` / `defundFarmUtility(uint256)` (`onlyFarmUtilityAllocator`) — the per-line `fund`/`closeLine`
+> reallocate pattern generalized to move idle USDC resting↔farm utility JIT, so the farm utility holds ≈0 at rest (split-slot
+> decision). Each is a two-item absolute-target zero-sum `eulerEarn.reallocate` between `usdcReservoir` and a new
+> `farmUtilityVault` slot, sized off `_eeSupplyAssets` (donation-immune, NOT `balanceOf`). Plus two Timelock-settable
+> wiring slots `farmUtilityVault`+`farmUtilityAllocator` (`setX`+`WiringSet`), a `NotFarmUtilityAllocator` error, and the
+> `onlyFarmUtilityAllocator` modifier. NOT on `IZipcodeVenue` (venue interface stays line-only). **Harness loop ran:** 4
 > critics (junior-dev/spec-fidelity/reference-verifier/contract-binding). The contract-binding critic CONFIRMED **ZERO
-> back-pressure** — the mechanism binds entirely to surfaces that exist today: (a) the reservoir vault is already an
-> enabled NON-supply-queue EE market (`DeployLocal.s.sol:140-141` acceptCap's it; supply queue = `[baseUsdcMarket]`
+> back-pressure** — the mechanism binds entirely to surfaces that exist today: (a) the farm utility vault is already an
+> enabled NON-supply-queue EE market (`DeployLocal.s.sol:140-141` acceptCap's it; supply queue = `[usdcReservoir]`
 > only), so it is reallocate-eligible; (b) its hook is **OP_BORROW-only**, so EE's reallocate deposit/withdraw legs
-> into it are un-hooked and don't trip `ReservoirBorrowGuard` (the critical check — fundReservoir does NOT brick); (c)
+> into it are un-hooked and don't trip `FarmUtilityBorrowGuard` (the critical check — fundFarmUtility does NOT brick); (c)
 > withdraw-while-lent-out reverts `E_InsufficientCash` (JIT discipline is EVK-enforced, not assumed); (d)
 > `previewRedeem` is flat under a zero-rate borrow so the round-trip sizing nets post-repay. spec-fidelity confirmed
 > invention-free + §17-faithful (the "split slot 2" topology is a PROGRESS session decision, not spec text — its
 > spec-doc-sync is forward-deferred per the §-sync note, NOT a precondition). All other critic findings were **ticket
 > gaps** (test-fixture under-specification), ALL fixed in the ticket BEFORE cold-build: the EE side does not exist in
-> the reservoir suite, so the ticket now pins the full port/merge (copy the faithful `MockEulerEarn` — which moves
+> the farm utility suite, so the ticket now pins the full port/merge (copy the faithful `MockEulerEarn` — which moves
 > REAL USDC between real EVK vaults — from `EulerVenueAdapter.t.sol`; add the `IOZERC4626`/`{IEulerEarn,
-> MarketAllocation}`/adapter imports; build the base resting market + `_fundBaseMarket`; enable the reservoir at ZERO
+> MarketAllocation}`/adapter imports; build the base resting market + `_fundBaseMarket`; enable the farm utility at ZERO
 > balance via `submitCap`+`acceptCap`; wire a real adapter with placeholder line-side ctor args; read tracked balances
-> via the mock's public `expectedSupplyAssets`; name `E_InsufficientCash` + `NotReservoirAllocator` revert selectors;
+> via the mock's public `expectedSupplyAssets`; name `E_InsufficientCash` + `NotFarmUtilityAllocator` revert selectors;
 > pin the donation = mint-shares-then-raw-transfer). **Two-key separation** is a documented DEPLOY invariant
-> (`reservoirAllocator` ≠ `ReservoirLoopModule.operator`) — the adapter holds no loop-module handle, so the on-chain
-> proof is the operator key reverting `NotReservoirAllocator` (no fabricated cross-contract coupling). Test home =
-> `ReservoirLoopModule.t.sol` (it already stands up the live reservoir borrow leg), reusing
+> (`farmUtilityAllocator` ≠ `FarmUtilityLoopModule.operator`) — the adapter holds no loop-module handle, so the on-chain
+> proof is the operator key reverting `NotFarmUtilityAllocator` (no fabricated cross-contract coupling). Test home =
+> `FarmUtilityLoopModule.t.sol` (it already stands up the live farm utility borrow leg), reusing
 > `test_full_loop_revolves_twice`'s fixture. Gate green (verified by my own re-run, not just the cold-build's): `forge
-> build` exit 0 + `forge test --match-path test/ReservoirLoopModule.t.sol` = **40 passed / 0 failed** (35 pre-existing
+> build` exit 0 + `forge test --match-path test/FarmUtilityLoopModule.t.sol` = **40 passed / 0 failed** (35 pre-existing
 > all still green + 5 new: roundtrip-restores-resting, defund-reverts-when-lent-out, operator-cannot-fund,
-> donation-noop-on-sizing, reservoir-zero-at-rest). Cold-build returned ZERO load-bearing guesses (only test-fixture
+> donation-noop-on-sizing, farm utility-zero-at-rest). Cold-build returned ZERO load-bearing guesses (only test-fixture
 > sizing choices — X=$100/strike=$50 matching the existing fork fixture's scale — and a faithful tuple-read idiom).
-> Ticket: `build/tickets/contracts/CTR-07-slot2-reservoir-fund-defund.md`. **Doc-sync:** modified contract → backward
-> wire `docs/wires/WOOF-04.md` (new "reservoir fund-defund" method entry + the OP_BORROW-only load-bearing invariant +
-> the adapter↔reservoir-loop two-key cross-component row + the allocator-role note now covers reallocate-for-reservoir
+> Ticket: `build/tickets/contracts/CTR-07-slot2-farm utility-fund-defund.md`. **Doc-sync:** modified contract → backward
+> wire `docs/wires/WOOF-04.md` (new "farm utility fund-defund" method entry + the OP_BORROW-only load-bearing invariant +
+> the adapter↔farm utility-loop two-key cross-component row + the allocator-role note now covers reallocate-for-farm utility
 > + the CTR-07 gotchas test note). No `claude-zipcode.md` edit (the federation/split-slot-2 §-sync is forward-deferred,
 > per the federation-section §-sync note; CTR-07 invents no mechanism — it generalizes the existing reallocate one).
 > **Unblocks CTR-08** (structure-2 revolving lines reuse this reallocate-funded-revolving pattern).
 > **Follow-up (reviewer-requested, same day):** the OP_BORROW-only hook invariant is now **fail-fast ENFORCED** —
-> `setReservoirVault` reverts `ReservoirHookBlocksReallocate` if the wired vault hooks any reallocate leg
+> `setFarmUtilityVault` reverts `FarmUtilityHookBlocksReallocate` if the wired vault hooks any reallocate leg
 > (`hookedOps & (OP_DEPOSIT|OP_MINT|OP_WITHDRAW|OP_REDEEM) != 0`), so a mis-hooked vault can't be wired in (a fresh
-> negative test `test_ctr07_setReservoirVault_rejects_reallocate_blocking_hook` simulates the governor widening the
+> negative test `test_ctr07_setFarmUtilityVault_rejects_reallocate_blocking_hook` simulates the governor widening the
 > mask). Gate re-run: **41 passed / 0 failed**. The only residual (a Timelock re-hooking an already-wired vault) stays
 > a documented §17 governed invariant — outside the adapter's reach. WOOF-04 + the ticket Do-NOT updated to match.
 
@@ -848,14 +877,14 @@ owed to the spec before CTR-02 can run.
 > `contracts/test/SiloDeployer.t.sol` (NEW files only — no existing contract changed, so no regression possible).
 > `deploy(SiloParams)` composes the four sub-deployers + the per-silo venue front into ONE complete silo and returns
 > the `Silo` handle the Timelock registers via `addSilo`: (0) precompute the junior `juniorTrancheSafe`; (1) EE pool via a
-> `virtual _createEePool` (live-factory `.call`; mock in the test); (2) resting `baseUsdcMarket` (bare EVK proxy);
-> (3) `ReservoirMarketDeployer` (CTR-06a); (4) EE admin config via low-level `_eeCall`; (5) per-silo `CREGatingHook` +
+> `virtual _createEePool` (live-factory `.call`; mock in the test); (2) resting `usdcReservoir` (bare EVK proxy);
+> (3) `FarmUtilityMarketDeployer` (CTR-06a); (4) EE admin config via low-level `_eeCall`; (5) per-silo `CREGatingHook` +
 > `EulerVenueAdapter`; (6) `CreditWarehouseDeployer` (redemptionBox = the SHARED queue); (7) `JuniorTrancheDeployer`
 > (CTR-06b); (8) fail-closed post-asserts; (9) return. **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/
 > reference-verifier/contract-binding) CONVERGED on ~9 load-bearing gaps in the first draft, ALL in-tree fixable (ZERO
-> back-pressure), fixed in the ticket BEFORE cold-build: (1) the **reservoir↔junior circular dependency** — the reservoir
+> back-pressure), fixed in the ticket BEFORE cold-build: (1) the **farm utility↔junior circular dependency** — the farm utility
 > `juniorTrancheEngine` must be the junior `juniorTrancheSafe`, but `JuniorTrancheDeployer.deploy` self-summons its Baal internally AND
-> consumes the reservoir vaults as inputs; resolved by precomputing `jr.computeMainSafe(p.saltNonce)` (verified
+> consumes the farm utility vaults as inputs; resolved by precomputing `jr.computeMainSafe(p.saltNonce)` (verified
 > saltNonce-only, caller-independent — `SummonSubstrate.s.sol:110-118`; CTR-06b's `MainSafeMismatch` guarantees the
 > precompute == the eventual summon), NOT the draft's infeasible "two-phase junior build"; (2) **`CREGatingHook` is
 > PER-SILO, not shared** — its `borrowDriver` is a single settable address gating one adapter (`:35,94,110-113`), so the
@@ -864,7 +893,7 @@ owed to the spec before CTR-02 can run.
 > donation-immune NAV reads (`convertToAssets`/`balanceOf`/`maxWithdraw`) the aggregator needs, so the test defines a
 > small combined mock (de-scoping D4 to no-opens makes the rich queue mock unnecessary); (4) the full **`SiloParams`
 > struct** specified; (5) `lpOracle` is a built-and-SEEDED INPUT (the LP_MARK is a CRE/forwarder push the deployer
-> can't make, and `setLTV`'s `getQuote` needs it); (6) `baseUsdcMarket` is CREATED by the deployer; (7) the
+> can't make, and `setLTV`'s `getQuote` needs it); (6) `usdcReservoir` is CREATED by the deployer; (7) the
 > `SzipPerspectiveProbe` is EXCLUDED (mock-incompatible; fork-runbook advisory only); (8) `_createEePool` arity pinned;
 > (9) **D4 de-scoped** — the controller routing/rollover is already exhaustively proven by `ZipcodeController.t.sol`
 > (CTR-03), so CTR-06c proves it at the REGISTRY level (pranked `incrementLineCount` to the `MAX_LINES_PER_SILO=28` cap
@@ -872,7 +901,7 @@ owed to the spec before CTR-02 can run.
 > real controller/opens (the stale "29th origination" off-by-one fixed — cap is 28). Gate green (verified by my own
 > re-run, not just the cold-build's): `forge build` exit 0 + `forge test --match-path test/SiloDeployer.t.sol` = **5
 > passed / 0 failed** — `test_deploy_silo_seams_hold`, `test_ownership_handoff` (hook→TL, junior OZ-ownables/8 modules→TL,
-> reservoir borrow-vault governor→TL, warehouse Safe/Roles→godOwner + admin adapter→receiverAdmin, both Baal Safes→team
+> farm utility borrow-vault governor→TL, warehouse Safe/Roles→godOwner + admin adapter→receiverAdmin, both Baal Safes→team
 > & NOT the deployer), `test_addSilo_first_try` (a REAL `SiloRegistry.addSilo` from a pranked Timelock passes on the
 > first try — non-vacuous, reverts `SiloMiswired` on any clause failure), `test_D4_two_silo_routing_rollover_and_aggregate`,
 > `test_D2_runbook` (`setCapacity`/`addSilo`/`setCurrentSilo` via `vm.prank(timelock)`). Cold-build returned ZERO
@@ -890,7 +919,7 @@ owed to the spec before CTR-02 can run.
 > `contracts/script/JuniorTrancheDeployer.s.sol` + `contracts/test/JuniorTrancheDeployer.t.sol` (NEW files only — no
 > existing contract changed, so no regression possible). `deploy(JuniorParams)` is a faithful EXTRACTION of
 > `DeployZipcode`'s inline junior stack (phases P3/P6/P7/P8/P9, ~30 deployments + 15 seam asserts) into one callable,
-> parameterized to point at THIS silo's `eePool`/`warehouseSafe`/reservoir handles + the SHARED hub `zipUSD`/
+> parameterized to point at THIS silo's `eePool`/`warehouseSafe`/farm utility handles + the SHARED hub `zipUSD`/
 > `rateOracle`. Stands up: Baal two-Safe substrate + `SzipNavOracle` + `ExitGate`/`SzipUSD` + `ZipDepositModule` + the
 > **8** yield/freeze/buy-burn engine modules + the loss side (`LienXAlphaEscrow`+`DefaultCoordinator`); reproduces every
 > seam assert; hands OZ-ownable → Timelock, engine modules already Timelock-owned from setUp, BOTH Baal Safes → the
@@ -912,16 +941,16 @@ owed to the spec before CTR-02 can run.
 > = **4 passed / 0 failed** — `test_deploy_seams_hold`, `test_ownership_handoff` (OZ→Timelock, 8 modules→Timelock, both
 > Safes→team & NOT the deployer, rate-oracle wired-not-owned), `test_addSilo_topology_clauses_1_to_5` (a REAL
 > `SiloRegistry.addSilo` from a pranked Timelock — reverts `SiloMiswired` on any clause failure; non-vacuous), and
-> `test_non_commingling`; the reservoir leg is built via the REAL `ReservoirMarketDeployer` over the live EVK + a mock
+> `test_non_commingling`; the farm utility leg is built via the REAL `FarmUtilityMarketDeployer` over the live EVK + a mock
 > LP. Cold-build returned ZERO load-bearing guesses. Ticket: `build/tickets/contracts/CTR-06b-junior-tranche-deployer.md`.
 > **Doc-sync:** NEW script → new wire `docs/wires/CTR-06b-JuniorTrancheDeployer.md` + `COVERAGE.md` rows (scripts 9→10,
 > tests 32→33). No existing contract changed → no backward wire edit owed. No `claude-zipcode.md` edit (the federation
 > §-sync is forward, not a precondition; the deployer invents no mechanism — it extracts `DeployZipcode`'s existing one).
 > **Unblocks CTR-06c** (the `SiloDeployer` orchestrator calls this once per silo).
 
-> **CTR-06a — `ReservoirMarketDeployer` hands the borrow-vault governor to the Timelock — DONE 2026-06-19.** First
+> **CTR-06a — `FarmUtilityMarketDeployer` hands the borrow-vault governor to the Timelock — DONE 2026-06-19.** First
 > child of the re-scoped CTR-06; discharges **FE-07 Finding A**. One-line source fix + one post-assert (no new files).
-> `ReservoirMarketDeployer.deploy` (`contracts/script/ReservoirMarketDeployer.sol`) handed ONLY the **router**
+> `FarmUtilityMarketDeployer.deploy` (`contracts/script/FarmUtilityMarketDeployer.sol`) handed ONLY the **router**
 > governance to `p.governor` (`:88`); the USDC **borrow vault** is created via `factory.createProxy(address(0), …)`
 > (`:77`) so its `governorAdmin` defaulted to the throwaway deployer INSTANCE and was never re-pointed — directly
 > contradicting the contract header (`:13-14`) + `:75` ("Governor RETAINED … the Timelock can tune LTV/caps") and §17.
@@ -930,15 +959,15 @@ owed to the spec before CTR-02 can run.
 > Escrow renounce (`:61`, intentional holding box) + router transfer untouched. **Binding verified, not cited blind:**
 > `IEVault.setGovernorAdmin(address)` @ `reference/euler-vault-kit/src/EVault/IEVault.sol:481`, `governorAdmin()` @
 > `:370` — both real. Test home = the existing fork section `test_deployer_governor_RETAINED`
-> (`test/ReservoirLoopModule.t.sol`), next to the router-retained + escrow-renounced asserts: added
+> (`test/FarmUtilityLoopModule.t.sol`), next to the router-retained + escrow-renounced asserts: added
 > `assertEq(IEVault(bv).governorAdmin(), owner, "borrow vault governor RETAINED")`. **Proven load-bearing** — reverting
 > the source line fails the assert (`governorAdmin()` = the deployer instance `0x5991…` ≠ owner `0xf744…`), confirming
 > it tests the EFFECT not "didn't revert". Gate green: `forge build` exit 0 + `forge test` on the two deployer-touching
-> suites = `ReservoirLoopModule.t.sol` **35 passed / 0 failed** + `AlgebraIchiFairLpOracle.t.sol` **5 passed / 0
+> suites = `FarmUtilityLoopModule.t.sol` **35 passed / 0 failed** + `AlgebraIchiFairLpOracle.t.sol` **5 passed / 0
 > failed**; no pre-existing test regressed (escrow `governorAdmin()==address(0)` still holds). Cold-build returned ZERO
 > load-bearing guesses (the ticket was already 4-critic-vetted in the CTR-06 split; binding + seam re-verified against
-> live source this window). Ticket: `build/tickets/contracts/CTR-06a-reservoir-governoradmin-fix.md`. **Doc-sync:**
-> modified script contract → backward wire `docs/wires/8-B5-ReservoirLoop.md` step-5 sequence rewritten to enumerate
+> live source this window). Ticket: `build/tickets/contracts/CTR-06a-farm utility-governoradmin-fix.md`. **Doc-sync:**
+> modified script contract → backward wire `docs/wires/8-B5-FarmUtilityLoop.md` step-5 sequence rewritten to enumerate
 > the borrow-vault `setGovernorAdmin` handoff (the prose claim at `:25`/`:150` was already "retained on both" — the
 > SEQUENCE list was the stale part). No new contract/test file → no `COVERAGE.md` row change. No `claude-zipcode.md`
 > edit (§17 already correct — the fix makes the code MATCH §17). **Live-fork caveat:** fixes future deploys only; the
@@ -1121,7 +1150,7 @@ owed to the spec before CTR-02 can run.
 > useCowOrderbook}.ts` + `components/zipcode/{ZcNavExitBookChart,ZcLiquidityGauge}.vue`. The two-sided depth chart
 > (x = % of NAV, y = cumulative USDC): NAV line @100% + the protocol buy-burn bid block @ `navExit×(1−d)` sized to
 > the live `currentBid().sellAmount` (the CRE-05a loop) + the external CoW book fanned below; a liquidity gauge
-> (free reservoir = `eePool.maxWithdraw(warehouseSafe)`, `U` the donation-immune §8.2 way); a "Sell to floor" CTA
+> (free farm utility = `eePool.maxWithdraw(warehouseSafe)`, `U` the donation-immune §8.2 way); a "Sell to floor" CTA
 > that opens the unmodified FE-04 `ZcWithdrawModal` (no new exit logic). Reads all exist (no back-pressure); the
 > registry already had `eePool`/`warehouseSafe`. Gate green: `npm run build` (nuxt) clean + `node
 > .output/server/index.mjs` → `/lender/szip-exit-book` returns 200 (external book empty on the fork, renders fine).
@@ -1131,7 +1160,7 @@ owed to the spec before CTR-02 can run.
 > CTR-01. Built `cre/buyburn-bid/` (the first buildable CRE workflow — also the minimal CRE scaffold): a
 > `cre-sdk-go` workflow that maintains the single resting buy-burn bid via the report path. Reads
 > `currentBid`/`quoteMaxPrice`/`buybackCap`/`fresh`/`maxAge`/`oldestRequiredLegTs`/`covered` + the donation-immune
-> §8.2 free-reservoir read (`EulerEarn.maxWithdraw(warehouse)`); sizes `clamp(freeReservoir − harvestReserve −
+> §8.2 free-farm utility read (`EulerEarn.maxWithdraw(warehouse)`); sizes `clamp(freeReservoir − harvestReserve −
 > safetyBuffer, 0, buybackCap)` @ `quoteMaxPrice` (= `navExit×(1−d)`); reconciles one bid (post / cancel+repost on
 > size-drift ≥ driftBps / cancel) via `WriteReport(POST_BID|CANCEL_BID)` to the socketed module; cron + a
 > `RedemptionSettled` LogTrigger. Gate green: `GOOS=wasip1 GOARCH=wasm go build` exit 0 + `go test` 14 pass
@@ -1192,7 +1221,7 @@ Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) 
 | CRE-00 | Project + secrets scaffold (`cre-templates` layout, `wasip1` build, DON-only `GetSecret`) + the shared §8.0 report-encoding package the workflows reuse | §8.11 / §8.0 — **DONE 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; note below) |
 | CRE-01 | Origination / draw / close / status → controller (rt 1/2/4/5,6); revaluation → registry (rt3, gas-bounded sharded); default/recovery → `DefaultCoordinator` (rt8 action family). **SEC-01 constraint: must not co-locate two same-lien `seedPrice` writes (origination+draw / draw+draw) in one block — the registry monotonic guard reverts the second. See open obligations.** | §8.1 / §8.4 |
 | CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call. *(2026-06-12: `settleEpoch` is now ON-DEMAND — the 30-day epoch gate was removed — so this can be event-driven off the queue's `RedemptionSettled` event rather than a fixed cron: settle → if backlog remains, sequence another REDEEM→REPAY. See `build/wires/9-ZipRedemptionQueue.md`.)* **Scope: `build/tickets/cre/CRE-02-redemption-settle.md`.** | §8.3 / §8.5 |
-| CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (one coherent producer). **DONE 2026-06-20** (`cre/sharefeeds/`, note below). The "xALPHA-APR feed" the row used to bundle is NOT here: the APR is on-chain-derived (§8.8), and the raw RATE push is the separate `cre/szalpha-rate` (8x-02, R-1-blocked) — NOT owed by CRE-03. | §8.6 / §8.8 |
+| CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipFarmUtilityLpOracle` (one coherent producer). **DONE 2026-06-20** (`cre/sharefeeds/`, note below). The "xALPHA-APR feed" the row used to bundle is NOT here: the APR is on-chain-derived (§8.8), and the raw RATE push is the separate `cre/szalpha-rate` (8x-02, R-1-blocked) — NOT owed by CRE-03. | §8.6 / §8.8 |
 | CRE-04 | Senior-warehouse **SUPPLY / APPROVE / REPAY** ops via the Roles adapter | §8.5 |
 | CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔juniorTrancheSidecar rotation; regime/split/cap policy). **SPLIT — exit half = CRE-05a (DONE); harvest + rotation remainder = KEEPER-01b (POLICY-BLOCKED) + KEEPER-01c (DEFERRED). CRE-05 is NOT complete; there is no CRE-05b/05c — the remainder lives under the KEEPER prefix.** *(2026-06-12 design inputs: (a) the DurationFreeze main↔juniorTrancheSidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth — the exit half SHIPPED as CRE-05a, `cre/buyburn-bid/`.)* **CLARIFICATION (2026-06-16): the freeze's physical lever (`commit`/`release`) is DORMANT by design.** `commit` is `onlyOperator` + discretionary (no auto-machinery), and the juniorTrancheSidecar is empty in normal operation because the dominant asset (the staked ICHI LP) can't be moved into it — it is counted toward the floor IN PLACE via the oracle's `pathLockedLpEquity()` (`coverageValue = committedValue + pathLockedLpEquity`). So CRE-05 should drive `commit` ONLY on a coverage shortfall (a price-drift breach where in-place LP + juniorTrancheSidecar < `requiredCommittedValue`), to top up with the movable plain legs (USDC/zipUSD preferred — stable backing). The live machinery is the **accounting + outflow gates** (`covered()` on `postBid`/`removeLiquidity`/`release`), not the physical rotation. | §8.7 |
 | CRE-06 | **DISCHARGED-as-config by CRE-05a (2026-06-16).** The exit-vs-harvest split is now the `harvestReserve` + `safetyBuffer` Config params in the buy-burn bid sizing (`clamp(freeReservoir − harvestReserve − safetyBuffer, 0, buybackCap)`) — M1 constants; a dynamic utilization-aware policy is a later parameter swap, not a redesign. No standalone workflow. (Cross-cutting coupling now recorded in the CRE-05a ticket + `build/wires/DurationFreezeModule.md`.) | §8.5 / §8.7 |
@@ -1214,8 +1243,8 @@ foundation → leaf. Addresses below are the anvil board (`contract-map.md`); AB
 | FE-03 | Position / NAV view: szipUSD + zipUSD balances + **$ value via `navExit`** (held = redemption price; `navEntry` for the entry hint only, caught; NOT `navPerShare` — absent); the lender portfolio screen | `SzipNavOracle` `0x0C3E…` + `SzipUSD` `0x33aD…` + zipUSD `0xC5bd…` | §7 / §12 — **DONE 2026-06-10** |
 | FE-04 | szipUSD junior exit via the **CoW book** (rest a sell order + the §6.4 status track); wire `ZcWithdrawModal` | `SzipBuyBurnModule` `0x1288…` (CoW wiring + treasury bid) + `SzipUSD` `0x33aD…` (`approve(vaultRelayer)`) + `SzipNavOracle` `0x0C3E…` | §6.2 / §6.4 — **DONE 2026-06-11** |
 | FE-05 | Borrower flow: line state + permissionless repay; wire `ZcDrawModal` / `ZcRepayModal` (CRE drives origination per §17 — UI reads line state + repays) | `EulerVenueAdapter` `0x87dC…` + `ZipcodeController` `0x3602…` | §4 / §15 — **DONE 2026-06-11** |
-| FE-06 | **Solvency dashboard** (§12 metrics — NAV, zipUSD supply + peg, szipUSD NAV/share + trailing APR, utilization / free liquidity, insurance coverage) via **direct on-chain view reads** (no subgraph for MVP); wire `ZcStatCard` grid / `ZcVaultAllocationTable` | `SzipNavOracle`, zipUSD, reservoir `IEVault` `0x1aFc…`, warehouse Safe `0xe028…` | §12 — **DONE 2026-06-11** |
-| FE-07 | **Euler-native vault dashboard**: surface the real reservoir EVK market + senior EE pool through euler-lite's OWN lend/borrow/earn pages (largely FE-00 config + the local labels file — this is the "show euler data / particular vaults" surface) | reservoir `IEVault` `0x1aFc…` + EE pool `EulerEarn` `0x1a7A…` | §4.7 — **DONE 2026-06-11** |
+| FE-06 | **Solvency dashboard** (§12 metrics — NAV, zipUSD supply + peg, szipUSD NAV/share + trailing APR, utilization / free liquidity, insurance coverage) via **direct on-chain view reads** (no subgraph for MVP); wire `ZcStatCard` grid / `ZcVaultAllocationTable` | `SzipNavOracle`, zipUSD, farm utility `IEVault` `0x1aFc…`, warehouse Safe `0xe028…` | §12 — **DONE 2026-06-11** |
+| FE-07 | **Euler-native vault dashboard**: surface the real farm utility EVK market + senior EE pool through euler-lite's OWN lend/borrow/earn pages (largely FE-00 config + the local labels file — this is the "show euler data / particular vaults" surface) | farm utility `IEVault` `0x1aFc…` + EE pool `EulerEarn` `0x1a7A…` | §4.7 — **DONE 2026-06-11** |
 
 INFLOW-06 (`build/tickets/frontend/INFLOW-06-deposit-module.md`) is the **FE-02 draft** — its "address config depends
 on item 10 / reads a placeholder" notes are now discharged (use the anvil board); its `abis/`/composable files live in
@@ -1295,9 +1324,9 @@ track on it.
   > `cre-sdk-go`'s evm client has reads + exactly ONE write — `WriteReport` (DON-signed
   → Keystone Forwarder → `IReceiver.onReport`); there is **no raw-tx / keeper primitive**. So a wasip1 CRE workflow
   can only drive contracts that are **report receivers**. Today that is: `WarehouseAdminModule`, `SzipNavOracle`,
-  `SzipReservoirLpOracle`, `DefaultCoordinator`, `ZipcodeController`, `ZipcodeOracleRegistry`, `SzAlphaRateOracle`
+  `SzipFarmUtilityLpOracle`, `DefaultCoordinator`, `ZipcodeController`, `ZipcodeOracleRegistry`, `SzAlphaRateOracle`
   — and now **`SzipBuyBurnModule`** (CTR-01). The following are gated `msg.sender == operator`/`controller` and
-  thus **cannot be driven by CRE as built**: `ReservoirLoopModule` (8-B5), `LpStrategyModule` (8-B6),
+  thus **cannot be driven by CRE as built**: `FarmUtilityLoopModule` (8-B5), `LpStrategyModule` (8-B6),
   `HarvestVoteModule` (8-B7), `ExerciseModule` (8-B8), `SellModule` (8-B9), `RecycleModule` (8-B10),
   `DurationFreezeModule`, `OffRampModule`, `ZipRedemptionQueue` (`settleEpoch`/`claim`), `ExitGate.burnFor`. **This
   blocks CRE-02 (`settleEpoch`/`requestRedeem`/`claim`) and the rest of CRE-05 (the engine loop).** Per-module
@@ -1357,8 +1386,8 @@ track on it.
   fee added.** The per-line borrow vaults run a flat `IRMLinearKink` (`script/LineIrm.sol`,
   `baseRate = 0.075·1e27 / SECONDS_PER_YEAR` per-second RAY, units VERIFIED against EVK `Cache` accrual; per-second
   compounding ⇒ effective APY ~7.788%), wired into the adapter `irm` slot (`setIrm`; every `openLine` installs it at
-  `EulerVenueAdapter.sol:323`). The **reservoir** borrow vault stays on `ZeroIRM` (internal POL, §4.5.1) — the adapter
-  `irm` slot and the reservoir IRM are independent. NO new `src/` contract for the rate (reuses EVK `IRMLinearKink` +
+  `EulerVenueAdapter.sol:323`). The **farm utility** borrow vault stays on `ZeroIRM` (internal POL, §4.5.1) — the adapter
+  `irm` slot and the farm utility IRM are independent. NO new `src/` contract for the rate (reuses EVK `IRMLinearKink` +
   the existing `setIrm`/`setInterestRateModel`). Fresh-deploy only (no live lines to roll off).
   **EE perf-fee `f` left DORMANT at 0** (recipient pre-wired to the warehouse Safe): the warehouse Safe is the SOLE
   senior EE-share custodian, so net line interest already accrues to it via share appreciation — a non-zero `f` would
@@ -1396,7 +1425,7 @@ track on it.
   szALPHA/zipUSD vAMM pool + the Ichi strategy (upstream of us; needs szALPHA bridged + live — see `docs/bridge.md`
   / `hydrex-demo-fork`). Until that pool exists, `SzipNavOracle.ichiVault` stays on the **WETH/USDC stand-in**
   (`0x07e72E46…`) and the LP code path is exercised only by the demo vAMM fork (`SzipNavOracleDemoVAMM`). The wiring
-  surfaces already exist (`setLpPosition`/`setReservoirLeg`, Timelock-settable), so when the pool is live it is a
+  surfaces already exist (`setLpPosition`/`setFarmUtilityLeg`, Timelock-settable), so when the pool is live it is a
   deploy/fork-wiring step (create+stake gauge → escrow vault → `setLpPosition` → CRE-03 `LP_MARK` feed), NOT a
   contract change. One verification owed at that point: confirm the LP-leg read (`_legPriceOfToken` spot
   `getTotalAmounts()`) is not flash-skewable for the real pool — if the TWAP bracket doesn't defend, that becomes a
@@ -1433,7 +1462,7 @@ track on it.
       **read-only**; the draw is CRE-originated (§17).
     - **Repay is NOT a Zipcode method — it is the native EVK `IEVault(lineRef).repay(amount, borrowAccount)`**, ungated
       (`openLine` hooks only `OP_BORROW | OP_LIQUIDATE`, **never** `OP_REPAY`, `EulerVenueAdapter.sol:220`). Approve is
-      a **direct** `usdc.approve(lineRef, amount)` to the line vault (NOT Permit2 — `ReservoirLoopModule.repay:251`).
+      a **direct** `usdc.approve(lineRef, amount)` to the line vault (NOT Permit2 — `FarmUtilityLoopModule.repay:251`).
       Any wallet may repay (credits `borrowAccount`, no controller-enablement/operator bit) — the §4.4e permissionless
       property. `full`→`type(uint256).max` (EVK clamps; a finite over-repay reverts `E_RepayTooMuch`).
     - **No back-pressure obligation owed** — every read (`getLine`/`observeDebt`/`getLien` + the `LienOriginated`/
@@ -1443,26 +1472,26 @@ track on it.
       not a positional tuple — the ticket wording was corrected.
     - **New FE seam:** `useZipTx.sendRawZipTx({to,abi,functionName,args})` writes to a **runtime/non-registry address**
       (per-line vaults) reusing the shared 1.3× buffer — the spine for any dynamically-discovered-contract write.
-- **FE-07 Finding A — DISCHARGED 2026-06-19 by CTR-06a.** `ReservoirMarketDeployer.deploy` now hands the borrow-vault
+- **FE-07 Finding A — DISCHARGED 2026-06-19 by CTR-06a.** `FarmUtilityMarketDeployer.deploy` now hands the borrow-vault
   governor to the Timelock (`IEVault(borrowVault).setGovernorAdmin(p.governor)`, step 6, alongside the router transfer);
   `test_deployer_governor_RETAINED` asserts `governorAdmin() == governor` (proven load-bearing: the assert fails without
   the fix, where the governor is the throwaway deployer instance). **Live-fork caveat retained:** this fixes all FUTURE
   deploys; the ALREADY-DEPLOYED anvil borrow vault keeps its stranded governor until a redeploy — FE-07's `entities.json`
   must still re-read `governorAdmin()` after any redeploy (that row already says so). Original finding kept below for
   context:
-  - The reservoir **borrow vault's `governorAdmin` is never transferred to the Timelock** — it stays
-  the throwaway `ReservoirMarketDeployer` instance (`0x77C2Cb207Ee27F8fB5Fc1586da3Bfef40Fba3ffa` on the current fork).
-  `ReservoirMarketDeployer.deploy` (`contracts/script/ReservoirMarketDeployer.sol`) transfers only the **router**
+  - The farm utility **borrow vault's `governorAdmin` is never transferred to the Timelock** — it stays
+  the throwaway `FarmUtilityMarketDeployer` instance (`0x77C2Cb207Ee27F8fB5Fc1586da3Bfef40Fba3ffa` on the current fork).
+  `FarmUtilityMarketDeployer.deploy` (`contracts/script/FarmUtilityMarketDeployer.sol`) transfers only the **router**
   governance (`EulerRouter(router).transferGovernance(p.governor)`, `:88`); the borrow vault is created via
   `factory.createProxy` (deployer = governor at birth, `:77`) and never gets `setGovernorAdmin(p.governor)`. The comment
   at `:75` ("Governor RETAINED so the Timelock can tune LTV/caps") is **wrong for the borrow vault** — the Timelock
   cannot govern it; the deployer can. **Fix owed:** add `IEVault(borrowVault).setGovernorAdmin(p.governor)` in
-  `ReservoirMarketDeployer.deploy` (alongside the router transfer) so the borrow vault is Timelock-governed (§17
+  `FarmUtilityMarketDeployer.deploy` (alongside the router transfer) so the borrow vault is Timelock-governed (§17
   Timelock-settable-not-frozen). Once fixed, the live `governorAdmin` becomes `0x89ae…` (already in FE-07's
   `entities.json`) and the deployer entry can be dropped. **FE interim (shipped):** FE-07 declares the live deployer
-  address so the reservoir market verifies in the UI today; `0x77C2Cb…` is nonce-derived, so re-read `governorAdmin()`
+  address so the farm utility market verifies in the UI today; `0x77C2Cb…` is nonce-derived, so re-read `governorAdmin()`
   and update `entities.json` after any redeploy that moves it. **TICKETED 2026-06-18 as CTR-06a**
-  (`build/tickets/contracts/CTR-06a-reservoir-governoradmin-fix.md`) — add `IEVault(borrowVault).setGovernorAdmin(p.governor)`
+  (`build/tickets/contracts/CTR-06a-farm utility-governoradmin-fix.md`) — add `IEVault(borrowVault).setGovernorAdmin(p.governor)`
   + a post-assert; mark this obligation DISCHARGED when CTR-06a lands.
 - **DEPLOY OBLIGATION (raised 2026-06-18, CTR-03) — wire the controller↔SiloRegistry pair before the first
   origination.** The `ZipcodeController` now resolves venue + slot-accounting through `SiloRegistry`. The deploy

@@ -21,7 +21,7 @@ func TestLoad_HappyPath(t *testing.T) {
 	t.Setenv("KEEPER_CONFIRM_TIMEOUT", "45s")
 	t.Setenv("KEEPER_GAS_BUFFER_BPS", "2500")
 	t.Setenv("KEEPER_FEE_CAP_MULTIPLIER", "3")
-	t.Setenv("KEEPER_ADDR_ReservoirLoopModule", "0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4")
+	t.Setenv("KEEPER_ADDR_FarmUtilityLoopModule", "0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4")
 	t.Setenv("KEEPER_ADDR_ExitGate", "0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e")
 
 	cfg, err := Load()
@@ -47,8 +47,8 @@ func TestLoad_HappyPath(t *testing.T) {
 		t.Errorf("FeeCapMultiplier = %d", cfg.FeeCapMultiplier)
 	}
 	want := common.HexToAddress("0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4")
-	if got, err := cfg.MustAddr("ReservoirLoopModule"); err != nil || got != want {
-		t.Errorf("MustAddr(ReservoirLoopModule) = %s, %v", got.Hex(), err)
+	if got, err := cfg.MustAddr("FarmUtilityLoopModule"); err != nil || got != want {
+		t.Errorf("MustAddr(FarmUtilityLoopModule) = %s, %v", got.Hex(), err)
 	}
 }
 

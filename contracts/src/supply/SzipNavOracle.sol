@@ -19,15 +19,15 @@ interface IXAlphaRateFresh {
     function lastUpdate() external view returns (uint48);
 }
 
-/// @notice The reservoir LP escrow collateral vault (8-B5) — only the two views the NAV needs to value the
+/// @notice The farm utility LP escrow collateral vault (8-B5) — only the two views the NAV needs to value the
 ///         LP posted as collateral (ERC4626 `convertToAssets`/`balanceOf`; the escrow is a bare 1:1 box).
-interface IReservoirEscrow {
+interface IFarmUtilityEscrow {
     function balanceOf(address account) external view returns (uint256);
     function convertToAssets(uint256 shares) external view returns (uint256);
 }
 
-/// @notice The reservoir USDC borrow vault (8-B5) — only the outstanding-debt read the NAV subtracts.
-interface IReservoirDebt {
+/// @notice The farm utility USDC borrow vault (8-B5) — only the outstanding-debt read the NAV subtracts.
+interface IFarmUtilityDebt {
     function debtOf(address account) external view returns (uint256);
 }
 
@@ -107,11 +107,11 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         cannot move the LP mark (the fair-LP defense-in-depth). Timelock-settable (§17);
     ///         only set once the LP is a live Algebra pool that exposes a TWAP plugin.
     uint32 public lpTwapWindow;
-    /// @notice The reservoir LP escrow collateral vault (8-B5). Zero ⇒ the escrow-collateralized LP leg contributes
+    /// @notice The farm utility LP escrow collateral vault (8-B5). Zero ⇒ the escrow-collateralized LP leg contributes
     ///         0 (M1 pre-loop). Closes the mid-loop blind spot: while the LP is posted as collateral it is neither
     ///         loose in the Safe nor gauge-staked, so without this it reads as gone. Timelock-settable (§17).
     address public escrowVault;
-    /// @notice The reservoir USDC borrow vault (8-B5). Zero ⇒ no debt subtraction (M1 pre-loop). The strike USDC the
+    /// @notice The farm utility USDC borrow vault (8-B5). Zero ⇒ no debt subtraction (M1 pre-loop). The strike USDC the
     ///         loop borrows is counted in the `usdc` leg, so its debt must be subtracted or NAV over-reads mid-loop.
     ///         Timelock-settable (§17).
     address public borrowVault;
@@ -174,7 +174,7 @@ contract SzipNavOracle is ReceiverTemplate {
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
     event LpPositionSet(address indexed ichiVault, address indexed gauge);
-    event ReservoirLegSet(address indexed escrowVault, address indexed borrowVault);
+    event FarmUtilityLegSet(address indexed escrowVault, address indexed borrowVault);
     event LpTwapWindowSet(uint32 window);
     event EngineSafeSet(address indexed juniorTrancheEngine);
     event DefaultCoordinatorSet(address indexed dc);
@@ -238,14 +238,14 @@ contract SzipNavOracle is ReceiverTemplate {
         emit LpPositionSet(ichiVault_, gauge_);
     }
 
-    /// @notice Wire/re-point the reservoir escrow + borrow vaults (8-B5), set together. `onlyOwner` (Timelock).
+    /// @notice Wire/re-point the farm utility escrow + borrow vaults (8-B5), set together. `onlyOwner` (Timelock).
     ///         Closes the mid-loop NAV blind spot: the escrow-collateralized LP is added and the strike debt
     ///         subtracted, so a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle is NAV-invariant.
-    function setReservoirLeg(address escrowVault_, address borrowVault_) external onlyOwner {
+    function setFarmUtilityLeg(address escrowVault_, address borrowVault_) external onlyOwner {
         if (escrowVault_ == address(0) || borrowVault_ == address(0)) revert ZeroAddress();
         escrowVault = escrowVault_;
         borrowVault = borrowVault_;
-        emit ReservoirLegSet(escrowVault_, borrowVault_);
+        emit FarmUtilityLegSet(escrowVault_, borrowVault_);
     }
 
     /// @notice Wire/re-point the LP TWAP window (the fair-LP reconstruction window). Zero ⇒ the
@@ -360,7 +360,7 @@ contract SzipNavOracle is ReceiverTemplate {
 
     // --------------------------------------------------------------------- NAV composition
     /// @notice The gross junior basket value (18-dp USD, `1e18 = $1`), summed across main + juniorTrancheSidecar; IL marked-through.
-    ///         The LP is counted in ALL states (loose share + gauge-staked + escrow-collateralized) and the reservoir
+    ///         The LP is counted in ALL states (loose share + gauge-staked + escrow-collateralized) and the farm utility
     ///         strike debt is subtracted, so a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle is
     ///         NAV-invariant (closes the §8.2 mid-loop blind spot). Saturates at 0 (debt can never exceed the basket
     ///         in solvent operation; the floor guards the insolvent edge).
@@ -377,7 +377,7 @@ contract SzipNavOracle is ReceiverTemplate {
         value += _bal(hydx) * legCache[LEG_HYDX_USD].price / 1e18;
         value += _bal(oHydx) * _oHydxUSD() / 1e18;
         value += _lpValue(_lpShares(juniorTrancheSafe) + _lpShares(juniorTrancheSidecar));
-        uint256 debt = _reservoirDebt(juniorTrancheSafe) + _reservoirDebt(juniorTrancheSidecar);
+        uint256 debt = _farmUtilityDebt(juniorTrancheSafe) + _farmUtilityDebt(juniorTrancheSidecar);
         value = value > debt ? value - debt : 0;
     }
 
@@ -396,7 +396,7 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @dev Value ONE Safe's holdings (18-dp USD), mirroring `grossBasketValue` per-leg + LP marks (incl. the escrow
-    ///      leg) minus that Safe's reservoir debt. Used by `committedValue`/`freeValue`. Saturates at 0.
+    ///      leg) minus that Safe's farm utility debt. Used by `committedValue`/`freeValue`. Saturates at 0.
     function _grossValueOf(address safe) internal view returns (uint256 value) {
         value += IERC20(zipUSD).balanceOf(safe); // 18-dp $1
         value += IERC20(usdc).balanceOf(safe) * 1e12; // 6-dp -> 18-dp $1
@@ -404,12 +404,12 @@ contract SzipNavOracle is ReceiverTemplate {
         value += IERC20(hydx).balanceOf(safe) * legCache[LEG_HYDX_USD].price / 1e18;
         value += IERC20(oHydx).balanceOf(safe) * _oHydxUSD() / 1e18;
         value += _lpValue(_lpShares(safe));
-        uint256 debt = _reservoirDebt(safe);
+        uint256 debt = _farmUtilityDebt(safe);
         value = value > debt ? value - debt : 0;
     }
 
     /// @notice The path-locked LP equity (18-dp USD): the MAIN-Safe ICHI LP in every state (loose + gauge-staked +
-    ///         escrow-collateralized), NET of the main Safe's reservoir strike debt. MAIN-SAFE ONLY — the SIDECAR's
+    ///         escrow-collateralized), NET of the main Safe's farm utility strike debt. MAIN-SAFE ONLY — the SIDECAR's
     ///         LP + debt are already owned by `committedValue()` (`_grossValueOf(juniorTrancheSidecar)`), so summing this into
     ///         `coverageValue()` counts every Safe's LP exactly once (double-count fix).
     ///         The freeze module adds this to `committedValue()` for its coverage floor because the LP is fenced — its
@@ -417,7 +417,7 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         below the floor.
     function pathLockedLpEquity() public view returns (uint256) {
         uint256 lpValue = _lpValue(_lpShares(juniorTrancheSafe));
-        uint256 debt = _reservoirDebt(juniorTrancheSafe);
+        uint256 debt = _farmUtilityDebt(juniorTrancheSafe);
         return lpValue > debt ? lpValue - debt : 0;
     }
 
@@ -427,7 +427,7 @@ contract SzipNavOracle is ReceiverTemplate {
         if (ichiVault == address(0)) return 0;
         s = IICHIVault(ichiVault).balanceOf(safe) + IGauge(gauge).balanceOf(safe);
         if (escrowVault != address(0)) {
-            s += IReservoirEscrow(escrowVault).convertToAssets(IReservoirEscrow(escrowVault).balanceOf(safe));
+            s += IFarmUtilityEscrow(escrowVault).convertToAssets(IFarmUtilityEscrow(escrowVault).balanceOf(safe));
         }
     }
 
@@ -459,10 +459,10 @@ contract SzipNavOracle is ReceiverTemplate {
         return _tokenValue(IICHIVault(ichiVault).token0(), amt0) + _tokenValue(IICHIVault(ichiVault).token1(), amt1);
     }
 
-    /// @dev Reservoir strike debt of `safe` in 18-dp USD (USDC 6-dp -> 18-dp). Zero if `borrowVault` unwired.
-    function _reservoirDebt(address safe) internal view returns (uint256) {
+    /// @dev Farm utility strike debt of `safe` in 18-dp USD (USDC 6-dp -> 18-dp). Zero if `borrowVault` unwired.
+    function _farmUtilityDebt(address safe) internal view returns (uint256) {
         if (borrowVault == address(0)) return 0;
-        return IReservoirDebt(borrowVault).debtOf(safe) * 1e12;
+        return IFarmUtilityDebt(borrowVault).debtOf(safe) * 1e12;
     }
 
     /// @notice The live (spot) szipUSD NAV-per-share, 18-dp. Returns `GENESIS_NAV` at zero effective supply.

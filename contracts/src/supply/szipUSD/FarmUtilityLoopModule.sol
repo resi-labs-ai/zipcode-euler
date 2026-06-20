@@ -9,7 +9,7 @@ import {IERC4626 as IEVKERC4626} from "evk/EVault/IEVault.sol";
 import {IEVC} from "evc/interfaces/IEthereumVaultConnector.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @title ReservoirLoopModule
+/// @title FarmUtilityLoopModule
 /// @notice The on-chain seam of the 8-B5 strike-financing loop (§4.5.1): the second engine Zodiac Module (after the
 ///         8-B14 buy-and-burn), CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target ==
 ///         juniorTrancheEngine`). It drives the **Safe's own EVC account** (borrower-of-record = the Safe, NOT a fresh
@@ -30,7 +30,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///      so `immutable` is identical for every clone — it CANNOT carry per-clone `setUp` config. EVERY per-clone wired
 ///      address/param is plain set-once storage written in `setUp` under `initializer`, NOT `immutable`. The
 ///      mastercopy is init-locked in its constructor (see {MastercopyInitLock}).
-contract ReservoirLoopModule is MastercopyInitLock {
+contract FarmUtilityLoopModule is MastercopyInitLock {
     /// @notice The EVK `OP_BORROW` op bit (`1 << 6`) — reference only (the guard is installed by the deployer).
     uint32 internal constant OP_BORROW = 1 << 6;
 
@@ -41,7 +41,7 @@ contract ReservoirLoopModule is MastercopyInitLock {
     address public operator;
     /// @notice The Ethereum Vault Connector.
     address public evc;
-    /// @notice The reservoir USDC borrow vault (the warehouse resting USDC vault; created by the deployer).
+    /// @notice The farm utility USDC borrow vault (the warehouse resting USDC vault; created by the deployer).
     address public borrowVault;
     /// @notice The LP escrow collateral vault (the bare 1:1 holding box; created by the deployer).
     address public escrowVault;
@@ -285,7 +285,7 @@ contract ReservoirLoopModule is MastercopyInitLock {
     }
 
     // --------------------------------------------------------------------- views (8-B11/8-B12 back-pressure)
-    /// @notice The live outstanding reservoir debt (read from the vault, NOT a cached field).
+    /// @notice The live outstanding farm utility debt (read from the vault, NOT a cached field).
     function outstandingDebt() external view returns (uint256) {
         return IBorrowing(borrowVault).debtOf(juniorTrancheEngine);
     }

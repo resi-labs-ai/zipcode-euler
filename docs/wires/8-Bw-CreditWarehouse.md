@@ -166,8 +166,8 @@ blindly (a front-run with different init params resolves to a different address;
   infinite); verify at item-10 whether the live EulerEarn is upgradeable / curator-controlled.
 - **Non-commingling asserts (row 364f, §11):** assert `redemptionBox != juniorBaalSafe` **and** `safe !=
   juniorBaalSafe` at deploy.
-- **EE supply-queue allocation (row 333):** point EulerEarn's supply queue at the 8-B5 **reservoir borrow vault**
-  (`ReservoirMarketDeployer.deploy`'s vault, the "resting vault") so idle depositor USDC IS the warehouse
+- **EE supply-queue allocation (row 333):** point EulerEarn's supply queue at the 8-B5 **farm utility borrow vault**
+  (`FarmUtilityMarketDeployer.deploy`'s vault, the "resting vault") so idle depositor USDC IS the warehouse
   `USDC Resting Vault`. This is an EulerEarn **curator/allocator** step, NOT a `WarehouseAdminModule` op — the
   adapter's op-set never configures the allocator. Keep the module's `borrowVault`/governor at the Timelock.
 - **CRE §8 reconcile (row 370/CRE-04):** author the warehouse envelope (opType 1/2/3/4, payloads per §8.5) into

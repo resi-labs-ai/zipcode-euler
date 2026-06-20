@@ -4,7 +4,7 @@ The full Zipcode protocol, deployed + wired on a **local anvil forking Base main
 (`script/DeployLocal.s.sol`, real-EE deploy 2026-06-10). This is the address book every smoke-path spec binds to.
 
 > **Real contracts, not mocks.** The senior pool is a REAL EulerEarn pool created off the live factory + curator-
-> configured; the base USDC market is a REAL EVK vault; the reservoir market is real EVK; Safe/Baal/Zodiac/CoW/ICHI/
+> configured; the base USDC market is a REAL EVK vault; the farm utility market is real EVK; Safe/Baal/Zodiac/CoW/ICHI/
 > Hydrex/Algebra/oHYDX/USDC are the live Base bytecode on the fork. Only the IRM (a real 0%-rate contract) and xALPHA
 > (an inherent cross-chain stand-in) are local. See "Simulation boundaries" at the bottom.
 
@@ -47,7 +47,7 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 | ExitGate | `0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e` |
 | SzipNavOracle | `0x0C3E77314D97e8e001e0F626A559992479A3C79e` |
 | ZipRedemptionQueue | `0x46c89c1a4e86b7F025871c35F08aA7DA95F79D8f` |
-| SzipReservoirLpOracle | `0x4505dbe66837804e2bFe068A365B68cA707d0D42` |
+| SzipFarmUtilityLpOracle | `0x4505dbe66837804e2bFe068A365B68cA707d0D42` |
 
 ## Baal substrate (junior vault)
 | Piece | Address |
@@ -69,9 +69,9 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 |---|---|---|
 | EulerEarn pool (USDC) | `0x1a7A8A5a6A2B34895201CFBC997C4eC419ba8A3d` | owner=team, **curator=adapter**, timelock 0, fee 0, feeRecipient=warehouse Safe |
 | base USDC market (resting; supply-queue head) | `0x3A48aaaa90CF3938290f12F6A1E58C1aeb54699D` | onboarded cap=uint136.max, enabled, supplyQueue[0] |
-| reservoir borrow vault also onboarded | (see below) | cap=uint136.max, enabled (for SP-15 reallocate→utilization) |
+| farm utility borrow vault also onboarded | (see below) | cap=uint136.max, enabled (for SP-15 reallocate→utilization) |
 
-## Reservoir market (EVK, 8-B5)
+## Farm utility market (EVK, 8-B5)
 | Piece | Address |
 |---|---|
 | borrow vault (USDC) | `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267` |
@@ -82,7 +82,7 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 | Module | Address | Enabled on |
 |---|---|---|
 | SzipBuyBurnModule | `0x12881a80c4f4eee7430d1c1c53bbbcfc4c92f71b` | main Safe |
-| ReservoirLoopModule | `0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4` | main Safe |
+| FarmUtilityLoopModule | `0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4` | main Safe |
 | LpStrategyModule | `0xc242eaeb8e0647ef49a97ed827059786446f3c5c` | main Safe |
 | HarvestVoteModule | `0x38d549cdaf088f68f549d85c0ba390005ff087ec` | main Safe |
 | ExerciseModule | `0x8a80b821f6fe43b94e84a1ed245276964e52c9d1` | main Safe |

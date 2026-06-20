@@ -10,10 +10,10 @@ import {TickMath} from "../src/libraries/ConcentratedLiquidity.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {EulerRouter} from "euler-price-oracle/EulerRouter.sol";
 import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {ReservoirMarketDeployer} from "../script/ReservoirMarketDeployer.sol";
+import {FarmUtilityMarketDeployer} from "../script/FarmUtilityMarketDeployer.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 
-/// @notice A zero-rate IRM (EVK `IIRM` face) for the reservoir-market deploy-path test.
+/// @notice A zero-rate IRM (EVK `IIRM` face) for the farm utility-market deploy-path test.
 contract ZeroIRM {
     function computeInterestRate(address, uint256, uint256) external pure returns (uint256) {
         return 0;
@@ -112,8 +112,8 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
 
     // ----------------------------------------------------------------- 4. plugs into Euler as collateral
     /// @notice The LP token resolves as EVK collateral through a real `EulerRouter` configured with this oracle —
-    ///         the trustless drop-in for `SzipReservoirLpOracle` on the reservoir borrow market. Proves the
-    ///         router→lpToken→oracle resolution the `ReservoirMarketDeployer` wire-check depends on.
+    ///         the trustless drop-in for `SzipFarmUtilityLpOracle` on the farm utility borrow market. Proves the
+    ///         router→lpToken→oracle resolution the `FarmUtilityMarketDeployer` wire-check depends on.
     function test_fork_resolves_through_euler_router() public {
         EulerRouter router = new EulerRouter(BaseAddresses.EVC, address(this)); // this = governor
         router.govSetConfig(VAULT, USDC, address(oracle)); // price (lpToken, USDC) via the fair oracle
@@ -126,14 +126,14 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
     }
 
     // ----------------------------------------------------------------- 5. the deploy P5 fair-oracle path
-    /// @notice Build the actual reservoir market (the same `ReservoirMarketDeployer` `DeployZipcode._phaseP5` runs)
+    /// @notice Build the actual farm utility market (the same `FarmUtilityMarketDeployer` `DeployZipcode._phaseP5` runs)
     ///         with the fair oracle as the collateral oracle. Proves the `lpTwapWindow != 0` deploy branch: the
     ///         market wires + resolves with NO CRE seed (the fair oracle prices live), unlike the CRE-push oracle
     ///         that reverts until a mark is pushed. The deployer's internal W3 wire-check (`_assertWired`) is the
     ///         in-deploy proof; here we additionally resolve through the returned router.
-    function test_fork_reservoir_market_builds_with_fair_oracle() public {
-        (address escrowVault, address borrowVault, address router) = new ReservoirMarketDeployer().deploy(
-            ReservoirMarketDeployer.Params({
+    function test_fork_farmUtility_market_builds_with_fair_oracle() public {
+        (address escrowVault, address borrowVault, address router) = new FarmUtilityMarketDeployer().deploy(
+            FarmUtilityMarketDeployer.Params({
                 factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
                 evc: BaseAddresses.EVC,
                 governor: address(this),

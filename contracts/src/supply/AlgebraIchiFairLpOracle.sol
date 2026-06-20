@@ -16,7 +16,7 @@ import {TickMath, FullMath} from "../libraries/ConcentratedLiquidity.sol";
 ///           2. valuing the volatile leg (token0) in token1 at that same TWAP tick;
 ///           3. pro-rating the resulting TVL by the caller's LP-share fraction (rounded DOWN, against the borrower).
 ///
-///         This is the trustless on-chain alternative to `SzipReservoirLpOracle`'s CRE-pushed mark: same EVK
+///         This is the trustless on-chain alternative to `SzipFarmUtilityLpOracle`'s CRE-pushed mark: same EVK
 ///         `_getQuote(lpShares) -> USDC` face, but no off-chain push and no liveness dependency — the price is a
 ///         pure function of pool/vault state + the Algebra TWAP. Fail-closed: reverts (`NoPlugin` / a plugin TWAP
 ///         revert / zero supply) so a missing manipulation-resistant price FAILS THE BORROW rather than opening an

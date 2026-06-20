@@ -52,7 +52,7 @@ CRE push (impersonate Forwarder) · xALPHA (stand-in ERC20) · CoW fill (simulat
 | 01 | zipUSD utility-dollar lifecycle | pure on-chain | does zipUSD mint/transfer/park; who can mint/burn |
 | 02 | NAV oracle genesis + read surface | pure on-chain | what's a share worth at genesis; FREE+COMMITTED additivity |
 | 03 | DurationFreeze commit (rq→non-rq move) | pure on-chain | can a zodiac module move value to the non-rq Safe |
-| 04 | Reservoir borrow/repay (real EVK) | pure on-chain | lines of credit + utilization on a real borrow vault |
+| 04 | Farm utility borrow/repay (real EVK) | pure on-chain | lines of credit + utilization on a real borrow vault |
 | 05 | Buy-burn bid post/cancel | needs-forwarder | the CoW limit order set + price bound |
 | 06 | Junior zap → share issuance | needs-forwarder | shares per zipUSD; Loot→gate, szipUSD→depositor |
 | 07 | szipUSD secondary transfer + NAV asymmetry | needs-forwarder | sell shares; entry pauses on stale, exit doesn't |

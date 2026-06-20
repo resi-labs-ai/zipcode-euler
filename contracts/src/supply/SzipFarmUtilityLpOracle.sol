@@ -5,10 +5,10 @@ import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplat
 import {BaseAdapter, Errors, IPriceOracle} from "euler-price-oracle/adapter/BaseAdapter.sol";
 import {ScaleUtils, Scale} from "euler-price-oracle/lib/ScaleUtils.sol";
 
-/// @title SzipReservoirLpOracle
-/// @notice The CRE-fed push-cache LP-collateral price oracle for the 8-B5 reservoir loop (§4.5.1). A single-key
+/// @title SzipFarmUtilityLpOracle
+/// @notice The CRE-fed push-cache LP-collateral price oracle for the 8-B5 farm utility loop (§4.5.1). A single-key
 ///         adapter (the ICHI LP share, quote = USDC) modeled directly on `ZipcodeOracleRegistry`: it is the EVK
-///         read-adapter (`BaseAdapter`/`IPriceOracle` face) the reservoir's `EulerRouter` resolves the LP collateral
+///         read-adapter (`BaseAdapter`/`IPriceOracle` face) the farm utility's `EulerRouter` resolves the LP collateral
 ///         through, AND the CRE receiver (`ReceiverTemplate`) the Forwarder pushes the per-LP-share USD mark to. The
 ///         mark is computed off-chain by CRE as `(reserve_xALPHA × priceXAlpha + reserve_zipUSD × priceZipUSD) /
 ///         ICHI_LP_totalSupply` (the same reserve-value LP math `SzipNavOracle` runs for the basket's staked-LP leg)
@@ -18,11 +18,11 @@ import {ScaleUtils, Scale} from "euler-price-oracle/lib/ScaleUtils.sol";
 ///         only writer is the Forwarder push). The inherited OZ-5 Ownable is transferred to the §17 Timelock at deploy
 ///         (`transferOwnership(tl)` in the deploy script) — NOT renounced: the three build-phase re-point setters
 ///         (`setQuote`/`setLpToken`/`setValidityWindow`) stay live behind the Timelock until they are frozen pre-prod.
-contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
+contract SzipFarmUtilityLpOracle is ReceiverTemplate, BaseAdapter {
     /// @notice The ICHI LP share decimals (18-dp). The base must be exactly this key.
     uint8 public constant LP_DECIMALS = 18;
     /// @notice The oracle name (satisfies `IPriceOracle.name()`).
-    string public constant name = "SzipReservoirLpOracle";
+    string public constant name = "SzipFarmUtilityLpOracle";
     /// @notice The dedicated engine-oracle `reportType` (§8 placeholder, distinct from the registry's `REVALUATION=3`;
     ///         CRE-§8 ratifies it later — see the 8-B5 cross-ticket obligation).
     uint8 public constant LP_MARK = 7;
@@ -116,7 +116,7 @@ contract SzipReservoirLpOracle is ReceiverTemplate, BaseAdapter {
         if (mark == 0) revert Errors.PriceOracle_InvalidAnswer();
         if (mark > type(uint208).max) revert Errors.PriceOracle_Overflow();
         if (ts > block.timestamp) revert FutureTimestamp();
-        if (ts <= cache.timestamp) revert StaleReport(); // strictly-newer (first write: timestamp==0 passes); blocks a stale higher mark over-crediting reservoir collateral
+        if (ts <= cache.timestamp) revert StaleReport(); // strictly-newer (first write: timestamp==0 passes); blocks a stale higher mark over-crediting farm utility collateral
         cache = Cache({price: uint208(mark), timestamp: ts});
     }
 

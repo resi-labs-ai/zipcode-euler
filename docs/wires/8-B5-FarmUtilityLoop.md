@@ -1,10 +1,10 @@
-# 8-B5 — ReservoirLoop cluster (wiring map)
+# 8-B5 — FarmUtilityLoop cluster (wiring map)
 
-> Source of truth = the kept code: `contracts/src/supply/szipUSD/ReservoirLoopModule.sol`,
-> `contracts/src/supply/SzipReservoirLpOracle.sol`, `contracts/src/supply/szipUSD/ReservoirBorrowGuard.sol`,
-> `contracts/script/ReservoirMarketDeployer.sol`. Ticket `tickets/sodo/8-B5-reservoir-loop.md` + report
+> Source of truth = the kept code: `contracts/src/supply/szipUSD/FarmUtilityLoopModule.sol`,
+> `contracts/src/supply/SzipFarmUtilityLpOracle.sol`, `contracts/src/supply/szipUSD/FarmUtilityBorrowGuard.sol`,
+> `contracts/script/FarmUtilityMarketDeployer.sol`. Ticket `tickets/sodo/8-B5-farm utility-loop.md` + report
 > `reports/8-B5-report.md` + `claude-zipcode.md §4.5.1` are intent — **code wins where they differ**. This doc
-> reads the code as the final form. (Test `contracts/test/ReservoirLoopModule.t.sol`.)
+> reads the code as the final form. (Test `contracts/test/FarmUtilityLoopModule.t.sol`.)
 
 ## Role
 8-B5 is the **strike-financing borrow loop** of the auto-compounder engine (§4.5.1). oHYDX is an option — redeeming
@@ -19,14 +19,14 @@ vault level (the guard) — no third-party ICHI-LP holder may lever depositor fu
 ## Contracts involved (what each does)
 | Contract | What it is |
 |---|---|
-| `ReservoirLoopModule` (`is Module`) | The **2nd engine Zodiac Module** (after 8-B14 buy-and-burn), enabled on the engine Safe (`avatar == target == juniorTrancheEngine`), CRE-`onlyOperator`. Four loop entrypoints `postCollateral`/`borrow`/`repay`/`withdrawCollateral`, each a sequence of `exec(Call, value 0)` with every `receiver`/`owner`/`onBehalfOfAccount` hard-pinned to `juniorTrancheEngine`. No generic call/exec passthrough, no delegatecall. Operator supplies ONLY scalars; the module builds all calldata to set-once-wired targets. |
-| `SzipReservoirLpOracle` (`is ReceiverTemplate, BaseAdapter`) | CRE-fed **push-cache** LP-collateral oracle. Single fixed key (`lpToken`, quote USDC); the EVK read-adapter the reservoir router resolves the LP collateral through (`IPriceOracle`/`BaseAdapter` face) AND the CRE receiver the Forwarder pushes the per-LP-share USD mark to (`reportType LP_MARK = 7`). Stale/missing mark **fails the borrow closed**. |
-| `ReservoirBorrowGuard` (`is IHookTarget`) | EVK hook target installed on the USDC borrow vault at `OP_BORROW` (security F8a). Pins the borrow to the engine Safe: the EVK-appended on-behalf account must `== juniorTrancheEngine`, else revert `NotEngineSafe`. Account-identity gate (NOT operator-authorization). |
-| `ReservoirMarketDeployer` (script) | One-time stand-up of the per-strategy borrow market: the LP escrow collateral vault, a dedicated `EulerRouter` wired `escrow → lpToken → lpOracle`, the borrow guard, and the USDC borrow vault (oracle = that router). Governor **RETAINED** at the Timelock on both router and borrow vault. Returns `(escrowVault, borrowVault, router)`. |
+| `FarmUtilityLoopModule` (`is Module`) | The **2nd engine Zodiac Module** (after 8-B14 buy-and-burn), enabled on the engine Safe (`avatar == target == juniorTrancheEngine`), CRE-`onlyOperator`. Four loop entrypoints `postCollateral`/`borrow`/`repay`/`withdrawCollateral`, each a sequence of `exec(Call, value 0)` with every `receiver`/`owner`/`onBehalfOfAccount` hard-pinned to `juniorTrancheEngine`. No generic call/exec passthrough, no delegatecall. Operator supplies ONLY scalars; the module builds all calldata to set-once-wired targets. |
+| `SzipFarmUtilityLpOracle` (`is ReceiverTemplate, BaseAdapter`) | CRE-fed **push-cache** LP-collateral oracle. Single fixed key (`lpToken`, quote USDC); the EVK read-adapter the farm utility router resolves the LP collateral through (`IPriceOracle`/`BaseAdapter` face) AND the CRE receiver the Forwarder pushes the per-LP-share USD mark to (`reportType LP_MARK = 7`). Stale/missing mark **fails the borrow closed**. |
+| `FarmUtilityBorrowGuard` (`is IHookTarget`) | EVK hook target installed on the USDC borrow vault at `OP_BORROW` (security F8a). Pins the borrow to the engine Safe: the EVK-appended on-behalf account must `== juniorTrancheEngine`, else revert `NotEngineSafe`. Account-identity gate (NOT operator-authorization). |
+| `FarmUtilityMarketDeployer` (script) | One-time stand-up of the per-strategy borrow market: the LP escrow collateral vault, a dedicated `EulerRouter` wired `escrow → lpToken → lpOracle`, the borrow guard, and the USDC borrow vault (oracle = that router). Governor **RETAINED** at the Timelock on both router and borrow vault. Returns `(escrowVault, borrowVault, router)`. |
 
 ## Wiring — internal
 
-### ReservoirLoopModule — ctor / setUp
+### FarmUtilityLoopModule — ctor / setUp
 - **Clone fact (§18.6).** A `ModuleProxyFactory` clone shares the mastercopy runtime bytecode, so `immutable`
   cannot carry per-clone config. EVERY wired address/param is plain **set-once storage written in `setUp` under
   the zodiac-core `initializer`**, NOT `immutable`. `setUp` decodes
@@ -37,7 +37,7 @@ vault level (the guard) — no third-party ICHI-LP holder may lever depositor fu
   `setBorrowCap` + all the §17 re-point setters. The inherited zodiac-core `setAvatar`/`setTarget` are
   `onlyOwner` — the operator **cannot** redirect them; only a deliberate timelocked governance act can.
 
-### ReservoirLoopModule — the four onlyOperator entrypoints (the EVC-account-driving loop)
+### FarmUtilityLoopModule — the four onlyOperator entrypoints (the EVC-account-driving loop)
 Every step runs through the private `_exec(to, data)` → `execAndReturnData(to, 0, data, Operation.Call)` and
 **hard-reverts on `ok == false`** (see Gotchas — the Safe swallows inner reverts). The borrow/repay/withdraw run
 the EVK call on behalf of the Safe via `IEVC.call(target, juniorTrancheEngine, 0, …)` — the Safe is the EVC msg.sender and
@@ -70,7 +70,7 @@ bit**.
   field.
 - **Governed param:** `setBorrowCap(uint256)` is `onlyOwner` (the Timelock), NOT operator-settable (security F1).
 
-### ReservoirLoopModule — §17 Timelock-settable wiring
+### FarmUtilityLoopModule — §17 Timelock-settable wiring
 `setJuniorTrancheEngine` / `setOperator` / `setEvc` / `setBorrowVault` / `setEscrowVault` / `setLpToken` / `setUsdc` are
 all `onlyOwner`, each with a zero-address guard, each emitting `WiringSet(slot, value)`. `setOperator` additionally
 re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse the Timelock owner and the
@@ -78,7 +78,7 @@ CRE operator into one key — preserving the init-time (`setUp`) role separation
 `avatar`/`target` in **lockstep** with `juniorTrancheEngine` so the borrower-of-record + every receiver/owner invariant
 holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key cannot call any of these.
 
-### SzipReservoirLpOracle — ctor / push / read
+### SzipFarmUtilityLpOracle — ctor / push / read
 - **Ctor** `(forwarder, quote_, validityWindow_, lpToken_)` → `ReceiverTemplate(forwarder)` (reverts on zero
   forwarder — the only writer). Sets `quote = USDC`, `lpToken` (the single 18-dp key), `validityWindow` (the
   generous engine-cadence read-staleness window), and derives `scale = ScaleUtils.calcScale(LP_DECIMALS=18,
@@ -88,7 +88,7 @@ holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key c
   `InvalidReportType`), decodes `(uint256 mark, uint32 ts)`, and `_writePrice(mark, ts)` →
   fail-closed write guards `mark != 0` (`PriceOracle_InvalidAnswer`), `mark <= uint208.max`
   (`PriceOracle_Overflow`), `ts <= block.timestamp` (`FutureTimestamp`), **`ts <= cache.timestamp` (`StaleReport`) —
-  strictly-newer monotonic guard (SEC-01); blocks a stale-but-still-fresh higher mark over-crediting reservoir
+  strictly-newer monotonic guard (SEC-01); blocks a stale-but-still-fresh higher mark over-crediting farm utility
   collateral, first write `timestamp==0` passes**; caches `Cache{uint208 price, uint48
   timestamp}`. There is **no controller-seed path** — the Forwarder push is the only writer (the difference from
   the lien `ZipcodeOracleRegistry`).
@@ -101,7 +101,7 @@ holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key c
 - **§17 wiring:** `setQuote` (re-derives `scale`), `setLpToken`, `setValidityWindow` — all `onlyOwner` (the OZ-5
   `Ownable` owner = the Timelock). Re-pointing is the router governor's job, not an oracle-local owner.
 
-### ReservoirBorrowGuard — the borrow pin
+### FarmUtilityBorrowGuard — the borrow pin
 - **Ctor** `(eVaultFactory_, juniorTrancheEngine_)` — sets `eVaultFactory` (the EVK GenericFactory), `juniorTrancheEngine` (the
   sole legal borrower), and `owner = msg.sender` (the deployer, then `transferOwnership(timelock)`). It is **NOT
   OZ `Ownable`** — the inherited `Context._msgSender()` would collide with the hook's EVK trailing-data
@@ -116,7 +116,7 @@ holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key c
   verbatim (evk-periphery is not remapped, so the logic is inlined).
 - **§17 wiring:** `setEVaultFactory`, `setJuniorTrancheEngine`, `transferOwnership` — all `onlyOwner` (raw `msg.sender`).
 
-### ReservoirMarketDeployer — `deploy(Params)`
+### FarmUtilityMarketDeployer — `deploy(Params)`
 Modeled on WOOF-04 `openLine` steps 1–3 with **two deliberate differences**: (1) the governor is **RETAINED**
 (not renounced to `address(0)` like WOOF-04 per-line routers — LTV/caps/oracle stay tunable under the §17
 2-day veto as LP economics shift); (2) the deployer **creates the borrow vault** (oracle = the router),
@@ -129,7 +129,7 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
    `govSetConfig(lpToken, usdc, lpOracle)` (price `(lpToken, USDC)` via the LP oracle).
 3. **Borrow guard + borrow vault** — `createProxy(address(0), false, abi.encodePacked(usdc, router, usdc))`
    (oracle = the router, unit-of-account = USDC → 1:1); `setInterestRateModel(irm)`; `setHookConfig(new
-   ReservoirBorrowGuard(factory, juniorTrancheEngine), OP_BORROW)` (**never hook `OP_REPAY`**); `setLTV(escrowVault,
+   FarmUtilityBorrowGuard(factory, juniorTrancheEngine), OP_BORROW)` (**never hook `OP_REPAY`**); `setLTV(escrowVault,
    borrowLTV, liqLTV, 0)` (1e4 scale, ramp 0 — accepts the escrow as collateral).
 4. **Birth-time wire-check (W3)** `_assertWired` — `resolveOracle(1e18, escrowVault, usdc)` must resolve
    `rBase == lpToken && rOracle == lpOracle`, else `WireMismatch`.
@@ -147,11 +147,11 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
   the short loop window). The module's `borrowVault` slot points at this same vault.
 - **`lpToken` = the SHARED ICHI vault address (the load-bearing identity invariant).** The single production POL
   ICHI vault share token MUST be the SAME address wired into ALL of: the 8-B5 escrow collateral-vault `asset()`
-  (`ReservoirMarketDeployer.lpToken`), the module's `lpToken`, the `SzipReservoirLpOracle` `LP_MARK` key, the
+  (`FarmUtilityMarketDeployer.lpToken`), the module's `lpToken`, the `SzipFarmUtilityLpOracle` `LP_MARK` key, the
   8-B6 `LpStrategyModule.ichiVault` (`setUp`), and the `SzipNavOracle` basket-LP leg (PROGRESS row 338). 8-B6
   unstakes that LP to the Safe (loop step 1) and 8-B5 `postCollateral` deposits the SAME token into the escrow —
   wire two different LP addresses and the harvest loop silently fractures (the unstaked LP cannot be posted).
-- **Reservoir governor retained at the Timelock.** Router + borrow vault governor = the §17 `TimelockController`
+- **Farm utility governor retained at the Timelock.** Router + borrow vault governor = the §17 `TimelockController`
   (`transferGovernance(governor)`), so LTV/caps/oracle stay tunable under the 2-day veto — distinct from the
   frozen per-line lien routers (§4.7).
 - **CRE operator.** The module's `operator` is the single immutable CRE operator identity (§8.7) that runs the
@@ -159,7 +159,7 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
   oracle's writer is the Chainlink Forwarder (`CRE_KEYSTONE_FORWARDER`), pushing the LP mark each epoch.
 
 ## Item-10 deploy facts (PROGRESS rows 333 / 335 / 336 / 338)
-- **Deploy the reservoir market** via `ReservoirMarketDeployer.deploy(Params)` (GenericFactory escrow + router +
+- **Deploy the farm utility market** via `FarmUtilityMarketDeployer.deploy(Params)` (GenericFactory escrow + router +
   guard + borrow vault) — NOT `EdgeFactory` (which renounces governance + bakes LTV, making post-deploy
   `setLTV`/`setCaps` and oracle re-point impossible).
 - **Set the module's `borrowVault`** to the deployer's borrow-vault address; keep its governor at the Timelock
@@ -167,16 +167,16 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
   `address(0)`). The fork test proves the loop against a directly-seeded borrow vault; production points the EE
   supply queue at it (an EulerEarn curator/allocator config, NOT a `WarehouseAdminModule` op — row 333).
 - **Wire LP-token identity** across 8-B5 / 8-B6 / oracle / NAV (row 338): deploy MUST assert
-  `LpStrategyModule.ichiVault() == reservoir escrow vault asset() == lpOracle key`.
+  `LpStrategyModule.ichiVault() == farm utility escrow vault asset() == lpOracle key`.
 - **Wire the CRE operator** into the module (`operator`) and the **LP-oracle Forwarder** (`CRE_KEYSTONE_FORWARDER`
-  passed to the `SzipReservoirLpOracle` ctor); the 8-B11 CRE workflow computes the per-LP-share mark off-chain
+  passed to the `SzipFarmUtilityLpOracle` ctor); the 8-B11 CRE workflow computes the per-LP-share mark off-chain
   (`(reserve_xALPHA × priceXAlpha + reserve_zipUSD × priceZipUSD) / ICHI_LP_totalSupply` — the same reserve×price
   math `SzipNavOracle` runs for the basket LP leg) and pushes it each epoch within `validityWindow` (CRE-03 /
   §8.6).
 - **Audit sweep (row 335, OPEN):** author the loop into `audit/2.md` Phase L (an L-step post→borrow→repay→withdraw
   debt 0→strike→0; N-steps over-LTV / stale-mark / over-cap / non-operator / third-party-direct-borrow each
   revert) + the `audit/3-results.md` authority rows (operator-only entrypoints; owner-only `borrowCap`;
-  `setAvatar`/`setTarget` locked; reservoir governor retained at the Timelock; the `OP_BORROW` guard pins the
+  `setAvatar`/`setTarget` locked; farm utility governor retained at the Timelock; the `OP_BORROW` guard pins the
   Safe).
 
 ## Gotchas
@@ -189,12 +189,12 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
 - **`LP_MARK = 7` is per-receiver-scoped — never collides with `NavOracle NAV_LEG = 7`.** Both are the same
   numeral `7` on **different receivers**; each `WriteReport` names exactly one receiver, so there is no
   collision (§8.0 / §8.6 ratification; distinct from the lien registry's `REVALUATION = 3`). `LP_MARK = 7` is
-  pinned at `SzipReservoirLpOracle.sol:27`.
+  pinned at `SzipFarmUtilityLpOracle.sol:27`.
 - **`borrowCap` is AGGREGATE outstanding, not per-call.** `borrow` checks `debtOf(juniorTrancheEngine) + amount >
   borrowCap`; `borrowCap == 0` is the kill-switch (every borrow reverts). `onlyOwner` (Timelock), never operator.
 - **`repay` has no cap and rejects over-repay.** EVK `repay` reverts `E_RepayTooMuch` for a literal amount >
   debt (only `type(uint256).max` = "all") — the operator must repay the exact borrowed strike.
 - **Borrow gates on `borrowLTV`, not `liqLTV`.** A new borrow is health-checked against the lower borrow LTV; the
   self-collateralizing ~30% strike sits well inside it.
-- **Manual owner on the guard.** `ReservoirBorrowGuard` is deliberately NOT OZ `Ownable` (the `Context._msgSender`
+- **Manual owner on the guard.** `FarmUtilityBorrowGuard` is deliberately NOT OZ `Ownable` (the `Context._msgSender`
   vs the hook's EVK `_msgSender()` decoder collision); `onlyOwner` checks raw `msg.sender`.

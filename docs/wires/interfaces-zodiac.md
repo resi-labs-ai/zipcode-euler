@@ -27,7 +27,7 @@ forwarding. Both consumed only at the boundary: factory by the deployer, Roles b
   `IModuleProxyFactory(BaseAddresses.ZODIAC_MODULE_PROXY_FACTORY).deployModule(ZODIAC_ROLES_MASTERCOPY,
   setUp(owner=this, avatar=safe, target=safe)-initializer, saltNonce)`, then asserts the cloned instance's
   `avatar()/target()/owner()` via `IRolesInit`. This is the CREATE2 clone path for **every** engine Zodiac
-  module at full deploy (item 10) — each szipUSD engine module (Recycle/ReservoirLoop/HarvestVote/
+  module at full deploy (item 10) — each szipUSD engine module (Recycle/FarmUtilityLoop/HarvestVote/
   LpStrategy/DurationFreeze/SzipBuyBurn/Exercise/Sell/OffRamp) is a `is Module` mastercopy cloned the same way.
 - **Gotchas:** the NatSpec flags the alternative — a shaman/module may instead **INHERIT** the OZ-free
   `Module` via the `@gnosis-guild/zodiac-core/` remap (compiled) rather than call through this shim. Two

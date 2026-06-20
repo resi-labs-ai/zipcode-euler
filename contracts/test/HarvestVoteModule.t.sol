@@ -33,7 +33,7 @@ interface ILastVoted {
 
 /// @notice A recording mock Safe (Zodiac avatar surface). Records every `(to, value, data, operation)`, optionally
 ///         performs the call live, and can force a specific exec index to fail. Modeled on
-///         `LpStrategyModule.t.sol` / `ReservoirLoopModule.t.sol`, EXTENDED with a settable `_returnData` so the
+///         `LpStrategyModule.t.sol` / `FarmUtilityLoopModule.t.sol`, EXTENDED with a settable `_returnData` so the
 ///         `lockVe` nftId decode is exercisable on the non-live path.
 contract RecordingSafe {
     struct Recorded {

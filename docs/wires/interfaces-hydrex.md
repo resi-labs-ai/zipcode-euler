@@ -8,7 +8,7 @@
 
 ## Role
 The local interface set for the Hydrex ve(3,3) emissions stack (VoterV5 / oHYDX option token / veHYDX V2 /
-RewardsDistributor / on-demand gauge) that the 8-B5 reservoir loop farms — the supply-side flywheel that
+RewardsDistributor / on-demand gauge) that the 8-B5 farm utility loop farms — the supply-side flywheel that
 buys the szipUSD emissions subsidy. Every signature is Basescan/`cast`-selector-verified (Foundry fork
 auto-ABI is not trusted).
 

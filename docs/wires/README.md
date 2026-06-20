@@ -45,7 +45,7 @@ contracts + 6 scripts + 30 interface shims + 28 test/helper files) mapped to its
 | Supply | Senior par exit | `9-ZipRedemptionQueue.md` | `ZipRedemptionQueue` |
 | Supply | CoW off-ramp | `OffRampModule.md` | `OffRampModule` |
 | Engine | Buy-and-burn | `8-B14-SzipBuyBurnModule.md` | `SzipBuyBurnModule` |
-| Engine | Reservoir borrow loop | `8-B5-ReservoirLoop.md` | `ReservoirLoopModule`, `SzipReservoirLpOracle`, `ReservoirBorrowGuard`, `ReservoirMarketDeployer` |
+| Engine | Farm utility borrow loop | `8-B5-FarmUtilityLoop.md` | `FarmUtilityLoopModule`, `SzipFarmUtilityLpOracle`, `FarmUtilityBorrowGuard`, `FarmUtilityMarketDeployer` |
 | Engine | LP strategy | `8-B6-LpStrategyModule.md` | `LpStrategyModule` |
 | Engine | Harvest/vote | `8-B7-HarvestVoteModule.md` | `HarvestVoteModule` |
 | Engine | oHYDX exercise | `8-B8-ExerciseModule.md` | `ExerciseModule` |
@@ -92,7 +92,7 @@ DEPLOYMENT 1 — szipUSD junior substrate  (SummonSubstrate → BaalAndVaultSumm
 │     hats:  • basket (holds zipUSD/xALPHA; backs szipUSD NAV)                 │
 │            • ragequit target (the "free equity")                            │
 │            • juniorTrancheEngine  ── all engine modules bolt on here:                │
-│                 SzipBuyBurnModule (8-B14), ReservoirLoopModule (8-B5),       │
+│                 SzipBuyBurnModule (8-B14), FarmUtilityLoopModule (8-B5),       │
 │                 LpStrategyModule (8-B6), HarvestVoteModule (8-B7),           │
 │                 ExerciseModule (8-B8), SellModule (8-B9),                    │
 │                 RecycleModule (8-B10), OffRampModule                         │
@@ -149,8 +149,8 @@ These recur across many components and are where the item-10 deploy script lives
    step (so the transient pre-burn szipUSD is excluded from navPerShare). (`8-B14`, `8-B4`, PROGRESS 325.)
 
 4. **The shared-LP-address invariant.** One ICHI vault share address must be identical across:
-   `LpStrategyModule.ichiVault` (8-B6) == the 8-B5 reservoir escrow collateral `asset()` ==
-   `SzipReservoirLpOracle` LP_MARK key == `SzipNavOracle` basket-LP leg. If any diverge, the unstake→post-
+   `LpStrategyModule.ichiVault` (8-B6) == the 8-B5 farm utility escrow collateral `asset()` ==
+   `SzipFarmUtilityLpOracle` LP_MARK key == `SzipNavOracle` basket-LP leg. If any diverge, the unstake→post-
    collateral harvest loop silently fractures. Deploy MUST assert equality. (`8-B5`, `8-B6`, PROGRESS 338.)
 
 5. **The one-bank invariant (loss/supply join).** `RecycleModule.warehouse == ZipDepositModule`'s warehouse
@@ -185,7 +185,7 @@ The order `DeployZipcode` realizes (phases P0–P9; see `DeployZipcode.md`), ove
    `ZipDepositModule` → `SzipNavOracle` → `ExitGate` + `SzipUSD` (Gate manager(2) grant; `setShareToken`) →
    `CreditWarehouse` Safe + `WarehouseAdminModule` (Roles) → `ZipRedemptionQueue` (`redemptionBox` wiring).
 5. **Engine modules:** create the POL ICHI vault + resolve the gauge (whitelist-gated) → deploy `8-B5`
-   reservoir market (governor → timelock; point EE supply queue at it) → clone `8-B5..B10`, `8-B14`,
+   farm utility market (governor → timelock; point EE supply queue at it) → clone `8-B5..B10`, `8-B14`,
    `DurationFreeze`, `OffRamp` (enable on the right Safe(s), wire operators, the shared-LP/one-bank/juniorTrancheEngine
    asserts).
 6. **Loss side:** `LienXAlphaEscrow` → `DefaultCoordinator` (`setEscrow` + `forceApprove`, oracle

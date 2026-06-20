@@ -6,7 +6,7 @@ import {Script} from "forge-std/Script.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
 import {SummonSubstrate} from "./SummonSubstrate.s.sol";
 import {CreditWarehouseDeployer} from "./CreditWarehouseDeployer.sol";
-import {ReservoirMarketDeployer} from "./ReservoirMarketDeployer.sol";
+import {FarmUtilityMarketDeployer} from "./FarmUtilityMarketDeployer.sol";
 
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
@@ -28,12 +28,12 @@ import {ExitGate} from "../src/supply/szipUSD/ExitGate.sol";
 import {SzipUSD} from "../src/supply/szipUSD/SzipUSD.sol";
 import {ZipDepositModule} from "../src/supply/ZipDepositModule.sol";
 import {ZipRedemptionQueue} from "../src/supply/ZipRedemptionQueue.sol";
-import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 import {AlgebraIchiFairLpOracle} from "../src/supply/AlgebraIchiFairLpOracle.sol";
 
 // --- engine modules (Zodiac mastercopies; cloned via ModuleProxyFactory) ---
 import {SzipBuyBurnModule} from "../src/supply/szipUSD/SzipBuyBurnModule.sol";
-import {ReservoirLoopModule} from "../src/supply/szipUSD/ReservoirLoopModule.sol";
+import {FarmUtilityLoopModule} from "../src/supply/szipUSD/FarmUtilityLoopModule.sol";
 import {LpStrategyModule} from "../src/supply/szipUSD/LpStrategyModule.sol";
 import {HarvestVoteModule} from "../src/supply/szipUSD/HarvestVoteModule.sol";
 import {ExerciseModule} from "../src/supply/szipUSD/ExerciseModule.sol";
@@ -67,10 +67,10 @@ import {ISafe} from "../src/interfaces/safe/ISafe.sol";
 ///      broadcaster MUST be `TEAM_MULTISIG` (the Safe `v==1` pre-validated path needs `msg.sender == owner`).
 ///
 ///      EE-pool ABI avoidance: `EULER_EARN_FACTORY.createEulerEarn(...)` and the EE admin config (setIsAllocator /
-///      setCurator / setFeeRecipient / setFee, and pointing the EE supply queue at the reservoir borrow vault) are
+///      setCurator / setFeeRecipient / setFee, and pointing the EE supply queue at the farm utility borrow vault) are
 ///      FORK-ONLY curator ops whose admin ABI is intentionally NOT in the local `IEulerEarn` shim (we do not compile
 ///      EulerEarn source). They are taken as PRE-STEP env inputs here: `EE_POOL` (the created USDC EulerEarn pool)
-///      and `BASE_USDC_MARKET` (the no-borrow USDC EVault at the EE supply-queue head) are env addresses. The EE
+///      and `USDC_RESERVOIR` (the no-borrow USDC EVault at the EE supply-queue head) are env addresses. The EE
 ///      allocator/curator/fee config is a documented fork-only TODO at its phase (not compiled).
 contract DeployZipcode is SummonSubstrate {
     // ----------------------------------------------------------------- asserts (clear custom errors)
@@ -93,7 +93,7 @@ contract DeployZipcode is SummonSubstrate {
         uint256 saltNonce; // SUMMON_SALT_NONCE (also reused for the sub-deployers)
         address creOperator; // CRE_OPERATOR — the engine-module operator (owner != operator)
         address erebor; // EREBOR — the draw off-ramp
-        address irm; // IRM — interest-rate model for the RESERVOIR borrow vault (ZeroIRM: internal POL, §4.5.1)
+        address irm; // IRM — interest-rate model for the FARM UTILITY borrow vault (ZeroIRM: internal POL, §4.5.1)
         address lineIrm; // LINE_IRM — interest-rate model for the per-line credit-line borrow vaults (CTR-13, ~7.5% APR)
         address xAlphaMirror; // XALPHA_MIRROR — 8x-01 Base xALPHA leg (M1 stand-in token ok)
         address polIchiVault; // POL_ICHI_VAULT — the zipUSD/xALPHA ICHI vault (OTC-gated; stand-in)
@@ -104,20 +104,20 @@ contract DeployZipcode is SummonSubstrate {
         bytes32 workflowId; // WORKFLOW_ID — the CRE workflow id (all receivers; one author/id family)
         // EE-factory ABI avoidance (pre-step env inputs; see contract NatSpec):
         address eePool; // EE_POOL — the created USDC EulerEarn pool
-        address baseUsdcMarket; // BASE_USDC_MARKET — the no-borrow USDC EVault at the EE supply-queue head
+        address usdcReservoir; // USDC_RESERVOIR — the no-borrow USDC EVault at the EE supply-queue head
         // numeric knobs
         uint256 validityWindow; // registry + lpOracle read-staleness window
         uint32 lpTwapWindow; // 0 = CRE-push lpOracle + spot NAV LP leg (M1 default); >0 = trustless fair-LP
-            // (AlgebraIchiFairLpOracle) for the reservoir collateral AND the NAV LP leg. Opt-in once the
+            // (AlgebraIchiFairLpOracle) for the farm utility collateral AND the NAV LP leg. Opt-in once the
             // zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin.
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV pushed-leg staleness
         uint256 maxDeviationBps; // NAV per-push deviation circuit-break
         uint256 tvlCap; // ExitGate TVL cap
         uint256 recoveryFloor; // DefaultCoordinator recovery floor (< 1e18)
-        uint256 borrowCap; // ReservoirLoopModule borrow cap
-        uint16 borrowLTV; // reservoir market borrow LTV (1e4)
-        uint16 liqLTV; // reservoir market liquidation LTV (1e4)
+        uint256 borrowCap; // FarmUtilityLoopModule borrow cap
+        uint16 borrowLTV; // farm utility market borrow LTV (1e4)
+        uint16 liqLTV; // farm utility market liquidation LTV (1e4)
         uint16 dBps; // buy-burn discount bps
         uint256 buybackCap; // buy-burn per-cycle cap
         // bridge rate oracle
@@ -148,14 +148,14 @@ contract DeployZipcode is SummonSubstrate {
         ZipRedemptionQueue queue;
         // P4 warehouse
         CreditWarehouseDeployer.Warehouse warehouse;
-        // P5 reservoir market + LP oracle
-        SzipReservoirLpOracle lpOracle;
+        // P5 farm utility market + LP oracle
+        SzipFarmUtilityLpOracle lpOracle;
         address escrowVault;
         address borrowVault;
         address router;
         // P6 engine modules (proxies)
         address buyBurn;
-        address reservoirLoop;
+        address farmUtilityLoop;
         address lpStrategy;
         address harvestVote;
         address exercise;
@@ -201,7 +201,7 @@ contract DeployZipcode is SummonSubstrate {
 
         // 2. eePool: created off the LIVE EulerEarnFactory in a pre-step (fork-only; ABI not compiled). Taken as
         //    env input `EE_POOL`. On a non-fork build this call site is intentionally absent — the script compiles
-        //    against the address. Same for `baseUsdcMarket` (the no-borrow USDC EVault).
+        //    against the address. Same for `usdcReservoir` (the no-borrow USDC EVault).
     }
 
     // ================================================================= P1 — venue spine
@@ -221,10 +221,10 @@ contract DeployZipcode is SummonSubstrate {
             BaseAddresses.EVAULT_FACTORY,
             address(d.registry),
             address(d.hook),
-            i.lineIrm, // CTR-13: the adapter `irm` slot drives the per-line vaults (real ~7.5% APR), NOT the reservoir
+            i.lineIrm, // CTR-13: the adapter `irm` slot drives the per-line vaults (real ~7.5% APR), NOT the farm utility
             BaseAddresses.USDC,
             i.erebor,
-            i.baseUsdcMarket
+            i.usdcReservoir
         );
 
         // 7. controller (venue_ must be non-zero ✓).
@@ -343,28 +343,28 @@ contract DeployZipcode is SummonSubstrate {
         if (d.gate.shareToken() != address(d.szip)) revert SeamGateShareToken();
     }
 
-    // ================================================================= P5 — reservoir market + LP oracle
+    // ================================================================= P5 — farm utility market + LP oracle
     /// @dev `virtual` so a local/fork harness can interleave an initial `LP_MARK` push between the oracle creation and
-    ///      the market build: EVK `setLTV` (step 24) calls `getQuote` on the `SzipReservoirLpOracle`, which reverts
+    ///      the market build: EVK `setLTV` (step 24) calls `getQuote` on the `SzipFarmUtilityLpOracle`, which reverts
     ///      `PriceOracle_NotSupported` until a fresh mark exists. In production the CRE `LP_MARK` push seeds it here.
     function _phaseP5() internal virtual {
         // 23. LP oracle. Trustless fair-LP (Algebra TWAP) when `lpTwapWindow` is set — it reads
         //     the price live on-chain, so it needs NO CRE seed before the step-24 `setLTV` getQuote (it resolves
-        //     immediately on a live Algebra pool). Else the CRE-pushed mark (`SzipReservoirLpOracle`), which this
+        //     immediately on a live Algebra pool). Else the CRE-pushed mark (`SzipFarmUtilityLpOracle`), which this
         //     phase is `virtual` to let a local/fork harness seed before `setLTV`.
         address lpOracleAddr;
         if (i.lpTwapWindow != 0) {
             lpOracleAddr = address(new AlgebraIchiFairLpOracle(i.polIchiVault, i.lpTwapWindow));
         } else {
-            d.lpOracle = new SzipReservoirLpOracle(
+            d.lpOracle = new SzipFarmUtilityLpOracle(
                 BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
             );
             lpOracleAddr = address(d.lpOracle);
         }
 
-        // 24. reservoir market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
-        (d.escrowVault, d.borrowVault, d.router) = new ReservoirMarketDeployer().deploy(
-            ReservoirMarketDeployer.Params({
+        // 24. farm utility market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
+        (d.escrowVault, d.borrowVault, d.router) = new FarmUtilityMarketDeployer().deploy(
+            FarmUtilityMarketDeployer.Params({
                 factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
                 evc: BaseAddresses.EVC,
                 governor: address(d.timelock),
@@ -423,9 +423,9 @@ contract DeployZipcode is SummonSubstrate {
                 || d.gate.juniorTrancheEngine() != d.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
 
-        // -- ReservoirLoopModule (juniorTrancheEngine) --
-        d.reservoirLoop = _cloneModule(
-            address(new ReservoirLoopModule()),
+        // -- FarmUtilityLoopModule (juniorTrancheEngine) --
+        d.farmUtilityLoop = _cloneModule(
+            address(new FarmUtilityLoopModule()),
             abi.encode(tl, juniorTrancheEngine, op, BaseAddresses.EVC, d.borrowVault, d.escrowVault, i.polIchiVault, BaseAddresses.USDC, i.borrowCap),
             juniorTrancheEngine
         );
@@ -517,11 +517,11 @@ contract DeployZipcode is SummonSubstrate {
     function _phaseP8() internal {
         // 29.
         d.navOracle.setLpPosition(i.polIchiVault, i.polGauge);
-        // reservoir escrow + borrow vaults (P5) -> NAV closes the mid-loop blind spot (counts escrow-collateralized
+        // farm utility escrow + borrow vaults (P5) -> NAV closes the mid-loop blind spot (counts escrow-collateralized
         // LP + subtracts strike debt). Both exist by P5 (step 24).
-        d.navOracle.setReservoirLeg(d.escrowVault, d.borrowVault);
+        d.navOracle.setFarmUtilityLeg(d.escrowVault, d.borrowVault);
         // Fair-LP NAV LP leg: when set, the NAV LP leg reconstructs reserves
-        // at the Algebra TWAP tick instead of spot getTotalAmounts. Same window the reservoir collateral oracle uses.
+        // at the Algebra TWAP tick instead of spot getTotalAmounts. Same window the farm utility collateral oracle uses.
         if (i.lpTwapWindow != 0) d.navOracle.setLpTwapWindow(i.lpTwapWindow);
         d.navOracle.setXAlphaRateOracle(address(d.rateOracle));
         if (d.navOracle.shareToken() == address(0)) revert SeamNavShareTokenUnset();
@@ -643,8 +643,8 @@ contract DeployZipcode is SummonSubstrate {
         i.erebor = vm.envAddress("EREBOR");
         i.curatorSafe = vm.envOr("CURATOR_SAFE", address(0)); // CTR-13: 0 ⇒ no curator fee (forfeit to Euler)
         i.irm = vm.envAddress("IRM");
-        // CTR-13: the per-line rate. Defaults to the reservoir IRM if unset (back-compat), but a real deploy SHOULD
-        // set LINE_IRM to the ~7.5%-APR `LineIrm` instance so lines accrue while the reservoir stays at zero.
+        // CTR-13: the per-line rate. Defaults to the farm utility IRM if unset (back-compat), but a real deploy SHOULD
+        // set LINE_IRM to the ~7.5%-APR `LineIrm` instance so lines accrue while the farm utility stays at zero.
         i.lineIrm = vm.envOr("LINE_IRM", i.irm);
         i.xAlphaMirror = vm.envAddress("XALPHA_MIRROR");
         i.polIchiVault = vm.envAddress("POL_ICHI_VAULT");
@@ -656,7 +656,7 @@ contract DeployZipcode is SummonSubstrate {
         i.workflowAuthor = vm.envAddress("WORKFLOW_AUTHOR");
         i.workflowId = vm.envBytes32("WORKFLOW_ID");
         i.eePool = vm.envAddress("EE_POOL");
-        i.baseUsdcMarket = vm.envAddress("BASE_USDC_MARKET");
+        i.usdcReservoir = vm.envAddress("USDC_RESERVOIR");
 
         i.validityWindow = vm.envUint("VALIDITY_WINDOW");
         i.W = uint32(vm.envUint("NAV_W"));

@@ -274,7 +274,7 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     }
 
     /// @notice The path-locked LP equity (18-dp USD), read FROM the oracle: the fenced zipUSD/xALPHA ICHI LP in every
-    ///         state (loose + gauge-staked + escrow-collateralized) net of reservoir strike debt. It backs the floor
+    ///         state (loose + gauge-staked + escrow-collateralized) net of farm utility strike debt. It backs the floor
     ///         IN PLACE — the LP's only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it
     ///         cannot reach an exit below the floor.
     function pathLockedLpEquity() public view returns (uint256) {
@@ -321,8 +321,8 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///         coverage falling below the floor with no `release` — freezes outflow until a `commit`/re-stake tops it
     ///         back up.
     /// @dev DOUBLE-SQUEEZE — bucket holds, the "debt nets out consistently" rationale was wrong: a
-    ///      reservoir borrow against the fenced LP pushes BOTH sides of this inequality the wrong way at once —
-    ///      (1) the NUMERATOR drops, because `pathLockedLpEquity()` subtracts the reservoir strike debt from the LP
+    ///      farm utility borrow against the fenced LP pushes BOTH sides of this inequality the wrong way at once —
+    ///      (1) the NUMERATOR drops, because `pathLockedLpEquity()` subtracts the farm utility strike debt from the LP
     ///      mark; and (2) the FLOOR rises, because the borrow draws senior cash so `maxWithdraw(warehouseSafe)` falls,
     ///      lifting `illiquidSeniorValue()` and thus `requiredCommittedValue()`. The two effects do NOT cancel. This
     ///      is FAIL-CLOSED / SELF-DoS by design: the borrower can only freeze its own outflow, and it recovers fully

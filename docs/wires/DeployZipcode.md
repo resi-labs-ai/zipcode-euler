@@ -9,7 +9,7 @@
 ## Role
 The single Base-side deploy + wiring orchestrator. `contract DeployZipcode is SummonSubstrate` (which `is
 Script`) — it INHERITS `_summon`/`computeMainSafe` and the Safe pre-validated-signature `execTransaction`
-pattern, and `new`s the `CreditWarehouseDeployer` / `ReservoirMarketDeployer` sub-deployers so the intricate
+pattern, and `new`s the `CreditWarehouseDeployer` / `FarmUtilityMarketDeployer` sub-deployers so the intricate
 Baal-summon / Roles-scoping / EVK-market logic stays in its tested home. Entrypoint is **`deploy()`** (NOT
 `run()` — `run()` is the inherited non-virtual `SummonSubstrate` entrypoint; delta 3). It deploys + wires the
 whole protocol in dependency order across phases **P0–P9**, asserts the **8 cross-cutting seams** inline,
@@ -23,12 +23,12 @@ Execution order is P0 → P1 → P2 → **P4 → P3** (warehouse before the depo
 
 | Phase | What it stands up |
 |---|---|
-| **P0 roots** | `TimelockController` (2-day, deployer = sole proposer/executor + retained build-phase admin). `EE_POOL` / `BASE_USDC_MARKET` are env inputs (out-of-band, see Gotchas). |
+| **P0 roots** | `TimelockController` (2-day, deployer = sole proposer/executor + retained build-phase admin). `EE_POOL` / `USDC_RESERVOIR` are env inputs (out-of-band, see Gotchas). |
 | **P1 venue spine** | registry → lienFactory → hook (borrowDriver placeholder) → adapter (controller placeholder) → controller; close the two ctor cycles via `adapter.setController` / `hook.setBorrowDriver` / `registry.setController`. Asserts `SeamVenue`, `SeamRegistryController`. |
 | **P2 bridge** | `SzAlphaRateOracle` (Base side of 8x-02). |
 | **P4 warehouse** | `ZipRedemptionQueue` (deployed here with `zipUSD=address(0)` so the warehouse can pin `redemptionBox == queue`; delta 2) → `CreditWarehouseDeployer.deploy`. Asserts `SeamWarehouseCommingled`. |
 | **P3 supply substrate** | `_summon` (Baal + main Safe + juniorTrancheSidecar) → `ESynth` zipUSD → `ZipDepositModule` → `SzipNavOracle` → `ExitGate` → `SzipUSD` → `setShareToken` both sides → `queue.setTokens` (re-point to the real zipUSD) → Gate `manager(2)` via `setShamans`. Asserts zero-Shares + `SeamGateShareToken`. |
-| **P5 reservoir** | `SzipReservoirLpOracle` + `ReservoirMarketDeployer.deploy` (governor = Timelock, juniorTrancheEngine = main Safe). Asserts `SeamSharedLp` (`POL_ICHI_VAULT == escrowVault.asset()`). |
+| **P5 farm utility** | `SzipFarmUtilityLpOracle` + `FarmUtilityMarketDeployer.deploy` (governor = Timelock, juniorTrancheEngine = main Safe). Asserts `SeamSharedLp` (`POL_ICHI_VAULT == escrowVault.asset()`). |
 | **P6 engine modules** | all 9 Zodiac modules cloned via `ModuleProxyFactory.deployModule(mastercopy, setUp, salt)` + `_enableModuleOnSafe`; DurationFreeze enabled on BOTH Safes, OffRamp + the rest on the main Safe. Sets `navOracle.setJuniorTrancheEngine` / `gate.setJuniorTrancheEngine`. Asserts `SeamEngineSafe`, `SeamOneBank`, `SeamSharedLp`; `owner=timelock != operator=CRE`. |
 | **P7 loss** | `LienXAlphaEscrow` (coordinator placeholder) → `DefaultCoordinator` → close the cycle via `escrow.setCoordinator` / `coord.setEscrow` (the latter `forceApprove(max)`s the escrow) → `navOracle.setDefaultCoordinator`. Asserts `SeamEscrowCoordinator`. |
 | **P8 NAV final** | `navOracle.setLpPosition` + `navOracle.setXAlphaRateOracle`. Asserts `SeamNavShareTokenUnset`. |
@@ -43,7 +43,7 @@ reverts — the script connects documented pins, it does not rediscover them.
 ## Inputs (env / stand-ins)
 ~30 env keys via `_loadInputs()`: principals (`TEAM_MULTISIG`, `GOD_OWNER`, `CRE_OPERATOR`, `WORKFLOW_AUTHOR`,
 `WORKFLOW_ID`, `EREBOR`, `ADMIN_SAFE`, `SUMMON_SALT_NONCE`), live-infra stand-ins (`IRM`, `XALPHA_MIRROR`,
-`POL_ICHI_VAULT`, `POL_GAUGE`, `EE_POOL`, `BASE_USDC_MARKET`), and numeric knobs (NAV window/maxAge/deviation,
+`POL_ICHI_VAULT`, `POL_GAUGE`, `EE_POOL`, `USDC_RESERVOIR`), and numeric knobs (NAV window/maxAge/deviation,
 TVL cap, recovery floor, borrow cap, LTVs, buy-burn discount/cap, rate staleness/window/cap). Mirrors
 `contracts/.env.example`.
 
@@ -54,7 +54,7 @@ anywhere.** The fork harness `contracts/test/DeployZipcode.t.sol` is three `vm.s
 fork contracts. So the 8 seams are asserted in code but **unverified at runtime**, and the deploy DAG is a
 build-green plan, not a proven stand-up. Turning the skips green is the open item-10 acceptance (PROGRESS
 "Open obligations"). The individual sub-deployers (`SummonSubstrate`, `CreditWarehouseDeployer`,
-`ReservoirMarketDeployer`) and every component HAVE each run on a Base fork in their own suites — it is the
+`FarmUtilityMarketDeployer`) and every component HAVE each run on a Base fork in their own suites — it is the
 single end-to-end `deploy()` pass that has not.
 
 ## Gotchas (5 build-discovered deltas + the EE hole)
@@ -67,9 +67,9 @@ single end-to-end `deploy()` pass that has not.
 4. **The broadcaster IS `TEAM_MULTISIG`** — the Safe-driving helpers (`_enableModuleOnSafe`,
    `_setShamansManager`, `_execAsTeam`) use the `v==1` pre-validated single-owner signature path
    (`msg.sender == owner`).
-5. **EE-pool config is out-of-band (the honest hole).** `EE_POOL` / `BASE_USDC_MARKET` are env inputs, NOT
+5. **EE-pool config is out-of-band (the honest hole).** `EE_POOL` / `USDC_RESERVOIR` are env inputs, NOT
    created by the script — the EulerEarn admin ABI (`createEulerEarn`, `setIsAllocator`, `setCurator`,
-   `setFeeRecipient`, `setFee`, point the supply queue at the reservoir borrow vault) is intentionally not
+   `setFeeRecipient`, `setFee`, point the supply queue at the farm utility borrow vault) is intentionally not
    compiled in (we do not vendor EulerEarn 0.8.26). It is a documented fork-runbook pre/post step. This is the
    gap between "deploy script runs" and "system actually works." Tracked as the item-10 EE obligation.
 

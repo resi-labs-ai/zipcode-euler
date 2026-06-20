@@ -31,8 +31,8 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     uint32 internal constant OP_BORROW = 1 << 6;
     uint32 internal constant OP_LIQUIDATE = 1 << 11;
     /// @notice The ops an EE `reallocate` leg invokes on a market: supply = deposit/mint, withdraw = withdraw/redeem.
-    ///         If the reservoir vault hooks ANY of these, `fundReservoir`/`defundReservoir` brick (the hook reverts the
-    ///         reallocate leg) — `setReservoirVault` refuses to wire such a vault (CTR-07).
+    ///         If the farm utility vault hooks ANY of these, `fundFarmUtility`/`defundFarmUtility` brick (the hook reverts the
+    ///         reallocate leg) — `setFarmUtilityVault` refuses to wire such a vault (CTR-07).
     uint32 internal constant REALLOC_OPS = OP_DEPOSIT | OP_MINT | OP_WITHDRAW | OP_REDEEM;
 
     // ----- wiring (constructor-seeded; §9/item 10 grants roles separately) -----
@@ -58,18 +58,18 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     /// @notice The ONLY legal draw receiver (the Erebor off-ramp, §4.4a/§9).
     address public erebor;
     /// @notice The no-borrow base USDC market at the EE supply-queue head that `fund` withdraws from.
-    address public baseUsdcMarket;
-    /// @notice The reservoir USDC borrow vault (`ReservoirMarketDeployer.deploy`'s `borrowVault`) — an enabled,
-    ///         NON-supply-queue EE market (acceptCap'd at deploy). `fundReservoir`/`defundReservoir` reallocate
-    ///         resting USDC in/out of it just-in-time so it holds ≈0 at rest (§4.5.1 reservoir loop).
-    address public reservoirVault;
-    /// @notice The sole authority that may call `fundReservoir`/`defundReservoir`. Two-key separation (§4.5.1, do-NOT):
-    ///         this MUST be set to an identity DISTINCT from the `ReservoirLoopModule.operator` that drives
-    ///         `borrow`/`repay`, so funding the reservoir and borrowing from it require different keys (draining idle
+    address public usdcReservoir;
+    /// @notice The farm utility USDC borrow vault (`FarmUtilityMarketDeployer.deploy`'s `borrowVault`) — an enabled,
+    ///         NON-supply-queue EE market (acceptCap'd at deploy). `fundFarmUtility`/`defundFarmUtility` reallocate
+    ///         resting USDC in/out of it just-in-time so it holds ≈0 at rest (§4.5.1 farm utility loop).
+    address public farmUtilityVault;
+    /// @notice The sole authority that may call `fundFarmUtility`/`defundFarmUtility`. Two-key separation (§4.5.1, do-NOT):
+    ///         this MUST be set to an identity DISTINCT from the `FarmUtilityLoopModule.operator` that drives
+    ///         `borrow`/`repay`, so funding the farm utility and borrowing from it require different keys (draining idle
     ///         USDC needs BOTH). The distinctness is a DEPLOY invariant — there is no on-chain handle on the loop
     ///         module to assert it, so the gate proof is that the loop `operator` key (lacking this role) reverts
-    ///         `NotReservoirAllocator`.
-    address public reservoirAllocator;
+    ///         `NotFarmUtilityAllocator`.
+    address public farmUtilityAllocator;
 
     // ----- per-revolution protocol fee (CTR-09, §5/§17) -----
     /// @notice The protocol-fee recipient. DEFAULTS to `address(0)` = fee OFF until the Timelock wires it via
@@ -125,11 +125,11 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     /// @notice `openLine` aborts early: the EE pool's timelock is non-zero, so the same-tx `submitCap`+`acceptCap`
     ///         onboarding (`afterTimelock`) would revert mid-origination — fail loud BEFORE any line state is built.
     error EulerEarnTimelockNonZero();
-    /// @notice `fundReservoir`/`defundReservoir` caller is not the wired `reservoirAllocator` (two-key separation).
-    error NotReservoirAllocator();
-    /// @notice `setReservoirVault` rejected a vault whose hook would block the EE reallocate legs (deposit/withdraw),
-    ///         which would brick `fundReservoir`/`defundReservoir` (CTR-07 fail-fast).
-    error ReservoirHookBlocksReallocate();
+    /// @notice `fundFarmUtility`/`defundFarmUtility` caller is not the wired `farmUtilityAllocator` (two-key separation).
+    error NotFarmUtilityAllocator();
+    /// @notice `setFarmUtilityVault` rejected a vault whose hook would block the EE reallocate legs (deposit/withdraw),
+    ///         which would brick `fundFarmUtility`/`defundFarmUtility` (CTR-07 fail-fast).
+    error FarmUtilityHookBlocksReallocate();
     /// @notice `setFeeBps` rejected a bps value above `MAX_FEE_BPS` (CTR-09).
     error FeeTooHigh();
 
@@ -147,11 +147,11 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         _;
     }
 
-    /// @notice Gate for the reservoir fund/defund path. The `reservoirAllocator` is a DISTINCT key from the
-    ///         `ReservoirLoopModule.operator` (two-key separation, §4.5.1) — funding the reservoir and borrowing from
+    /// @notice Gate for the farm utility fund/defund path. The `farmUtilityAllocator` is a DISTINCT key from the
+    ///         `FarmUtilityLoopModule.operator` (two-key separation, §4.5.1) — funding the farm utility and borrowing from
     ///         it require different identities.
-    modifier onlyReservoirAllocator() {
-        if (msg.sender != reservoirAllocator) revert NotReservoirAllocator();
+    modifier onlyFarmUtilityAllocator() {
+        if (msg.sender != farmUtilityAllocator) revert NotFarmUtilityAllocator();
         _;
     }
 
@@ -165,7 +165,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         address irm_,
         address usdc_,
         address erebor_,
-        address baseUsdcMarket_
+        address usdcReservoir_
     ) Ownable(msg.sender) {
         controller = controller_;
         evc = IEVC(evc_);
@@ -176,7 +176,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         irm = irm_;
         usdc = usdc_;
         erebor = erebor_;
-        baseUsdcMarket = baseUsdcMarket_;
+        usdcReservoir = usdcReservoir_;
     }
 
     // --- Timelock-settable wiring (build phase, §17) ---
@@ -244,34 +244,34 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         emit WiringSet("erebor", erebor_);
     }
 
-    /// @notice Re-point `baseUsdcMarket` (build phase, §17). onlyOwner (Timelock).
-    function setBaseUsdcMarket(address baseUsdcMarket_) external onlyOwner {
-        if (baseUsdcMarket_ == address(0)) revert ZeroAddress();
-        baseUsdcMarket = baseUsdcMarket_;
-        emit WiringSet("baseUsdcMarket", baseUsdcMarket_);
+    /// @notice Re-point `usdcReservoir` (build phase, §17). onlyOwner (Timelock).
+    function setUsdcReservoir(address usdcReservoir_) external onlyOwner {
+        if (usdcReservoir_ == address(0)) revert ZeroAddress();
+        usdcReservoir = usdcReservoir_;
+        emit WiringSet("usdcReservoir", usdcReservoir_);
     }
 
-    /// @notice Re-point `reservoirVault` (build phase, §17). onlyOwner (Timelock). The reservoir borrow vault the
+    /// @notice Re-point `farmUtilityVault` (build phase, §17). onlyOwner (Timelock). The farm utility borrow vault the
     ///         JIT fund/defund path moves resting USDC in/out of.
-    function setReservoirVault(address reservoirVault_) external onlyOwner {
-        if (reservoirVault_ == address(0)) revert ZeroAddress();
+    function setFarmUtilityVault(address farmUtilityVault_) external onlyOwner {
+        if (farmUtilityVault_ == address(0)) revert ZeroAddress();
         // Fail-fast (CTR-07): the EE reallocate legs DEPOSIT/MINT into and WITHDRAW/REDEEM out of this vault, so if any
-        // of those ops is hooked the guard reverts and `fundReservoir`/`defundReservoir` brick. The reservoir vault is
-        // purpose-built hooked OP_BORROW-only (`ReservoirMarketDeployer`); refuse to wire any vault whose hook would
+        // of those ops is hooked the guard reverts and `fundFarmUtility`/`defundFarmUtility` brick. The farm utility vault is
+        // purpose-built hooked OP_BORROW-only (`FarmUtilityMarketDeployer`); refuse to wire any vault whose hook would
         // block reallocate. (Catches a mis-wire at SET time; the Timelock can still re-hook an already-wired vault
         // later — that remains a governed §17 invariant, outside this adapter's reach.)
-        (, uint32 hookedOps) = IEVault(reservoirVault_).hookConfig();
-        if (hookedOps & REALLOC_OPS != 0) revert ReservoirHookBlocksReallocate();
-        reservoirVault = reservoirVault_;
-        emit WiringSet("reservoirVault", reservoirVault_);
+        (, uint32 hookedOps) = IEVault(farmUtilityVault_).hookConfig();
+        if (hookedOps & REALLOC_OPS != 0) revert FarmUtilityHookBlocksReallocate();
+        farmUtilityVault = farmUtilityVault_;
+        emit WiringSet("farmUtilityVault", farmUtilityVault_);
     }
 
-    /// @notice Re-point `reservoirAllocator` (build phase, §17). onlyOwner (Timelock). DEPLOY INVARIANT: set this to
-    ///         an identity DISTINCT from the `ReservoirLoopModule.operator` (two-key separation, §4.5.1).
-    function setReservoirAllocator(address reservoirAllocator_) external onlyOwner {
-        if (reservoirAllocator_ == address(0)) revert ZeroAddress();
-        reservoirAllocator = reservoirAllocator_;
-        emit WiringSet("reservoirAllocator", reservoirAllocator_);
+    /// @notice Re-point `farmUtilityAllocator` (build phase, §17). onlyOwner (Timelock). DEPLOY INVARIANT: set this to
+    ///         an identity DISTINCT from the `FarmUtilityLoopModule.operator` (two-key separation, §4.5.1).
+    function setFarmUtilityAllocator(address farmUtilityAllocator_) external onlyOwner {
+        if (farmUtilityAllocator_ == address(0)) revert ZeroAddress();
+        farmUtilityAllocator = farmUtilityAllocator_;
+        emit WiringSet("farmUtilityAllocator", farmUtilityAllocator_);
     }
 
     /// @notice Set the per-draw fee recipient (CTR-09, §17). onlyOwner (Timelock). UNLIKE the other wiring setters this
@@ -349,7 +349,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
 
         // step 4: onboard EVAULT to the EE pool so `fund` can reallocate into it. Curator submitCap is bounded to
         // ONLY the freshly-minted local EVAULT (security F3 — never a caller-supplied market). M1 shortcut: the
-        // supply queue is [baseUsdcMarket, EVAULT]; rebuild it preserving the existing queue.
+        // supply queue is [usdcReservoir, EVAULT]; rebuild it preserving the existing queue.
         eulerEarn.submitCap(IOZERC4626(evault), type(uint136).max);
         eulerEarn.acceptCap(IOZERC4626(evault));
         uint256 qlen = eulerEarn.supplyQueueLength();
@@ -423,13 +423,13 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         // `reallocate` uses internally, so a direct share donation cannot skew the targets (NOT
         // `convertToAssets(balanceOf(EE))`, which counts donated shares the pool's accounting ignores; NOT
         // `maxWithdraw`, which is capped by idle cash and under-reads once a prior line borrowed the cash out).
-        // Two-item allocation: withdraw `amount` from baseUsdcMarket, supply it to lineRef to reach the new
+        // Two-item allocation: withdraw `amount` from usdcReservoir, supply it to lineRef to reach the new
         // absolute target.
-        uint256 baseBalance = _eeSupplyAssets(baseUsdcMarket);
+        uint256 baseBalance = _eeSupplyAssets(usdcReservoir);
         uint256 lineBalance = _eeSupplyAssets(lineRef);
 
         MarketAllocation[] memory allocs = new MarketAllocation[](2);
-        allocs[0] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: baseBalance - amount});
+        allocs[0] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: baseBalance - amount});
         allocs[1] = MarketAllocation({id: IOZERC4626(lineRef), assets: lineBalance + amount});
         eulerEarn.reallocate(allocs);
 
@@ -546,10 +546,10 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         // withdrawal-only leg cannot balance).
         uint256 lineBalance = _eeSupplyAssets(lineRef);
         if (lineBalance != 0) {
-            uint256 baseBalance = _eeSupplyAssets(baseUsdcMarket);
+            uint256 baseBalance = _eeSupplyAssets(usdcReservoir);
             MarketAllocation[] memory defund = new MarketAllocation[](2);
             defund[0] = MarketAllocation({id: IOZERC4626(lineRef), assets: 0});
-            defund[1] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: baseBalance + lineBalance});
+            defund[1] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: baseBalance + lineBalance});
             eulerEarn.reallocate(defund);
         }
 
@@ -588,7 +588,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         eulerEarn.submitCap(IOZERC4626(lineRef), 0);
         //   2. Build keepIndexes = every current withdraw-queue index whose market != lineRef, by ADDRESS (do NOT
         //      assume the line is the last entry — interleaved opens/closes move it, like the supply-prune above).
-        //      Keep the base USDC market (and any reservoir/resting market); only lineRef drops.
+        //      Keep the base USDC market (and any farm utility/resting market); only lineRef drops.
         uint256 wqlen = eulerEarn.withdrawQueueLength();
         uint256 keepCount;
         for (uint256 i; i < wqlen; ++i) {
@@ -609,41 +609,41 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         emit LineClosed(lineRef);
     }
 
-    // --- reservoir JIT fund/defund (adapter-LOCAL; NOT on IZipcodeVenue — the venue interface stays line-only) ---
+    // --- farm utility JIT fund/defund (adapter-LOCAL; NOT on IZipcodeVenue — the venue interface stays line-only) ---
 
-    /// @notice Move `amount` resting USDC into the reservoir borrow vault so a junior strike-financing harvest has
-    ///         lendable cash (§4.5.1). The reservoir holds ≈0 at rest; the CRE calls this JUST-IN-TIME pre-borrow,
-    ///         then `defundReservoir` re-absorbs it after the junior repays — so idle USDC is never standing-borrowable
+    /// @notice Move `amount` resting USDC into the farm utility borrow vault so a junior strike-financing harvest has
+    ///         lendable cash (§4.5.1). The farm utility holds ≈0 at rest; the CRE calls this JUST-IN-TIME pre-borrow,
+    ///         then `defundFarmUtility` re-absorbs it after the junior repays — so idle USDC is never standing-borrowable
     ///         (the rejected "combined" topology) and senior-redemption liquidity stays in the no-borrow resting market.
     ///         Mirrors `fund` exactly: an ABSOLUTE-target, zero-sum two-item reallocate sized off the EE's TRACKED
     ///         supplied position (`_eeSupplyAssets` = `previewRedeem(config.balance)`, security L9/SEC-11) — NOT
     ///         `convertToAssets(balanceOf(EE))`, which a direct share donation skews into `InconsistentReallocation`.
-    ///         Withdraw `amount` from baseUsdcMarket, supply it to the reservoir vault (withdraw leg first, so the
-    ///         single in-order reallocate pass has cash before it deposits). `onlyReservoirAllocator` — a DISTINCT key
-    ///         from the `ReservoirLoopModule.operator` (two-key separation): both are needed to move idle USDC out.
-    function fundReservoir(uint256 amount) external onlyReservoirAllocator {
-        uint256 base = _eeSupplyAssets(baseUsdcMarket);
-        uint256 res = _eeSupplyAssets(reservoirVault);
+    ///         Withdraw `amount` from usdcReservoir, supply it to the farm utility vault (withdraw leg first, so the
+    ///         single in-order reallocate pass has cash before it deposits). `onlyFarmUtilityAllocator` — a DISTINCT key
+    ///         from the `FarmUtilityLoopModule.operator` (two-key separation): both are needed to move idle USDC out.
+    function fundFarmUtility(uint256 amount) external onlyFarmUtilityAllocator {
+        uint256 base = _eeSupplyAssets(usdcReservoir);
+        uint256 res = _eeSupplyAssets(farmUtilityVault);
 
         MarketAllocation[] memory allocs = new MarketAllocation[](2);
-        allocs[0] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: base - amount});
-        allocs[1] = MarketAllocation({id: IOZERC4626(reservoirVault), assets: res + amount});
+        allocs[0] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: base - amount});
+        allocs[1] = MarketAllocation({id: IOZERC4626(farmUtilityVault), assets: res + amount});
         eulerEarn.reallocate(allocs);
     }
 
-    /// @notice The inverse of `fundReservoir`: re-absorb `amount` USDC from the reservoir vault back to the resting
-    ///         market after the junior repays, restoring resting liquidity and returning the reservoir to ≈0 at rest
-    ///         (§4.5.1). Sized off `_eeSupplyAssets` like `closeLine`'s defund (donation-immune). Withdraw the reservoir
-    ///         leg first, then supply to base. A `defundReservoir` issued while the reservoir's cash is still borrowed
+    /// @notice The inverse of `fundFarmUtility`: re-absorb `amount` USDC from the farm utility vault back to the resting
+    ///         market after the junior repays, restoring resting liquidity and returning the farm utility to ≈0 at rest
+    ///         (§4.5.1). Sized off `_eeSupplyAssets` like `closeLine`'s defund (donation-immune). Withdraw the farm utility
+    ///         leg first, then supply to base. A `defundFarmUtility` issued while the farm utility's cash is still borrowed
     ///         out (no repay yet) REVERTS — the EVK withdraw leg has no cash (`E_InsufficientCash`); this is the
-    ///         JIT/redemption-isolation discipline, NOT a silent under-defund. `onlyReservoirAllocator`.
-    function defundReservoir(uint256 amount) external onlyReservoirAllocator {
-        uint256 res = _eeSupplyAssets(reservoirVault);
-        uint256 base = _eeSupplyAssets(baseUsdcMarket);
+    ///         JIT/redemption-isolation discipline, NOT a silent under-defund. `onlyFarmUtilityAllocator`.
+    function defundFarmUtility(uint256 amount) external onlyFarmUtilityAllocator {
+        uint256 res = _eeSupplyAssets(farmUtilityVault);
+        uint256 base = _eeSupplyAssets(usdcReservoir);
 
         MarketAllocation[] memory allocs = new MarketAllocation[](2);
-        allocs[0] = MarketAllocation({id: IOZERC4626(reservoirVault), assets: res - amount});
-        allocs[1] = MarketAllocation({id: IOZERC4626(baseUsdcMarket), assets: base + amount});
+        allocs[0] = MarketAllocation({id: IOZERC4626(farmUtilityVault), assets: res - amount});
+        allocs[1] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: base + amount});
         eulerEarn.reallocate(allocs);
     }
 

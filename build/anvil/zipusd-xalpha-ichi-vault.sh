@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # zipusd-xalpha-ichi-vault.sh — deploy the REAL single-sided-zipUSD ICHI YieldIQ vault over the
 # zipUSD/xALPHA Hydrex pool (built by zipusd-xalpha-pool.sh) and mint the fungible ERC20 LP share.
-# That share IS the collateral token for the reservoir EVK market (8-B6 / DEC-03).
+# That share IS the collateral token for the farm utility EVK market (8-B6 / DEC-03).
 #
 # Run AFTER zipusd-xalpha-pool.sh. Resets on anvil restart + redeploy.
 #   bash build/anvil/zipusd-xalpha-ichi-vault.sh

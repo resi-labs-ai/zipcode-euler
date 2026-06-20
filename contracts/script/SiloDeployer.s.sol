@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Script} from "forge-std/Script.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
 
-import {ReservoirMarketDeployer} from "./ReservoirMarketDeployer.sol";
+import {FarmUtilityMarketDeployer} from "./FarmUtilityMarketDeployer.sol";
 import {CreditWarehouseDeployer} from "./CreditWarehouseDeployer.sol";
 import {JuniorTrancheDeployer} from "./JuniorTrancheDeployer.s.sol";
 
@@ -17,11 +17,11 @@ import {IEVault} from "evk/EVault/IEVault.sol";
 
 /// @title SiloDeployer (CTR-06c)
 /// @notice The orchestrator that composes ONE self-consistent silo out of the four verbatim sub-deployers
-///         (`ReservoirMarketDeployer` CTR-06a, `CreditWarehouseDeployer` 8-Bw, `JuniorTrancheDeployer` CTR-06b) plus
-///         the per-silo venue front (EulerEarn pool + resting `baseUsdcMarket` + per-silo `CREGatingHook` +
+///         (`FarmUtilityMarketDeployer` CTR-06a, `CreditWarehouseDeployer` 8-Bw, `JuniorTrancheDeployer` CTR-06b) plus
+///         the per-silo venue front (EulerEarn pool + resting `usdcReservoir` + per-silo `CREGatingHook` +
 ///         `EulerVenueAdapter`), and returns a `Silo` handle that maps 1:1 to `SiloRegistry.SiloConfig`. The hub
 ///         (`timelock`/`controller`/`oracleRegistry`/`zipUSD`/`rateOracle`/`redemptionBox`/`erebor`/`forwarder` + the shared
-///         POL + EVC/EVK factory) is a deploy INPUT, never built here; only the per-silo venue + reservoir + warehouse +
+///         POL + EVC/EVK factory) is a deploy INPUT, never built here; only the per-silo venue + farm utility + warehouse +
 ///         junior are built. `claude-zipcode.md` §4.5/§4.7/§9.1/§17.
 ///
 /// @dev `is Script` — `deploy` calls `JuniorTrancheDeployer.computeMainSafe` (a `vm`-using view), so this runs in a
@@ -29,8 +29,8 @@ import {IEVault} from "evk/EVault/IEVault.sol";
 ///      `internal` helpers so `deploy` stays under the 16-local stack limit.
 ///
 /// @dev THE D2 HUB-GRANT RUNBOOK (NOT script code — Timelock-owned post-deploy). Before `deploy(...)` (one-time, per
-///      silo): build a `SzipReservoirLpOracle` for the silo + push its first `LP_MARK` (a CRE/forwarder push the
-///      deployer cannot make — `ReservoirMarketDeployer`'s `setLTV` `getQuote` reverts without a resolvable mark) →
+///      silo): build a `SzipFarmUtilityLpOracle` for the silo + push its first `LP_MARK` (a CRE/forwarder push the
+///      deployer cannot make — `FarmUtilityMarketDeployer`'s `setLTV` `getQuote` reverts without a resolvable mark) →
 ///      pass as `p.lpOracle`. After `deploy(...)`, the Timelock MUST:
 ///        1. `zipUSD.setCapacity(silo.depositModule, type(uint128).max)` — grant the new deposit module mint authority
 ///           on the shared zipUSD (Timelock-owned).
@@ -48,8 +48,8 @@ contract SiloDeployer is Script {
     // ----------------------------------------------------------------- deployer-added post-asserts (fail-closed)
     /// @notice §2 non-commingling: the shared redemptionBox/queue, the warehouse Safe, and the junior Safes collide.
     error SeamCommingled();
-    /// @notice The reservoir borrow vault's governor is not the Timelock (CTR-06a §17 standing-tunable facility).
-    error SeamReservoirGovernor();
+    /// @notice The farm utility borrow vault's governor is not the Timelock (CTR-06a §17 standing-tunable facility).
+    error SeamFarmUtilityGovernor();
     /// @notice An `addSilo` 6-clause pre-flight clause failed — the handle would revert `SiloMiswired` at admission.
     error SeamSiloMiswired();
 
@@ -72,7 +72,7 @@ contract SiloDeployer is Script {
         address redemptionBox; // == the ONE shared ZipRedemptionQueue (D5/§6)
         address erebor;
         address forwarder;
-        // shared POL (D1) + the pre-seeded reservoir LP oracle
+        // shared POL (D1) + the pre-seeded farm utility LP oracle
         address polIchiVault;
         address polGauge;
         address lpOracle; // built-and-SEEDED INPUT (initial LP_MARK already pushed)
@@ -82,7 +82,7 @@ contract SiloDeployer is Script {
         address hydx;
         address oHydx;
         // IRMs
-        address reservoirIrm;
+        address farmUtilityIrm;
         address lineIrm;
         // EE pool naming
         string eeName;
@@ -126,8 +126,8 @@ contract SiloDeployer is Script {
     ///         venue front / cap onboarding / post-asserts are factored out so `deploy` stays under the 16-local
     ///         stack-depth limit.
     function deploy(SiloParams memory p) external returns (Silo memory s) {
-        // -- 0. Precompute the junior juniorTrancheSafe (breaks the reservoir<->junior cycle). The reservoir's `juniorTrancheEngine`
-        //       MUST be the junior juniorTrancheSafe (the ReservoirBorrowGuard pins OP_BORROW to it, IMMUTABLE). `computeMainSafe`
+        // -- 0. Precompute the junior juniorTrancheSafe (breaks the farm utility<->junior cycle). The farm utility's `juniorTrancheEngine`
+        //       MUST be the junior juniorTrancheSafe (the FarmUtilityBorrowGuard pins OP_BORROW to it, IMMUTABLE). `computeMainSafe`
         //       is a pure function of saltNonce + the live Safe factory/singleton, so the precompute here EQUALS the
         //       juniorTrancheSafe `jr.deploy(...)` later summons (its `MainSafeMismatch` assert guarantees it). REUSE `jr` in
         //       step 7 so the salt + summon match.
@@ -136,21 +136,21 @@ contract SiloDeployer is Script {
         // -- 1. EE pool (D3 seam — `_createEePool` is virtual; the test overrides it to return a MockEulerEarn).
         s.eePool = _createEePool(p);
 
-        // -- 2. Resting baseUsdcMarket — a bare EVK proxy (asset=USDC, no oracle/uoa => supply-only). NOT an input.
-        address baseUsdcMarket = GenericFactory(EVAULT_FACTORY).createProxy(
+        // -- 2. Resting usdcReservoir — a bare EVK proxy (asset=USDC, no oracle/uoa => supply-only). NOT an input.
+        address usdcReservoir = GenericFactory(EVAULT_FACTORY).createProxy(
             address(0), false, abi.encodePacked(p.usdc, address(0), address(0))
         );
-        IEVault(baseUsdcMarket).setHookConfig(address(0), 0);
+        IEVault(usdcReservoir).setHookConfig(address(0), 0);
 
-        // -- 3. Reservoir market (CTR-06a-fixed). juniorTrancheEngine = the precomputed junior juniorTrancheSafe (step 0).
+        // -- 3. Farm utility market (CTR-06a-fixed). juniorTrancheEngine = the precomputed junior juniorTrancheSafe (step 0).
         (address escrowVault, address borrowVault,) =
-            new ReservoirMarketDeployer().deploy(_reservoirParams(p, jr.computeMainSafe(p.saltNonce)));
+            new FarmUtilityMarketDeployer().deploy(_farmUtilityParams(p, jr.computeMainSafe(p.saltNonce)));
 
         // -- 4a. EE cap onboarding (markets exist; does NOT depend on the curator).
-        _onboardCaps(s.eePool, baseUsdcMarket, borrowVault);
+        _onboardCaps(s.eePool, usdcReservoir, borrowVault);
 
         // -- 5. Per-silo CREGatingHook + EulerVenueAdapter (borrowDriver -> this silo's adapter; hook owner -> TL).
-        (s.adapter, s.hook) = _deployVenueFront(p, s.eePool, baseUsdcMarket);
+        (s.adapter, s.hook) = _deployVenueFront(p, s.eePool, usdcReservoir);
 
         // -- 6. Warehouse (verbatim CreditWarehouseDeployer). redemptionBox MUST be the shared queue (D5/§6).
         CreditWarehouseDeployer.Warehouse memory warehouse = new CreditWarehouseDeployer().deploy(
@@ -164,7 +164,7 @@ contract SiloDeployer is Script {
         _eeCall(s.eePool, abi.encodeWithSignature("setCurator(address)", s.adapter));
 
         // -- 7. Junior tranche (the step-0 `jr` instance so the salt + summon match; CTR-06b). juniorTrancheEngine of the
-        //       reservoir (step 3) == the juniorTrancheSafe this summons.
+        //       farm utility (step 3) == the juniorTrancheSafe this summons.
         JuniorTrancheDeployer.JuniorTranche memory junior =
             jr.deploy(_juniorParams(p, s.eePool, s.warehouseSafe, escrowVault, borrowVault));
         s.juniorBasket = junior.juniorTrancheSafe;
@@ -180,7 +180,7 @@ contract SiloDeployer is Script {
     }
 
     /// @dev Step-8 fail-closed post-asserts: §2 non-commingling (deployer-added — addSilo does NOT enforce these), the
-    ///      reservoir borrow-vault governor = Timelock (CTR-06a), and the `addSilo` 6-clause pre-flight (so the Timelock
+    ///      farm utility borrow-vault governor = Timelock (CTR-06a), and the `addSilo` 6-clause pre-flight (so the Timelock
     ///      `addSilo` can't revert `SiloMiswired`).
     function _postAsserts(
         SiloParams memory p,
@@ -191,7 +191,7 @@ contract SiloDeployer is Script {
         if (p.redemptionBox == junior.juniorTrancheSafe || s.warehouseSafe == junior.juniorTrancheSafe || s.warehouseSafe == junior.juniorTrancheSidecar) {
             revert SeamCommingled();
         }
-        if (IEVault(borrowVault).governorAdmin() != p.timelock) revert SeamReservoirGovernor();
+        if (IEVault(borrowVault).governorAdmin() != p.timelock) revert SeamFarmUtilityGovernor();
         if (
             IFreeze(s.freeze).eulerEarn() != s.eePool || IFreeze(s.freeze).warehouseSafe() != s.warehouseSafe
                 || IFreeze(s.freeze).navOracle() != s.navOracle
@@ -204,21 +204,21 @@ contract SiloDeployer is Script {
     /// @dev Step-4a EE cap onboarding via the low-level `_eeCall` idiom (the EE admin ABI is NOT compiled in):
     ///      `submitCap`+`acceptCap` for both non-line markets, then point the supply queue at the resting market.
     ///      (setFeeRecipient/setCurator are step 4b — they need the warehouse Safe + venue adapter.)
-    function _onboardCaps(address eePool, address baseUsdcMarket, address borrowVault) internal {
+    function _onboardCaps(address eePool, address usdcReservoir, address borrowVault) internal {
         uint256 capMax = type(uint136).max;
-        _eeCall(eePool, abi.encodeWithSignature("submitCap(address,uint256)", baseUsdcMarket, capMax));
-        _eeCall(eePool, abi.encodeWithSignature("acceptCap(address)", baseUsdcMarket));
+        _eeCall(eePool, abi.encodeWithSignature("submitCap(address,uint256)", usdcReservoir, capMax));
+        _eeCall(eePool, abi.encodeWithSignature("acceptCap(address)", usdcReservoir));
         _eeCall(eePool, abi.encodeWithSignature("submitCap(address,uint256)", borrowVault, capMax));
         _eeCall(eePool, abi.encodeWithSignature("acceptCap(address)", borrowVault));
         address[] memory q = new address[](1);
-        q[0] = baseUsdcMarket;
+        q[0] = usdcReservoir;
         _eeCall(eePool, abi.encodeWithSignature("setSupplyQueue(address[])", q));
     }
 
     /// @dev Step-5 per-silo venue front: a fresh `CREGatingHook` + `EulerVenueAdapter`, the hook's `borrowDriver` set to
     ///      THIS silo's adapter (N silos = N adapters = N hooks), and the hook owner (= this deployer) handed to the
     ///      Timelock.
-    function _deployVenueFront(SiloParams memory p, address eePool, address baseUsdcMarket)
+    function _deployVenueFront(SiloParams memory p, address eePool, address usdcReservoir)
         internal
         returns (address adapter, address hook)
     {
@@ -233,7 +233,7 @@ contract SiloDeployer is Script {
             p.lineIrm,
             p.usdc,
             p.erebor,
-            baseUsdcMarket
+            usdcReservoir
         );
         a.setCuratorSafe(p.curatorSafe); // CTR-13: per-line EVK feeReceiver (deployer is adapter owner at birth)
         h.setBorrowDriver(address(a));
@@ -264,19 +264,19 @@ contract SiloDeployer is Script {
 
     // ================================================================= sub-deployer param helpers (stack relief)
 
-    function _reservoirParams(SiloParams memory p, address juniorTrancheEngine)
+    function _farmUtilityParams(SiloParams memory p, address juniorTrancheEngine)
         internal
         pure
-        returns (ReservoirMarketDeployer.Params memory)
+        returns (FarmUtilityMarketDeployer.Params memory)
     {
-        return ReservoirMarketDeployer.Params({
+        return FarmUtilityMarketDeployer.Params({
             factory: GenericFactory(EVAULT_FACTORY),
             evc: EVC,
             governor: p.timelock,
             lpToken: p.polIchiVault,
             usdc: p.usdc,
             lpOracle: p.lpOracle,
-            irm: p.reservoirIrm,
+            irm: p.farmUtilityIrm,
             juniorTrancheEngine: juniorTrancheEngine,
             borrowLTV: p.borrowLTV,
             liqLTV: p.liqLTV

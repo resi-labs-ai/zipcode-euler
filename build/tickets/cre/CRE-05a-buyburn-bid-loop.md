@@ -33,8 +33,8 @@ sub-modules + go-ethereum):
      defensive `validTo`, below).
    - coverage gate `covered()` → `bool` (the `DurationFreezeModule`; address from config — skip the read /
      treat as `true` only if the configured gate is the zero address).
-   - free reservoir + utilization off `EulerEarn`: `maxWithdraw(warehouse)` → `uint256` (6-dp USDC freeable
-     NOW = the free reservoir) and `convertToAssets(balanceOf(warehouse))` → `uint256` (the warehouse senior
+   - free farm utility + utilization off `EulerEarn`: `maxWithdraw(warehouse)` → `uint256` (6-dp USDC freeable
+     NOW = the free farm utility) and `convertToAssets(balanceOf(warehouse))` → `uint256` (the warehouse senior
      position) for `U = 1 − maxWithdraw/convertToAssets`. **`freeReservoir = maxWithdraw(warehouse)`.** (Read the
      same donation-immune way §8.2 mandates — NOT `IERC20.balanceOf(eulerEarn)`.)
 3. **Size (the CRE-06 split folded in here — see Decision):**

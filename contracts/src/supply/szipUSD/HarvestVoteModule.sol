@@ -12,7 +12,7 @@ import {IRewardsDistributor} from "../../interfaces/hydrex/IRewardsDistributor.s
 
 /// @title HarvestVoteModule
 /// @notice The on-chain seam of the 8-B7 harvest/vote leg (§4.5.1): the fourth engine Zodiac Module (after the 8-B14
-///         buy-and-burn, the 8-B5 reservoir loop, and the 8-B6 LP strategy), CRE-operator-gated, enabled on the
+///         buy-and-burn, the 8-B5 farm utility loop, and the 8-B6 LP strategy), CRE-operator-gated, enabled on the
 ///         szipUSD engine Safe (`avatar == target == juniorTrancheEngine`). It owns the emissions + governance leg of the
 ///         auto-compounder: per epoch it (1) CLAIMS the gauge's oHYDX to the Safe (`gauge.getReward()`), (2) takes the
 ///         vote-floor `exerciseVe` slice FIRST (the free permalock → grows the Safe's account-aggregate veHYDX),

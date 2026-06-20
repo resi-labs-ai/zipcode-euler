@@ -74,7 +74,7 @@ interface ISeniorVenue {
 contract SiloRegistry is Ownable {
     // --------------------------------------------------------------------- constants
     /// @notice The per-silo concurrent-line cap. Derived: `MAX_QUEUE_LENGTH (30) − resting-USDC market (1) −
-    ///         reservoir vault (1) = 28`. (CTR-07's split-slot decision keeps it at 28.)
+    ///         farm utility vault (1) = 28`. (CTR-07's split-slot decision keeps it at 28.)
     uint16 public constant MAX_LINES_PER_SILO = 28;
 
     // --------------------------------------------------------------------- records

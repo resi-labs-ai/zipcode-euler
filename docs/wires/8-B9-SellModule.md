@@ -2,7 +2,7 @@
 
 > Source of truth = `contracts/src/supply/szipUSD/SellModule.sol` (the kept code is FINAL/AUTHORITATIVE — code
 > wins). Ticket `tickets/sodo/8-B9-sell-module.md` + report `reports/8-B9-report.md` are intent only.
-> Sibling engine modules: `ExerciseModule` (8-B8, the primary model), `ReservoirLoopModule` (8-B5),
+> Sibling engine modules: `ExerciseModule` (8-B8, the primary model), `FarmUtilityLoopModule` (8-B5),
 > `LpStrategyModule` (8-B6), `HarvestVoteModule` (8-B7), `SzipBuyBurnModule` (8-B14), `RecycleModule` (8-B10).
 
 ## Role
@@ -13,7 +13,7 @@ so the proceeds can repay the 8-B5 strike-borrow (`debtOf(safe)→0`), and it al
 swap the 8-B10/8-B13 recycle/compound Mode-B/C policy consumes. It is **pure swap mechanism** — Algebra
 `SwapRouter.exactInputSingle` only: **NO EVC leg, NO oracle, NO LP, NO veNFT, NO oHYDX exercise, NO repay/borrow, NO
 free-value accumulator** (those are 8-B5/8-B6/8-B7/8-B8/SzipNavOracle/8-B10). The repay that consumes the USDC is
-8-B5's `ReservoirLoopModule.repay`; the free-value crediting is 8-B10's `creditFreeValue` — both CRE-sequenced **after**
+8-B5's `FarmUtilityLoopModule.repay`; the free-value crediting is 8-B10's `creditFreeValue` — both CRE-sequenced **after**
 this sell. The operator supplies **only scalars** (`amountIn`, `minOut`, `deadline`); the module builds all calldata.
 
 It also exposes **`sellXAlpha` (xALPHA→zipUSD)** — the reverse of `buyXAlpha` on the same POL pair. No live-ops loop

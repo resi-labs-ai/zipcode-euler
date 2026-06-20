@@ -11,7 +11,7 @@ the set `{venue adapter + warehouse Safe + EulerEarn pool + junior tranche}` plu
 (escrow + DefaultCoordinator + SzipNavOracle) and freeze (DurationFreezeModule) components. EulerEarn caps a
 pool at `MAX_QUEUE_LENGTH = 30` markets (`reference/euler-earn/src/libraries/ConstantsLib.sol:17`, enforced on
 the binding withdraw queue at `EulerEarn.sol:785`); with 2 permanent non-line markets per pool (resting USDC +
-reservoir vault) → 28 lines/pool. To exceed that the protocol shards across pools; to keep one senior zipUSD
+farm utility vault) → 28 lines/pool. To exceed that the protocol shards across pools; to keep one senior zipUSD
 those pools must be enumerated, admitted under a uniform gate, and slot-counted. This is that registry.
 
 It is a **pure catalog**: it touches NO silo-internal contract; silo logic is unchanged. A plain OZ `Ownable`
@@ -80,7 +80,7 @@ curator gets senior backing only by registering a SELF-CONSISTENT silo.
 - **Deploy order.** Deploy `SiloRegistry` with `controller_` = the controller (or a placeholder, then
   `setController` once CTR-03's controller exists); transfer `owner` to the Timelock. Register the genesis silo
   (configuration one) via `addSilo` — it becomes `currentSilo` automatically.
-- **`MAX_LINES_PER_SILO = 28`** is a compile-time constant derived `30 − resting-USDC market (1) − reservoir vault
+- **`MAX_LINES_PER_SILO = 28`** is a compile-time constant derived `30 − resting-USDC market (1) − farm utility vault
   (1)`. CTR-07's split-slot decision keeps it at 28.
 - **Non-commingling assert is NOT here.** The §11 `redemptionBox != juniorSafe` / `warehouseSafe != juniorSafe`
   non-commingling check is a deploy-time obligation owed to the **SiloDeployer (CTR-06)**, not the registry — the

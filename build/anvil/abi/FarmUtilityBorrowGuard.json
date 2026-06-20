@@ -8,7 +8,7 @@
         "internalType": "address"
       },
       {
-        "name": "engineSafe_",
+        "name": "juniorTrancheEngine_",
         "type": "address",
         "internalType": "address"
       }
@@ -34,19 +34,6 @@
   },
   {
     "type": "function",
-    "name": "engineSafe",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "isHookTarget",
     "inputs": [],
     "outputs": [
@@ -54,6 +41,19 @@
         "name": "",
         "type": "bytes4",
         "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheEngine",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -86,10 +86,10 @@
   },
   {
     "type": "function",
-    "name": "setEngineSafe",
+    "name": "setJuniorTrancheEngine",
     "inputs": [
       {
-        "name": "engineSafe_",
+        "name": "juniorTrancheEngine_",
         "type": "address",
         "internalType": "address"
       }

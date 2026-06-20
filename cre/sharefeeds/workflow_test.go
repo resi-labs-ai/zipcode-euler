@@ -87,7 +87,7 @@ func decodeNavPayload(t *testing.T, payload []byte) ([]uint8, []*big.Int, uint32
 	return out[0].([]uint8), out[1].([]*big.Int), out[2].(uint32)
 }
 
-// decodeLpPayload decodes the LP_MARK payload as the exact SzipReservoirLpOracle._processReport tuple
+// decodeLpPayload decodes the LP_MARK payload as the exact SzipFarmUtilityLpOracle._processReport tuple
 // (uint256 mark, uint32 ts).
 func decodeLpPayload(t *testing.T, payload []byte) (*big.Int, uint32) {
 	t.Helper()

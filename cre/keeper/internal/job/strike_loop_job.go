@@ -36,7 +36,7 @@ var scaleUp = func() *big.Int { v, _ := new(big.Int).SetString("1000000000000", 
 type StrikeLoopJob struct {
 	// the six engine module addresses (re-pointable; from cfg.MustAddr).
 	harvest   common.Address // HarvestVoteModule — claimReward / pendingReward / oHYDX
-	reservoir common.Address // ReservoirLoopModule — borrow / repay / usdc
+	farmUtility common.Address // FarmUtilityLoopModule — borrow / repay / usdc
 	exercise  common.Address // ExerciseModule — exercise / quoteStrike / oHYDX
 	sell      common.Address // SellModule — sellHydx / maxSellHydx / hydx / usdc
 	recycle   common.Address // RecycleModule — creditFreeValue / recycle / usdc
@@ -60,7 +60,7 @@ type StrikeLoopJob struct {
 // StrikeLoopConfig groups the StrikeLoopJob construction inputs (modules +
 // knobs) so the wiring in cmd/keeper is explicit.
 type StrikeLoopConfig struct {
-	Harvest, Reservoir, Exercise, Sell, Recycle, Lp  common.Address
+	Harvest, FarmUtility, Exercise, Sell, Recycle, Lp  common.Address
 	Quoter                                           quote.Quoter
 	CushionBps, AmberFractionBps, RecycleFractionBps uint64
 	HaltPriceUsdc, AmberPriceUsdc                    uint64
@@ -72,7 +72,7 @@ type StrikeLoopConfig struct {
 func NewStrikeLoopJob(c StrikeLoopConfig) *StrikeLoopJob {
 	return &StrikeLoopJob{
 		harvest:            c.Harvest,
-		reservoir:          c.Reservoir,
+		farmUtility:          c.FarmUtility,
 		exercise:           c.Exercise,
 		sell:               c.Sell,
 		recycle:            c.Recycle,
@@ -228,10 +228,10 @@ func (j *StrikeLoopJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	// --- the ordered Plan (leg order is load-bearing, K2). ---
 	actions := []chain.Action{
 		{Label: "claimReward", To: j.harvest, Data: chain.PackCall("claimReward()")},
-		{Label: "borrow", To: j.reservoir, Data: chain.PackUintCall("borrow(uint256)", borrowAmount)},
+		{Label: "borrow", To: j.farmUtility, Data: chain.PackUintCall("borrow(uint256)", borrowAmount)},
 		{Label: "exercise", To: j.exercise, Data: chain.PackUintsCall("exercise(uint256,uint256,uint256)", exerciseAmount, maxPayment, deadline)},
 		{Label: "sellHydx", To: j.sell, Data: chain.PackUintsCall("sellHydx(uint256,uint256,uint256)", sellAmount, minOut, deadline)},
-		{Label: "repay", To: j.reservoir, Data: chain.PackUintCall("repay(uint256)", borrowAmount)},
+		{Label: "repay", To: j.farmUtility, Data: chain.PackUintCall("repay(uint256)", borrowAmount)},
 		{Label: "creditFreeValue", To: j.recycle, Data: chain.PackUintCall("creditFreeValue(uint256)", creditAmount)},
 	}
 

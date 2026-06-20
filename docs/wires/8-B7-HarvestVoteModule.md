@@ -5,7 +5,7 @@
 > Spec context: `claude-zipcode.md §4.5.1`, `reports/baal-spec.md §10.8`.
 
 ## Role
-The **4th engine Zodiac Module** (after 8-B14 buy-and-burn, 8-B5 reservoir loop, 8-B6 LP strategy) — the
+The **4th engine Zodiac Module** (after 8-B14 buy-and-burn, 8-B5 farm utility loop, 8-B6 LP strategy) — the
 simplest sibling of 8-B6: **no EVC, no oracle, no custody, no approvals, and NO `tokenId` state**. It owns the
 emissions + governance leg of the auto-compounder. Enabled ON the szipUSD engine Safe (`avatar == target ==
 juniorTrancheEngine`), CRE-operator-gated. Per epoch it (1) CLAIMS the gauge's oHYDX to the Safe, (2) takes the

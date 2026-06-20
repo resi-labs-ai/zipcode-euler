@@ -7,7 +7,7 @@ import {ZipcodeDeployAsserts} from "../src/ZipcodeDeployAsserts.sol";
 import {ZipcodeOracleRegistry} from "../src/ZipcodeOracleRegistry.sol";
 import {ZipcodeController} from "../src/ZipcodeController.sol";
 import {LienTokenFactory} from "../src/LienTokenFactory.sol";
-import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -204,7 +204,7 @@ contract LpGateHarness {
 }
 
 /// @title SEC-05 — seal the un-looped CRE-push `lpOracle` identity + extend the pre-gate (kill-list M4)
-/// @notice Proves the M4 fix against the REAL `SzipReservoirLpOracle` (a `ReceiverTemplate` NOT in the deploy's
+/// @notice Proves the M4 fix against the REAL `SzipFarmUtilityLpOracle` (a `ReceiverTemplate` NOT in the deploy's
 ///         S10b same-WORKFLOW_ID seal loop), in four classes mirroring the harness Done-when:
 ///           1. IDENTITY SEALED — after the P9 seal, `getExpectedWorkflowId() == WID` (pre-fix: bytes32(0)).
 ///           2. BEHAVIORAL fail-closed — an unsealed lpOracle ACCEPTS a wrong-identity LP_MARK push (the dormant
@@ -217,7 +217,7 @@ contract LpGateHarness {
 contract SEC05LpOracleIdentityTest is Test {
     LpGateHarness internal harness;
     MockUSDC internal usdc;
-    SzipReservoirLpOracle internal lpOracle;
+    SzipFarmUtilityLpOracle internal lpOracle;
 
     address internal FORWARDER = makeAddr("forwarder");
     address internal LP_TOKEN = makeAddr("ichiLpToken");
@@ -232,7 +232,7 @@ contract SEC05LpOracleIdentityTest is Test {
         harness = new LpGateHarness();
         usdc = new MockUSDC();
         // The test is the deployer/owner ⇒ it can seal identity (mirrors P9's team broadcaster pre-transfer).
-        lpOracle = new SzipReservoirLpOracle(FORWARDER, address(usdc), VALIDITY, LP_TOKEN);
+        lpOracle = new SzipFarmUtilityLpOracle(FORWARDER, address(usdc), VALIDITY, LP_TOKEN);
         assertEq(lpOracle.owner(), address(this), "test owns lpOracle");
     }
 
@@ -344,7 +344,7 @@ contract SEC05LpOracleIdentityTest is Test {
         // The deployment struct's default `lpOracle` is the zero address (never assigned on the fair-LP branch),
         // and the script gates both new calls on `!= address(0)`. The library is therefore never reached.
         address fairLpBranchOracle = address(0);
-        assertEq(fairLpBranchOracle, address(0), "fair-LP branch: no SzipReservoirLpOracle to seal/assert");
+        assertEq(fairLpBranchOracle, address(0), "fair-LP branch: no SzipFarmUtilityLpOracle to seal/assert");
         // (No harness.gate(address(0)) call — that is precisely what the script's guard prevents.)
     }
 }

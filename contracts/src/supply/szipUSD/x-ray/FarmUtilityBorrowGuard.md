@@ -1,21 +1,21 @@
-# X-Ray — `ReservoirBorrowGuard.sol` (single-contract, test-connected)
+# X-Ray — `FarmUtilityBorrowGuard.sol` (single-contract, test-connected)
 
-> ReservoirBorrowGuard | 53 nSLOC | 2109fe5 (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE**
+> FarmUtilityBorrowGuard | 53 nSLOC | 2109fe5 (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE**
 
-Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/ReservoirBorrowGuard.sol`, the EVK hook target
-(§4.3, security F8a) installed on the reservoir USDC borrow vault at `OP_BORROW`. **No dedicated test file** — its
-two decisive security properties are exercised via its sibling `test/ReservoirLoopModule.t.sol` (the anti-spoof
+Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/FarmUtilityBorrowGuard.sol`, the EVK hook target
+(§4.3, security F8a) installed on the farm utility USDC borrow vault at `OP_BORROW`. **No dedicated test file** — its
+two decisive security properties are exercised via its sibling `test/FarmUtilityLoopModule.t.sol` (the anti-spoof
 `isHookTarget` + the account-identity borrow gate, the latter against the **real** EVK/EVC market). The
 admin/wiring surface — previously the gap — is **now covered too** (2026-06-20): 3 guard tests total.
 
-> Why this guard matters: the reservoir borrow vault **is the warehouse's shared resting USDC** (idle depositor
+> Why this guard matters: the farm utility borrow vault **is the warehouse's shared resting USDC** (idle depositor
 > cash). Without this hook, any ICHI-LP holder could post the escrow collateral on their *own* EVC account and lever
 > that shared USDC. The guard pins `OP_BORROW` to the engine Safe — so the test that a third party is rejected on its
 > own account is the whole point, and it's proven on the live market.
 
 ## 1. What it is
 
-An `IHookTarget` installed only on `OP_BORROW` of the reservoir USDC vault. A borrow is allowed **only when the
+An `IHookTarget` installed only on `OP_BORROW` of the farm utility USDC vault. A borrow is allowed **only when the
 EVK-appended on-behalf account `== juniorTrancheEngine`** (else revert `NotEngineSafe`). The engine Safe borrows on
 its own account (no operator, §4.5.1), so this is an **account-identity** gate, not operator-authorization — distinct
 from `CREGatingHook` (which gates `isAccountOperatorAuthorized`). It replicates `BaseHookTarget`'s `isProxy`-guarded
@@ -45,7 +45,7 @@ No CRE operator, no value path. The only state is the wired factory + engine Saf
 | I-2 | **`isHookTarget` anti-spoof** — magic selector only when the caller is a recognized factory proxy (a vault) | Yes | **`test_guard_isHookTarget_only_for_factory_proxy`** (non-proxy caller → `0`; real factory proxy → the selector) |
 | I-3 | **`_msgSender` anti-spoof** — trusts the appended 20-byte on-behalf account only when `msg.sender` is a factory proxy; else returns raw `msg.sender` (a non-vault caller can't spoof an authorized account) | Yes | structural (replicated verbatim from `BaseHookTarget`); exercised by I-1 (real-vault path) + I-2 (the proxy branch); a *direct* non-vault `fallback()` call isn't separately tested |
 | I-4 | **admin gate uses raw `msg.sender`** (not the EVK decoder) — a non-owner reverts `NotOwner`; the owner can transfer/re-point | Yes | **`test_guard_admin_onlyOwner_transfer_and_wiring`** — non-owner → `NotOwner` on all 3 admin fns; zero-guards; `setJuniorTrancheEngine`/`setEVaultFactory` effects; `transferOwnership` hands off + the old owner then loses the gate |
-| X-1 | the guard only protects if **installed on `OP_BORROW`** of the reservoir vault, and `eVaultFactory` is the real factory | **No** | the hook install + factory wiring is deploy/config (out of this scope); `test_third_party_borrow_blocked_by_guard` deploys the market with the guard installed, evidencing the wiring end-to-end |
+| X-1 | the guard only protects if **installed on `OP_BORROW`** of the farm utility vault, and `eVaultFactory` is the real factory | **No** | the hook install + factory wiring is deploy/config (out of this scope); `test_third_party_borrow_blocked_by_guard` deploys the market with the guard installed, evidencing the wiring end-to-end |
 
 ## 4. Guards — coverage
 
@@ -58,7 +58,7 @@ No CRE operator, no value path. The only state is the wired factory + engine Saf
 
 ## 5. Attack surfaces
 
-- **The account-identity borrow gate is the whole point — and it's proven on the live market (I-1)** — the reservoir
+- **The account-identity borrow gate is the whole point — and it's proven on the live market (I-1)** — the farm utility
   vault is shared depositor USDC; the guard is the only thing stopping an LP holder from levering it on their own
   account. `test_third_party_borrow_blocked_by_guard` stands up the real EVK market with the guard installed, lets
   the engine Safe borrow (passes), then has a third party post the same escrow on its own account and attempt a
@@ -83,7 +83,7 @@ No CRE operator, no value path. The only state is the wired factory + engine Saf
 
 | Category | Count | Notes |
 |---|---|---|
-| Dedicated unit | 0 | no `ReservoirBorrowGuard.t.sol` — covered via the sibling loop suite |
+| Dedicated unit | 0 | no `FarmUtilityBorrowGuard.t.sol` — covered via the sibling loop suite |
 | Consumer (security gate) | 2 | `test_third_party_borrow_blocked_by_guard` (real-EVK account-identity gate), `test_guard_isHookTarget_only_for_factory_proxy` (anti-spoof) |
 | Admin/wiring | 1 | `test_guard_admin_onlyOwner_transfer_and_wiring` (raw-`msg.sender` `onlyOwner` on all 3 fns, zero-guards, effects, ownership handoff) |
 | Fuzz / invariant | 0 | stateless identity check — N/A |
@@ -94,7 +94,7 @@ covered.
 
 ## X-Ray Verdict
 
-**ADEQUATE** — the guard's reason for existing (pin `OP_BORROW` to the engine Safe so the shared reservoir USDC
+**ADEQUATE** — the guard's reason for existing (pin `OP_BORROW` to the engine Safe so the shared farm utility USDC
 can't be levered by an outsider) is proven on the **real EVK/EVC market**, the `isHookTarget` anti-spoof is tested,
 and the admin surface — incl. the borrow-allowlist `setJuniorTrancheEngine` and the deliberate raw-`msg.sender`
 `onlyOwner` — is now covered too. Capped at ADEQUATE only by the off-chain install-on-`OP_BORROW` assumption (X-1,

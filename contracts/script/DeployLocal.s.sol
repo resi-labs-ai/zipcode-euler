@@ -3,8 +3,8 @@ pragma solidity 0.8.24;
 
 import {DeployZipcode} from "./DeployZipcode.s.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
-import {ReservoirMarketDeployer} from "./ReservoirMarketDeployer.sol";
-import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {FarmUtilityMarketDeployer} from "./FarmUtilityMarketDeployer.sol";
+import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 import {SzipPerspectiveProbe} from "./SzipPerspectiveProbe.sol";
 import {LineIrm} from "./LineIrm.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
@@ -103,9 +103,9 @@ contract DeployLocal is DeployZipcode {
     ///         cross-chain stand-in — no real Base asset exists pre-bridge) are local. Collateral/Proof-of-Value stays
     ///         mocked per §17. CoW solver + CRE DON are simulated at smoke-time (the contracts they hit are real).
     function _provisionStandins() internal {
-        // Reservoir IRM: a real 0%-rate model (reservoir borrowing is internal POL — charging the protocol itself is
+        // Farm utility IRM: a real 0%-rate model (farm utility borrowing is internal POL — charging the protocol itself is
         // pointless). The per-line IRM is SEPARATE (CTR-13): a real ~7.5%-APR flat `IRMLinearKink` wired into the
-        // adapter `irm` slot, so every `openLine` installs it while the reservoir stays at zero.
+        // adapter `irm` slot, so every `openLine` installs it while the farm utility stays at zero.
         i.irm = address(new ZeroIRM());
         i.lineIrm = LineIrm.deploy();
         i.xAlphaMirror = address(new MockERC20("Zipcode xALPHA mirror", "xALPHA", 18));
@@ -116,7 +116,7 @@ contract DeployLocal is DeployZipcode {
             address(0), false, abi.encodePacked(BaseAddresses.USDC, address(0), address(0))
         );
         IEVault(baseMkt).setHookConfig(address(0), 0);
-        i.baseUsdcMarket = baseMkt;
+        i.usdcReservoir = baseMkt;
 
         // REAL EulerEarn senior pool off the LIVE factory. owner = team; timelock 0 => immediate cap config below.
         (bool ok, bytes memory ret) = BaseAddresses.EULER_EARN_FACTORY.call(
@@ -130,7 +130,7 @@ contract DeployLocal is DeployZipcode {
     }
 
     /// @notice The EE curator runbook the base deploy intentionally omits (admin ABI not compiled). Run as the EE
-    ///         owner (team): set fee recipient + 0 fee, onboard the resting USDC market + the reservoir borrow vault
+    ///         owner (team): set fee recipient + 0 fee, onboard the resting USDC market + the farm utility borrow vault
     ///         (both EVK-factory proxies => perspective-verified), point the supply queue at the resting market, then
     ///         hand curator (which also satisfies the allocator role) to the venue adapter so `openLine` can onboard
     ///         per-line vaults and `fund` can reallocate at origination.
@@ -145,13 +145,13 @@ contract DeployLocal is DeployZipcode {
         // no-op). The recipient stays wired so `f` can be flipped on IF external senior LPs ever deposit (post-M1).
         _eeCall(ee, abi.encodeWithSignature("setFeeRecipient(address)", d.warehouse.warehouseSafe));
 
-        _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", i.baseUsdcMarket, capMax));
-        _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", i.baseUsdcMarket));
+        _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", i.usdcReservoir, capMax));
+        _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", i.usdcReservoir));
         _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", d.borrowVault, capMax));
         _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", d.borrowVault));
 
         address[] memory q = new address[](1);
-        q[0] = i.baseUsdcMarket;
+        q[0] = i.usdcReservoir;
         _eeCall(ee, abi.encodeWithSignature("setSupplyQueue(address[])", q));
 
         _eeCall(ee, abi.encodeWithSignature("setCurator(address)", address(d.adapter)));
@@ -169,7 +169,7 @@ contract DeployLocal is DeployZipcode {
             BaseAddresses.EVC,
             BaseAddresses.USDC,
             address(d.registry),
-            i.lineIrm, // CTR-13: mirror what `openLine` installs (the line IRM), not the reservoir's ZeroIRM
+            i.lineIrm, // CTR-13: mirror what `openLine` installs (the line IRM), not the farm utility's ZeroIRM
             address(d.hook),
             i.polIchiVault
         );
@@ -186,21 +186,21 @@ contract DeployLocal is DeployZipcode {
         }
     }
 
-    /// @notice P5 override: seed an initial `LP_MARK` between oracle creation and the market build, so the reservoir
+    /// @notice P5 override: seed an initial `LP_MARK` between oracle creation and the market build, so the farm utility
     ///         `setLTV`'s `getQuote` resolves. In production the CRE `LP_MARK` push does this; here the broadcaster
     ///         (the oracle's owner at birth) seeds it by briefly pointing the forwarder at itself.
     function _phaseP5() internal override {
         // 23. LP oracle.
-        d.lpOracle = new SzipReservoirLpOracle(
+        d.lpOracle = new SzipFarmUtilityLpOracle(
             BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
         );
 
         // seed an initial mark: $1.00 per 1e18 LP share (6-dp quote).
         _seedLpMark(1e6);
 
-        // 24. reservoir market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
-        (d.escrowVault, d.borrowVault, d.router) = new ReservoirMarketDeployer().deploy(
-            ReservoirMarketDeployer.Params({
+        // 24. farm utility market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
+        (d.escrowVault, d.borrowVault, d.router) = new FarmUtilityMarketDeployer().deploy(
+            FarmUtilityMarketDeployer.Params({
                 factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
                 evc: BaseAddresses.EVC,
                 governor: address(d.timelock),
@@ -229,7 +229,7 @@ contract DeployLocal is DeployZipcode {
 
 // ============================================================================ local stand-in mocks
 
-/// @notice A zero-rate IRM (EVK `IIRM` face) — installed on the reservoir borrow vault.
+/// @notice A zero-rate IRM (EVK `IIRM` face) — installed on the farm utility borrow vault.
 contract ZeroIRM {
     function computeInterestRate(address, uint256, uint256) external pure returns (uint256) {
         return 0;

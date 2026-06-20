@@ -26,7 +26,7 @@ Everything that moves value prices off NAV. The oracle is the one contract whose
 
 **Inputs NAV reads** (`grossBasketValue()` + legs, per `8-B4-SzipNavOracle.md`):
 - raw `balanceOf` of the **main + sidecar Safes** for the 5 plain legs (zipUSD/USDC/xALPHA/HYDX/oHYDX)
-- the **escrow-collateralized ICHI LP** (counted in place) **minus reservoir strike debt**
+- the **escrow-collateralized ICHI LP** (counted in place) **minus farm utility strike debt**
 - the **xALPHA rate** — from the wired Base `SzAlphaRateOracle` (CRE-pushed from 964), else the M1 stand-in
 - the **impairment provision** — written only by `DefaultCoordinator`
 

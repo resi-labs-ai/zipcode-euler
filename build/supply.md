@@ -48,7 +48,7 @@ Evaluate this while reviewing the leg-cache design.
 **Phase 2 — the engine loop:**
 5. `szipUSD/LpStrategyModule.sol` (8-B6), `HarvestVoteModule.sol` (8-B7), `ExerciseModule.sol` (8-B8),
    `SellModule.sol` (8-B9), `RecycleModule.sol` (8-B10), `SzipBuyBurnModule.sol` (8-B14).
-6. `szipUSD/ReservoirLoopModule.sol` + `ReservoirBorrowGuard.sol` (8-B5) + `src/supply/SzipReservoirLpOracle.sol`.
+6. `szipUSD/FarmUtilityLoopModule.sol` + `FarmUtilityBorrowGuard.sol` (8-B5) + `src/supply/SzipFarmUtilityLpOracle.sol`.
 
 **Phase 3 — periphery:**
 7. `szipUSD/OffRampModule.sol`, `szipUSD/DurationFreezeModule.sol`, `CreditWarehouse/houseAdminModule.sol`.

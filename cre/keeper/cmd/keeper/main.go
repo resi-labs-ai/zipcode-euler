@@ -62,7 +62,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	reservoir, err := cfg.MustAddr("ReservoirLoopModule")
+	farmUtility, err := cfg.MustAddr("FarmUtilityLoopModule")
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func run(log *slog.Logger) error {
 	checks := []job.IdentityCheck{
 		{Name: "ExitGate", Addr: exitGate, AdminSig: "windowController()"},
 		{Name: "HarvestVoteModule", Addr: harvest, AdminSig: "operator()"},
-		{Name: "ReservoirLoopModule", Addr: reservoir, AdminSig: "operator()"},
+		{Name: "FarmUtilityLoopModule", Addr: farmUtility, AdminSig: "operator()"},
 		{Name: "ExerciseModule", Addr: exerciseMod, AdminSig: "operator()"},
 		{Name: "SellModule", Addr: sellMod, AdminSig: "operator()"},
 		{Name: "RecycleModule", Addr: recycleMod, AdminSig: "operator()"},
@@ -126,7 +126,7 @@ func run(log *slog.Logger) error {
 	quoter := quote.NewProdQuoter(c, hydxUsdcPool, uint32(cfg.TwapPeriod/time.Second))
 	strikeLoop := job.NewStrikeLoopJob(job.StrikeLoopConfig{
 		Harvest:            harvest,
-		Reservoir:          reservoir,
+		FarmUtility:          farmUtility,
 		Exercise:           exerciseMod,
 		Sell:               sellMod,
 		Recycle:            recycleMod,
@@ -156,7 +156,7 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("startup identity assertion passed",
 		"ExitGate", exitGate.Hex(), "HarvestVoteModule", harvest.Hex(),
-		"ReservoirLoopModule", reservoir.Hex(), "ExerciseModule", exerciseMod.Hex(),
+		"FarmUtilityLoopModule", farmUtility.Hex(), "ExerciseModule", exerciseMod.Hex(),
 		"SellModule", sellMod.Hex(), "RecycleModule", recycleMod.Hex(),
 		"LpStrategyModule", lpMod.Hex(),
 		"OffRampModule", offramp.Hex(), "ZipRedemptionQueue", redemptionQueue.Hex())

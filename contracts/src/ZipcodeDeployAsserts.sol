@@ -50,7 +50,7 @@ library ZipcodeDeployAsserts {
     ///         "same WORKFLOW_ID on every subclass" assumption of `requireIdentityWired`. Reverts
     ///         `ReceiverIdentityNotWired` when the receiver's `getExpectedWorkflowId()` is `bytes32(0)`
     ///         (dormant identity ⇒ any co-tenant Forwarder workflow can push its mark, M4).
-    /// @param receiver The un-looped CRE-push `SzipReservoirLpOracle` (the deploy guards the call on
+    /// @param receiver The un-looped CRE-push `SzipFarmUtilityLpOracle` (the deploy guards the call on
     ///        `lpOracle != address(0)`; the fair-LP branch has no identity surface to assert).
     function requireReceiverIdentityWired(address receiver) internal view {
         if (IReceiverIdentity(receiver).getExpectedWorkflowId() == bytes32(0)) {

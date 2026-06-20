@@ -7,7 +7,7 @@ import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplat
 
 /// @notice Dedicated unit + fuzz suite for the DEMO NAV-oracle fork — ported from `test/SzipNavOracle.t.sol`
 ///         (the audited prod parent) with the ONLY differing seam swapped: the prod ICHI LP leg
-///         (`getTotalAmounts()` + reservoir escrow) becomes the demo's **Solidly vAMM pair** leg
+///         (`getTotalAmounts()` + farm utility escrow) becomes the demo's **Solidly vAMM pair** leg
 ///         (`getReserves()` pro-rata, HYDX/USDC priced via `_legPriceOfToken`). Mocks are `setBalance`-style
 ///         (no real transfers), mirroring the prod suite. Converts the fork from EXPOSED (no dedicated tests).
 

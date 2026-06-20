@@ -5,7 +5,7 @@
 > Test: `contracts/test/LpStrategyModule.t.sol`.
 
 ## Role
-The **third engine Zodiac Module** (after the 8-B14 buy-and-burn and the 8-B5 reservoir loop) and the **simplest**
+The **third engine Zodiac Module** (after the 8-B14 buy-and-burn and the 8-B5 farm utility loop) and the **simplest**
 of the engine set: **no EVC leg, no oracle, no hook, no custody, no storage written in any mutating path**. It owns
 the LP's whole lifecycle on the szipUSD engine Safe: build the single-sided zipUSD/xALPHA ICHI LP (`addLiquidity` →
 `IICHIVault.deposit`), gauge-stake it to farm oHYDX (`stake` → `IGauge.deposit`), unstake slices back to the
@@ -91,12 +91,12 @@ wired nor referenced.
 
 ## Wiring — cross-component (who points at whom)
 - **`ichiVault` = the SHARED LP address (PROGRESS row 338).** The production POL ICHI vault (the LP share token) MUST
-  be the **single** address wired into ALL of: this module's `ichiVault` (`setUp`), the 8-B5 reservoir escrow vault's
-  collateral `asset()` (`ReservoirMarketDeployer.lpToken`), the `SzipReservoirLpOracle` `LP_MARK` key, and the
+  be the **single** address wired into ALL of: this module's `ichiVault` (`setUp`), the 8-B5 farm utility escrow vault's
+  collateral `asset()` (`FarmUtilityMarketDeployer.lpToken`), the `SzipFarmUtilityLpOracle` `LP_MARK` key, and the
   `SzipNavOracle` basket-LP leg. 8-B6 `unstake`s that LP to the Safe (harvest-loop step 1) and 8-B5 `postCollateral`
   deposits it into the escrow — if the two are wired to *different* LP addresses the loop silently fractures (the
   unstaked LP can't be posted). The item-10 deploy MUST assert
-  `LpStrategyModule.ichiVault() == reservoir-escrow asset() == lpOracle key`.
+  `LpStrategyModule.ichiVault() == farm utility-escrow asset() == lpOracle key`.
 - **`gauge` resolved via `Voter.gauges(ourPool)`** (Hydrex Voter `0xc69E…`) with a **hard `!= 0` gate** — our
   zipUSD/xALPHA gauge must be Hydrex-whitelisted (`Voter.createGauge(ourPool, ALM_ICHI_UNIV3)`), an **external
   governance dependency** (`hydrex.md §9.4`). The gauge's staking token is the ICHI vault share; staking is what earns
@@ -130,7 +130,7 @@ wired nor referenced.
   `DurationFreezeModule` at the TOP of P6 (before this module) so the gate is wired
   LIVE; a `SeamCoverageGate` assert confirms `coverageGate() == durationFreeze`.
 - **`owner = TimelockController != operator`** (the hot CRE key).
-- **Assert** `LpStrategyModule.ichiVault() == reservoir-escrow vault asset() == lpOracle key` (the shared-LP-address
+- **Assert** `LpStrategyModule.ichiVault() == farm utility-escrow vault asset() == lpOracle key` (the shared-LP-address
   invariant, row 338).
 - No `audit/*` follow-on for 8-B6 itself — the LP-lifecycle audit-sweep is folded into the deferred
   engine-integration pass.

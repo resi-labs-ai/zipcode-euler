@@ -19,12 +19,12 @@ import {DeployZipcode} from "../script/DeployZipcode.s.sol";
 ///           - EE_POOL: create the USDC EulerEarn pool off the LIVE `EULER_EARN_FACTORY` (curator timelock 0),
 ///             then run the EE admin config the script omits (the IEulerEarn-shim gap): `setIsAllocator(adapter)`,
 ///             `setCurator(adapter)`, `setFeeRecipient(warehouse.safe)`, `setFee(0.5e18)`, and point the supply
-///             queue at the reservoir `borrowVault`. (Obligations 311/333 — fork-only.)
-///           - BASE_USDC_MARKET: a no-borrow USDC EVault at the supply-queue head (via `EVAULT_FACTORY`).
+///             queue at the farm utility `borrowVault`. (Obligations 311/333 — fork-only.)
+///           - USDC_RESERVOIR: a no-borrow USDC EVault at the supply-queue head (via `EVAULT_FACTORY`).
 ///           - XALPHA_MIRROR: an ERC20 stand-in (NavOracle reads `balanceOf`; SellModule swaps it).
 ///           - POL_ICHI_VAULT + POL_GAUGE: an ICHI-vault + Hydrex-gauge stand-in (the shared-LP seam keys off
-///             the vault; the reservoir escrow `asset()` must equal it). OTC-whitelist-gated in prod.
-///           - IRM: a real Base IRM (or a mock) for the reservoir borrow vault.
+///             the vault; the farm utility escrow `asset()` must equal it). OTC-whitelist-gated in prod.
+///           - IRM: a real Base IRM (or a mock) for the farm utility borrow vault.
 ///        2. BROADCASTER: `deploy()` calls `vm.startBroadcast()` and the Safe pre-validated `v==1` path needs
 ///           `msg.sender == TEAM_MULTISIG`. In a TEST, either drive via `vm.prank(team)` + a non-broadcast deploy
 ///           variant, or fund + `vm.startBroadcast(teamPk)`. (May warrant a test-only `_deployWith(Inputs)`
@@ -59,7 +59,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
 
     /// @dev Set every env key `DeployZipcode._loadInputs()` reads. Address `(T)` stand-ins are placeholder
     ///      `makeAddr`s here — the next window REPLACES them with real/mock fork contracts (see the class NatSpec),
-    ///      else `deploy()` reverts (e.g. `ExitGate` calls `IBaal`, the reservoir deployer calls the live EVK
+    ///      else `deploy()` reverts (e.g. `ExitGate` calls `IBaal`, the farm utility deployer calls the live EVK
     ///      factory, `SzipNavOracle` zero-checks its token args).
     function _setDeployEnv() internal {
         // principals
@@ -78,7 +78,7 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         vm.setEnv("POL_ICHI_VAULT", vm.toString(makeAddr("STANDIN_polIchiVault")));
         vm.setEnv("POL_GAUGE", vm.toString(makeAddr("STANDIN_polGauge")));
         vm.setEnv("EE_POOL", vm.toString(makeAddr("STANDIN_eePool")));
-        vm.setEnv("BASE_USDC_MARKET", vm.toString(makeAddr("STANDIN_baseUsdcMarket")));
+        vm.setEnv("USDC_RESERVOIR", vm.toString(makeAddr("STANDIN_usdcReservoir")));
 
         // numeric knobs (mirror .env.example)
         vm.setEnv("VALIDITY_WINDOW", vm.toString(uint256(31_536_000)));

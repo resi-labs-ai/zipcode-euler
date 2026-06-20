@@ -18,10 +18,10 @@ marks (alphaUSD, HYDX/USD) it cannot read on Base, and maintains an on-chain TWA
 share price: `navEntry = max(spot, twap)` (issuance, reverts on stale), `navExit = min(spot, twap)` (exit, prices
 last good mark). The `DefaultCoordinator` writes an impairment `provision` that `spotNavPerShare` subtracts.
 
-**The fork delta (vs prod):** the LP leg. Prod values an ICHI vault (`getTotalAmounts()` + a reservoir escrow
+**The fork delta (vs prod):** the LP leg. Prod values an ICHI vault (`getTotalAmounts()` + a farm utility escrow
 collateral leg). The demo values the Solidly **pair** directly: `heldShares/totalSupply × getReserves()`, with
 the reserve tokens (HYDX/USDC) priced via `_legPriceOfToken` (HYDX = the pushed leg, USDC = `1e30` for the 6→18-dp
-$1 fold). The demo has **no reservoir leg**.
+$1 fold). The demo has **no farm utility leg**.
 
 ## 2. Entry points
 
@@ -68,7 +68,7 @@ $1 fold). The demo has **no reservoir leg**.
 
 Ported the applicable prod coverage (ctor/guards, the full CRE push path, freshness, plain-leg NAV, the spot/twap
 bracket, provision gating, `valueOf`, genesis) and wrote fresh tests for the **swapped vAMM LP valuation** — the
-one part that differs from the audited parent. Skipped the prod suite's reservoir-leg + ICHI-`getTotalAmounts`
+one part that differs from the audited parent. Skipped the prod suite's farm utility-leg + ICHI-`getTotalAmounts`
 tests (the demo has neither). The vAMM `getReserves()` pro-rata pricing is now covered, including the HYDX/USDC
 `_legPriceOfToken` decimal fold and the unwired/empty-LP zero case.
 
@@ -84,7 +84,7 @@ out-of-scope-by-design.
 
 **Structural facts:**
 1. 294 nSLOC; plain (non-upgradeable) `ReceiverTemplate`; one CRE-gated state-changer (`_processReport`) + `writeProvision` (DC) + `poke` (permissionless) + Timelock setters.
-2. The fork delta is the LP leg: vAMM `getReserves()` pro-rata (HYDX/USDC), vs prod's ICHI `getTotalAmounts()` + reservoir escrow — no reservoir leg here.
+2. The fork delta is the LP leg: vAMM `getReserves()` pro-rata (HYDX/USDC), vs prod's ICHI `getTotalAmounts()` + farm utility escrow — no farm utility leg here.
 3. Tests: 23 unit + 1 fuzz, **24/24 green** — ported from the prod `SzipNavOracle` suite with the vAMM LP seam swapped in (was 0 dedicated).
 4. Both value reads (issuance `navEntry`, exit `navExit`) price off this oracle; the bracket + freshness gate the fail-closed behavior.
 5. Self-declared DEMO/SHOWCASE; the NAV-hub residuals (donation seam, spot-LP, unbounded provision) are inherited from the prod design, not introduced by the fork.

@@ -12,7 +12,7 @@ unit-testable.
 
 Every report receiver decodes `abi.encode(uint8 reportType, bytes payload)` first
 (`ZipcodeController.sol:193`, `ZipcodeOracleRegistry.sol:129`, `SzipNavOracle.sol:301`,
-`SzipReservoirLpOracle.sol:107`, `DefaultCoordinator.sol:182`, `SzAlphaRateOracle.sol:81`,
+`SzipFarmUtilityLpOracle.sol:107`, `DefaultCoordinator.sol:182`, `SzAlphaRateOracle.sol:81`,
 `WarehouseAdminModule.sol:158` — there the first field is named `opType`, same `(uint8, bytes)` shape).
 
 ```go
@@ -29,7 +29,7 @@ env, err := zipreport.Envelope(reportType, payload) // abi.encode(uint8, bytes)
 | `5` Default / `6` Liquidation | `RT_DEFAULT`/`RT_LIQUIDATION` (`:51`/`:52`) | `(bytes32 lienId, uint8 status)` (`:203`) | `Status(reportType, lienId, status)` |
 | `3` Revaluation | `ZipcodeOracleRegistry.REVALUATION` (`:29`) | `(address[] liens, uint256[] prices, uint32 ts)` (`:132`) | `Revaluation(...)` |
 | `7` NavLeg | `SzipNavOracle.NAV_LEG` (`:72`) | `(uint8[] legs, uint256[] prices, uint32 ts)` (`:304`); `legs ∈ {0,1}` (`:66/:68`) | `NavLegReport(...)` |
-| `7` LpMark | `SzipReservoirLpOracle.LP_MARK` (`:28`) | `(uint256 mark, uint32 ts)` (`:109`) | `LpMarkReport(...)` |
+| `7` LpMark | `SzipFarmUtilityLpOracle.LP_MARK` (`:28`) | `(uint256 mark, uint32 ts)` (`:109`) | `LpMarkReport(...)` |
 | `8` Coordinator | `DefaultCoordinator.REPORT_TYPE` (`:49`) | `(uint8 action, bytes data)` (`:185`) | `CoordLock/Release/Default/Recovery/Resolve/WriteOff` |
 | `8` RATE | `SzAlphaRateOracle.RATE` (`:26`) | `(uint256 rate, uint48 ts)` (`:83`) | `Rate(...)` |
 | `1/2/3/4` Warehouse op | `WarehouseAdminModule.SUPPLY/APPROVE/REDEEM/REPAY` (`:25-31`) | per-op (below); first field is `opType` | `WhSupplyReport/WhApproveReport/WhRedeemReport/WhRepayReport` |

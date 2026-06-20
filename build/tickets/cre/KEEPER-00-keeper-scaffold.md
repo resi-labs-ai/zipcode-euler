@@ -70,12 +70,12 @@ Base fork, **chainId 8453**, RPC `http://127.0.0.1:8545`. The keeper reads/drive
 | Name (config key) | Address | Read/Write surface used here |
 |---|---|---|
 | `creOperator` (the key) | `0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC` | priv key `0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a` (anvil acct #3) — **dev only; `.env`-injected, never committed** |
-| `ReservoirLoopModule` (8-B5) | `0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4` | `operator() returns (address)` — verified `address public operator;` `ReservoirLoopModule.sol:41` |
+| `FarmUtilityLoopModule` (8-B5) | `0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4` | `operator() returns (address)` — verified `address public operator;` `FarmUtilityLoopModule.sol:41` |
 | `ExitGate` | `0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e` | `windowController() returns (address)` — verified `address public windowController;` `ExitGate.sol:51` |
 | `ZipRedemptionQueue` | `0x46c89c1a4e86b7F025871c35F08aA7DA95F79D8f` | (config-registered; no call this window) |
 
 Every engine module exposes `address public operator;` (auto-getter `operator()`), verified across
-`ReservoirLoopModule/LpStrategyModule/HarvestVoteModule/ExerciseModule/SellModule/RecycleModule/OffRampModule/
+`FarmUtilityLoopModule/LpStrategyModule/HarvestVoteModule/ExerciseModule/SellModule/RecycleModule/OffRampModule/
 DurationFreezeModule/SzipBuyBurnModule.sol`. `ExitGate.burnFor(uint256)` is `onlyWindowController` (`ExitGate.sol:199-200`)
 — **that is KEEPER-01's write target, not this window's.** This window only **reads** `operator()`/`windowController()`.
 
@@ -113,7 +113,7 @@ cre/keeper/
   (e.g. `30s`), `GasBufferBps uint64` (default `3000` ⇒ gas-units ×1.30; applies to the **gas limit only**, NOT the
   fee cap — see K3), `FeeCapMultiplier uint64` (default `2`; the base-fee headroom knob, see K3),
   `ConfirmTimeout time.Duration` (e.g. `60s`), and an **address book**
-  `Modules map[string]common.Address` keyed by name (`ReservoirLoopModule`, `ExitGate`, `ZipRedemptionQueue`, …).
+  `Modules map[string]common.Address` keyed by name (`FarmUtilityLoopModule`, `ExitGate`, `ZipRedemptionQueue`, …).
 - `Load()`: **apply defaults first**, then read env, then `Validate()` — so an unset `KEEPER_GAS_BUFFER_BPS` becomes
   `3000` (valid) and only an explicit `KEEPER_GAS_BUFFER_BPS=0` is rejected. Env keys: `KEEPER_RPC_URL`,
   `KEEPER_CHAIN_ID`, `KEEPER_POLL_INTERVAL`, `KEEPER_GAS_BUFFER_BPS`, `KEEPER_FEE_CAP_MULTIPLIER`,
@@ -122,7 +122,7 @@ cre/keeper/
 - `Validate()` rejects: empty `RPCURL`; `ChainID==0`; `GasBufferBps==0`; `FeeCapMultiplier==0`;
   `PollInterval<=0`; `ConfirmTimeout<=0`. **Address-book scope:** `Validate()` requires non-zero/valid addresses
   ONLY for the names this window's startup-check + registered jobs actually reference (this window:
-  `ReservoirLoopModule` and `ExitGate`). Unreferenced book entries (e.g. `ZipRedemptionQueue` — registered for
+  `FarmUtilityLoopModule` and `ExitGate`). Unreferenced book entries (e.g. `ZipRedemptionQueue` — registered for
   KEEPER-01, not called here) MAY be absent/zero. Provide `Config.MustAddr(name) (common.Address, error)` (errors
   loudly — not a panic — if a *referenced* name is missing/zero) so a job declares which names it needs and
   `main.go` fail-fasts cleanly.
@@ -252,7 +252,7 @@ type IdentityJob struct { want common.Address; checks []IdentityCheck }
   `operator != owner` invariant the spec demands (verified exposed: zodiac `Ownable.owner()` and OZ `Ownable.owner()`,
   selector `0x8da5cb5b`). Any failure → return an **error** (the Runner logs the mismatch — a misconfigured/wrong key
   is a loud liveness failure, not silent). Returns an **empty `chain.Plan`** always (read-only; never writes).
-- `cmd/keeper/main.go` builds the check list from config — `{"ReservoirLoopModule", addr, "operator()"}` and
+- `cmd/keeper/main.go` builds the check list from config — `{"FarmUtilityLoopModule", addr, "operator()"}` and
   `{"ExitGate", addr, "windowController()"}` — and runs the assertion **once at startup** (fail-fast: refuse to start
   the Runner if it fails), then also registers `IdentityJob` as a heartbeat job.
 - **Test `IdentityJob` with a stub `chain.Reader`** (anvil-free, simulated-free — the cleanest seam): a fake Reader
@@ -317,7 +317,7 @@ Selectors (verified `keccak256(sig)[:4]`): `setValue(uint256)=0x55241077`, `oper
 3. The Go module is **committed to `cre/keeper/`** in this monorepo.
 4. **Live-anvil acceptance (documented in README; gated on anvil up — NOT the CI gate):** with anvil up
    (`cast block-number --rpc-url http://127.0.0.1:8545`), `go run ./cmd/keeper` with the anvil env (operator key
-   `0x5de4…b365a`, `KEEPER_ADDR_ReservoirLoopModule=0x61cd…`, `KEEPER_ADDR_ExitGate=0xd9b8…`) passes the startup
+   `0x5de4…b365a`, `KEEPER_ADDR_FarmUtilityLoopModule=0x61cd…`, `KEEPER_ADDR_ExitGate=0xd9b8…`) passes the startup
    identity assertion (reads `operator()`==`0x3C44…93BC`, `windowController()`==`0x3C44…93BC`) and the IdentityJob
    logs OK each tick. (No write tx is sent against anvil this window.)
 
@@ -334,7 +334,7 @@ gap folds back into this ticket.
   (`IERC20(shareToken).balanceOf(engineSafe)`; `shareToken`/`engineSafe` are exposed on `ExitGate.sol:50,52`) or a
   CoW-side read — not a log subscription. CRE-02's `RedemptionSettled` sequencing is likewise a state poll inside
   `Evaluate`. The poll-only spine (K4) is sufficient; no new contract surface is owed.
-- **Harvest legs are discrete txs (no on-chain multicall).** `ReservoirLoopModule` exposes four separate
+- **Harvest legs are discrete txs (no on-chain multicall).** `FarmUtilityLoopModule` exposes four separate
   `onlyOperator` entrypoints (post-collateral / borrow / repay / withdraw-collateral) + `outstandingDebt()` /
   `postedCollateral()` views. KEEPER-01's harvest job returns these as an **ordered `chain.Plan`** and relies on the
   spine's abort-on-first-error (K4) + nonce-safety (K3) so a dropped leg cannot leave a borrow-without-repay.

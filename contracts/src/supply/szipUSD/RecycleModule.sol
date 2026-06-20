@@ -31,7 +31,7 @@ interface IEulerEarn {
 
 /// @title RecycleModule
 /// @notice The 8-B10 engine module (§4.5.1) — the auto-compounder's **free-value ledger** and the spends that draw it
-///         down. A CRE-operator-gated Zodiac Module (sibling of 8-B14 buy-and-burn, 8-B5 reservoir-loop, 8-B6
+///         down. A CRE-operator-gated Zodiac Module (sibling of 8-B14 buy-and-burn, 8-B5 farm utility loop, 8-B6
 ///         LP-strategy, 8-B7 harvest/vote, 8-B8 exercise, 8-B9 sell), enabled on the szipUSD engine Safe
 ///         (`avatar == target == juniorTrancheEngine`). It owns the engine's ONE piece of real mutable state — the single
 ///         `freeValueAccrued` accumulator (no other module writes it; the CRE operator is the only writer, §8 inv. 3) —

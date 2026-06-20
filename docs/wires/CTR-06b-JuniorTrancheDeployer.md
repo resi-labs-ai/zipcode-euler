@@ -12,7 +12,7 @@ inline across phases P3/P6/P7/P8/P9 (~30 deployments + ~15 seam asserts, strict 
 reproduce it for silo #2..N (unlike the senior warehouse, which has `CreditWarehouseDeployer`). This is that callable:
 `deploy(JuniorParams)` stands up ONE self-consistent junior tranche — Baal two-Safe substrate + `SzipNavOracle` +
 `ExitGate`/`SzipUSD` + `ZipDepositModule` + the **8** yield/freeze/buy-burn engine modules + the loss side
-(`LienXAlphaEscrow` + `DefaultCoordinator`) — wired to THIS silo's `eePool`/`warehouseSafe`/reservoir handles and the
+(`LienXAlphaEscrow` + `DefaultCoordinator`) — wired to THIS silo's `eePool`/`warehouseSafe`/farm utility handles and the
 SHARED hub `zipUSD`/`rateOracle`, and returns the handles `SiloRegistry.addSilo` needs. CTR-06c calls it once per silo.
 
 It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the one `DeployZipcode` already uses
@@ -37,10 +37,10 @@ It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the 
 - **The 17 steps** (each mirrors a `DeployZipcode` line, cited in the ticket): 1 summon → 2 `SzipNavOracle` (11-arg) →
   3 `ExitGate`+`SzipUSD`+shareToken-both-ways+windowController → 4 `ZipDepositModule`+`setGate` → 5 shaman grant
   (Gate→manager(2)) + `totalShares()==0` assert → 6 `DurationFreezeModule` FIRST (the `coverageGate`) enabled on BOTH
-  Safes → 7 `SzipBuyBurnModule` + engine-safe seam → 8 `ReservoirLoopModule` → 9 `LpStrategyModule` + shared-LP seam →
+  Safes → 7 `SzipBuyBurnModule` + engine-safe seam → 8 `FarmUtilityLoopModule` → 9 `LpStrategyModule` + shared-LP seam →
   10 `HarvestVoteModule` → 11 `ExerciseModule` → 12 `SellModule` → 13 `RecycleModule` + one-bank seam → 14 loss side
   (coordinator FIRST to break the ctor cycle, then escrow, `setEscrow`, `setDefaultCoordinator`) → 15 NAV final wiring
-  (`setLpPosition`/`setReservoirLeg`/`setXAlphaRateOracle`) → 16 identity seal + OZ-ownable handoff → 17 Safe handoff.
+  (`setLpPosition`/`setFarmUtilityLeg`/`setXAlphaRateOracle`) → 16 identity seal + OZ-ownable handoff → 17 Safe handoff.
 - **Seam asserts reproduced (fails closed on any mis-wire):** coverage-gate ×2 (buy-burn + LP-strategy →
   `durationFreeze`), engine-safe (NAV == Gate == buy-burn), shared-LP (`lpStrategy.ichiVault() == polIchiVault ==
   escrowVault.asset()`), one-bank (recycle's warehouse/eePool/navOracle == the deposit module's bank + the NAV oracle),
@@ -55,8 +55,8 @@ It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the 
   `DeployZipcode`'s `SeamWarehouseCommingled` (`:291`, which checks only the main Safe) by also covering the juniorTrancheSidecar.
 
 ## Wiring — cross-component (who points at whom)
-- **← `SiloDeployer`** (CTR-06c, not yet built) is the sole intended caller: it builds the EE pool + reservoir market
-  (via the CTR-06a-fixed `ReservoirMarketDeployer`) + warehouse (via `CreditWarehouseDeployer`), then calls
+- **← `SiloDeployer`** (CTR-06c, not yet built) is the sole intended caller: it builds the EE pool + farm utility market
+  (via the CTR-06a-fixed `FarmUtilityMarketDeployer`) + warehouse (via `CreditWarehouseDeployer`), then calls
   `new JuniorTrancheDeployer().deploy(JuniorParams{...})` and feeds the returned handles + the warehouse-side
   `adapter`/`warehouseSafe`/`eePool`/`curator` to `SiloRegistry.addSilo`.
 - **→ shared hub (inputs, never deployed/re-pointed here):** `zipUSD`, `rateOracle`, `timelock`, `team`. Per D2,
@@ -99,8 +99,8 @@ It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the 
 `contracts/test/JuniorTrancheDeployer.t.sol` — a fork test on `_selectBaseFork()` (live `BaalAndVaultSummoner` + live
 EVK/EVC). Injects mock NAV legs (`zip/usdc/xalpha/hydx/ohydx`) + `MockEulerEarn` (eePool) + `MockLpToken` (polIchiVault,
 with `token0/token1` for `LpStrategyModule.setUp`) + `MockGauge` (`rewardToken` for `HarvestVoteModule.setUp`); builds
-the reservoir escrow/borrow vaults via the REAL `ReservoirMarketDeployer` over the live EVK + a CRE-marked
-`SzipReservoirLpOracle`. 4 tests, all green: `test_deploy_seams_hold` (every inline seam passes), `test_ownership_handoff`
+the farm utility escrow/borrow vaults via the REAL `FarmUtilityMarketDeployer` over the live EVK + a CRE-marked
+`SzipFarmUtilityLpOracle`. 4 tests, all green: `test_deploy_seams_hold` (every inline seam passes), `test_ownership_handoff`
 (OZ→Timelock, 8 modules→Timelock, both Safes→team & NOT the deployer, rate oracle wired-not-owned), 
 `test_addSilo_topology_clauses_1_to_5` (a REAL `SiloRegistry.addSilo` from a pranked Timelock — reverts `SiloMiswired`
 if any clause fails), `test_non_commingling`.

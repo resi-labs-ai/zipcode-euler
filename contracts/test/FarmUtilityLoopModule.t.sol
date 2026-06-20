@@ -7,10 +7,10 @@ import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
 import {ISafe} from "../src/interfaces/safe/ISafe.sol";
 import {IBaal} from "../src/interfaces/baal/IBaal.sol";
 
-import {ReservoirLoopModule} from "../src/supply/szipUSD/ReservoirLoopModule.sol";
-import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
-import {ReservoirBorrowGuard} from "../src/supply/szipUSD/ReservoirBorrowGuard.sol";
-import {ReservoirMarketDeployer} from "../script/ReservoirMarketDeployer.sol";
+import {FarmUtilityLoopModule} from "../src/supply/szipUSD/FarmUtilityLoopModule.sol";
+import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
+import {FarmUtilityBorrowGuard} from "../src/supply/szipUSD/FarmUtilityBorrowGuard.sol";
+import {FarmUtilityMarketDeployer} from "../script/FarmUtilityMarketDeployer.sol";
 
 import {EulerVenueAdapter} from "../src/venue/EulerVenueAdapter.sol";
 
@@ -27,8 +27,8 @@ import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 /// @dev SEC-14: mastercopies are init-locked in their ctor, so `setUp` on a bare impl reverts.
 ///      A fresh EIP-1167 clone (fresh proxy storage) behaves like the old bare instance for setUp.
-function _cloneReservoirLoopModule() returns (ReservoirLoopModule) {
-    return ReservoirLoopModule(Clones.clone(address(new ReservoirLoopModule())));
+function _cloneFarmUtilityLoopModule() returns (FarmUtilityLoopModule) {
+    return FarmUtilityLoopModule(Clones.clone(address(new FarmUtilityLoopModule())));
 }
 
 // =========================================================================== mocks
@@ -147,7 +147,7 @@ contract ZeroIRM {
 /// @notice A recording IEulerEarn mock — only the surface the adapter touches. EulerEarn pins solc 0.8.26 so it
 ///         cannot be `new`-ed under 0.8.24; the adapter imports only the interface, so a focused recording mock
 ///         suffices for the unit/fork test (the live EE path is the audit S9/L4 integration). Ported verbatim from
-///         `EulerVenueAdapter.t.sol` so CTR-07's reservoir fund/defund reallocate runs against the same faithful EE.
+///         `EulerVenueAdapter.t.sol` so CTR-07's farm utility fund/defund reallocate runs against the same faithful EE.
 contract MockEulerEarn {
     // Mirror the real EulerEarn supply-queue cap so the H2 brick (SEC-06) is reproducible at the unit level.
     uint256 internal constant MAX_QUEUE_LENGTH = 30; // ConstantsLib.MAX_QUEUE_LENGTH
@@ -228,7 +228,7 @@ contract MockEulerEarn {
     }
 
     /// @dev CTR-04: faithful first-enable path (reference _setCap :782-794). Called by BOTH acceptCap (the line
-    ///      onboarding path) and the base/reservoir seedConfig enable path. On a market's FIRST enable it pushes the
+    ///      onboarding path) and the base/farm utility seedConfig enable path. On a market's FIRST enable it pushes the
     ///      market onto the WITHDRAW queue and enforces the hard MAX_QUEUE_LENGTH (30) cap (reference :783-785) — the
     ///      BINDING cap that bricks the ~29th lifetime openLine absent CTR-04's reclaim. Guarded against double-push
     ///      (an already-enabled market re-onboarded does not re-push), like _setCap's `if (!marketConfig.enabled)`.
@@ -254,7 +254,7 @@ contract MockEulerEarn {
     ///      `balanceOf(EE) > cfgBalance`, which is exactly the L9 skew.
     function seedConfig(address market, uint256 shares) external {
         cfgBalance[market] += uint112(shares);
-        // CTR-04: the base/reservoir enable path also takes a withdraw-queue slot on first enable (faithful to
+        // CTR-04: the base/farm utility enable path also takes a withdraw-queue slot on first enable (faithful to
         // _setCap's first-enable push), via the SAME guarded helper acceptCap uses — so re-seeding an already-enabled
         // market does not re-push, and a freshly-seeded base market occupies one slot exactly like the real EE.
         _enableMarket(market);
@@ -428,7 +428,7 @@ contract MockEulerEarn {
 
 /// @notice A deployer harness that deliberately mis-wires the wire-check against the WRONG LP token, so the (W3)
 ///         WireMismatch invariant is reachable — model `MisWiringAdapter`.
-contract MisWiringDeployer is ReservoirMarketDeployer {
+contract MisWiringDeployer is FarmUtilityMarketDeployer {
     address public immutable wrongLpToken;
 
     constructor(address wrongLpToken_) {
@@ -447,10 +447,10 @@ contract MisWiringDeployer is ReservoirMarketDeployer {
 
 // =========================================================================== tests
 
-/// @notice 8-B5 reservoir strike-financing loop. Unit (recording mock Safe — exec-shape/authority/atomicity) + fork
+/// @notice 8-B5 farm utility strike-financing loop. Unit (recording mock Safe — exec-shape/authority/atomicity) + fork
 ///         (live Base EVK/EVC/EulerRouter, real summoned substrate Safe — the post→borrow→repay→withdraw loop) +
 ///         LP-oracle + guard + deployer.
-contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
+contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
     // -- live Base --
     address internal constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // 6-dp
     address internal constant FORWARDER = 0xF8344CFd5c43616a4366C34E3EEE75af79a74482;
@@ -461,12 +461,12 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     address internal rando = makeAddr("rando");
     address internal team = makeAddr("teamMultisig");
     address internal supplier = makeAddr("usdcSupplier");
-    // CTR-07: the reservoir-fund allocator — a DISTINCT key from `operator` (two-key separation, §4.5.1).
-    address internal allocatorKey = makeAddr("reservoirAllocator");
+    // CTR-07: the farm utility-fund allocator — a DISTINCT key from `operator` (two-key separation, §4.5.1).
+    address internal allocatorKey = makeAddr("farmUtilityAllocator");
 
     uint256 internal constant BORROW_CAP = 1_000_000e6; // 1,000,000 USDC aggregate cap
     uint256 internal constant VALIDITY = 1 days; // generous engine-cadence window
-    uint256 internal constant SALT = uint256(keccak256("zipcode.reservoir.8b5.salt.a"));
+    uint256 internal constant SALT = uint256(keccak256("zipcode.farm utility.8b5.salt.a"));
 
     // -- common deploys --
     GenericFactory internal factory;
@@ -489,8 +489,8 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         address borrowVault_,
         address escrowVault_,
         uint256 cap_
-    ) internal returns (ReservoirLoopModule m) {
-        m = _cloneReservoirLoopModule();
+    ) internal returns (FarmUtilityLoopModule m) {
+        m = _cloneFarmUtilityLoopModule();
         m.setUp(
             abi.encode(
                 owner, juniorTrancheEngine_, operator, address(evc), borrowVault_, escrowVault_, address(lp), USDC, cap_
@@ -499,26 +499,26 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     /// @dev Deploy a fresh LP oracle (renounced, as production) wired to `lpToken_`.
-    function _deployOracle(address lpToken_) internal returns (SzipReservoirLpOracle o) {
-        o = new SzipReservoirLpOracle(FORWARDER, USDC, VALIDITY, lpToken_);
+    function _deployOracle(address lpToken_) internal returns (SzipFarmUtilityLpOracle o) {
+        o = new SzipFarmUtilityLpOracle(FORWARDER, USDC, VALIDITY, lpToken_);
         o.renounceOwnership();
     }
 
     /// @dev Push an LP mark via the CRE Forwarder (the only writer).
-    function _pushMark(SzipReservoirLpOracle o, uint256 mark) internal {
+    function _pushMark(SzipFarmUtilityLpOracle o, uint256 mark) internal {
         bytes memory report = abi.encode(o.LP_MARK(), abi.encode(mark, uint32(block.timestamp)));
         vm.prank(FORWARDER);
         o.onReport("", report);
     }
 
-    /// @dev Stand up the reservoir market through the deployer for `juniorTrancheEngine_`/`oracle`.
+    /// @dev Stand up the farm utility market through the deployer for `juniorTrancheEngine_`/`oracle`.
     function _deployMarket(address juniorTrancheEngine_, address oracle_, uint16 borrowLTV, uint16 liqLTV)
         internal
         returns (address escrowVault, address borrowVault, address router)
     {
-        ReservoirMarketDeployer dep = new ReservoirMarketDeployer();
+        FarmUtilityMarketDeployer dep = new FarmUtilityMarketDeployer();
         (escrowVault, borrowVault, router) = dep.deploy(
-            ReservoirMarketDeployer.Params({
+            FarmUtilityMarketDeployer.Params({
                 factory: factory,
                 evc: address(evc),
                 governor: owner,
@@ -543,7 +543,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     /// @dev Summon a real substrate + enable the module on its main Safe (team-owner drives the enable).
-    function _summonAndEnable(ReservoirLoopModule m) internal returns (address juniorTrancheSafe) {
+    function _summonAndEnable(FarmUtilityLoopModule m) internal returns (address juniorTrancheSafe) {
         vm.startPrank(team);
         Substrate memory s = _summon(team, SALT);
         vm.stopPrank();
@@ -557,7 +557,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     // =================================================================== setUp / authority / locks (unit)
 
     function test_setUp_wires_storage() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         assertEq(m.owner(), owner);
         assertEq(m.operator(), operator);
         assertEq(m.juniorTrancheEngine(), address(0xBEEF));
@@ -573,7 +573,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
     /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
     function test_SEC14_mastercopy_setUp_reverts() public {
-        ReservoirLoopModule mc = new ReservoirLoopModule();
+        FarmUtilityLoopModule mc = new FarmUtilityLoopModule();
         vm.expectRevert(abi.encodeWithSignature("AlreadyInitialized()"));
         mc.setUp(
             abi.encode(owner, address(0xBEEF), operator, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP)
@@ -581,7 +581,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_setUp_initializer_once() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         vm.expectRevert();
         m.setUp(
             abi.encode(owner, address(0xBEEF), operator, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP)
@@ -591,7 +591,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     /// @dev SEC-15 (I6): `setOperator` re-point must preserve the init-time owner != operator separation.
     ///      Pre-fix the re-point only rejected the zero address, so it could silently collapse the two roles.
     function test_SEC15_setOperator_owner_recheck() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         // a valid non-owner, non-zero re-point still succeeds
         address newOp = makeAddr("sec15NewOp");
         vm.prank(owner);
@@ -599,34 +599,34 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(m.operator(), newOp);
         // re-pointing operator to the owner now reverts OwnerIsOperator (pre-fix it succeeded)
         vm.prank(owner);
-        vm.expectRevert(ReservoirLoopModule.OwnerIsOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.OwnerIsOperator.selector);
         m.setOperator(owner);
         // zero still rejected
         vm.prank(owner);
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setOperator(address(0));
     }
 
     function test_setUp_rejects_owner_equals_operator() public {
-        ReservoirLoopModule m = _cloneReservoirLoopModule();
-        vm.expectRevert(ReservoirLoopModule.OwnerIsOperator.selector);
+        FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
+        vm.expectRevert(FarmUtilityLoopModule.OwnerIsOperator.selector);
         m.setUp(abi.encode(owner, address(0xBEEF), owner, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
     }
 
     function test_setUp_rejects_zero_address_evc() public {
-        ReservoirLoopModule m = _cloneReservoirLoopModule();
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setUp(abi.encode(owner, address(0xBEEF), operator, address(0), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
     }
 
     function test_setUp_rejects_zero_address_juniorTrancheEngine() public {
-        ReservoirLoopModule m = _cloneReservoirLoopModule();
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setUp(abi.encode(owner, address(0), operator, address(evc), address(0xB), address(0xE), address(lp), USDC, BORROW_CAP));
     }
 
     function test_operator_cannot_redirect_safe() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", operator));
         m.setAvatar(rando);
@@ -636,39 +636,39 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_mastercopy_inert() public {
-        ReservoirLoopModule mc = _cloneReservoirLoopModule();
+        FarmUtilityLoopModule mc = _cloneFarmUtilityLoopModule();
         assertEq(mc.operator(), address(0));
         assertEq(mc.juniorTrancheEngine(), address(0));
         vm.prank(operator);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         mc.postCollateral(1e18);
         vm.prank(operator);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         mc.borrow(1e6);
         vm.prank(operator);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         mc.repay(1e6);
         vm.prank(operator);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         mc.withdrawCollateral(1e18);
     }
 
     function test_entrypoints_only_operator() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         vm.startPrank(rando);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         m.postCollateral(1e18);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         m.borrow(1e6);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         m.repay(1e6);
-        vm.expectRevert(ReservoirLoopModule.NotOperator.selector);
+        vm.expectRevert(FarmUtilityLoopModule.NotOperator.selector);
         m.withdrawCollateral(1e18);
         vm.stopPrank();
     }
 
     function test_setBorrowCap_only_owner() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         vm.prank(rando);
         vm.expectRevert();
         m.setBorrowCap(123);
@@ -685,7 +685,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     ///      (`borrowVault`/`escrowVault`/`lpToken`), so the wiring matters more here than on a benign module.
     ///      `setJuniorTrancheEngine` additionally keeps `avatar`/`target` in lockstep (the borrower-of-record invariant).
     function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         address x = makeAddr("rewire");
 
         // non-owner rejected on every setter
@@ -726,31 +726,31 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(m.target(), newEngine, "target synced to juniorTrancheEngine");
 
         // zero rejected on every setter
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setJuniorTrancheEngine(address(0));
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setEvc(address(0));
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setBorrowVault(address(0));
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setEscrowVault(address(0));
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setLpToken(address(0));
-        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAddress.selector);
         m.setUsdc(address(0));
         vm.stopPrank();
     }
 
     function test_zero_amount_reverts() public {
-        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         vm.startPrank(operator);
-        vm.expectRevert(ReservoirLoopModule.ZeroAmount.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAmount.selector);
         m.postCollateral(0);
-        vm.expectRevert(ReservoirLoopModule.ZeroAmount.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAmount.selector);
         m.borrow(0);
-        vm.expectRevert(ReservoirLoopModule.ZeroAmount.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAmount.selector);
         m.repay(0);
-        vm.expectRevert(ReservoirLoopModule.ZeroAmount.selector);
+        vm.expectRevert(FarmUtilityLoopModule.ZeroAmount.selector);
         m.withdrawCollateral(0);
         vm.stopPrank();
     }
@@ -764,7 +764,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         RecordingSafe safe = new RecordingSafe();
         address bv = address(0xB0B0);
         address ev = address(0xE5C0);
-        ReservoirLoopModule m = _deployModule(address(safe), bv, ev, BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(safe), bv, ev, BORROW_CAP);
         address es = address(safe);
 
         // ---- postCollateral: exactly 3 ----
@@ -780,7 +780,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         // Re-deploy with a DebtStub borrow vault so debtOf() == 0 succeeds in the cap check.
         DebtStub stub = new DebtStub();
         RecordingSafe safe2 = new RecordingSafe();
-        ReservoirLoopModule m2 = _deployModule(address(safe2), address(stub), ev, BORROW_CAP);
+        FarmUtilityLoopModule m2 = _deployModule(address(safe2), address(stub), ev, BORROW_CAP);
         address es2 = address(safe2);
 
         vm.prank(operator);
@@ -792,7 +792,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
         // ---- repay: exactly 3 ----
         RecordingSafe safe3 = new RecordingSafe();
-        ReservoirLoopModule m3 = _deployModule(address(safe3), address(stub), ev, BORROW_CAP);
+        FarmUtilityLoopModule m3 = _deployModule(address(safe3), address(stub), ev, BORROW_CAP);
         address es3 = address(safe3);
         vm.prank(operator);
         m3.repay(40e6);
@@ -803,7 +803,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
         // ---- withdrawCollateral: exactly 1 (after debtOf view == 0) ----
         RecordingSafe safe4 = new RecordingSafe();
-        ReservoirLoopModule m4 = _deployModule(address(safe4), address(stub), ev, BORROW_CAP);
+        FarmUtilityLoopModule m4 = _deployModule(address(safe4), address(stub), ev, BORROW_CAP);
         address es4 = address(safe4);
         vm.prank(operator);
         m4.withdrawCollateral(30e18);
@@ -864,7 +864,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         // anyway, but the FORCED fail at index 2 happens BEFORE the deposit is recorded, so approve+enableCollateral
         // (indices 0,1) ran live. enableCollateral on the real EVC for a code-less account is a no-op success.
         address ev = address(0xE5C0);
-        ReservoirLoopModule m = _deployModule(address(safe), address(new DebtStub()), ev, BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(safe), address(new DebtStub()), ev, BORROW_CAP);
 
         vm.prank(operator);
         vm.expectRevert();
@@ -881,7 +881,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         safe.setLive(true);
         safe.setFailOnCallIndex(1); // fail on the EVC.call(repay)
         DebtStub stub = new DebtStub();
-        ReservoirLoopModule m = _deployModule(address(safe), address(stub), address(0xE5C0), BORROW_CAP);
+        FarmUtilityLoopModule m = _deployModule(address(safe), address(stub), address(0xE5C0), BORROW_CAP);
 
         vm.prank(operator);
         vm.expectRevert();
@@ -894,14 +894,14 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     // =================================================================== LP oracle (unit)
 
     function test_oracle_push_and_quote_roundtrip() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         _pushMark(o, 1e6); // $1.00 per 1e18 LP share
         assertEq(o.getQuote(1e18, address(lp), USDC), 1e6, "full share == $1");
         assertEq(o.getQuote(5e17, address(lp), USDC), 5e5, "half share == $0.50");
     }
 
     function test_oracle_non_divisible_floors_against_borrower() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         // mark = 3 (6-dp); inAmount = 1 wei LP share -> 1 * 1e6 * 3 / 1e24 floors to 0 (against the borrower).
         _pushMark(o, 3);
         assertEq(o.getQuote(1, address(lp), USDC), 0, "floors against borrower");
@@ -915,7 +915,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_oracle_only_forwarder_can_push() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         bytes memory report = abi.encode(o.LP_MARK(), abi.encode(uint256(1e6), uint32(block.timestamp)));
         vm.prank(rando);
         vm.expectRevert();
@@ -923,15 +923,15 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_oracle_wrong_reportType_reverts() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         bytes memory report = abi.encode(uint8(3), abi.encode(uint256(1e6), uint32(block.timestamp)));
         vm.prank(FORWARDER);
-        vm.expectRevert(abi.encodeWithSelector(SzipReservoirLpOracle.InvalidReportType.selector, uint8(3)));
+        vm.expectRevert(abi.encodeWithSelector(SzipFarmUtilityLpOracle.InvalidReportType.selector, uint8(3)));
         o.onReport("", report);
     }
 
     function test_oracle_base_or_quote_mismatch_reverts() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         _pushMark(o, 1e6);
         vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_NotSupported.selector, address(0xAAAA), USDC));
         o.getQuote(1e18, address(0xAAAA), USDC); // base != lpToken
@@ -940,7 +940,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_oracle_failclosed_zero_mark_and_future_ts() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         bytes memory zeroMark = abi.encode(o.LP_MARK(), abi.encode(uint256(0), uint32(block.timestamp)));
         vm.prank(FORWARDER);
         vm.expectRevert(PriceErrors.PriceOracle_InvalidAnswer.selector);
@@ -948,18 +948,18 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
         bytes memory futureTs = abi.encode(o.LP_MARK(), abi.encode(uint256(1e6), uint32(block.timestamp + 1)));
         vm.prank(FORWARDER);
-        vm.expectRevert(SzipReservoirLpOracle.FutureTimestamp.selector);
+        vm.expectRevert(SzipFarmUtilityLpOracle.FutureTimestamp.selector);
         o.onReport("", futureTs);
     }
 
     function test_oracle_never_pushed_reverts_notsupported() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_NotSupported.selector, address(lp), USDC));
         o.getQuote(1e18, address(lp), USDC);
     }
 
     function test_oracle_stale_reverts_toostale() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         _pushMark(o, 1e6);
         vm.warp(block.timestamp + VALIDITY + 1);
         vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_TooStale.selector, VALIDITY + 1, VALIDITY));
@@ -967,7 +967,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_oracle_lp_mark_is_not_three() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         assertEq(o.LP_MARK(), 7);
         assertTrue(o.LP_MARK() != 3, "LP_MARK must not be the registry REVALUATION=3");
     }
@@ -975,7 +975,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     // =================================================================== guard (unit + fork-ish)
 
     function test_guard_isHookTarget_only_for_factory_proxy() public {
-        ReservoirBorrowGuard g = new ReservoirBorrowGuard(address(factory), address(0xBEEF));
+        FarmUtilityBorrowGuard g = new FarmUtilityBorrowGuard(address(factory), address(0xBEEF));
         // a non-proxy caller (this test) -> 0
         assertEq(g.isHookTarget(), bytes4(0));
         // a real factory proxy caller -> the magic selector
@@ -988,7 +988,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     ///      `onlyOwner` gate uses the RAW `msg.sender` (NOT the EVK `_msgSender()` decoder, to avoid the `Context`
     ///      collision), so a non-owner caller reverts `NotOwner`. The constructor sets `owner = msg.sender` (this).
     function test_guard_admin_onlyOwner_transfer_and_wiring() public {
-        ReservoirBorrowGuard g = new ReservoirBorrowGuard(address(factory), address(0xBEEF));
+        FarmUtilityBorrowGuard g = new FarmUtilityBorrowGuard(address(factory), address(0xBEEF));
         assertEq(g.owner(), address(this), "deployer is the build-phase admin");
 
         address newFactory = makeAddr("newFactory");
@@ -996,20 +996,20 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
         // raw-msg.sender onlyOwner: a non-owner reverts NotOwner on every admin function
         vm.startPrank(rando);
-        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        vm.expectRevert(FarmUtilityBorrowGuard.NotOwner.selector);
         g.setEVaultFactory(newFactory);
-        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        vm.expectRevert(FarmUtilityBorrowGuard.NotOwner.selector);
         g.setJuniorTrancheEngine(newEngine);
-        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        vm.expectRevert(FarmUtilityBorrowGuard.NotOwner.selector);
         g.transferOwnership(rando);
         vm.stopPrank();
 
         // zero-guard on each (owner caller = this)
-        vm.expectRevert(ReservoirBorrowGuard.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityBorrowGuard.ZeroAddress.selector);
         g.setEVaultFactory(address(0));
-        vm.expectRevert(ReservoirBorrowGuard.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityBorrowGuard.ZeroAddress.selector);
         g.setJuniorTrancheEngine(address(0));
-        vm.expectRevert(ReservoirBorrowGuard.ZeroAddress.selector);
+        vm.expectRevert(FarmUtilityBorrowGuard.ZeroAddress.selector);
         g.transferOwnership(address(0));
 
         // owner re-points take effect (setJuniorTrancheEngine is the borrow allowlist)
@@ -1021,14 +1021,14 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         // transferOwnership hands the admin to the Timelock; the old owner then loses the gate
         g.transferOwnership(owner);
         assertEq(g.owner(), owner, "ownership transferred to the Timelock");
-        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        vm.expectRevert(FarmUtilityBorrowGuard.NotOwner.selector);
         g.setJuniorTrancheEngine(address(0xCAFE)); // old owner (this) no longer authorized
     }
 
     // =================================================================== deployer wiring (fork)
 
     function test_deployer_governor_RETAINED() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         _pushMark(o, 1e6); // the deployer's setLTV reads getQuote
         (address ev, address bv, address router) = _deployMarket(address(0xBEEF), address(o), 0.7e4, 0.8e4);
 
@@ -1048,22 +1048,22 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(IEVault(bv).oracle(), router, "borrow vault oracle == router");
         (address hookTarget, uint32 hookedOps) = IEVault(bv).hookConfig();
         assertEq(hookedOps, uint32(1 << 6), "OP_BORROW only");
-        assertEq(ReservoirBorrowGuard(hookTarget).juniorTrancheEngine(), address(0xBEEF), "guard pins the engine Safe");
+        assertEq(FarmUtilityBorrowGuard(hookTarget).juniorTrancheEngine(), address(0xBEEF), "guard pins the engine Safe");
 
         // The retained governor can still re-point the router (re-pointable).
-        SzipReservoirLpOracle o2 = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o2 = _deployOracle(address(lp));
         vm.prank(owner);
         EulerRouter(router).govSetConfig(address(lp), USDC, address(o2));
     }
 
     function test_deployer_wiremismatch_reachable() public {
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         _pushMark(o, 1e6); // the deployer's setLTV reads getQuote (runs before the wire-check)
         MockLpToken wrongLp = new MockLpToken();
         MisWiringDeployer dep = new MisWiringDeployer(address(wrongLp));
-        vm.expectRevert(ReservoirMarketDeployer.WireMismatch.selector);
+        vm.expectRevert(FarmUtilityMarketDeployer.WireMismatch.selector);
         dep.deploy(
-            ReservoirMarketDeployer.Params({
+            FarmUtilityMarketDeployer.Params({
                 factory: factory,
                 evc: address(evc),
                 governor: owner,
@@ -1081,8 +1081,8 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     // =================================================================== the full loop (fork, headline)
 
     function test_full_loop_revolves_twice() public {
-        ReservoirLoopModule m = _cloneReservoirLoopModule();
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         address juniorTrancheEngine = _summonAndEnable(m);
 
         // push a fresh LP mark ($1/share) before the deployer's setLTV (which reads getQuote).
@@ -1136,7 +1136,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     // =================================================================== over-LTV / cap / stale / guard (fork)
 
     function test_over_LTV_reverts_AccountLiquidity() public {
-        (ReservoirLoopModule m, address juniorTrancheEngine, address ev, address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        (FarmUtilityLoopModule m, address juniorTrancheEngine, address ev, address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
 
         // post $100 collateral.
         vm.prank(operator);
@@ -1157,7 +1157,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_no_collateral_borrow_reverts_AccountLiquidity() public {
-        (ReservoirLoopModule m,,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        (FarmUtilityLoopModule m,,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
         vm.prank(operator);
         vm.expectRevert(EvkErrors.E_AccountLiquidity.selector);
         m.borrow(1e6);
@@ -1165,7 +1165,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
     function test_aggregate_cap_boundary_and_killswitch() public {
         // cap == strike exactly: borrow(cap) succeeds, +1 reverts CapExceeded.
-        (ReservoirLoopModule m, address juniorTrancheEngine,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        (FarmUtilityLoopModule m, address juniorTrancheEngine,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
         juniorTrancheEngine;
         // need cap small; redeploy module with cap = 60e6 against the same market.
         // (the _liveLoopSetup module has cap BORROW_CAP; just test boundary on a fresh small-cap module.)
@@ -1179,21 +1179,21 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m.borrow(50e6); // exactly the cap, debt 0 -> 50 <= 50 OK and < liqLTV*$100
         assertEq(m.outstandingDebt(), 50e6);
         vm.prank(operator);
-        vm.expectRevert(ReservoirLoopModule.CapExceeded.selector);
+        vm.expectRevert(FarmUtilityLoopModule.CapExceeded.selector);
         m.borrow(1); // 50 + 1 > 50 cap
 
         // kill-switch: cap 0 -> every borrow reverts.
         vm.prank(owner);
         m.setBorrowCap(0);
         vm.prank(operator);
-        vm.expectRevert(ReservoirLoopModule.CapExceeded.selector);
+        vm.expectRevert(FarmUtilityLoopModule.CapExceeded.selector);
         m.borrow(1);
     }
 
     function test_stale_and_never_pushed_mark_fail_borrow_closed() public {
         // Stand up with a live mark (the deployer's setLTV needs one); then test the two fail-closed borrow paths.
-        ReservoirLoopModule m = _cloneReservoirLoopModule();
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         address juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6);
         (address ev, address bv, address router) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
@@ -1212,7 +1212,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
         // (2) PATH B — NEVER-PUSHED: the (retained) governor re-points the router to a fresh, never-pushed oracle ->
         //     borrow reverts NotSupported (bubbled from the router; the cache timestamp == 0).
-        SzipReservoirLpOracle bare = _deployOracle(address(lp));
+        SzipFarmUtilityLpOracle bare = _deployOracle(address(lp));
         vm.prank(owner);
         EulerRouter(router).govSetConfig(address(lp), USDC, address(bare));
         vm.prank(operator);
@@ -1221,13 +1221,13 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_withdraw_with_debt_reverts() public {
-        (ReservoirLoopModule m,,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        (FarmUtilityLoopModule m,,,) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
         vm.prank(operator);
         m.postCollateral(100e18);
         vm.prank(operator);
         m.borrow(10e6);
         vm.prank(operator);
-        vm.expectRevert(ReservoirLoopModule.DebtOutstanding.selector);
+        vm.expectRevert(FarmUtilityLoopModule.DebtOutstanding.selector);
         m.withdrawCollateral(50e18);
     }
 
@@ -1236,7 +1236,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         // outstanding debt — a literal over-amount reverts `E_RepayTooMuch` (only `type(uint256).max` means "all").
         // So the loop repays the EXACT debt: an exact repay clears it + resets the residual approval; an over-repay
         // reverts (the operator never over-pays — it repays the strike it borrowed). See the build report.
-        (ReservoirLoopModule m, address juniorTrancheEngine, , address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
+        (FarmUtilityLoopModule m, address juniorTrancheEngine, , address bv) = _liveLoopSetup(0.7e4, 0.8e4, 1e6);
         vm.prank(operator);
         m.postCollateral(100e18);
         vm.prank(operator);
@@ -1260,8 +1260,8 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
     function test_third_party_borrow_blocked_by_guard() public {
         // The engine Safe's loop passes the guard; a third party that posts the escrow on its OWN account is blocked.
-        ReservoirLoopModule m = _cloneReservoirLoopModule();
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         address juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6);
         (address ev, address bv,) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
@@ -1293,10 +1293,10 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
     /// @dev Shared live-loop setup: summon Safe, enable module, stand up market, seed USDC, push mark, mint LP.
     function _liveLoopSetup(uint16 borrowLTV, uint16 liqLTV, uint256 mark)
         internal
-        returns (ReservoirLoopModule m, address juniorTrancheEngine, address ev, address bv)
+        returns (FarmUtilityLoopModule m, address juniorTrancheEngine, address ev, address bv)
     {
-        m = _cloneReservoirLoopModule();
-        SzipReservoirLpOracle o = _deployOracle(address(lp));
+        m = _cloneFarmUtilityLoopModule();
+        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
         juniorTrancheEngine = _summonAndEnable(m);
         // The mark must exist before the deployer's `setLTV` (which reads `getQuote` to validate the collateral
         // price at config time) — in production CRE pushes the mark at/before deploy.
@@ -1309,38 +1309,38 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         lp.mint(juniorTrancheEngine, 1000e18);
     }
 
-    // =================================================================== CTR-07 reservoir fund/defund (fork)
-    // The EE side does NOT exist in the borrow-leg fixture above; CTR-07 layers it on. The reservoir vault `bv` is a
+    // =================================================================== CTR-07 farm utility fund/defund (fork)
+    // The EE side does NOT exist in the borrow-leg fixture above; CTR-07 layers it on. The farm utility vault `bv` is a
     // real EVK USDC vault with an OP_BORROW-only hook (the deployer's `setHookConfig(guard, OP_BORROW)`), so the EE's
     // reallocate deposit/withdraw legs into `bv` are UN-hooked and net — the load-bearing fund-path invariant.
 
-    /// @dev A live base USDC resting market (no-borrow holding vault) the reservoir funds OUT OF / re-absorbs INTO —
+    /// @dev A live base USDC resting market (no-borrow holding vault) the farm utility funds OUT OF / re-absorbs INTO —
     ///      ported verbatim from `EulerVenueAdapter.t.sol`. Set once by `_ee07Setup`.
-    address internal baseUsdcMarket;
+    address internal usdcReservoir;
     MockEulerEarn internal ee;
     EulerVenueAdapter internal adapter;
 
-    /// @dev Seed the EE mock's tracked position in the base resting market so `fundReservoir`'s `base - amount` has
+    /// @dev Seed the EE mock's tracked position in the base resting market so `fundFarmUtility`'s `base - amount` has
     ///      cash to withdraw — ported verbatim from `EulerVenueAdapter.t.sol:_fundBaseMarket`. Deposit as the EE, then
     ///      record the minted shares as EE-tracked config.balance (security L9/SEC-11): a legitimate supply IS tracked
     ///      (unlike a donation). Seeding the ACTUAL shares minted (not usdcAmount) keeps cfgBalance == balanceOf(EE).
     function _fundBaseMarket(uint256 usdcAmount) internal {
         deal(USDC, address(this), usdcAmount);
-        IERC20(USDC).approve(baseUsdcMarket, usdcAmount);
-        uint256 shares = IEVault(baseUsdcMarket).deposit(usdcAmount, address(ee));
-        ee.seedConfig(baseUsdcMarket, shares);
+        IERC20(USDC).approve(usdcReservoir, usdcAmount);
+        uint256 shares = IEVault(usdcReservoir).deposit(usdcAmount, address(ee));
+        ee.seedConfig(usdcReservoir, shares);
     }
 
-    /// @dev Stand up the full CTR-07 fixture on top of the existing reservoir borrow leg: summon + enable the loop
-    ///      module, deploy the reservoir market, mint a fresh $1 LP mark, wire a real `EulerVenueAdapter` (line-side
+    /// @dev Stand up the full CTR-07 fixture on top of the existing farm utility borrow leg: summon + enable the loop
+    ///      module, deploy the farm utility market, mint a fresh $1 LP mark, wire a real `EulerVenueAdapter` (line-side
     ///      ctor args are real-but-unused placeholders — CTR-07 opens no lines), seed the base resting market, enable
-    ///      the reservoir vault on the EE mock at ZERO balance (submitCap+acceptCap — NOT seeded with shares, so it
-    ///      holds ≈0 at rest), and wire the reservoir vault + allocator (allocatorKey ≠ operator).
+    ///      the farm utility vault on the EE mock at ZERO balance (submitCap+acceptCap — NOT seeded with shares, so it
+    ///      holds ≈0 at rest), and wire the farm utility vault + allocator (allocatorKey ≠ operator).
     function _ee07Setup(uint256 baseUsdc)
         internal
-        returns (ReservoirLoopModule m, address juniorTrancheEngine, address ev, address bv, SzipReservoirLpOracle o)
+        returns (FarmUtilityLoopModule m, address juniorTrancheEngine, address ev, address bv, SzipFarmUtilityLpOracle o)
     {
-        m = _cloneReservoirLoopModule();
+        m = _cloneFarmUtilityLoopModule();
         o = _deployOracle(address(lp));
         juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6); // $1/share, before the deployer's setLTV reads getQuote
@@ -1352,9 +1352,9 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
 
         // EE side: a fresh faithful mock + a live base resting market (no-borrow holding vault).
         ee = new MockEulerEarn(USDC);
-        baseUsdcMarket = factory.createProxy(address(0), false, abi.encodePacked(USDC, address(0), address(0)));
-        IEVault(baseUsdcMarket).setHookConfig(address(0), 0);
-        IEVault(baseUsdcMarket).setGovernorAdmin(address(0));
+        usdcReservoir = factory.createProxy(address(0), false, abi.encodePacked(USDC, address(0), address(0)));
+        IEVault(usdcReservoir).setHookConfig(address(0), 0);
+        IEVault(usdcReservoir).setGovernorAdmin(address(0));
 
         // Real adapter (10-arg ctor; line-side args are real-but-unused placeholders). The test contract is the owner.
         adapter = new EulerVenueAdapter(
@@ -1367,37 +1367,37 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
             address(irm),
             USDC,
             address(0xE6E6), // erebor (unused)
-            baseUsdcMarket
+            usdcReservoir
         );
 
-        // Seed the EE supply queue with the base market ONLY (the reservoir vault stays a NON-supply-queue market).
+        // Seed the EE supply queue with the base market ONLY (the farm utility vault stays a NON-supply-queue market).
         IOZERC4626[] memory q = new IOZERC4626[](1);
-        q[0] = IOZERC4626(baseUsdcMarket);
+        q[0] = IOZERC4626(usdcReservoir);
         ee.setSupplyQueue(q);
 
-        // Seed the base resting position so fundReservoir has cash to withdraw.
+        // Seed the base resting position so fundFarmUtility has cash to withdraw.
         _fundBaseMarket(baseUsdc);
 
-        // Enable the reservoir vault on the EE mock at ZERO balance (mirrors DeployLocal submitCap+acceptCap) — NOT
+        // Enable the farm utility vault on the EE mock at ZERO balance (mirrors DeployLocal submitCap+acceptCap) — NOT
         // seeded with shares, so it is reallocate-eligible (enabled, cap != 0) but holds ≈0 at rest.
         ee.submitCap(IOZERC4626(bv), type(uint136).max);
         ee.acceptCap(IOZERC4626(bv));
 
-        // Wire the reservoir slots. allocatorKey is DISTINCT from operator (two-key separation).
-        adapter.setReservoirVault(bv);
-        adapter.setReservoirAllocator(allocatorKey);
+        // Wire the farm utility slots. allocatorKey is DISTINCT from operator (two-key separation).
+        adapter.setFarmUtilityVault(bv);
+        adapter.setFarmUtilityAllocator(allocatorKey);
     }
 
     function test_ctr07_roundtrip_restores_resting() public {
-        (ReservoirLoopModule m, address juniorTrancheEngine, , address bv, SzipReservoirLpOracle o) = _ee07Setup(1_000_000e6);
-        uint256 X = 100e6; // $100 funded into the reservoir
-        uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket));
+        (FarmUtilityLoopModule m, address juniorTrancheEngine, , address bv, SzipFarmUtilityLpOracle o) = _ee07Setup(1_000_000e6);
+        uint256 X = 100e6; // $100 funded into the farm utility
+        uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(usdcReservoir));
 
-        // fund: base -X, reservoir == X.
+        // fund: base -X, farm utility == X.
         vm.prank(allocatorKey);
-        adapter.fundReservoir(X);
-        assertEq(ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket)), baseBefore - X, "base debited X");
-        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), X, "reservoir holds X");
+        adapter.fundFarmUtility(X);
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(usdcReservoir)), baseBefore - X, "base debited X");
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), X, "farm utility holds X");
 
         // a real borrow leg < X through the loop operator ($50 against $100 LP collateral, inside 0.7 LTV).
         o; // mark already $1 from setup; the validity window is generous
@@ -1406,28 +1406,28 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         m.postCollateral(100e18);
         vm.prank(operator);
         m.borrow(strike);
-        assertEq(m.outstandingDebt(), strike, "borrowed out of the reservoir");
+        assertEq(m.outstandingDebt(), strike, "borrowed out of the farm utility");
         // repay (give the Safe the USDC, as production from sale proceeds).
         deal(USDC, juniorTrancheEngine, strike);
         vm.prank(operator);
         m.repay(strike);
         assertEq(m.outstandingDebt(), 0, "repaid in full");
 
-        // defund: base restored, reservoir == 0.
+        // defund: base restored, farm utility == 0.
         vm.prank(allocatorKey);
-        adapter.defundReservoir(X);
-        assertEq(ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket)), baseBefore, "resting restored after full cycle");
-        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), 0, "reservoir back to 0");
+        adapter.defundFarmUtility(X);
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(usdcReservoir)), baseBefore, "resting restored after full cycle");
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), 0, "farm utility back to 0");
     }
 
     function test_ctr07_defund_reverts_when_lent_out() public {
-        (ReservoirLoopModule m,, , address bv,) = _ee07Setup(1_000_000e6);
+        (FarmUtilityLoopModule m,, , address bv,) = _ee07Setup(1_000_000e6);
         bv;
         uint256 X = 100e6;
         vm.prank(allocatorKey);
-        adapter.fundReservoir(X);
+        adapter.fundFarmUtility(X);
 
-        // borrow out of the reservoir WITHOUT repaying — the reservoir EVK vault now lacks the cash for a withdraw.
+        // borrow out of the farm utility WITHOUT repaying — the farm utility EVK vault now lacks the cash for a withdraw.
         vm.prank(operator);
         m.postCollateral(100e18);
         vm.prank(operator);
@@ -1436,7 +1436,7 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         // a defund of the full X reverts: the withdraw leg has no cash (redemption-isolation / JIT discipline).
         vm.prank(allocatorKey);
         vm.expectRevert(EvkErrors.E_InsufficientCash.selector);
-        adapter.defundReservoir(X);
+        adapter.defundFarmUtility(X);
     }
 
     function test_ctr07_operator_cannot_fund() public {
@@ -1444,18 +1444,18 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         uint256 X = 100_000e6;
         // the loop hot key (operator), lacking the allocator role, cannot fund OR defund.
         vm.prank(operator);
-        vm.expectRevert(EulerVenueAdapter.NotReservoirAllocator.selector);
-        adapter.fundReservoir(X);
+        vm.expectRevert(EulerVenueAdapter.NotFarmUtilityAllocator.selector);
+        adapter.fundFarmUtility(X);
         vm.prank(operator);
-        vm.expectRevert(EulerVenueAdapter.NotReservoirAllocator.selector);
-        adapter.defundReservoir(X);
+        vm.expectRevert(EulerVenueAdapter.NotFarmUtilityAllocator.selector);
+        adapter.defundFarmUtility(X);
     }
 
     function test_ctr07_donation_noop_on_sizing() public {
         (, , , address bv,) = _ee07Setup(1_000_000e6);
         uint256 X = 100_000e6;
 
-        // A donor mints reservoir-vault shares then RAW-transfers them to the EE — inflating balanceOf(ee) but NOT the
+        // A donor mints farm utility-vault shares then RAW-transfers them to the EE — inflating balanceOf(ee) but NOT the
         // tracked cfgBalance. Sizing off the tracked balance (`_eeSupplyAssets`), fund/defund still net.
         address donor = makeAddr("donor");
         deal(USDC, donor, 250_000e6);
@@ -1467,21 +1467,21 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertGt(IEVault(bv).balanceOf(address(ee)), ee.cfgBalance(bv), "donation skews live, not tracked");
 
         // fund + defund still net (no InconsistentReallocation), because sizing is off cfgBalance not balanceOf.
-        uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket));
+        uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(usdcReservoir));
         vm.prank(allocatorKey);
-        adapter.fundReservoir(X);
+        adapter.fundFarmUtility(X);
         vm.prank(allocatorKey);
-        adapter.defundReservoir(X);
-        assertEq(ee.expectedSupplyAssets(IOZERC4626(baseUsdcMarket)), baseBefore, "donation-immune round-trip nets");
+        adapter.defundFarmUtility(X);
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(usdcReservoir)), baseBefore, "donation-immune round-trip nets");
     }
 
-    function test_ctr07_reservoir_zero_at_rest() public {
-        (ReservoirLoopModule m, address juniorTrancheEngine, , address bv,) = _ee07Setup(1_000_000e6);
+    function test_ctr07_farmUtility_zero_at_rest() public {
+        (FarmUtilityLoopModule m, address juniorTrancheEngine, , address bv,) = _ee07Setup(1_000_000e6);
         uint256 X = 100e6;
         uint256 strike = 50e6;
 
         vm.prank(allocatorKey);
-        adapter.fundReservoir(X);
+        adapter.fundFarmUtility(X);
         vm.prank(operator);
         m.postCollateral(100e18);
         vm.prank(operator);
@@ -1490,23 +1490,23 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         vm.prank(operator);
         m.repay(strike);
         vm.prank(allocatorKey);
-        adapter.defundReservoir(X);
+        adapter.defundFarmUtility(X);
 
-        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), 0, "reservoir == 0 at rest after a full cycle");
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(bv)), 0, "farm utility == 0 at rest after a full cycle");
     }
 
-    /// @dev CTR-07 fail-fast: `setReservoirVault` refuses a vault whose hook would block the EE reallocate legs. The
-    ///      reservoir vault is purpose-built OP_BORROW-only; here the governor (Timelock) widens its mask to ALSO hook
-    ///      deposits (the §17 footgun) — re-wiring it must now revert `ReservoirHookBlocksReallocate` rather than
-    ///      silently accept a vault `fundReservoir` would brick on.
-    function test_ctr07_setReservoirVault_rejects_reallocate_blocking_hook() public {
+    /// @dev CTR-07 fail-fast: `setFarmUtilityVault` refuses a vault whose hook would block the EE reallocate legs. The
+    ///      farm utility vault is purpose-built OP_BORROW-only; here the governor (Timelock) widens its mask to ALSO hook
+    ///      deposits (the §17 footgun) — re-wiring it must now revert `FarmUtilityHookBlocksReallocate` rather than
+    ///      silently accept a vault `fundFarmUtility` would brick on.
+    function test_ctr07_setFarmUtilityVault_rejects_reallocate_blocking_hook() public {
         (, , , address bv,) = _ee07Setup(1_000_000e6);
         (address hookTarget,) = IEVault(bv).hookConfig();
         // OP_BORROW (1<<6) | OP_DEPOSIT (1<<0): keep the borrow guard, but now also hook deposits.
         vm.prank(owner);
         IEVault(bv).setHookConfig(hookTarget, uint32((1 << 6) | (1 << 0)));
-        vm.expectRevert(EulerVenueAdapter.ReservoirHookBlocksReallocate.selector);
-        adapter.setReservoirVault(bv);
+        vm.expectRevert(EulerVenueAdapter.FarmUtilityHookBlocksReallocate.selector);
+        adapter.setFarmUtilityVault(bv);
     }
 }
 

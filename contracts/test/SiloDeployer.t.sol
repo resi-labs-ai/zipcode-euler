@@ -9,7 +9,7 @@ import {SiloDeployer} from "../script/SiloDeployer.s.sol";
 import {SiloRegistry} from "../src/SiloRegistry.sol";
 import {SeniorNavAggregator} from "../src/SeniorNavAggregator.sol";
 
-import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -125,7 +125,7 @@ contract MockGauge {
     }
 }
 
-/// @dev A zero-rate IRM (IIRM face) for the reservoir borrow vault — mirrors JuniorTrancheDeployer.t.sol's ZeroIRM.
+/// @dev A zero-rate IRM (IIRM face) for the farm utility borrow vault — mirrors JuniorTrancheDeployer.t.sol's ZeroIRM.
 contract ZeroIRM {
     function computeInterestRate(address, uint256, uint256) external pure returns (uint256) {
         return 0;
@@ -265,7 +265,7 @@ contract SiloDeployerHarness is SiloDeployer {
 // =========================================================================== test
 
 /// @notice CTR-06c fork test (D3/D4). On `_selectBaseFork()` (live Baal summoner + live EVK/EVC): inject mock NAV legs +
-///         a MockLpToken (polIchiVault) + a FORWARDER-seeded SzipReservoirLpOracle, override `_createEePool` to the
+///         a MockLpToken (polIchiVault) + a FORWARDER-seeded SzipFarmUtilityLpOracle, override `_createEePool` to the
 ///         combined MockEulerEarn, run `SiloDeployer.deploy(...)`, and assert the silo seams hold, the ownership handoff
 ///         is complete, the handle passes a real `addSilo` on the first try, two-silo routing/rollover + the aggregate
 ///         hold (registry-level, NO real controller/opens), and the D2 runbook lands via Timelock pranks.
@@ -294,7 +294,7 @@ contract SiloDeployerTest is ForkConfig {
     // -- roots / hub --
     TimelockController internal timelock;
 
-    // -- mocks (shared NAV legs across silos; only the EE + reservoir + junior are per-silo) --
+    // -- mocks (shared NAV legs across silos; only the EE + farm utility + junior are per-silo) --
     MockERC20 internal zip;
     MockERC20 internal usdc;
     MockXAlphaToken internal xalpha;
@@ -325,10 +325,10 @@ contract SiloDeployerTest is ForkConfig {
     }
 
     /// @dev Build + FORWARDER-seed a fresh per-silo LP oracle (the JuniorTrancheDeployer.t.sol:245-249 pattern). The
-    ///      mark must be pushed BEFORE `deploy` (the reservoir `setLTV` `getQuote` reverts without a resolvable mark).
+    ///      mark must be pushed BEFORE `deploy` (the farm utility `setLTV` `getQuote` reverts without a resolvable mark).
     function _seededLpOracle() internal returns (address) {
-        SzipReservoirLpOracle o =
-            new SzipReservoirLpOracle(BaseAddresses.CRE_KEYSTONE_FORWARDER, address(usdc), 1 days, address(lp));
+        SzipFarmUtilityLpOracle o =
+            new SzipFarmUtilityLpOracle(BaseAddresses.CRE_KEYSTONE_FORWARDER, address(usdc), 1 days, address(lp));
         o.renounceOwnership();
         bytes memory report = abi.encode(o.LP_MARK(), abi.encode(uint256(1e6), uint32(block.timestamp)));
         vm.prank(BaseAddresses.CRE_KEYSTONE_FORWARDER);
@@ -360,7 +360,7 @@ contract SiloDeployerTest is ForkConfig {
             xAlphaMirror: address(xalpha),
             hydx: address(hydx),
             oHydx: address(ohydx),
-            reservoirIrm: address(irm),
+            farmUtilityIrm: address(irm),
             lineIrm: address(irm),
             eeName: "Zipcode Senior USDC",
             eeSymbol: "zSNR",
@@ -429,7 +429,7 @@ contract SiloDeployerTest is ForkConfig {
     // ----------------------------------------------------------------- 2. ownership handoff
 
     /// @notice Every transferred owner lands away from the deployer: junior OZ-ownables + the per-silo hook + the
-    ///         reservoir borrow-vault governor → Timelock; warehouseSafe Safe/Roles → godOwner; warehouseSafe adapter →
+    ///         farm utility borrow-vault governor → Timelock; warehouseSafe Safe/Roles → godOwner; warehouseSafe adapter →
     ///         receiverAdmin; both Baal Safes → team & NOT the deployer.
     function test_ownership_handoff() public {
         (SiloDeployerHarness dep, SiloDeployer.Silo memory s,) = _deploySilo(SALT);
@@ -444,10 +444,10 @@ contract SiloDeployerTest is ForkConfig {
         // the per-silo hook owner → Timelock (SiloDeployer transfers it). Hook owner is a plain `owner` var, NOT OZ.
         assertEq(ICREHook(s.hook).owner(), tl, "hook owner -> TL");
 
-        // the reservoir borrow-vault governor → Timelock (CTR-06a) — read via the freeze's reservoir leg is indirect;
+        // the farm utility borrow-vault governor → Timelock (CTR-06a) — read via the freeze's farm utility leg is indirect;
         // assert through the registry-asserted seam instead: the adapter is OZ-owned by the deployer (untransferred —
         // the ticket does not direct an adapter handoff), and the borrow vault governor was asserted == TL in step 8.
-        // (the borrow vault address is not on the handle; the step-8 SeamReservoirGovernor pass proves governor==TL.)
+        // (the borrow vault address is not on the handle; the step-8 SeamFarmUtilityGovernor pass proves governor==TL.)
 
         // warehouseSafe Safe → godOwner; Roles → godOwner; warehouseSafe admin adapter → receiverAdmin.
         assertTrue(ISafe(s.warehouseSafe).isOwner(godOwner), "warehouseSafe Safe owned by godOwner");

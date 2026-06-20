@@ -10,7 +10,7 @@
 //         cache (legCache(uint8)) for the deviation-band clamp;
 //   (iii) composes ONE coherent computation — the SAME post-band-clamp alphaUSD prices BOTH the NAV alpha leg
 //         AND the LP mark's xALPHA reserve valuation (§8.6 coherence, load-bearing);
-//   (iv)  emits up to TWO WriteReports — NAV_LEG → SzipNavOracle and LP_MARK → SzipReservoirLpOracle —
+//   (iv)  emits up to TWO WriteReports — NAV_LEG → SzipNavOracle and LP_MARK → SzipFarmUtilityLpOracle —
 //         each the §8.0 envelope abi.encode(uint8 reportType=7, bytes payload), encoded via the shared
 //         cre/zipreport library (CRE-00). This slice does NOT re-implement the handshake.
 //
@@ -60,7 +60,7 @@ var (
 type Config struct {
 	ChainSelector   uint64 `json:"chainSelector"`   // the chain hosting the receivers + vault + rate source (Base)
 	NavOracle       string `json:"navOracle"`       // SzipNavOracle (the NAV_LEG receiver); unset ⇒ skip the NAV push
-	LpOracle        string `json:"lpOracle"`        // SzipReservoirLpOracle (the LP_MARK receiver); unset ⇒ skip the LP push
+	LpOracle        string `json:"lpOracle"`        // SzipFarmUtilityLpOracle (the LP_MARK receiver); unset ⇒ skip the LP push
 	IchiVault       string `json:"ichiVault"`       // the ICHI zipUSD/xALPHA vault (reserves + supply + token0/token1)
 	RateSource      string `json:"rateSource"`      // IXAlphaRate.exchangeRate() source (SzAlphaRateOracle or xALPHA stand-in)
 	XAlpha          string `json:"xAlpha"`          // the xALPHA token address (side-aware token0/token1 mapping)
@@ -257,7 +257,7 @@ func bandClamp(trueP, priorP *big.Int, priorTs uint64, maxDeviationBps uint64) *
 }
 
 // lpMark6dp computes the per-LP-share mark in quote-native USDC 6-dp from the vault reserves/supply, the side
-// mapping, the (clamped) alphaUSD, and the exchangeRate (§8.6 / SzipReservoirLpOracle mark units). Pure:
+// mapping, the (clamped) alphaUSD, and the exchangeRate (§8.6 / SzipFarmUtilityLpOracle mark units). Pure:
 //
 //	priceXAlpha_18dp = exchangeRate × alphaUSD_18dp / 1e18      (mirror SzipNavOracle._xAlphaUSD)
 //	priceZipUSD_18dp = 1e18                                      ($1)

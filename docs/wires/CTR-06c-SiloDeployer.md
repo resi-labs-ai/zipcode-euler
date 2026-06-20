@@ -17,8 +17,8 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
 ## Contracts involved (what each does)
 | Contract / interface | What it does |
 |---|---|
-| `SiloDeployer` (`is Script`) | The callable. `deploy(SiloParams)` runs the load-bearing 0–9 build order, builds the per-silo venue front (EE pool + resting `baseUsdcMarket` + per-silo `CREGatingHook` + `EulerVenueAdapter`), composes the reservoir/warehouse/junior sub-deployers, runs the fail-closed post-asserts, and returns a `Silo` handle. `is Script` (not a plain factory) because it calls `JuniorTrancheDeployer.computeMainSafe`, a `vm`-using view. |
-| `ReservoirMarketDeployer` (CTR-06a) | Builds this silo's reservoir escrow/borrow vaults (governor = Timelock). |
+| `SiloDeployer` (`is Script`) | The callable. `deploy(SiloParams)` runs the load-bearing 0–9 build order, builds the per-silo venue front (EE pool + resting `usdcReservoir` + per-silo `CREGatingHook` + `EulerVenueAdapter`), composes the farm utility/warehouse/junior sub-deployers, runs the fail-closed post-asserts, and returns a `Silo` handle. `is Script` (not a plain factory) because it calls `JuniorTrancheDeployer.computeMainSafe`, a `vm`-using view. |
+| `FarmUtilityMarketDeployer` (CTR-06a) | Builds this silo's farm utility escrow/borrow vaults (governor = Timelock). |
 | `CreditWarehouseDeployer` (8-Bw) | Builds this silo's senior warehouse `{Safe, Roles, WarehouseAdminModule}`; `redemptionBox` = the SHARED queue. |
 | `JuniorTrancheDeployer` (CTR-06b) | Builds this silo's junior tranche (Baal substrate + NAV + ExitGate/SzipUSD + deposit module + 8 engine modules + loss side). |
 | `CREGatingHook` (per-silo) | A fresh hook per silo, `borrowDriver` → THIS silo's adapter, owner → Timelock. |
@@ -26,9 +26,9 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
 | `IFreeze`/`IEscrow`/`INavWriter`/`IAdapter` (local interfaces) | The getters the step-8 `addSilo` 6-clause pre-flight dereferences (mirror `SiloRegistry.sol`'s). |
 
 ## Wiring — internal (the build model, steps 0–9)
-- **0. Precompute the junior juniorTrancheSafe (breaks the reservoir↔junior circular dependency — load-bearing).** The reservoir
-  market needs `juniorTrancheEngine` = the junior `juniorTrancheSafe` (the `ReservoirBorrowGuard` pins `OP_BORROW` to it, IMMUTABLE), but
-  `JuniorTrancheDeployer.deploy` is monolithic — it self-summons its Baal internally AND consumes the reservoir's
+- **0. Precompute the junior juniorTrancheSafe (breaks the farm utility↔junior circular dependency — load-bearing).** The farm utility
+  market needs `juniorTrancheEngine` = the junior `juniorTrancheSafe` (the `FarmUtilityBorrowGuard` pins `OP_BORROW` to it, IMMUTABLE), but
+  `JuniorTrancheDeployer.deploy` is monolithic — it self-summons its Baal internally AND consumes the farm utility's
   `escrowVault`/`borrowVault` as inputs. Resolved WITHOUT a CTR-06b change: instantiate `jr = new JuniorTrancheDeployer()`
   once, precompute `juniorTrancheEngine = jr.computeMainSafe(p.saltNonce)`. `computeMainSafe` (`SummonSubstrate.s.sol:110-118`) is
   a pure function of `saltNonce` + the live Safe factory/singleton — caller-independent — so the precompute EQUALS the
@@ -38,25 +38,25 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
   (`createEulerEarn(p.timelock, 0, p.usdc, p.eeName, p.eeSymbol, bytes32(p.saltNonce))`, `DeployLocal.s.sol:115-122`).
   `initialTimelock = 0` or the first `openLine` reverts `EulerEarnTimelockNonZero` (`EulerVenueAdapter.sol:80`). The
   test overrides it to return a `MockEulerEarn`.
-- **2. Resting `baseUsdcMarket`** — SiloDeployer CREATES it (bare EVK proxy `createProxy(0,false,(usdc,0,0))` +
+- **2. Resting `usdcReservoir`** — SiloDeployer CREATES it (bare EVK proxy `createProxy(0,false,(usdc,0,0))` +
   `setHookConfig(0,0)`; `DeployLocal.s.sol:108-112`). NOT an input.
-- **3. Reservoir market** — `new ReservoirMarketDeployer().deploy(Params{... juniorTrancheEngine, lpOracle, governor=timelock ...})`.
+- **3. Farm utility market** — `new FarmUtilityMarketDeployer().deploy(Params{... juniorTrancheEngine, lpOracle, governor=timelock ...})`.
   `lpOracle` is a built-and-SEEDED INPUT (`setLTV`'s `getQuote` reverts without a resolvable LP mark, and the mark is a
   CRE/forwarder push the deployer cannot make).
 - **4. EE admin config** (low-level `_eeCall`/`abi.encodeWithSignature` — the EE admin ABI is NOT compiled in): split —
-  4a (after markets exist) `submitCap`+`acceptCap` for `baseUsdcMarket` + `borrowVault`, `setSupplyQueue([base])`; 4b
+  4a (after markets exist) `submitCap`+`acceptCap` for `usdcReservoir` + `borrowVault`, `setSupplyQueue([base])`; 4b
   (after the warehouse + adapter exist) `setFeeRecipient(warehouseSafe)` + `setCurator(adapter)`. **No
   `SzipPerspectiveProbe`** — it is a deploy-time advisory needing the live EE factory `creator()`, mock-incompatible;
   it stays a fork-runbook step, NOT part of `deploy`.
 - **5. Per-silo venue front** — `new CREGatingHook(factory, evc, address(0))` → `new EulerVenueAdapter(controller, evc,
-  eePool, factory, oracleRegistry, hook, lineIrm, usdc, erebor, baseUsdcMarket)` → `hook.setBorrowDriver(adapter)` →
+  eePool, factory, oracleRegistry, hook, lineIrm, usdc, erebor, usdcReservoir)` → `hook.setBorrowDriver(adapter)` →
   `hook.transferOwnership(timelock)`.
 - **6. Warehouse** — `new CreditWarehouseDeployer().deploy(godOwner, receiverAdmin, eePool, usdc, forwarder,
   redemptionBox=SHARED queue, saltNonce)` (Safe/Roles → `godOwner`; the CRE warehouse admin adapter → `receiverAdmin`).
 - **7. Junior tranche** — `jr.deploy(JuniorParams{... eePool, warehouseSafe, escrowVault, borrowVault, shared
   zipUSD/rateOracle/POL, NAV-leg tokens ...})` (all 25 fields threaded from `SiloParams`).
 - **8. Fail-closed post-asserts** — §2 non-commingling (`redemptionBox != juniorTrancheSafe`, `warehouseSafe != juniorTrancheSafe/juniorTrancheSidecar` —
-  deployer-added; `addSilo` does NOT enforce these), reservoir borrow-vault `governorAdmin() == timelock` (CTR-06a),
+  deployer-added; `addSilo` does NOT enforce these), farm utility borrow-vault `governorAdmin() == timelock` (CTR-06a),
   and the `addSilo` 6-clause pre-flight (so the Timelock `addSilo` can't revert `SiloMiswired`).
 - **9. Return** the `Silo` handle (first 9 fields → `SiloConfig`; trailing `depositModule`/`warehouseRoles`/`hook` for
   the D2 runbook + observability).
@@ -76,8 +76,8 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
   (`isAccountOperatorAuthorized(caller, borrowDriver)`, `:110-113`). N silos = N adapters = N hooks. So the deployer
   builds a fresh hook per silo, mirroring `DeployZipcode.s.sol:212`. The index's "deployed once at the hub, SHARED"
   list-item for the hook is superseded by this.
-- **`lpOracle` is a built-and-seeded INPUT.** The runbook builds a `SzipReservoirLpOracle` per silo + CRE pushes its
-  first `LP_MARK` BEFORE `SiloDeployer.deploy` (the reservoir `setLTV`'s `getQuote` needs it). The deployer cannot push
+- **`lpOracle` is a built-and-seeded INPUT.** The runbook builds a `SzipFarmUtilityLpOracle` per silo + CRE pushes its
+  first `LP_MARK` BEFORE `SiloDeployer.deploy` (the farm utility `setLTV`'s `getQuote` needs it). The deployer cannot push
   the mark (forwarder-gated).
 - **`saltNonce` distinct per silo** (CREATE2 across the Safe factory + Baal summoner + EVK proxies + the EE salt — the
   guaranteed cross-silo collision is the junior main Safe, its initializer is silo-invariant; see CTR-06b's note).
@@ -100,7 +100,7 @@ modeled on `JuniorTrancheDeployer.t.sol`. EE is mocked via a `_createEePool` ove
 `MockEulerEarn` (settable-backing reads `balanceOf`/`convertToAssets`/`maxWithdraw` + `setBacking`, PLUS no-op/recording
 admin stubs `setFeeRecipient`/`submitCap`/`acceptCap`/`setSupplyQueue`/`setCurator` — neither pre-existing mock had
 both surfaces). 5 tests, all green: `test_deploy_silo_seams_hold`, `test_ownership_handoff` (hook/junior/Safes/warehouse
-handoffs + reservoir governor = Timelock), `test_addSilo_first_try` (a REAL `addSilo` from a pranked Timelock passes on
+handoffs + farm utility governor = Timelock), `test_addSilo_first_try` (a REAL `addSilo` from a pranked Timelock passes on
 the first try), `test_D4_two_silo_routing_rollover_and_aggregate` (registry-level: `venueOf` routing + pranked
 `incrementLineCount` to `MAX_LINES_PER_SILO=28` → `SiloFull` → `setCurrentSilo` rollover lands on silo #2 +
 `SeniorNavAggregator.seniorBacking()` sums both warehouses — NO real controller/opens, the CTR-03-already-proven path

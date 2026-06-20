@@ -51,9 +51,9 @@ interface ICoverageGate {
 ///      The drain is bounded by ONE fact: a resting bid fills only against USDC actually in the engine Safe at
 ///      solver-settlement time. So a global exit is a feeder pipeline into this Safe, choreographed by the CRE:
 ///        1. LIQUIDATE every basket leg to USDC via the existing driver modules — unstake LP from the gauge
-///           (`LpStrategyModule`), exercise/sell rewards (`ExerciseModule`/`SellModule`), repay reservoir debt
-///           (`ReservoirLoopModule`), and run zipUSD → USDC through the senior par sink (`OffRampModule` +
-///           `ZipRedemptionQueue`). At utilization 0% the whole reservoir is free, so 100%-depth funding is reachable.
+///           (`LpStrategyModule`), exercise/sell rewards (`ExerciseModule`/`SellModule`), repay farm utility debt
+///           (`FarmUtilityLoopModule`), and run zipUSD → USDC through the senior par sink (`OffRampModule` +
+///           `ZipRedemptionQueue`). At utilization 0% the whole farm utility is free, so 100%-depth funding is reachable.
 ///        2. CONSOLIDATE the proceeds as USDC in the engine Safe (the `receiver`/`owner` of every bid).
 ///        3. RAISE `buybackCap` (Timelock) toward the total NAV value of `szipUSD.totalSupply()`, and keep the
 ///           resting bid posted at `navExit × (1 − d)`. The single-resting-bid invariant means the CRE operator

@@ -248,8 +248,8 @@ the `EulerVenueAdapter.irm` slot (`LineIrm`, `baseRate = 0.075·1e27 / SECONDS_P
 bank warehouse lines SOFR+2.25–3.25% and ≤ the consumer HELOC so the originator's gain-on-sale survives). A flat
 rate fits the single-borrower isolated line (~binary utilization). EVK compounds per-second, so the effective APY
 is marginally above nominal (~7.788% = e^0.075−1). Every `openLine` installs it; the slot is **Timelock-settable**
-(§17). The **reservoir** borrow vault stays on `ZeroIRM` (internal POL, §4.5.1 — charging the protocol itself is
-pointless) — the adapter `irm` slot and the reservoir IRM are independent. The net interest accrues to the
+(§17). The **farm utility** borrow vault stays on `ZeroIRM` (internal POL, §4.5.1 — charging the protocol itself is
+pointless) — the adapter `irm` slot and the farm utility IRM are independent. The net interest accrues to the
 warehouse Safe (the **sole senior EE-share custodian**) as over-collateralization cushion via share appreciation;
 the EulerEarn perf-fee `f` stays **dormant at 0** (recipient pre-wired) — a non-zero `f` would only mint fee-shares
 to the entity that already owns the pool (a no-op until external senior LPs ever deposit, post-M1). Pre-CTR-13 /
@@ -488,14 +488,14 @@ two trust modes; every workflow below is one or the other.
    The `f+1`-DON-signed, workflow-identity-gated path (§4.4/§17). Every report is the shared envelope
    `abi.encode(uint8 reportType, bytes payload)`; the workflow targets one `Receiver` per `WriteReport` and the
    `(receiver, reportType)` pair selects the on-chain decode. The receivers: `ZipcodeController` (origination/
-   draw/close/status), `ZipcodeOracleRegistry` (revaluation), `SzipNavOracle` (NAV legs), `SzipReservoirLpOracle`
+   draw/close/status), `ZipcodeOracleRegistry` (revaluation), `SzipNavOracle` (NAV legs), `SzipFarmUtilityLpOracle`
    (LP mark), the `CreditWarehouse` CRE-receiver/Roles-adapter (senior-custody ops), and `DefaultCoordinator`
    (default/recovery, M2). Full per-type table: §8.0.
 2. **The operator path — the single immutable CRE operator → the engine modules' `onlyOperator` entrypoints.**
    The auto-compounder engine (8-B5…8-B10, §4.5/§4.5.1) is driven by **one immutable operator identity** calling
    plain `msg.sender == operator` entrypoints on the engine Zodiac modules — **not** DON-signed reports
    (§8.7; `pending-docs/auto-compounder.md §8` inv. 1). This path is **operator-TRUSTED** (e.g.
-   `RecycleModule.creditFreeValue` is unbounded), and that trust is exactly what makes the revolving reservoir
+   `RecycleModule.creditFreeValue` is unbounded), and that trust is exactly what makes the revolving farm utility
    borrow safe (it kills the external-oracle-manipulation exploit, §4.5.1). Full surface: §8.7.
 The two paths are independent identities by construction (the engine `operator` is asserted `!= owner` at module
 `setUp`, and is never the controller/registry Forwarder). §17 governs both (Timelock-settable in build, immutability
@@ -507,9 +507,9 @@ receiver** — the workflow ABI-encodes the payload, calls `runtime.GenerateRepo
 runtime, {Receiver, Report, GasConfig})` (`cre/runtime.go:58`, `client_sdk_gen.go:293`), and the receiver's
 `_processReport` decodes `payload` by its own type constant. Because each `WriteReport` names one `Receiver`, the
 **type-number space is keyed by `(receiver, reportType)`, not globally** — so `SzipNavOracle.NAV_LEG == 7` and
-`SzipReservoirLpOracle.LP_MARK == 7` are the **same numeral on two different receivers and never collide** (each
+`SzipFarmUtilityLpOracle.LP_MARK == 7` are the **same numeral on two different receivers and never collide** (each
 push targets exactly one). This is the ratification the 8-B5 placeholder asked for: **`LP_MARK = 7` stands**
-(`SzipReservoirLpOracle.sol:27`), distinct from the registry's `REVALUATION = 3` (`ZipcodeOracleRegistry.sol:24`)
+(`SzipFarmUtilityLpOracle.sol:27`), distinct from the registry's `REVALUATION = 3` (`ZipcodeOracleRegistry.sol:24`)
 as required; no contract change.
 
 | reportType | Receiver | payload ABI (on-chain decode, exact) | Producing workflow (§) | CRE ticket |
@@ -520,7 +520,7 @@ as required; no contract change.
 | `4` Close | `ZipcodeController` | `(bytes32 lienId)` | Close/release (§8.1) | CRE-01 |
 | `5`/`6` Default/Liquidation | `ZipcodeController` | `(bytes32 lienId, uint8 status)` | Default/recovery (§8.4) | CRE-01 |
 | `7` NAV_LEG | `SzipNavOracle` | `(uint8[] legs, uint256[] prices, uint32 ts)` — `legs ∈ {0 ALPHA_USD, 1 HYDX_USD}` | Share-price feeds (§8.6) | CRE-03 |
-| `7` LP_MARK | `SzipReservoirLpOracle` | `(uint256 mark, uint32 ts)` | Share-price feeds (§8.6) | CRE-03 |
+| `7` LP_MARK | `SzipFarmUtilityLpOracle` | `(uint256 mark, uint32 ts)` | Share-price feeds (§8.6) | CRE-03 |
 | SUPPLY/APPROVE/REDEEM/REPAY | `CreditWarehouse` CRE-receiver | `(uint8 opType, bytes payload)` → re-encoded Safe call (§8.5) | Warehouse ops (§8.5) | CRE-04 |
 | default/recovery (reportType 8) | `DefaultCoordinator` | `(uint8 action, bytes actionData)` — LOCK/RELEASE/DEFAULT/RECOVERY/RESOLVE/WRITEOFF (§8.4) | Default/recovery (§8.4) | CRE-01 (LOCK/RELEASE M1-live; default actions go live with the M2 demo) |
 | `8` RATE | `SzAlphaRateOracle` (Base) | `(uint256 rate, uint48 ts)` — the raw xALPHA `exchangeRate()` pulled from 964 | xALPHA rate pull (§8.8) | CRE-03 (8x-02) |
@@ -543,7 +543,7 @@ attestation bundle (lien-perfected + value + insurance); the lien/insurance **ga
 preconditions — the workflow emits a report **only if they pass** (§8.9/§8.10). `regionalHPI` is in no payload
 (§4.1). The on-chain decoders are the source of truth: the workflow's report struct + `consensus_aggregation`
 tags MUST match these exactly (§4.4 / `ZipcodeOracleRegistry.sol:93` / `SzipNavOracle.sol:201` /
-`SzipReservoirLpOracle.sol:72`).
+`SzipFarmUtilityLpOracle.sol:72`).
 
 **This envelope + every per-`(receiver, reportType)` payload encoder is now BUILT as the shared
 `cre/zipreport` Go package (CRE-00, 2026-06-19)** — an SDK-free library whose round-trip test pins each builder
@@ -730,7 +730,7 @@ unchanged http path — forced by the `ReceiverTemplate` single-`expectedWorkflo
 can `WriteReport` to the warehouse, so the sizing must live in the same binary; the open fork resolved to "fold-in",
 not a separate producer). Each tick (reactive/stateless, §17 live reads): `shortfall = max(0, totalPending/scaleUp −
 (usdc.balanceOf(queue) − reservedAssets))`; **REPAY** drains `min(safeUsdc, shortfall)` to the queue (= the
-deploy-pinned `redemptionBox`), **un-gated** (it moves cash already held, not reservoir backing); **REDEEM** tops
+deploy-pinned `redemptionBox`), **un-gated** (it moves cash already held, not farm utility backing); **REDEEM** tops
 the Safe up to `min(shortfall − repay, floor)` where `floor = covered() ? clamp(maxWithdraw(SAFE) − harvestReserve −
 safetyBuffer, 0, maxRedeemPerTick) : 0`, and `redeemShares = redeemAssets·balanceOf(SAFE)/convertToAssets(balanceOf(SAFE))`
 (conservative integer floor). **Utilization is captured by `maxWithdraw` through the reserve math — no bespoke `U`
@@ -772,13 +772,13 @@ cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
   leg more than the governed band in one push (push intermediate marks, or the band rejects it). Cadence:
   push on the engine epoch and on a material leg move; the `fresh()` issuance guard (`:328`) pauses **issuance**
   if either required leg ages past `maxAge`, while exit prices off the last good mark (asymmetric by design).
-- **`SzipReservoirLpOracle` (reportType `LP_MARK = 7`, `SzipReservoirLpOracle.sol:27`).** Payload `(uint256
+- **`SzipFarmUtilityLpOracle` (reportType `LP_MARK = 7`, `SzipFarmUtilityLpOracle.sol:27`).** Payload `(uint256
   mark, uint32 ts)` — a **single fixed key** (the ICHI LP share, quote USDC; no per-key map, no controller
   seed, the Forwarder is the only writer). The workflow computes the mark off-chain as
   `(reserve_xALPHA × priceXAlpha + reserve_zipUSD × priceZipUSD) / ICHI_LP_totalSupply` (the same reserve-value
   LP math `SzipNavOracle` runs for the basket's staked-LP leg, so the two feeds stay coherent — produce them
   from one computation) and pushes per engine epoch. **Fail-closed by design:** a stale/missing mark reverts
-  `_getQuote` → the reservoir borrow's EVC account-status check reverts (`:100-103`), never opening an unsafe
+  `_getQuote` → the farm utility borrow's EVC account-status check reverts (`:100-103`), never opening an unsafe
   borrow. So the producer's only obligation is **liveness** — re-push within `validityWindow` (generous,
   engine-cadence); a missed push is safe (closes the borrow), an over-stale one blocks new strike-loop draws
   until refreshed. `mark!=0`, `mark<=uint208.max`, `ts<=now` are enforced on-chain (`:82-84`).
@@ -793,7 +793,7 @@ DON-signed report** — the operator submits ordinary transactions (it may still
 `evmClient.WriteReport`'s sibling write surface / a keeper identity, but the on-chain gate is the operator
 address, not the Forwarder identity). **Trust model:** the operator is **TRUSTED** — `RecycleModule.creditFreeValue`
 is unbounded (`RecycleModule.sol`), so the single-immutable-operator permissioning (set at module `setUp`,
-asserted `operator != owner`) is the security boundary that makes the revolving reservoir borrow safe (§4.5.1).
+asserted `operator != owner`) is the security boundary that makes the revolving farm utility borrow safe (§4.5.1).
 
 **EXCEPTION — CTR-01 (2026-06-16): the operator path has no `cre-sdk-go` write surface, so a module may ALSO
 carry a report socket.** This section assumed "the operator submits ordinary transactions … using
@@ -824,8 +824,8 @@ Per epoch + on triggers the operator runs the loop (each leg an `onlyOperator` c
 **only scalar amounts** — never addresses/calldata — so its blast radius is bounded, `LpStrategyModule.sol:19`):
 1. **claim** oHYDX + fees and **vote** (8-B7 harvest/vote — `Voter.vote` each epoch, `exerciseVe` to defend the
    floor); **classify regime** (price vs. short EMA: UP/FLAT/DOWN, `hydrex.md §9.2`).
-2. **strike loop:** post LP collateral → CRE-only **borrow** USDC from the reservoir (8-B5
-   `ReservoirLoopModule`, gated by `LP_MARK` being live, §8.6) → **exercise** oHYDX (8-B8) → **sell** HYDX→USDC
+2. **strike loop:** post LP collateral → CRE-only **borrow** USDC from the farm utility (8-B5
+   `FarmUtilityLoopModule`, gated by `LP_MARK` being live, §8.6) → **exercise** oHYDX (8-B8) → **sell** HYDX→USDC
    via NFPM range orders with retrace-guard + soft-bleed caps (8-B9).
 3. **credit + recycle the free value:** `RecycleModule.creditFreeValue(net)` (the operator-trusted accumulator
    write) then `recycle(usdc)` → `ZipDepositModule.deposit` (USDC → `CreditWarehouse` senior backing → backed
@@ -944,7 +944,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) **+ the shared §8.0 `cre/zipreport` encoder package** — **BUILT 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; gate green) | — | none |
 | `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1) **— BUILT 2026-06-19** (`cre/revaluation`); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate) **— BUILT 2026-06-19** (`cre/controller`); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4) **— BUILT 2026-06-20** (`cre/coordinator`). **CRE-01 family COMPLETE** (01a/01b/01c). Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
 | `CRE-02` | Redemption-settle: **(K) operator half BUILT 2026-06-20** (`cre/keeper` `RedemptionJob` — `settleEpoch`/`claim`/optional `requestRedeem`, reactive+idempotent, escrow default-OFF; gate green). The **(R) warehouse REDEEM→REPAY funding** is `cre/warehouse` (CRE-04, DONE); the cross-transport orchestration glue that fires it is the owed seam **CRE-02b**. | keeper (K) + report (R, CRE-04) | 8-Bw reconcile — DONE |
-| `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
+| `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipFarmUtilityLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REDEEM/REPAY** ops via the Roles adapter (§8.5) **— BUILT 2026-06-20** (`cre/warehouse`; http op-discriminant producer → `WarehouseAdminModule` opType 1/2/3/4 via `cre/zipreport`; all four ops incl. REDEEM so CRE-02 reuses the package; gate green). | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) — DONE |
 | `CRE-05` | Engine strategy-admin **operator** orchestrator (§8.7). **SPLIT:** exit half = **CRE-05a (DONE)**; the harvest loop (8-B5…8-B10) + main↔juniorTrancheSidecar rotation = **KEEPER-01b/01c** on the (K) keeper track (POLICY-BLOCKED/deferred). Live status in PROGRESS. | operator / (K) | none (operator-trusted; engine modules built) |
 
@@ -1545,7 +1545,7 @@ would add its own reference repos behind the `IZipcodeVenue` boundary (§4.7).
   exception:** `LienCollateralToken.controller` stays immutable — it is a per-line disposable token, not
   re-pointable infrastructure (open a new line to change it). **No fund-extraction path was added anywhere** — no
   `sweep`/`rescue`/`pause`; the only new power is re-pointing wiring, gated by the 2-day Timelock veto. The EVK
-  hooks (`CREGatingHook`, `ReservoirBorrowGuard`) use a **manual `owner`/`onlyOwner`** (checking raw `msg.sender`),
+  hooks (`CREGatingHook`, `FarmUtilityBorrowGuard`) use a **manual `owner`/`onlyOwner`** (checking raw `msg.sender`),
   NOT OZ `Ownable`, because the inherited `Context._msgSender()` would collide with the hook's EVK trailing-data
   `_msgSender()` decoder. **Governance MUST never set a CRE Forwarder to `address(0)`** (`ReceiverTemplate`
   disables Forwarder validation at zero and emits a `SecurityWarning`).

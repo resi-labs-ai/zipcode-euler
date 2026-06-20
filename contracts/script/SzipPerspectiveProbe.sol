@@ -25,8 +25,8 @@ import {IEulerEarnFactory} from "euler-earn/interfaces/IEulerEarnFactory.sol";
 ///         (§17 "perspectives dropped entirely" governs the protocol's own design, not external EE infra).
 ///
 ///         A standalone CONTRACT (NOT a library) so the vault-building runs in THIS instance's context — `address(this)`
-///         is the probe contract (the per-line market governor at birth), exactly as `ReservoirMarketDeployer` is for
-///         the reservoir market. A library would inline into the ephemeral deploy script, and `forge script --broadcast`
+///         is the probe contract (the per-line market governor at birth), exactly as `FarmUtilityMarketDeployer` is for
+///         the farm utility market. A library would inline into the ephemeral deploy script, and `forge script --broadcast`
 ///         rejects a script's `address(this)` being baked into deployed state ("Script contracts are ephemeral...").
 contract SzipPerspectiveProbe {
     // EVK op bitmask constants — MUST match EulerVenueAdapter (`EulerVenueAdapter.sol:27-28`).

@@ -4,8 +4,8 @@ pragma solidity 0.8.24;
 import {DeployZipcode} from "./DeployZipcode.s.sol";
 import {ZeroIRM, MockERC20} from "./DeployLocal.s.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
-import {ReservoirMarketDeployer} from "./ReservoirMarketDeployer.sol";
-import {SzipReservoirLpOracle} from "../src/supply/SzipReservoirLpOracle.sol";
+import {FarmUtilityMarketDeployer} from "./FarmUtilityMarketDeployer.sol";
+import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 import {LineIrm} from "./LineIrm.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
@@ -14,7 +14,7 @@ import {IEVault} from "evk/EVault/IEVault.sol";
 /// @notice The real-network counterpart of `DeployLocal`. It runs the same `DeployZipcode` orchestrator (phases
 ///         P0..P9) but — unlike the bare `DeployZipcode:deploy()` — it also (a) PROVISIONS the two create-time
 ///         contracts whose addresses cannot be known in advance (the EulerEarn USDC pool + the no-borrow USDC EVault
-///         at its supply-queue head), (b) seeds the initial `LP_MARK` so the reservoir `setLTV.getQuote` resolves
+///         at its supply-queue head), (b) seeds the initial `LP_MARK` so the farm utility `setLTV.getQuote` resolves
 ///         before CRE is live (P5 override), and (c) runs the EulerEarn curator config (`_configureEulerEarn`) that
 ///         `deploy()` leaves as a fork-only TODO. Everything is one team-broadcast.
 ///
@@ -25,11 +25,11 @@ import {IEVault} from "evk/EVault/IEVault.sol";
 ///      (or use --account/--ledger instead of a raw key). DEPLOYER_PRIVATE_KEY's EOA must == TEAM_MULTISIG and hold
 ///      enough ETH on Base for the full P0..P9 + EE-config gas.
 ///
-///      Provision-if-zero seams (env override OR script-create): IRM, XALPHA_MIRROR, EE_POOL, BASE_USDC_MARKET.
+///      Provision-if-zero seams (env override OR script-create): IRM, XALPHA_MIRROR, EE_POOL, USDC_RESERVOIR.
 ///      Set the env var to a real address to use it; leave it unset/zero to have this script create it. POL_ICHI_VAULT
 ///      and POL_GAUGE are ALWAYS required env inputs (a live matched ICHI-vault/ALM-gauge pair — `Voter.gauges(vault)`,
 ///      NOT `Voter.gauges(pool)`; see DeployLocal's gauge note). The shared-LP seam asserts POL_ICHI_VAULT ==
-///      escrow.asset(), so it must be the SAME vault the reservoir market collateralises.
+///      escrow.asset(), so it must be the SAME vault the farm utility market collateralises.
 contract DeployMainnet is DeployZipcode {
     bool internal _eeProvisioned; // true iff this run CREATED the EE pool (=> we own it => run curator config)
 
@@ -53,7 +53,7 @@ contract DeployMainnet is DeployZipcode {
     }
 
     // ----------------------------------------------------------------- env load
-    /// @notice Principals + LP legs are REQUIRED env. IRM/XALPHA/EE_POOL/BASE_USDC_MARKET are provision-if-zero. The
+    /// @notice Principals + LP legs are REQUIRED env. IRM/XALPHA/EE_POOL/USDC_RESERVOIR are provision-if-zero. The
     ///         numeric knobs fall back to the documented defaults (.env.example / DeployLocal) via `envOr`.
     function _loadMainnetInputs() internal {
         // --- principals (real EOAs you control) ---
@@ -76,7 +76,7 @@ contract DeployMainnet is DeployZipcode {
         i.lineIrm = vm.envOr("LINE_IRM", address(0)); // CTR-13 per-line ~7.5% APR (provision-if-zero, like IRM)
         i.xAlphaMirror = vm.envOr("XALPHA_MIRROR", address(0));
         i.eePool = vm.envOr("EE_POOL", address(0));
-        i.baseUsdcMarket = vm.envOr("BASE_USDC_MARKET", address(0));
+        i.usdcReservoir = vm.envOr("USDC_RESERVOIR", address(0));
 
         // --- numeric knobs (documented defaults; override via env) ---
         i.validityWindow = vm.envOr("VALIDITY_WINDOW", uint256(31_536_000));
@@ -101,14 +101,14 @@ contract DeployMainnet is DeployZipcode {
         i.rateAprCap = vm.envOr("RATE_APR_CAP", uint256(50_000));
     }
 
-    /// @notice Create the seams left zero by `_loadMainnetInputs`. IRM: a 0%-rate model (reservoir borrowing is
+    /// @notice Create the seams left zero by `_loadMainnetInputs`. IRM: a 0%-rate model (farm utility borrowing is
     ///         internal POL; swap a real IRM in later via the Timelock if desired). XALPHA_MIRROR: an M1 ERC20
     ///         stand-in (no real Base xALPHA exists pre-bridge; see [[supply-side-redesign-locked]]). EE_POOL +
-    ///         BASE_USDC_MARKET: real EVK/EulerEarn contracts off the live factories.
+    ///         USDC_RESERVOIR: real EVK/EulerEarn contracts off the live factories.
     function _provisionStandins() internal {
         if (i.irm == address(0)) i.irm = address(new ZeroIRM());
-        // CTR-13: the per-line credit-line IRM is SEPARATE from the reservoir's ZeroIRM — a real ~7.5%-APR flat
-        // `IRMLinearKink` wired into the adapter `irm` slot. Reservoir borrowing stays 0% (internal POL, §4.5.1).
+        // CTR-13: the per-line credit-line IRM is SEPARATE from the farm utility's ZeroIRM — a real ~7.5%-APR flat
+        // `IRMLinearKink` wired into the adapter `irm` slot. Farm utility borrowing stays 0% (internal POL, §4.5.1).
         if (i.lineIrm == address(0)) i.lineIrm = LineIrm.deploy();
         if (i.xAlphaMirror == address(0)) {
             i.xAlphaMirror = address(new MockERC20("Zipcode xALPHA mirror", "xALPHA", 18));
@@ -116,12 +116,12 @@ contract DeployMainnet is DeployZipcode {
 
         // no-borrow USDC resting market — the EE supply-queue head. A bare EVK proxy (asset=USDC, no oracle/uoa =>
         // supply-only). EVK-factory proxies pass the EulerEarn "EVK Factory Perspective", so EE will onboard it.
-        if (i.baseUsdcMarket == address(0)) {
+        if (i.usdcReservoir == address(0)) {
             address baseMkt = GenericFactory(BaseAddresses.EVAULT_FACTORY).createProxy(
                 address(0), false, abi.encodePacked(BaseAddresses.USDC, address(0), address(0))
             );
             IEVault(baseMkt).setHookConfig(address(0), 0);
-            i.baseUsdcMarket = baseMkt;
+            i.usdcReservoir = baseMkt;
         }
 
         // EulerEarn senior USDC pool off the LIVE factory. owner = team; timelock 0 => immediate cap config in
@@ -140,7 +140,7 @@ contract DeployMainnet is DeployZipcode {
     }
 
     /// @notice EE curator runbook (admin ABI not compiled). Run as the EE owner (team): set fee recipient, onboard the
-    ///         resting USDC market + the reservoir borrow vault (both EVK-factory proxies => perspective-verified),
+    ///         resting USDC market + the farm utility borrow vault (both EVK-factory proxies => perspective-verified),
     ///         point the supply queue at the resting market, then hand curator (also satisfies allocator) to the venue
     ///         adapter so `openLine` can onboard per-line vaults and `fund` can reallocate at origination.
     function _configureEulerEarn() internal {
@@ -152,13 +152,13 @@ contract DeployMainnet is DeployZipcode {
         // owner, a no-op. Flip on only if external senior LPs ever deposit, post-M1).
         _eeCall(ee, abi.encodeWithSignature("setFeeRecipient(address)", d.warehouse.warehouseSafe));
 
-        _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", i.baseUsdcMarket, capMax));
-        _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", i.baseUsdcMarket));
+        _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", i.usdcReservoir, capMax));
+        _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", i.usdcReservoir));
         _eeCall(ee, abi.encodeWithSignature("submitCap(address,uint256)", d.borrowVault, capMax));
         _eeCall(ee, abi.encodeWithSignature("acceptCap(address)", d.borrowVault));
 
         address[] memory q = new address[](1);
-        q[0] = i.baseUsdcMarket;
+        q[0] = i.usdcReservoir;
         _eeCall(ee, abi.encodeWithSignature("setSupplyQueue(address[])", q));
 
         _eeCall(ee, abi.encodeWithSignature("setCurator(address)", address(d.adapter)));
@@ -174,19 +174,19 @@ contract DeployMainnet is DeployZipcode {
         }
     }
 
-    /// @notice P5 override: seed an initial `LP_MARK` between oracle creation and the market build, so the reservoir
+    /// @notice P5 override: seed an initial `LP_MARK` between oracle creation and the market build, so the farm utility
     ///         `setLTV`'s `getQuote` resolves. In production the CRE `LP_MARK` push overwrites this; the broadcaster
     ///         (the oracle's owner at birth) seeds it once here. Mark = LP_SEED_MARK (6-dp USD per 1e18 LP share);
     ///         default $1.00 — override to the chosen ICHI vault's real per-share value.
     function _phaseP5() internal override {
-        d.lpOracle = new SzipReservoirLpOracle(
+        d.lpOracle = new SzipFarmUtilityLpOracle(
             BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
         );
 
         _seedLpMark(vm.envOr("LP_SEED_MARK", uint256(1e6)));
 
-        (d.escrowVault, d.borrowVault, d.router) = new ReservoirMarketDeployer().deploy(
-            ReservoirMarketDeployer.Params({
+        (d.escrowVault, d.borrowVault, d.router) = new FarmUtilityMarketDeployer().deploy(
+            FarmUtilityMarketDeployer.Params({
                 factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
                 evc: BaseAddresses.EVC,
                 governor: address(d.timelock),

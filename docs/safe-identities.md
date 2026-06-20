@@ -57,7 +57,7 @@ because they play different roles (and a future deploy could split them onto dif
 - godOwner — the transient warehouse owner before the multisig handoff.
 - creOperator — the on-chain keeper that drives the engine modules' operator-gated calls.
 - workflowAuthor — the CRE workflow whose pushed oracle reports the receivers trust (data provenance, not a caller).
-- reservoirAllocator — the two-key reservoir funder (distinct from the reservoir loop operator).
+- farmUtilityAllocator — the two-key farm utility funder (distinct from the farm utility loop operator).
 
 == Notes for future maintainers ==
 - The deploy env keys were renamed to match the slots: `TREASURY_SAFE → ADMIN_SAFE` and

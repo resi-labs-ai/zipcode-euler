@@ -40,7 +40,7 @@ function requireIdentityWired(address controller, address registry) internal vie
 
 // SEC-05 (M4): the un-looped CRE-push lpOracle is a ReceiverTemplate NOT covered by the S10b same-WORKFLOW_ID
 // assumption above, so it gets an explicit per-receiver gate. P9 seals it and calls this, both guarded
-// `!= address(0)` (the fair-LP branch has no SzipReservoirLpOracle → nothing to seal/assert).
+// `!= address(0)` (the fair-LP branch has no SzipFarmUtilityLpOracle → nothing to seal/assert).
 error ReceiverIdentityNotWired(address receiver);
 
 function requireReceiverIdentityWired(address receiver) internal view {
@@ -82,7 +82,7 @@ function requireReceiverIdentityWired(address receiver) internal view {
 - **Every other `ReceiverTemplate` subclass** is covered transitively: §9/S10b sets the same `WORKFLOW_ID` on all
   of them in one loop, so the controller's non-zero id stands in for the whole set. The kept-code subclasses are
   `ZipcodeController`, `ZipcodeOracleRegistry`, `loss/DefaultCoordinator`, `supply/CreditWarehouse/WarehouseAdminModule`,
-  `supply/SzipNavOracle`, `supply/SzipReservoirLpOracle`, `bridge/SzAlphaRateOracle` (all `is ReceiverTemplate`).
+  `supply/SzipNavOracle`, `supply/SzipFarmUtilityLpOracle`, `bridge/SzAlphaRateOracle` (all `is ReceiverTemplate`).
   Per `PROGRESS.md`, the **warehouse/coordinator** `ReceiverTemplate` subclasses are the same-identity, same-gate
   population the S11 assert protects — they each get `setExpectedWorkflowId`→ownership hand-off in the same
   audit Phase-S seal (their item-10 wire is deferred to the engine-integration pass, `PROGRESS.md` row "Item 10 /
