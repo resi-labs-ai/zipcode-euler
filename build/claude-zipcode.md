@@ -544,6 +544,11 @@ preconditions — the workflow emits a report **only if they pass** (§8.9/§8.1
 tags MUST match these exactly (§4.4 / `ZipcodeOracleRegistry.sol:93` / `SzipNavOracle.sol:201` /
 `SzipReservoirLpOracle.sol:72`).
 
+**This envelope + every per-`(receiver, reportType)` payload encoder is now BUILT as the shared
+`cre/zipreport` Go package (CRE-00, 2026-06-19)** — an SDK-free library whose round-trip test pins each builder
+to the exact filed-contract decode tuple above. CRE-01/03/04 import it rather than re-implementing the
+handshake. (POST_BID/CANCEL_BID → `SzipBuyBurnModule` stay in CRE-05a's own workflow, not `zipreport`.)
+
 ### 8.1 Underwriting / origination / revaluation
 - **Trigger:** `http.Trigger(*Config)` (`capabilities/networking/http/trigger_sdk_gen.go:16`, originator
   submits an application) for origination; **event-driven re-pricing** on **secondary acquisition / deviation
@@ -865,7 +870,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 
 | Ticket | Scope (§) | Path | Gate |
 |---|---|---|---|
-| `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) | — | none |
+| `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) **+ the shared §8.0 `cre/zipreport` encoder package** — **BUILT 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; gate green) | — | none |
 | `CRE-01` | Origination / draw / close / status reports → controller (1/2/4/5,6); revaluation → registry (3, **gas-bounded sharded**, §8.1); default/recovery → `DefaultCoordinator` (8, action family §8.4) | report | DEC-01 (§8.9) |
 | `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |

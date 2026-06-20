@@ -22,8 +22,12 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   built core slice:** generalize the restake leg to the token1-side case (the core slice assumes the recycled
   zipUSD is the vault's token0 — see the KEEPER-01b note's known-limitation; fail-safe today, but the restake is
   skipped if zipUSD deploys as token1). Rotation → KEEPER-01c (freeze rebuild).
-- **CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package; then the **(R)** workflows
-  **CRE-01 / CRE-03 / CRE-04** (all through EXISTING report receivers — not blocked by anything). Independent of (K).
+- ~~**CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package~~ **DONE 2026-06-19**
+  (note below). The **(R)** workflows **CRE-01 / CRE-03 / CRE-04** are now UNBLOCKED and each imports the new
+  `cre/zipreport` shared encoder (all through EXISTING report receivers — not blocked by anything). Independent
+  of (K). **Strong NEXT candidate: CRE-01** (origination/draw/close/status → controller; revaluation → registry,
+  gas-bounded sharded; rt8 default/recovery → DefaultCoordinator) — the largest (R) producer, now that the
+  encode handshake is a tested library.
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
   `CRE-OPS-ROUTING.md`.
 - **CTR-06c / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
@@ -55,6 +59,46 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
   cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
   CTR-10c second-venue integration.)
+
+- **CRE-00 note (2026-06-19) — the (R)-track scaffold + the shared §8.0 `cre/zipreport` encoder package.** Head
+  of the CRE report-path track; unblocks CRE-01/03/04. Two artifacts, both committed to the monorepo `cre/`
+  (off-chain Go only — **NO contract changed**, so no backward `wires/` edit owed). **(1) `cre/zipreport/`** — a
+  standalone, **SDK-free** module (`module cre-zipreport`; depends only on `go-ethereum/accounts/abi`+`common`,
+  so it builds host AND `wasip1`) that is the single source of the §8.0 envelope `abi.encode(uint8 reportType,
+  bytes payload)` + **all 18 per-`(receiver, reportType)` payload builders**, each pinned by a non-vacuous
+  round-trip test to the EXACT filed-contract `abi.decode` tuple (controller origination/draw/close/status,
+  registry revaluation, Nav legs, LP mark, DefaultCoordinator's 6-action inner-inner family, SzAlphaRate, the 4
+  warehouse ops). Constants are grouped one `const` block per receiver so the cross-receiver numeral collisions
+  (`NavLeg==7`/`LpMark==7`; `CoordinatorReportType==8`/`RateReportType==8`; warehouse `opType` 1-4) are explicit.
+  CRE-01/03/04 import it instead of re-implementing the handshake (today `buyburn-bid`+`szalpha-rate` each
+  duplicate it). **(2) `cre/scaffold/`** — the clone-me `wasip1` workflow template (`module cre-scaffold`;
+  `replace cre-zipreport => ../zipreport`) demonstrating the SDK patterns the existing workflows do NOT: DON-only
+  `GetSecret` (fail-safe/illustrative, §8.10 — never in node mode), `RunInNodeMode` + `ConsensusIdentical
+  Aggregation[uint64]` over a deterministic observation, `runtime.Now()` ts-stamp, `zipreport.LpMarkReport` →
+  `GenerateReport` → `WriteReport`, plus the `cre-templates` project files. **Harness loop ran:** 4 critics
+  (junior-dev/spec-fidelity/reference-verifier/cre-binding). **cre-binding = ALL MATCH** (every reportType/field/
+  type/envelope verified field-by-field against the filed `src/` decoders — zero mismatch). **reference-verifier**
+  confirmed every SDK binding resolves (`cre.ParseJSON`, `wasm.NewRunner`, `GenerateReport`/`WriteCreReportRequest`,
+  `RunInNodeMode`/`ConsensusIdenticalAggregation`, `cre.SecretRequest` alias, `cron.Trigger`/`cre.Handler`,
+  `testutils`/`evmmock`, the go-ethereum native-type abi mapping incl. the uint32-native gotcha). **spec-fidelity =
+  FAITHFUL** — no fidelity bug; flagged two spots where the ticket is MORE precise than the literal §8.0 table
+  (it numbers the warehouse ops `1-4` from the filed constants, and omits the POST_BID/CANCEL_BID rows that
+  CRE-OPS-ROUTING reassigned to the SHIPPED CRE-05a) — both fixed as reconciliation notes in the ticket before
+  cold-build. **junior-dev** surfaced the load-bearing ambiguities (the `RunInNodeMode` carrier type, `GetSecret`
+  namespace/seeding, go.mod/go.sum seeding, project-file fidelity) — ALL pinned in the ticket before cold-build
+  (carrier = single `uint64` + ts from `runtime.Now()`; secret read fail-safe so the sim needs no seeded secret;
+  seed go.mod/go.sum from `buyburn-bid` then `go mod tidy`; project files illustrative/not gate-checked). **Gate
+  green (my own re-run, not just the cold-build's):** `cre/zipreport` → `go build && go vet && go test` (22 tests
+  PASS) + `GOOS=wasip1 GOARCH=wasm go build` exit 0; `cre/scaffold` → host build/vet/test (3 sim tests PASS) +
+  wasip1 build exit 0. **Cold-build returned ZERO load-bearing mechanism guesses;** its 3 reported items were
+  verified structural resolutions: (a) builders that would collide with a same-named constant got a `…Report`
+  suffix (`NavLegReport`/`LpMarkReport`/`Wh*Report`) — wire bytes/reportType unaffected; (b) a `//go:build
+  !wasip1` no-op `main()` (`main_host.go`) so the literal `go build ./...` host gate links (the wasip1-tagged
+  `main.go` leaves no host `main` — the same command exits 1 on `buyburn-bid`); (c) the seeded-secret test keys
+  the empty namespace, verified against `testutils/runtime.go`. Committed to the monorepo `cre/` — code only; no
+  `build/`/`docs/`/`contracts/` staged in the code commit. **Doc-sync:** no contract changed → no backward
+  `wires/` edit; forward spec `claude-zipcode.md` §8.0 gains a "(BUILT — `cre/zipreport`, CRE-00)" note + the
+  §8.11 CRE-00 row marked BUILT. Ticket: `build/tickets/cre/CRE-00-cre-scaffold.md`.
 
 - **KEEPER-01b core slice note (2026-06-19) — the strike-loop harvest Job (the bulk of the remaining CRE-05).**
   The (K) keeper-track Job that drives the auto-compounder engine's `onlyOperator` legs (8-B5…8-B10) as ONE
@@ -749,7 +793,7 @@ Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) 
 
 | Item | What | Spec § |
 |---|---|---|
-| CRE-00 | Project + secrets scaffold (`cre-templates` layout, `wasip1` build, DON-only `GetSecret`) + the shared §8.0 report-encoding package the workflows reuse | §8.11 / §8.0 — *(was NEXT; deferred behind the FE↔anvil push the user prioritized 2026-06-10 — head of the CRE track when released)* |
+| CRE-00 | Project + secrets scaffold (`cre-templates` layout, `wasip1` build, DON-only `GetSecret`) + the shared §8.0 report-encoding package the workflows reuse | §8.11 / §8.0 — **DONE 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; note below) |
 | CRE-01 | Origination / draw / close / status → controller (rt 1/2/4/5,6); revaluation → registry (rt3, gas-bounded sharded); default/recovery → `DefaultCoordinator` (rt8 action family). **SEC-01 constraint: must not co-locate two same-lien `seedPrice` writes (origination+draw / draw+draw) in one block — the registry monotonic guard reverts the second. See open obligations.** | §8.1 / §8.4 |
 | CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call. *(2026-06-12: `settleEpoch` is now ON-DEMAND — the 30-day epoch gate was removed — so this can be event-driven off the queue's `RedemptionSettled` event rather than a fixed cron: settle → if backlog remains, sequence another REDEEM→REPAY. See `build/wires/9-ZipRedemptionQueue.md`.)* **Scope: `build/tickets/cre/CRE-02-redemption-settle.md`.** | §8.3 / §8.5 |
 | CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` — and the xALPHA-APR feed (the 8x-02 receiver is built; the Go producer remains) | §8.6 / §8.8 |
