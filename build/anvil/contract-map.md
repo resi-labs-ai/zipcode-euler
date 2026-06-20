@@ -27,27 +27,27 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 ## Roots
 | Contract | Address |
 |---|---|
-| TimelockController (owns ~everything) | `0x89ae086561ed831C4f5ebF31d825f0364C8c3B27` |
+| TimelockController (owns ~everything) | `0x0395da1BBCD51A0b48EEBf40F4F39E5985d6CA1A` |
 
 ## Venue spine
 | Contract | Address |
 |---|---|
-| ZipcodeController | `0x36025de2F0753789058eAE99003BbE2131b63810` |
-| EulerVenueAdapter | `0x87dC8666F0c31Fb4B205240003DD733E327E14F3` |
-| ZipcodeOracleRegistry | `0x0395da1BBCD51A0b48EEBf40F4F39E5985d6CA1A` |
-| CREGatingHook | `0x16579ac952BBf5cC0844959699A2876eA885808C` |
-| LienTokenFactory | `0xbF1801C78593aF0Ef7BcB4415Eaf146993Ec7A01` |
+| ZipcodeController | `0x5bF6a1503F6A0f43Cf16f417FB033A9d3677dF01` |
+| EulerVenueAdapter | `0x36025de2F0753789058eAE99003BbE2131b63810` |
+| ZipcodeOracleRegistry | `0xbF1801C78593aF0Ef7BcB4415Eaf146993Ec7A01` |
+| CREGatingHook | `0x87dC8666F0c31Fb4B205240003DD733E327E14F3` |
+| LienTokenFactory | `0x16579ac952BBf5cC0844959699A2876eA885808C` |
 
 ## Supply
 | Contract | Address |
 |---|---|
-| zipUSD (ESynth) | `0xC5bd67f769bC0bEc5077c15E23d7AD707D5c45aF` |
-| szipUSD (junior vault share) | `0x33aD3E23ae6189055925ba2265041AcCA356b4E4` |
-| ZipDepositModule | `0x6ecc717266e6FE8d7Ad7608219c30b736eEB728a` |
-| ExitGate | `0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e` |
-| SzipNavOracle | `0x0C3E77314D97e8e001e0F626A559992479A3C79e` |
-| ZipRedemptionQueue | `0x46c89c1a4e86b7F025871c35F08aA7DA95F79D8f` |
-| SzipFarmUtilityLpOracle | `0x4505dbe66837804e2bFe068A365B68cA707d0D42` |
+| zipUSD (ESynth) | `0xabe34eC6072F35F956450159D7238bCB719Fde6a` |
+| szipUSD (junior vault share) | `0x783A08cb688a94cb6bCaE9f74eDe6762b44f3ACd` |
+| ZipDepositModule | `0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e` |
+| ExitGate | `0xB8fB416FbF1cfd793eCacF9135174bEf92a4b97F` |
+| SzipNavOracle | `0x33aD3E23ae6189055925ba2265041AcCA356b4E4` |
+| ZipRedemptionQueue | `0x7b5C04034b6531C36E0F10890056D95F6f6153F9` |
+| SzipFarmUtilityLpOracle | `0xc933fc2f0d97a14e08071778F6F2AA83ECb1309b` |
 
 ## Baal substrate (junior vault)
 | Piece | Address |
@@ -61,8 +61,8 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 ## Credit warehouse (senior)
 | Piece | Address |
 |---|---|
-| Warehouse Safe (EE-share + USDC custodian; EE feeRecipient) | `0xe028616919E7515Ff0Ce4086E9f5Fd4AcfffC68C` |
-| WarehouseAdminModule (CRE adapter — SUPPLY/APPROVE/REPAY/REDEEM) | `0xa430221162cf0e20abDab4324CE2F3d5d3391b5c` |
+| Warehouse Safe (EE-share + USDC custodian; EE feeRecipient) | `0x7975E1eFB09690E42C5B574B1768cdFA11e8693c` |
+| WarehouseAdminModule (CRE adapter — SUPPLY/APPROVE/REPAY/REDEEM) | `0x28b0109B3ac79fA14F2E1914D44872BD6b32B97f` |
 
 ## Senior pool — REAL EulerEarn (8-Bw)
 | Piece | Address | Config |
@@ -76,36 +76,36 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 |---|---|
 | borrow vault (USDC) | `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267` |
 | escrow vault (LP collateral) | `0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1` |
-| EulerRouter (escrow → LP → lpOracle) | `0x5a451fEB2Ef43B3615f1eaFba352B7b363d0629f` |
+| EulerRouter (escrow → LP → lpOracle) | `0x83cf98139A35830C90aa28f9e9abf198Fcf6A795` |
 
 ## Engine modules (zodiac proxies, all Timelock-owned; operator = `creOperator`)
 | Module | Address | Enabled on |
 |---|---|---|
-| SzipBuyBurnModule | `0x12881a80c4f4eee7430d1c1c53bbbcfc4c92f71b` | main Safe |
-| FarmUtilityLoopModule | `0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4` | main Safe |
-| LpStrategyModule | `0xc242eaeb8e0647ef49a97ed827059786446f3c5c` | main Safe |
-| HarvestVoteModule | `0x38d549cdaf088f68f549d85c0ba390005ff087ec` | main Safe |
-| ExerciseModule | `0x8a80b821f6fe43b94e84a1ed245276964e52c9d1` | main Safe |
-| SellModule | `0xbc8e1b79f9321d33266e1f8da594e238439a78e2` | main Safe |
-| RecycleModule | `0x0c4c63843f2607ce58ac31ebb8a86d28aadbbc4e` | main Safe |
-| OffRampModule | `0xc595aa93d9ba00726efd1741255961df72e49998` | main Safe (rq) |
-| DurationFreezeModule | `0x66e0e34254727954cc7137ea58b851d99d438485` | main + sidecar |
+| SzipBuyBurnModule | `0x9a59A47A42fb5D951c599BE0C9Af008D93ebe831` | main Safe |
+| FarmUtilityLoopModule | `0xa61c6B0E0CbA10Dad5ac06325ab95E5246c48DC2` | main Safe |
+| LpStrategyModule | `0x897d82285833933A79e2A3daC4759a7C47B0044e` | main Safe |
+| HarvestVoteModule | `0x2246C8b9756b255DBBEb50eb6f13511B93Eb13ee` | main Safe |
+| ExerciseModule | `0x10aa41B6A18FD128568D5e92012Fba4C6fE45f0f` | main Safe |
+| SellModule | `0xEbbB5EA0C4e3E719D5125002c8f91bCCD0B8913E` | main Safe |
+| RecycleModule | `0x953e739AcD9a07B1Aa8d6e1F04a6B7e7BEAf7b5b` | main Safe |
+| OffRampModule | `0xA444F4653A4DFd06FA6C7128e9A714c68EebF55D` | main Safe (rq) |
+| DurationFreezeModule | `0x675fdf5507b337cA98E3B40B59462B37A8DC050b` | main + sidecar |
 
 ## Loss side
 | Contract | Address |
 |---|---|
-| DefaultCoordinator | `0xb6366c0db8f31319e6fc6b28c6f6304064657e99` |
-| LienXAlphaEscrow | `0xfba6a2f082ca39552725cb9190754c2f4c525468` |
+| DefaultCoordinator | `0xAC07DBEEf61E773fc4d745EA83b70D7A18263a01` |
+| LienXAlphaEscrow | `0x97Fe77c24831ee77D6Fb4923aEd8138D7A79f02E` |
 
 ## Bridge
 | Contract | Address |
 |---|---|
-| SzAlphaRateOracle | `0x7251a305fe860099cdc842fcfbde8ab6002afe72` |
+| SzAlphaRateOracle | `0x46C89c1A4E86b7F025871C35f08aa7da95F79d8f` |
 
 ## Local stand-ins (only these are non-real, by necessity)
 | Stand-in | Address | Why local |
 |---|---|---|
-| xALPHA mirror (MockERC20, 18dp, mintable) | `0xF6CAAF72A788916915ce1bF111E245e0bEABCd18` | cross-chain asset (subnet 964→Base via CCIP), not yet bridged |
+| xALPHA mirror (MockERC20, 18dp, mintable) | `0x237C95e376FCA422316a18264936C426BBc686B6` | cross-chain asset (subnet 964→Base via CCIP), not yet bridged |
 | ZeroIRM (0%-rate, real contract) | `0xAF5C4Ff1CA534F6e8527Eaf448db7d30bf9d6d5E` | a real IRM; 0% is a valid config |
 
 ## Live Base externals it is wired to

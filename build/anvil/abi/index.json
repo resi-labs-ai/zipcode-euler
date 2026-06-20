@@ -1,135 +1,135 @@
 {
-  "0x89ae086561ed831C4f5ebF31d825f0364C8c3B27": {
+  "0x0395da1BBCD51A0b48EEBf40F4F39E5985d6CA1A": {
     "name": "TimelockController",
     "abi": "abi/TimelockController.json",
     "kind": "protocol"
   },
-  "0x36025de2F0753789058eAE99003BbE2131b63810": {
+  "0x5bF6a1503F6A0f43Cf16f417FB033A9d3677dF01": {
     "name": "ZipcodeController",
     "abi": "abi/ZipcodeController.json",
     "kind": "protocol"
   },
-  "0x87dC8666F0c31Fb4B205240003DD733E327E14F3": {
+  "0x36025de2F0753789058eAE99003BbE2131b63810": {
     "name": "EulerVenueAdapter",
     "abi": "abi/EulerVenueAdapter.json",
     "kind": "protocol"
   },
-  "0x0395da1BBCD51A0b48EEBf40F4F39E5985d6CA1A": {
+  "0xbF1801C78593aF0Ef7BcB4415Eaf146993Ec7A01": {
     "name": "ZipcodeOracleRegistry",
     "abi": "abi/ZipcodeOracleRegistry.json",
     "kind": "protocol"
   },
-  "0x16579ac952BBf5cC0844959699A2876eA885808C": {
+  "0x87dC8666F0c31Fb4B205240003DD733E327E14F3": {
     "name": "CREGatingHook",
     "abi": "abi/CREGatingHook.json",
     "kind": "protocol"
   },
-  "0xbF1801C78593aF0Ef7BcB4415Eaf146993Ec7A01": {
+  "0x16579ac952BBf5cC0844959699A2876eA885808C": {
     "name": "LienTokenFactory",
     "abi": "abi/LienTokenFactory.json",
     "kind": "protocol"
   },
-  "0xC5bd67f769bC0bEc5077c15E23d7AD707D5c45aF": {
+  "0xabe34eC6072F35F956450159D7238bCB719Fde6a": {
     "name": "zipUSD (ESynth)",
     "abi": "abi/ESynth.json",
     "kind": "protocol"
   },
-  "0x33aD3E23ae6189055925ba2265041AcCA356b4E4": {
+  "0x783A08cb688a94cb6bCaE9f74eDe6762b44f3ACd": {
     "name": "szipUSD",
     "abi": "abi/SzipUSD.json",
     "kind": "protocol"
   },
-  "0x6ecc717266e6FE8d7Ad7608219c30b736eEB728a": {
+  "0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e": {
     "name": "ZipDepositModule",
     "abi": "abi/ZipDepositModule.json",
     "kind": "protocol"
   },
-  "0xd9b8393fD5057bcb4Fb2d86a1FD594fD8Ebae89e": {
+  "0xB8fB416FbF1cfd793eCacF9135174bEf92a4b97F": {
     "name": "ExitGate",
     "abi": "abi/ExitGate.json",
     "kind": "protocol"
   },
-  "0x0C3E77314D97e8e001e0F626A559992479A3C79e": {
+  "0x33aD3E23ae6189055925ba2265041AcCA356b4E4": {
     "name": "SzipNavOracle",
     "abi": "abi/SzipNavOracle.json",
     "kind": "protocol"
   },
-  "0x46c89c1a4e86b7F025871c35F08aA7DA95F79D8f": {
+  "0x7b5C04034b6531C36E0F10890056D95F6f6153F9": {
     "name": "ZipRedemptionQueue",
     "abi": "abi/ZipRedemptionQueue.json",
     "kind": "protocol"
   },
-  "0x4505dbe66837804e2bFe068A365B68cA707d0D42": {
+  "0xc933fc2f0d97a14e08071778F6F2AA83ECb1309b": {
     "name": "SzipFarmUtilityLpOracle",
     "abi": "abi/SzipFarmUtilityLpOracle.json",
     "kind": "protocol"
   },
-  "0x12881a80c4f4eee7430d1c1c53bbbcfc4c92f71b": {
+  "0x9a59A47A42fb5D951c599BE0C9Af008D93ebe831": {
     "name": "SzipBuyBurnModule",
     "abi": "abi/SzipBuyBurnModule.json",
     "kind": "protocol"
   },
-  "0x61cdc9c8839753f520cc9dc4f2a733e132fe10e4": {
+  "0xa61c6B0E0CbA10Dad5ac06325ab95E5246c48DC2": {
     "name": "FarmUtilityLoopModule",
     "abi": "abi/FarmUtilityLoopModule.json",
     "kind": "protocol"
   },
-  "0xc242eaeb8e0647ef49a97ed827059786446f3c5c": {
+  "0x897d82285833933A79e2A3daC4759a7C47B0044e": {
     "name": "LpStrategyModule",
     "abi": "abi/LpStrategyModule.json",
     "kind": "protocol"
   },
-  "0x38d549cdaf088f68f549d85c0ba390005ff087ec": {
+  "0x2246C8b9756b255DBBEb50eb6f13511B93Eb13ee": {
     "name": "HarvestVoteModule",
     "abi": "abi/HarvestVoteModule.json",
     "kind": "protocol"
   },
-  "0x8a80b821f6fe43b94e84a1ed245276964e52c9d1": {
+  "0x10aa41B6A18FD128568D5e92012Fba4C6fE45f0f": {
     "name": "ExerciseModule",
     "abi": "abi/ExerciseModule.json",
     "kind": "protocol"
   },
-  "0xbc8e1b79f9321d33266e1f8da594e238439a78e2": {
+  "0xEbbB5EA0C4e3E719D5125002c8f91bCCD0B8913E": {
     "name": "SellModule",
     "abi": "abi/SellModule.json",
     "kind": "protocol"
   },
-  "0x0c4c63843f2607ce58ac31ebb8a86d28aadbbc4e": {
+  "0x953e739AcD9a07B1Aa8d6e1F04a6B7e7BEAf7b5b": {
     "name": "RecycleModule",
     "abi": "abi/RecycleModule.json",
     "kind": "protocol"
   },
-  "0xc595aa93d9ba00726efd1741255961df72e49998": {
+  "0xA444F4653A4DFd06FA6C7128e9A714c68EebF55D": {
     "name": "OffRampModule",
     "abi": "abi/OffRampModule.json",
     "kind": "protocol"
   },
-  "0x66e0e34254727954cc7137ea58b851d99d438485": {
+  "0x675fdf5507b337cA98E3B40B59462B37A8DC050b": {
     "name": "DurationFreezeModule",
     "abi": "abi/DurationFreezeModule.json",
     "kind": "protocol"
   },
-  "0xb6366c0db8f31319e6fc6b28c6f6304064657e99": {
+  "0xAC07DBEEf61E773fc4d745EA83b70D7A18263a01": {
     "name": "DefaultCoordinator",
     "abi": "abi/DefaultCoordinator.json",
     "kind": "protocol"
   },
-  "0xfba6a2f082ca39552725cb9190754c2f4c525468": {
+  "0x97Fe77c24831ee77D6Fb4923aEd8138D7A79f02E": {
     "name": "LienXAlphaEscrow",
     "abi": "abi/LienXAlphaEscrow.json",
     "kind": "protocol"
   },
-  "0x7251a305fe860099cdc842fcfbde8ab6002afe72": {
+  "0x46C89c1A4E86b7F025871C35f08aa7da95F79d8f": {
     "name": "SzAlphaRateOracle",
     "abi": "abi/SzAlphaRateOracle.json",
     "kind": "protocol"
   },
-  "0xa430221162cf0e20abDab4324CE2F3d5d3391b5c": {
+  "0x28b0109B3ac79fA14F2E1914D44872BD6b32B97f": {
     "name": "WarehouseAdminModule",
     "abi": "abi/WarehouseAdminModule.json",
     "kind": "protocol"
   },
-  "0xF6CAAF72A788916915ce1bF111E245e0bEABCd18": {
+  "0x237C95e376FCA422316a18264936C426BBc686B6": {
     "name": "xALPHA (MockERC20)",
     "abi": "abi/MockERC20.json",
     "kind": "standin"
@@ -159,7 +159,7 @@
     "abi": "abi/external/IEVault.json",
     "kind": "external"
   },
-  "0x5a451fEB2Ef43B3615f1eaFba352B7b363d0629f": {
+  "0x83cf98139A35830C90aa28f9e9abf198Fcf6A795": {
     "name": "farm utility EulerRouter",
     "abi": "abi/EulerRouter.json",
     "kind": "external"
@@ -174,7 +174,7 @@
     "abi": "abi/external/GnosisSafe.json",
     "kind": "external"
   },
-  "0xe028616919E7515Ff0Ce4086E9f5Fd4AcfffC68C": {
+  "0x7975E1eFB09690E42C5B574B1768cdFA11e8693c": {
     "name": "warehouse Safe",
     "abi": "abi/external/GnosisSafe.json",
     "kind": "external"
@@ -244,7 +244,7 @@
     "abi": "abi/external/EulerEarnFactory.json",
     "kind": "external"
   },
-  "0x38235Cfa6c5F5dC818fc83D64D38ff32c92c0811": {
+  "0x2f1f2e5cCB88E0B543A5d3B6c8e0095c754FE984": {
     "name": "warehouse Roles modifier",
     "abi": "abi/external/ZodiacRoles.json",
     "kind": "external"
