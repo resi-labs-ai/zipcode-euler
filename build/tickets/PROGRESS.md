@@ -42,9 +42,11 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   ~~**Strong NEXT candidate: CRE-01**~~ (split) (origination/draw/close/status → controller; revaluation → registry,
   gas-bounded sharded; rt8 default/recovery → DefaultCoordinator) — the largest (R) producer, now that the
   encode handshake is a tested library.
-- **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04 (**DONE 2026-06-20**) — now
-  **UNBLOCKED**. Reuses `cre/warehouse` for the (R) REDEEM→REPAY funding; sequences `OffRampModule` +
-  `ZipRedemptionQueue.settleEpoch/claim` via (K). Confirm the (R)/(K) split per `CRE-OPS-ROUTING.md`.
+- ~~**CRE-02 (R)+(K) hybrid** — redemption-settle~~ **(K) operator half DONE 2026-06-20** (note below). The
+  reactive `RedemptionJob` (`cre/keeper/internal/job/redemption_job.go`) drives `ZipRedemptionQueue.settleEpoch`
+  + `OffRampModule.claim`/`requestRedeem` via (K). The (R) REDEEM→REPAY funding is the EXISTING `cre/warehouse`
+  (CRE-04); **the cross-transport orchestration that fires it (sized off the §8.2 reserve) is the owed seam
+  CRE-02b** (see Open obligations). So the only remaining (R) backlog item is **CRE-03 (NAV/LP/xALPHA-APR feeds)**.
 - **CTR-06c / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
   CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` +
   CTR-06a reservoir borrow-vault governor handoff + CTR-06b `JuniorTrancheDeployer` are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
@@ -74,6 +76,54 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
   cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
   CTR-10c second-venue integration.)
+
+- **CRE-02 note (2026-06-20) — the (K) operator-half redemption-settle Job (`RedemptionJob` → `ZipRedemptionQueue`
+  + `OffRampModule`).** The (K) half of the (R)+(K) hybrid, per `CRE-OPS-ROUTING.md` (the (R) REDEEM/REPAY is the
+  SEPARATE `cre/warehouse`/CRE-04 — a transport the keeper cannot emit). A committed keeper `Job` at
+  **`cre/keeper/internal/job/redemption_job.go`** (off-chain Go on the KEEPER-00 spine — **NO contract changed**,
+  so **NO backward `wires/` edit owed**). Modeled on `BurnJob`: a PURE-read `Evaluate` returns an ordered
+  `chain.Plan`; the Runner alone submits. **Reactive + idempotent + stateless** — each tick re-reads live
+  off-ramp/queue state (§17, never cached) and emits an ordered Plan: **settleEpoch** (when free REPAY-delivered
+  USDC + pending exist — the Go gate `min(freeUsdc, pending/scaleUp) > 0` mirrors `ZipRedemptionQueue.sol:203-206`
+  exactly, so a 0-fill is skipped, no wasted tx), **claim** (drain banked `claimableAssets[rqSafe]` to the rq Safe
+  via `OffRampModule.claim`), and an OPTIONAL **requestRedeem** escrow leg gated by a config `RedeemTargetPending`
+  (**default 0 = escrow disabled**, the `BurnJob` `minBurn` idiom). **Reactive legs first, escrow last** so an
+  escrow revert under the spine's abort-on-first-error never strands the always-safe legs. Never calls the
+  warehouse, never calls `queue.withdraw`/`requestRedeem` DIRECTLY (only via the off-ramp, which `exec`s through
+  the rq Safe = `redeemController`). The single keeper signer must be BOTH `queue.controller` AND `offramp.operator`
+  — two new `IdentityCheck` rows (`operator()`/`controller()`) assert it at startup (§8.7 `owner != operator`).
+  **Harness loop ran:** 4 critics (junior-dev / spec-fidelity / reference-verifier / keeper-binding).
+  **keeper-binding = NO MISMATCHES** (settle math mirrors the contract exactly incl. the unchecked-sub edge;
+  `claim(claimable)` reads `maxWithdraw(rqSafe)==claimableAssets[rqSafe]` so it can't over-claim/revert;
+  `escrow = floorToUnit(min(gap,idleZip), scaleUp) >= scaleUp` satisfies every off-ramp `ZeroAmount`/`NotWholeUnit`
+  + queue whole-unit/single-requester guard; ordering + the synchronous-spine no-double-act argument hold).
+  **spec-fidelity = FAITHFUL** (no invention; honors §17 + the (R)/(K) routing ruling; **CRE-06 reserve correctly
+  on the (R) REDEEM-sizing side — this (K) Job is reserve-independent**, reads only the queue's own
+  `reservedAssets`; the stale 30-day-cron / "against the anvil fork" framing dropped — keeper-track gate is
+  `go build`/`go test` + simulated backend, not anvil). **reference-verifier = ALL bindings resolve** (every
+  OffRampModule/ZipRedemptionQueue signature + chain helper + the `RedemptionProbe` bytecode = valid solc-0.8.24
+  with every needed selector). **Ticket tightened pre-cold-build** from the junior-dev fan-out (the load-bearing
+  fixes: the stub MUST key the two `balanceOf` reads by `call.To` since they hit different token addrs; reuse the
+  EXISTING `encodeUint` — a local redeclaration is a compile error; the sim `record(i)` is a 2-field tuple not
+  StrikeLoop's 4-field; `floorToUnit` pinned as an unexported helper; `NewRedemptionJob` signature pinned; the
+  botched `claimable = CallUint…` line cleaned). **Gate green (my own `-count=1` re-run, not just the cold-build's):**
+  `cd cre/keeper && go build ./... && go vet ./... && go test -count=1 ./...` — all pass. **Non-vacuous:** the unit
+  test decodes real `Action` calldata to selectors+scalars across 6 groups (all-three-ordered / settle-only /
+  claim-only / 4 escrow-gating subcases / 4 no-op+fail-safe subcases / escrow-floored); the sim test deploys
+  `RedemptionProbe` on the simulated backend and runs the FULL Runner, asserting the 3 ordered recorded calls
+  (`settleEpoch` / `claim(5)` / `requestRedeem(7e12)`). **Cold-build returned ZERO load-bearing guesses** (verified
+  by my own gate re-run + code read; its 2 adjustments — a stub rename to dodge a `baseReader` collision +
+  `setRqSafe` calldata idiom — are forced compile fixes, not mechanism guesses). Committed to `cre/keeper`
+  (`0f2e32c`) — code only (6 files incl. `RedemptionProbe.sol`); no `build/`/`docs/`/`contracts/` staged; HEAD
+  verified (no rogue commit). Ticket: `build/tickets/cre/CRE-02-redemption-settle.md`. **Doc-sync:** no contract
+  changed → no backward `wires/` edit; forward `claude-zipcode.md` §8.3 gains a "(BUILT — CRE-02 (K) half)" note +
+  the §8.11 map's CRE-02 row marks the (K) half BUILT / flags the owed CRE-02b. **NEXT:** reviewer picks — the
+  remaining (R) backlog is **CRE-03** (NAV/LP/xALPHA-APR feeds); plus the owed **CRE-02b** orchestration glue.
+  ⚠️ **FLAG for reviewer (not mine, not committed):** the working tree carries a 123-line uncommitted change to
+  `contracts/test/WarehouseAdminModule.t.sol` (a `_onReportRevertsWithSelector` helper + new onReport
+  selector-revert tests + an `attacker` state-var refactor). It is **unrelated to CRE-02**, predates my window
+  (last committed touch was `81df630`, before the CRE-04 commits), and I left it untouched + unstaged — decide
+  whether it's leftover CRE-04 test-hardening to commit or to discard.
 
 - **CRE-04 note (2026-06-20) — the senior-warehouse op producer (opType 1/2/3/4 → `WarehouseAdminModule`/8-Bw).**
   A pure (R) producer through the EXISTING `WarehouseAdminModule` receiver (CRE-OPS-ROUTING: CRE-04 is pure (R);
@@ -1068,6 +1118,19 @@ track on it.
 ---
 
 ## Open obligations / seams
+
+- **CRE-02b — the redemption cross-transport orchestration glue (owed, raised 2026-06-20 by CRE-02).** CRE-02's
+  (K) `RedemptionJob` is REACTIVE: it settles + claims whatever USDC the queue already holds, but it does NOT fund
+  the queue. Funding the queue is the (R) warehouse **REDEEM→REPAY** (`cre/warehouse`, CRE-04, BUILT) — a wasip1
+  report transport the keeper cannot emit. **Owed:** the off-chain orchestration that decides WHEN + HOW MUCH to
+  REDEEM→REPAY (sized off the §8.2 reserve = the CRE-06 `harvestReserve`/`safetyBuffer` config) and POSTs the op
+  event to `cre/warehouse`'s `http.Trigger` ahead of the keeper's `settleEpoch`. Until CRE-02b lands, the funding
+  half is driven manually/by ops. Not blocking; the (K) settle/claim half is complete + safe.
+- **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
+  The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
+  while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
+  wire + assert these two are the same address (and that the keeper signer is BOTH `OffRampModule.operator` AND
+  `ZipRedemptionQueue.controller`). Mark DISCHARGED at item-10 deploy wiring.
 
 - **SYSTEMIC SEAM (raised 2026-06-16, CTR-01) — RESOLVED 2026-06-16 by `build/tickets/cre/CRE-OPS-ROUTING.md`.**
   The per-module write-path decision is made: **(R) report path only for 8-B14**; **(K) the single trusted

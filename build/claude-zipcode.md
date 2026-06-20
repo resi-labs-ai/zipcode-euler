@@ -636,6 +636,16 @@ the REDEEM (how many shares to release) is the producer's job; the on-chain Role
 not the amount. (`ZipRedemptionQueue.settleEpoch` is controller-gated, not renounced — the controller keeps calling
 it, §4.5.)
 
+**BUILT — CRE-02 ((K) operator half, `cre/keeper/internal/job/redemption_job.go`, 2026-06-20):** the
+`settleEpoch()` + `OffRampModule.claim`/`requestRedeem` legs are a committed keeper `Job` on the `cre/keeper`
+spine (the (K) keeper transport per `CRE-OPS-ROUTING.md`, NOT a wasip1 report — the keeper holds the queue
+`controller` + off-ramp `operator` keys). It is REACTIVE + idempotent: each tick it reads live queue/off-ramp
+state and emits an ordered Plan — `settleEpoch` (when free REPAY-delivered USDC + pending exist), `claim` (drain
+banked `claimableAssets` to the rq Safe), and an OPTIONAL `requestRedeem` escrow leg gated by a config
+`RedeemTargetPending` (**default 0 = escrow disabled**). The **(R) warehouse REDEEM→REPAY funding** that fills the
+queue's USDC is the SEPARATE `cre/warehouse` producer (CRE-04, a different transport the keeper cannot emit); the
+off-chain orchestration that fires it (sized off the §8.2 reserve) is the owed cross-transport seam (CRE-02b).
+
 ### 8.4 Default / recovery
 **(BUILT — CRE-01c, `cre/coordinator/`, 2026-06-20.)** The reportType-8 loss-action producer is a committed wasip1
 workflow: an off-chain loss event (`http.Trigger`) reaches identical consensus on a string-only `LossEvent`
@@ -900,7 +910,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 |---|---|---|---|
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) **+ the shared §8.0 `cre/zipreport` encoder package** — **BUILT 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; gate green) | — | none |
 | `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1) **— BUILT 2026-06-19** (`cre/revaluation`); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate) **— BUILT 2026-06-19** (`cre/controller`); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4) **— BUILT 2026-06-20** (`cre/coordinator`). **CRE-01 family COMPLETE** (01a/01b/01c). Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
-| `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
+| `CRE-02` | Redemption-settle: **(K) operator half BUILT 2026-06-20** (`cre/keeper` `RedemptionJob` — `settleEpoch`/`claim`/optional `requestRedeem`, reactive+idempotent, escrow default-OFF; gate green). The **(R) warehouse REDEEM→REPAY funding** is `cre/warehouse` (CRE-04, DONE); the cross-transport orchestration glue that fires it is the owed seam **CRE-02b**. | keeper (K) + report (R, CRE-04) | 8-Bw reconcile — DONE |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REDEEM/REPAY** ops via the Roles adapter (§8.5) **— BUILT 2026-06-20** (`cre/warehouse`; http op-discriminant producer → `WarehouseAdminModule` opType 1/2/3/4 via `cre/zipreport`; all four ops incl. REDEEM so CRE-02 reuses the package; gate green). | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) — DONE |
 | `CRE-05` | Engine strategy-admin **operator** orchestrator (§8.7). **SPLIT:** exit half = **CRE-05a (DONE)**; the harvest loop (8-B5…8-B10) + main↔juniorTrancheSidecar rotation = **KEEPER-01b/01c** on the (K) keeper track (POLICY-BLOCKED/deferred). Live status in PROGRESS. | operator / (K) | none (operator-trusted; engine modules built) |
