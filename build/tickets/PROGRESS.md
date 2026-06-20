@@ -15,17 +15,27 @@ Job) — DONE 2026-06-19** (note below) are landed. **KEEPER-01 was split into t
 size + maturity): **01a** fill-detect→`burnFor` (DONE), **01b** the engine harvest orchestrator (core slice DONE;
 own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (deferred — binds to the INCOMPLETE
 `DurationFreezeModule`). Candidate NEXT items (reviewer picks):
-- **KEEPER-01b own-later slices** (the policy-deferred remainder, each its own slice): **B1** regime classifier +
-  EMA price source, **B2** keeper STATE store (an infra decision — required by any stateful policy), **C1–C3**
-  vote/allocation weights + lock-vs-sell split + `claimRebase` set (§17-deferred economic knobs), **C5** explicit
-  per-epoch volume cap + epoch definition (+ A1's relocated 2h-TWAP cadence steer). ~~Plus one **follow-up on the
+- ~~**KEEPER-01b own-later slices**~~ **— CLOSED 2026-06-19 (reviewer: out of MVP scope).** The entire own-later
+  remainder (B1 regime classifier + EMA, B2 keeper STATE store, C1 vote weights, C2 lock-vs-sell split, C3
+  `claimRebase` set, C5 per-epoch volume cap + epoch definition + the relocated TWAP cadence steer) is the
+  ve-allocation / regime / epoch-cadence machinery — a process **not built out in the MVP**. None of it is a
+  build item. The shipped strike-loop core (claim→borrow→exercise→sell→credit/recycle→restake, side-aware, with
+  the level-based B3 taper/halt) is the whole of KEEPER-01b for M1. Rotation (D1) remains separately deferred to
+  KEEPER-01c (the freeze rebuild). See `KEEPER-01b-OPEN-POLICY.md` for the closed-out record. ~~Plus one **follow-up on the
   built core slice:** generalize the restake leg to the token1-side case~~ **KEEPER-01b-R1 DONE 2026-06-19**
   (note below) — the restake is now side-aware; the token0-only known-limitation is RESOLVED. Rotation →
   KEEPER-01c (freeze rebuild).
 - ~~**CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package~~ **DONE 2026-06-19**
   (note below). The **(R)** workflows **CRE-01 / CRE-03 / CRE-04** are now UNBLOCKED and each imports the new
   `cre/zipreport` shared encoder (all through EXISTING report receivers — not blocked by anything). Independent
-  of (K). **Strong NEXT candidate: CRE-01** (origination/draw/close/status → controller; revaluation → registry,
+  of (K).
+- **CRE-01 was SPLIT into three (R) slices 2026-06-19** (a 4-critic fan-out confirmed it can't cold-build to zero
+  guesses as one ticket — same pattern as CTR-06/CTR-10; three distinct workflows, triggers, receivers):
+  **CRE-01a** revaluation sharded → registry (rt3) — **DONE 2026-06-19** (note below); **CRE-01b** origination/
+  draw/close/status → controller (rt1/2/4/5,6; `http.Trigger` + the §8.9 mock Proof-gate + `equityMark` +
+  CTR-03 `siloId`) — **NEXT candidate, the headline/largest slice**; **CRE-01c** default/recovery → DefaultCoordinator
+  (rt8 action family; LOCK/RELEASE M1-live, DEFAULT/RECOVERY/RESOLVE/WRITEOFF go live with the M2 demo, §8.4).
+  ~~**Strong NEXT candidate: CRE-01**~~ (split) (origination/draw/close/status → controller; revaluation → registry,
   gas-bounded sharded; rt8 default/recovery → DefaultCoordinator) — the largest (R) producer, now that the
   encode handshake is a tested library.
 - **CRE-02 (R)+(K) hybrid** — redemption-settle; needs KEEPER-00 (done) + CRE-04. Confirm the (R)/(K) split per
@@ -59,6 +69,50 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
   cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
   CTR-10c second-venue integration.)
+
+- **CRE-01a note (2026-06-19) — the WOOF-02 gas-bounded revaluation producer (reportType 3 → `ZipcodeOracleRegistry`).**
+  The FIRST of the three CRE-01 (R) slices (the split was forced by a 4-critic fan-out — see the NEXT bullet).
+  A committed wasip1 workflow at **`cre/revaluation/`** (monorepo `cre/`, off-chain Go only — **NO contract
+  changed**, so no backward `wires/` edit owed). An off-chain Proof-of-Value re-appraisal batch arrives via
+  `http.Trigger`; the workflow reaches **identical consensus** on the `(lien, mark)` set, validates + **dedups
+  the full sweep (fail-closed — errors on a dup)** + enforces equal-length, **shards** into gas-bounded batches
+  (`MAX_LIENS_PER_REPORT` default 50, TUNABLE; logs the shard count), and emits **one `WriteReport` per shard**
+  encoded via the shared `cre/zipreport.Revaluation` (no re-implemented handshake). Stamps one DON
+  `uint32(runtime.Now().Unix())` ts across a sweep. Fail-safe no-ops on empty marks / unset registry. **Harness
+  loop ran:** 4 critics (junior-dev / spec-fidelity / reference-verifier / cre-binding). **cre-binding = byte-exact**
+  (envelope `(uint8 3, bytes)` → `(address[],uint256[],uint32)` matches `ZipcodeOracleRegistry._processReport`
+  exactly; every `_writePrice` revert path — price==0, future ts, StaleReport strictly-newer, decimals==18,
+  LengthMismatch — anticipated; uint32→uint48 ts widening lossless). **spec-fidelity = FAITHFUL** (the §8.1
+  sharding runbook implemented verbatim; trigger=`http.Trigger`/no-cron and dedup-across-sweep are LITERAL §8.1
+  text, not invention; carrier type is a transparent SDK derivation; the 01a/b/c split honors §8.11 intent).
+  **reference-verifier = ALL bindings resolve** (every cited contract/zipreport/SDK line verified; the `Marks`
+  struct-of-`[]string` carrier confirmed `isIdenticalType` + `values.Wrap`-able). **The one load-bearing find
+  (junior-dev + reference-verifier):** the draft's K3 said the http payload reaches node-mode `observe` "via
+  cfg/closure, mirroring the scaffold" — **WRONG** (the scaffold's `observe` ignores its config; `*Config` is
+  static, parsed once at init). **FIXED in the ticket BEFORE cold-build:** `RunInNodeMode[C,T]`'s `C` is a FREE
+  generic — the handler passes `payload.Input` in as `C = []byte` (`observe(in []byte, _ cre.NodeRuntime)`); a
+  Config field for the batch is explicitly forbidden. Also pinned pre-build: the JSON wire shape
+  (`{"liens":[],"prices":[]}`), the go.mod cron→http replace swap, and explicit hex validation before
+  `common.HexToAddress` (which does NOT error on bad input). **Two spec gaps fixed first** (§8.1 now states the
+  dup-action = error/fail-closed + the uint32-ts 2106 wire-ceiling note; §8.11's stale single-`CRE-01` build-map
+  row now reflects the 01a/01b/01c split). **Gate green (my own re-run, `-count=1`, not just the cold-build's):**
+  `cd cre/revaluation && go build ./... && go vet ./...` (host) + `GOOS=wasip1 GOARCH=wasm go build ./...` exit 0
+  + `go test ./...` = 10 tests PASS, **non-vacuous** (the full handler sim decodes the captured bytes to the exact
+  on-chain tuple and proves the `Marks` carrier `values.Wrap`s through `RunInNodeMode`; sharding asserts
+  ceil(N/k) writes / ordered subsets / identical ts / union==input; dedup/length/zero-price/malformed-address →
+  error+0 writes; no-op cases). **Cold-build returned ZERO load-bearing guesses;** verified by my own code read
+  (not just its report). Committed to `cre/revaluation` — code only; build artifact gitignored; no
+  `build/`/`docs/`/`contracts/` staged in the code commit; HEAD verified (no rogue commit). Ticket:
+  `build/tickets/cre/CRE-01a-revaluation-sharded.md`. **Doc-sync:** no contract changed → no backward `wires/`
+  edit; forward spec §8.1 + §8.11 edited (above). **NEXT remainder:** CRE-01b (controller underwriting — the
+  headline) + CRE-01c (DefaultCoordinator action family).
+
+- **KEEPER-01b own-later set CLOSED (2026-06-19, reviewer-driven) — out of MVP scope.** The B1 regime classifier
+  + EMA, B2 keeper STATE store, and C1/C2/C3/C5 economic knobs (vote weights / lock-vs-sell split / `claimRebase`
+  set / per-epoch volume cap) — the ve-allocation / regime / epoch-cadence machinery — are **not built out in the
+  MVP** and are no longer build items. The shipped strike-loop core (with the level-based B3 taper/halt) is the
+  whole of KEEPER-01b for M1. Rotation (D1) stays separately deferred to KEEPER-01c. Record:
+  `build/tickets/cre/KEEPER-01b-OPEN-POLICY.md` (rows struck through with a closeout note).
 
 - **CRE-00 note (2026-06-19) — the (R)-track scaffold + the shared §8.0 `cre/zipreport` encoder package.** Head
   of the CRE report-path track; unblocks CRE-01/03/04. Two artifacts, both committed to the monorepo `cre/`

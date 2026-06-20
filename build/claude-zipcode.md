@@ -582,7 +582,12 @@ handshake. (POST_BID/CANCEL_BID → `SzipBuyBurnModule` stay in CRE-05a's own wo
   the sweep); (iii) **dedup across the full sweep** so no `lien` appears in two shards in the same epoch
   (on-chain it is last-write-wins, so a dup is a silent-correctness footgun the producer must prevent) and
   enforce equal-length `liens`/`prices` **before** encoding (don't rely on the on-chain revert to catch a
-  malformed batch). No malformed/dup entry, atomic per batch.
+  malformed batch). **On a dup the producer ERRORS the whole sweep (fail-closed), it does not last-write-wins
+  silently** — a duplicate lien from the off-chain re-appraisal pipeline is a producer-side bug to surface, and
+  erroring matches the all-or-nothing ethos below (decided CRE-01a, 2026-06-19). No malformed/dup entry, atomic
+  per batch. **Wire-format note:** the payload `ts` is `uint32` (the registry decode tuple, widened to `uint48`
+  on-chain) — a 2106 unix-seconds ceiling shared with the NAV legs; far-horizon, contract-imposed, the producer
+  stamps `uint32(runtime.Now().Unix())`.
   - **(The all-or-nothing batch is the mitigation, not a bug.)** The per-batch atomicity is the
     intentional fail-closed design: a poison key reverts its own shard so no partial/inconsistent revaluation lands.
     Adding a per-key `try/catch` inside `_processReport` to skip-and-continue is **rejected** — it would swallow
@@ -874,7 +879,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 | Ticket | Scope (§) | Path | Gate |
 |---|---|---|---|
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) **+ the shared §8.0 `cre/zipreport` encoder package** — **BUILT 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; gate green) | — | none |
-| `CRE-01` | Origination / draw / close / status reports → controller (1/2/4/5,6); revaluation → registry (3, **gas-bounded sharded**, §8.1); default/recovery → `DefaultCoordinator` (8, action family §8.4) | report | DEC-01 (§8.9) |
+| `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4). Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
 | `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REPAY** ops via the Roles adapter (§8.5) | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) |

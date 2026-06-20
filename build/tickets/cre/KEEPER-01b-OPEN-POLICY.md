@@ -45,9 +45,17 @@ rotation) is fully specified and buildable as one ordered multi-leg Job. Lifted 
   below it). This is a **level check on the A1 live price** — no EMA / state store needed, so it ships in the core
   slice.
 
-**STILL OPEN (own slices, NOT this unblock):** B1 (regime price source + EMA params), B2 (keeper STATE store —
-infra decision), C1–C3 (vote weights / lock-vs-sell split / `claimRebase` set), C5 (the explicit per-epoch volume
-cap + epoch definition — now also home to A1's relocated TWAP-cadence steer), D1 (rotation → KEEPER-01c).
+**STILL OPEN (own slices, NOT this unblock):** none — the entire own-later set is CLOSED (see note below). Only D1
+(rotation) survives, and it is separately deferred to KEEPER-01c (the freeze rebuild).
+
+> **CLOSED — the entire KEEPER-01b own-later set (reviewer-driven 2026-06-19): B1, B2, C1, C2, C3, C5.** These were
+> the regime / ve-allocation / epoch-cadence knobs: B1 (regime classifier + EMA), B2 (keeper STATE store), C1 (vote
+> weights), C2 (lock-vs-sell split), C3 (`claimRebase` set), C5 (per-epoch volume cap + epoch definition + the
+> relocated TWAP cadence steer). All cut: they are the ve-allocation / regime / epoch-cadence **process, which is
+> not built out in the MVP.** None is a build item. The strike-loop core already ships the only price-reactive
+> behavior in scope — the level-based B3 taper/halt (shrink at the amber tier, halt below the profitability
+> cutoff). The B/C rows below are retained only as the historical record of the questions. Rotation (D1) stays
+> separately deferred to KEEPER-01c.
 
 ---
 
@@ -62,18 +70,18 @@ cap + epoch definition — now also home to A1's relocated TWAP-cadence steer), 
 ## B. Regime classifier + keeper state
 | # | Undecided knob | Detail | Candidate | Blocks |
 |---|---|---|---|---|
-| B1 | **Regime price source + EMA params** | UP/FLAT/DOWN from price vs short EMA + fill% — window length, thresholds, fill% input (`NFPM.positions` accrual) | hydrex §9.2 mapping (UP→fills→szipUSD; FLAT/DOWN→`exerciseVe`→vote floor) + §10 bot pipeline; params unset | the regime gate on the whole loop |
-| B2 | **Keeper STATE store** | the KEEPER-00 spine is a **stateless poll**; an EMA + fill% history need **cross-tick memory**. Where does it live (file? db? recompute-from-chain each tick)? | none — an infra decision | any stateful policy (regime, tapering history) |
+| ~~B1~~ | ~~**Regime price source + EMA params**~~ **— REMOVED as a slice (see note above).** A UP/FLAT/DOWN regime gate (price vs short EMA + fill%) was speculative policy machinery; the core loop's level-based taper/halt (B3) is the only price-reactive behavior in scope. | — | — |
+| ~~B2~~ | ~~**Keeper STATE store**~~ **— REMOVED as a standalone slice (see note above).** The KEEPER-00 spine is a stateless poll; if B1 needs cross-tick memory it is decided + built *inside B1* (leading candidate: recompute-from-chain off the Algebra oracle timepoints — no persistence). | — | — |
 | B3 | **Price tapering / halt tiers** | shrink loop size as HYDX falls; halt below the profitability cutoff | **taper from $0.033 → shrink at ~$0.018 → halt at $0.015** (hydrex §9.3, marked **user-ratified 2026-06-08**) — appears DECIDED, just **not lifted into §8.7**; confirm + pin | loop-size sizing |
 
 ## C. Governance / allocation (the §17-deferred economic knobs)
 | # | Undecided knob | Leg | Note | Blocks |
 |---|---|---|---|---|
-| C1 | **Vote weights** — `vote(poolVote[], weights[])`: which pools, what weights | 8-B7 `vote` | §17: "8-B10's allocation weights are the only open economic knob, **deferred to the treasury module**" | the per-epoch vote leg |
-| C2 | **lock-vs-sell split** — how much claimed oHYDX to `lockVe` vs exercise+sell | 8-B7/B8 | hydrex §9.2: FLAT/DOWN → `exerciseVe` → vote floor; the split ratio isn't pinned | the claim→deploy step |
-| C3 | **`claimRebase` ve-position set** — which `tokenId`s | 8-B7 | operational once C1/C2 fix the ve strategy | rebase claiming |
+| ~~C1~~ | ~~**Vote weights**~~ **— REMOVED as a slice (reviewer-driven 2026-06-19).** Pool/weight allocation for `vote(poolVote[], weights[])` is §17-parked on the treasury module with no ratified pool set or weights; not a build item. | — | — |
+| ~~C2~~ | ~~**lock-vs-sell split**~~ **— CLOSED (out of MVP scope).** The lock-vs-sell ve allocation is not built out in the MVP. | — | — |
+| ~~C3~~ | ~~**`claimRebase` ve-position set**~~ **— CLOSED (out of MVP scope).** ve rebase claiming is not built out in the MVP. | — | — |
 | C4 | **Borrow size + recycle/reserve split** — per-cycle borrow off LP collateral; recycle vs working-capital reserve | 8-B5/B10 | mirror CRE-05a's `harvestReserve`/`safetyBuffer` **M1 constants** (a dynamic policy is a later swap) | sizing the strike loop |
-| C5 | **Per-epoch volume cap + epoch definition** | 8-B9 | **≤ 1–2% of pool USDC (~$4–9k/epoch)** (hydrex §9.3); `maxSellHydx` is the on-chain backstop; "epoch" = Hydrex epoch? a cron? | sell cadence |
+| ~~C5~~ | ~~**Per-epoch volume cap + epoch definition**~~ **— CLOSED (out of MVP scope).** The per-epoch cadence/cap governor is not built out in the MVP; the on-chain `maxSellHydx` backstop + the fixed C4 per-cycle borrow already bound sell volume for M1. | — | — |
 
 ## D. Deferred (do NOT decide here)
 | # | Item | Why deferred |
@@ -87,8 +95,8 @@ cap + epoch definition — now also home to A1's relocated TWAP-cadence steer), 
   **strike-loop core** (claim → borrow → exercise → sell → credit/recycle → restake) is buildable as one ordered
   multi-leg Job with M1-constant slippage, **no regime gate** (run on a `pendingReward` threshold), no vote, no
   rotation. That is the smallest coherent, fully-specified unit.
-- **B (regime + state)** and **C1–C3 (vote/allocation)** are larger, genuinely-undecided policy + an infra
-  (state-store) decision — own slices after the policy is pinned.
+- **The entire own-later set (B1, B2, C1, C2, C3, C5) is CLOSED** — the regime / ve-allocation / epoch-cadence
+  process is not built out in the MVP (see the note above). Nothing in it is a build item.
 - **D1 (rotation)** stays with the freeze rebuild (01c).
 - **Quick win:** **B3** (price taper/halt) looks already user-ratified in hydrex.md — likely just needs lifting into
   `claude-zipcode.md` §8.7 verbatim, not re-deciding.
