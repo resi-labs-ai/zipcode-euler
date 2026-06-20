@@ -28,6 +28,20 @@ var scaleUp = func() *big.Int { v, _ := new(big.Int).SetString("1000000000000", 
 // the token getters) — addresses are NEVER hard-coded (§17 re-pointable). The
 // keeper supplies ONLY scalar amounts (never addresses/calldata) — blast radius
 // bounded (§8.7).
+//
+// ⚠️ KNOWN LIMITATION (restake leg, logged in PROGRESS.md "KEEPER-01b own-later"):
+// the restake assumes the recycled zipUSD is the LP vault's token0 — it builds
+// addLiquidity(deposit0=expectedZip, deposit1=0) and ZipToShares prices the
+// token0 side. Pool token0/token1 slotting is by ADDRESS SORT (lower address =
+// token0), fixed at pool creation, NOT chosen by us — so this holds only if
+// zipUSD's deployed address sorts below xALPHA's. If zipUSD deploys as token1,
+// this leg is malformed (it asks the vault to pull token0=xALPHA, which the Safe
+// lacks) and addLiquidity REVERTS — fail-safe: every prior leg (claim → borrow →
+// exercise → sell → repay → creditFreeValue → recycle) has already mined, so the
+// harvest completes and the recycled zipUSD sits backed in the Safe; only the
+// final LP-stake is skipped. Never unsafe, but the compounding doesn't close.
+// FOLLOW-UP: read token0()/token1() off the vault and branch to
+// addLiquidity(0, expectedZip, …) (pricing the token1 side) when zipUSD == token1.
 type StrikeLoopJob struct {
 	// the six engine module addresses (re-pointable; from cfg.MustAddr).
 	harvest   common.Address // HarvestVoteModule — claimReward / pendingReward / oHYDX
@@ -250,6 +264,8 @@ func (j *StrikeLoopJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 		} else {
 			// stakeAmount = minShares (conservative: addLiquidity guarantees shares ≥ minShares).
 			stakeAmount := new(big.Int).Set(minShares)
+			// ⚠️ token0-side assumption — see the KNOWN LIMITATION at the top of this
+			// file. deposit0=expectedZip presumes zipUSD == the vault's token0.
 			actions = append(actions,
 				chain.Action{Label: "recycle", To: j.recycle, Data: chain.PackUintCall("recycle(uint256)", recycleAmount)},
 				chain.Action{Label: "addLiquidity", To: j.lp, Data: chain.PackUintsCall("addLiquidity(uint256,uint256,uint256)", expectedZip, big.NewInt(0), minShares)},
