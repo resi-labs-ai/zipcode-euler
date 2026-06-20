@@ -33,8 +33,10 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   guesses as one ticket — same pattern as CTR-06/CTR-10; three distinct workflows, triggers, receivers):
   **CRE-01a** revaluation sharded → registry (rt3) — **DONE 2026-06-19** (note below); **CRE-01b** origination/
   draw/close/status → controller (rt1/2/4/5,6; `http.Trigger` + the §8.9 mock Proof-gate + `equityMark` +
-  CTR-03 `siloId`) — **NEXT candidate, the headline/largest slice**; **CRE-01c** default/recovery → DefaultCoordinator
-  (rt8 action family; LOCK/RELEASE M1-live, DEFAULT/RECOVERY/RESOLVE/WRITEOFF go live with the M2 demo, §8.4).
+  CTR-03 `siloId`) — **DONE 2026-06-19** (note below); **CRE-01c** default/recovery → DefaultCoordinator
+  (rt8 action family; LOCK/RELEASE M1-live, DEFAULT/RECOVERY/RESOLVE/WRITEOFF go live with the M2 demo, §8.4) —
+  **the remaining CRE-01 slice, a strong NEXT candidate** (the only un-built (R) controller-family producer;
+  encoders `zipreport.CoordLock/Release/Default/Recovery/Resolve/WriteOff` exist + are round-trip-tested).
   ~~**Strong NEXT candidate: CRE-01**~~ (split) (origination/draw/close/status → controller; revaluation → registry,
   gas-bounded sharded; rt8 default/recovery → DefaultCoordinator) — the largest (R) producer, now that the
   encode handshake is a tested library.
@@ -69,6 +71,48 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
   cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
   CTR-10c second-venue integration.)
+
+- **CRE-01b note (2026-06-19) — the controller lifecycle producer (reportType 1/2/4/5,6 → `ZipcodeController`).**
+  The SECOND of the three CRE-01 (R) slices — the headline/largest. A committed wasip1 workflow at
+  **`cre/controller/`** (monorepo `cre/`, off-chain Go only — **NO contract changed**, so no backward `wires/`
+  edit owed). One `http.Trigger` carries an off-chain lifecycle event; the workflow reaches **identical
+  consensus** on an `Application` carrier (string + bool + uintN scalars + a nested `Gates` struct of six bools),
+  normalizes + **dispatches on the action discriminant** (`origination`→rt1 / `draw`→rt2 / `close`→rt4 /
+  `default`→rt5 / `liquidation`→rt6), validates the per-action required fields, **enforces the §8.9 Proof gate
+  fail-closed** (origination/draw emit ONLY if all six gates pass — else a no-op, NO report), and emits **one
+  `WriteReport`** to the controller via the shared `cre/zipreport` encoders (`Origination`/`Draw`/`Close`/
+  `Status`; no re-implemented handshake). `siloId` rides **origination only** (CTR-03; draw/close re-resolve the
+  venue from the stored `r.siloId` on-chain — the producer does NOT re-send it). Fail-safe no-op on unset
+  Controller; required-field/unknown-action errors propagate. **Harness loop ran:** 4 critics (junior-dev /
+  spec-fidelity / reference-verifier / cre-binding). **cre-binding = byte-exact** (all four report types' field
+  order/type/reportType-routing match `ZipcodeController._processReport` at `:203/:222/:266/:287` exactly).
+  **spec-fidelity = FAITHFUL** (the §8.9 "emit only if gates pass" implemented verbatim; rt5/rt6 status-markers
+  to the *controller* correctly scoped IN, the DefaultCoordinator rt8 economic action family correctly DEFERRED
+  to CRE-01c — split is on the receiver, not on "default vs not"; honors §17/§8.0 534-538). **reference-verifier
+  = ALL 17 bindings resolve** — incl. the load-bearing carrier proof: `isIdenticalType` **recurses into structs**
+  (`consensus_aggregators.go:207-214`), so the nested `Gates` struct-of-bool + the `uintN` scalars are
+  identical-type and Wrap-able. **One cre-binding misread corrected by my own source read:** it claimed
+  `seedPrice` accepts any uint256 — FALSE; `seedPrice`→`_writePrice` reverts `PriceOracle_InvalidAnswer` on
+  `price==0` (`ZipcodeOracleRegistry.sol:115,142`), so the ticket's `equityMark > 0` rule was already correct
+  (kept). **Ticket tightened pre-cold-build** from the fan-out: pinned per-action required-vs-optional field
+  rules + action normalization (`ToLower`+`TrimSpace`); the `parseBytes32(s, allowZero bool)` signature; an
+  anticipated-on-chain-reverts note (`SiloUnrouted`/`SiloFull`/`LienExists`/`UnknownLien`/`DebtOutstanding` — the
+  producer surfaces, does not pre-check); and the two-distinct-single-gate-flip gate test. **Gate green (my own
+  re-run, `-count=1`, not just the cold-build's):** `cd cre/controller && go build ./... && go vet ./...` (host)
+  + `GOOS=wasip1 GOARCH=wasm go build ./...` exit 0 + `go test -count=1 ./...` = PASS (13 funcs + sub-cases),
+  **non-vacuous** (each handshake test drives the FULL handler through `evmmock`, captures the real `WriteReport`
+  bytes, then **independently `abi.Unpack`s** the envelope to `(uint8,bytes)` + the payload to the exact contract
+  tuple per action — NOT trusting `zipreport` — asserting reportType against BOTH the constant and the literal;
+  the full `RunInNodeMode` + `ConsensusIdenticalAggregation[Application]` path runs, **proving the carrier
+  Wraps**; gate-pass⇒1 write, two distinct single-gate flips⇒0 writes; the validation-error table⇒0 writes;
+  zero-proofRef accepted; unset-Controller no-op). **Cold-build returned ZERO load-bearing mechanism guesses**
+  (its 3 reported items are literal/structural resolutions — the `Hash→[32]byte` copy, empty-string=missing,
+  no Status range-check — all ticket-faithful); verified by my own code read. Committed to `cre/controller` —
+  code only; host build artifact + `*.wasm` gitignored; no `build/`/`docs/`/`contracts/` staged in the code
+  commit; HEAD verified (no rogue commit). Ticket: `build/tickets/cre/CRE-01b-controller-producer.md`.
+  **Doc-sync:** no contract changed → no backward `wires/` edit; forward spec §8.0 gains a "(BUILT — CRE-01b)"
+  producer note + §8.11's CRE-01 row marks 01b BUILT. **NEXT remainder:** CRE-01c (DefaultCoordinator rt8 action
+  family) — the last CRE-01 slice.
 
 - **CRE-01a note (2026-06-19) — the WOOF-02 gas-bounded revaluation producer (reportType 3 → `ZipcodeOracleRegistry`).**
   The FIRST of the three CRE-01 (R) slices (the split was forced by a 4-critic fan-out — see the NEXT bullet).

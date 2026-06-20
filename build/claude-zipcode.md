@@ -571,6 +571,12 @@ handshake. (POST_BID/CANCEL_BID → `SzipBuyBurnModule` stay in CRE-05a's own wo
   report, GasConfig: …})` (`capabilities/blockchain/evm/client_sdk_gen.go:293`). Receiver is the
   `ZipcodeController` (origination/draw, reportType 1/2 — atomic price seed) or the `ZipcodeOracleRegistry`
   (revaluation, reportType 3).
+- **(BUILT — CRE-01b, 2026-06-19, `cre/controller`.)** The controller lifecycle producer is built: one
+  `http.Trigger`, action-discriminated (origination rt1 / draw rt2 / close rt4 / default rt5 / liquidation rt6),
+  `ConsensusIdenticalAggregation` over an `Application` carrier (string + bool + uintN), the §8.9 Proof gate
+  enforced **fail-closed** (a credit-fact report — origination/draw — emits ONLY if every gate passes), encoding
+  via `cre/zipreport`. `siloId` rides origination ONLY (CTR-03; draw/close re-resolve on-chain). The §8.9/§8.10
+  per-node Proof/feed fetch + verify is the documented mock seam (the gates arrive in the payload this window).
 - **Revaluation sharding (the WOOF-02 discharge).** `ZipcodeOracleRegistry._processReport` applies the whole
   `(liens, prices, ts)` arrays in **one atomic loop** (`ZipcodeOracleRegistry.sol:93-111`): equal lengths are
   enforced (`LengthMismatch`, `:98`), and any single bad entry (`price==0`, `ts>now`, wrong-decimals lien)
@@ -879,7 +885,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 | Ticket | Scope (§) | Path | Gate |
 |---|---|---|---|
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) **+ the shared §8.0 `cre/zipreport` encoder package** — **BUILT 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; gate green) | — | none |
-| `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4). Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
+| `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1) **— BUILT 2026-06-19** (`cre/revaluation`); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate) **— BUILT 2026-06-19** (`cre/controller`); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4) — remaining. Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
 | `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REPAY** ops via the Roles adapter (§8.5) | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) |
