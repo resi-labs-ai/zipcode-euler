@@ -422,6 +422,51 @@ contract RecycleModuleUnitTest is Test {
         assertEq(m.warehouseSafe(), address(0xB03));
     }
 
+    /// @dev The remaining three wiring setters (the stream-2 trio is covered above, `setOperator` by SEC-15):
+    ///      `setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc` are each `onlyOwner`, non-zero-guarded, take
+    ///      effect, and emit `WiringSet`. (`setJuniorTrancheEngine` does NOT sync avatar/target here — unlike the
+    ///      other engine modules — so there is no sync to assert.)
+    function test_wiring_setters_repoint_only_owner() public {
+        address x = makeAddr("rewire");
+
+        // non-owner reverts
+        vm.startPrank(rando);
+        bytes memory unauth = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando);
+        vm.expectRevert(unauth);
+        m.setJuniorTrancheEngine(x);
+        vm.expectRevert(unauth);
+        m.setZipDepositModule(x);
+        vm.expectRevert(unauth);
+        m.setUsdc(x);
+        vm.stopPrank();
+
+        // zero reverts ZeroAddress
+        vm.startPrank(owner);
+        vm.expectRevert(RecycleModule.ZeroAddress.selector);
+        m.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(RecycleModule.ZeroAddress.selector);
+        m.setZipDepositModule(address(0));
+        vm.expectRevert(RecycleModule.ZeroAddress.selector);
+        m.setUsdc(address(0));
+
+        // owner re-points, each emits WiringSet with the correct slot label, and takes effect
+        vm.expectEmit(true, false, false, true, address(m));
+        emit WiringSet("juniorTrancheEngine", x);
+        m.setJuniorTrancheEngine(x);
+        assertEq(m.juniorTrancheEngine(), x, "juniorTrancheEngine re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(m));
+        emit WiringSet("zipDepositModule", x);
+        m.setZipDepositModule(x);
+        assertEq(m.zipDepositModule(), x, "zipDepositModule re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(m));
+        emit WiringSet("usdc", x);
+        m.setUsdc(x);
+        assertEq(m.usdc(), x, "usdc re-pointed");
+        vm.stopPrank();
+    }
+
     // ----------------------------------------------------------------- authority on the action legs
 
     function test_action_legs_only_operator() public {

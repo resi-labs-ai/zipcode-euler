@@ -20,6 +20,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         is always Call (literal 0), `shouldRevert` is always true — none are ever decoded from a payload.
 ///         The receiver/spender/redeem-owner are INJECTED from immutables (belt-and-suspenders with the scope
 ///         pins); only the REPAY `to` is passed through the payload, guarded by the scope `EqualTo(redemptionBox)`.
+///
+///         CUSTODY NOTE (why REPAY's sink can be the standing Safe USDC balance): the warehouse Safe is a
+///         SHARE-accumulator — supplier deposits go straight into `EulerEarn` as shares (`ZipDepositModule` /
+///         `RecycleModule` call `eePool.deposit(amount, warehouseSafe)`), the EE perf-fee accrues as shares
+///         (Safe == `eePool.feeRecipient`), and loss-recovery + the 0.5% draw fee route to the `adminSafe`, NOT
+///         here. So the ONLY USDC that ever lands naked in the Safe is REDEEM proceeds (`eePool.redeem(shares,
+///         warehouseSafe, warehouseSafe)`); SUPPLY only consumes Safe USDC back into EE. See
+///         `docs/wires/8-Bw-CreditWarehouse.md` "Custody character".
 contract WarehouseAdminModule is ReceiverTemplate {
     /// @notice SUPPLY: `eePool.deposit(amount, warehouseSafe)`. Scope pins `receiver == avatar`.
     uint8 public constant SUPPLY = 1;

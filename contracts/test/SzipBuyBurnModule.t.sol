@@ -350,6 +350,62 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         module.setDiscountBps(10_000);
     }
 
+    /// @dev The six build-phase wiring setters (besides `setOperator`/`setCoverageGate`/the governed params, covered
+    ///      elsewhere): each is `onlyOwner`, non-zero-guarded, and takes effect. Several re-point what is priced/
+    ///      signed/spent (`navOracle`/`szipUSD`/`usdc`/`settlement`), so the wiring matters on the value-out module.
+    ///      (`setJuniorTrancheEngine` does NOT sync avatar/target here — unlike the swap/LP/exercise modules — so
+    ///      there is no sync to assert.)
+    function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
+        address x = makeAddr("rewire");
+
+        // non-owner rejected on every setter
+        vm.startPrank(rando);
+        bytes memory unauth = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando);
+        vm.expectRevert(unauth);
+        module.setJuniorTrancheEngine(x);
+        vm.expectRevert(unauth);
+        module.setNavOracle(x);
+        vm.expectRevert(unauth);
+        module.setSzipUSD(x);
+        vm.expectRevert(unauth);
+        module.setUsdc(x);
+        vm.expectRevert(unauth);
+        module.setSettlement(x);
+        vm.expectRevert(unauth);
+        module.setVaultRelayer(x);
+        vm.stopPrank();
+
+        // owner re-points take effect
+        vm.startPrank(owner);
+        module.setJuniorTrancheEngine(x);
+        assertEq(module.juniorTrancheEngine(), x, "juniorTrancheEngine re-pointed");
+        module.setNavOracle(x);
+        assertEq(module.navOracle(), x, "navOracle re-pointed (the pricing primitive)");
+        module.setSzipUSD(x);
+        assertEq(module.szipUSD(), x, "szipUSD re-pointed (the buyToken)");
+        module.setUsdc(x);
+        assertEq(module.usdc(), x, "usdc re-pointed (the sellToken)");
+        module.setSettlement(x);
+        assertEq(module.settlement(), x, "settlement re-pointed (the presign target)");
+        module.setVaultRelayer(x);
+        assertEq(module.vaultRelayer(), x, "vaultRelayer re-pointed (the approve spender)");
+
+        // zero rejected on every setter
+        vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
+        module.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
+        module.setNavOracle(address(0));
+        vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
+        module.setSzipUSD(address(0));
+        vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
+        module.setUsdc(address(0));
+        vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
+        module.setSettlement(address(0));
+        vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
+        module.setVaultRelayer(address(0));
+        vm.stopPrank();
+    }
+
     // ----------------------------------------------------------------- zero-amount / validTo
     function test_zero_amounts_revert() public {
         vm.prank(operator);
@@ -963,6 +1019,30 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.prank(forwarder);
         m.onReport(_meta(wfId, bytes10(0), address(0)), report);
         assertTrue(m.currentUid().length != 0, "matching workflow id posts the bid");
+    }
+
+    // (d2) workflow-AUTHOR mismatch reverts; the matching author passes (the symmetric twin of (d) — the
+    //      `expectedAuthor` identity gate in CloneReportReceiver.onReport, otherwise uncovered).
+    function test_CTR01_workflow_author_mismatch_reverts_match_passes() public {
+        address author = makeAddr("workflowAuthor");
+        SzipBuyBurnModule m = _deployWired();
+        vm.prank(owner);
+        m.setExpectedAuthor(author);
+        assertEq(m.expectedAuthor(), author);
+
+        uint32 vt = uint32(block.timestamp + 1 hours);
+        bytes memory report = _postBidReport(5e5, 1e18, vt);
+
+        // wrong author -> revert
+        address wrongAuthor = makeAddr("notTheAuthor");
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(CloneReportReceiver.InvalidAuthor.selector, wrongAuthor, author));
+        m.onReport(_meta(bytes32(0), bytes10(0), wrongAuthor), report);
+
+        // matching author -> posts
+        vm.prank(forwarder);
+        m.onReport(_meta(bytes32(0), bytes10(0), author), report);
+        assertTrue(m.currentUid().length != 0, "matching workflow author posts the bid");
     }
 
     // (e) report-driven CANCEL_BID retracts the live bid.

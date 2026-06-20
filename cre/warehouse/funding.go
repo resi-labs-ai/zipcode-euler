@@ -147,6 +147,15 @@ func onFundingTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{},
 	if err != nil {
 		return struct{}{}, err
 	}
+	// THE CUSHION (operator note). freeReservoir is the idle USDC in the "resting-USDC market" slot (maxWithdraw
+	// of the senior pool) — the only senior cash that can leave; lent-out credit lines are invisible to this read.
+	// HarvestReserve is how much idle USDC to LEAVE behind. Why leave any: the oHYDX strike loop (the harvest
+	// engine) is funded by reallocating idle USDC from the resting-USDC market into the "reservoir vault" it
+	// borrows from; if this worker drains the resting-USDC market to fund redemptions, that path starves and yield
+	// can no longer be transmuted into the juniorTrancheSafe. So to always keep ~$25k of working room for the
+	// exercise, set HarvestReserve to 25_000_000000 ($25k at 6-dp USDC). DEFAULT 0 ⇒ no cushion: any idle USDC is fully
+	// redeemable and paid out toward the CoW order book. (SafetyBuffer is an additional general ops buffer, same
+	// units, also default 0.)
 	avail := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, mustBigF(cfg.HarvestReserve)), mustBigF(cfg.SafetyBuffer))
 	hi := mustBigF(cfg.MaxRedeemPerTick)
 	if hi.Sign() <= 0 {

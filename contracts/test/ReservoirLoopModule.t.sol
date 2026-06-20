@@ -680,6 +680,67 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(m.borrowCap(), 456e6);
     }
 
+    /// @dev The six build-phase wiring setters (besides `setBorrowCap`/`setOperator`, covered above/by SEC-15): each
+    ///      is `onlyOwner`, non-zero-guarded, and takes effect. Several re-point what is borrowed against
+    ///      (`borrowVault`/`escrowVault`/`lpToken`), so the wiring matters more here than on a benign module.
+    ///      `setJuniorTrancheEngine` additionally keeps `avatar`/`target` in lockstep (the borrower-of-record invariant).
+    function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
+        ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
+        address x = makeAddr("rewire");
+
+        // non-owner rejected on every setter
+        vm.startPrank(rando);
+        bytes memory unauth = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando);
+        vm.expectRevert(unauth);
+        m.setJuniorTrancheEngine(x);
+        vm.expectRevert(unauth);
+        m.setEvc(x);
+        vm.expectRevert(unauth);
+        m.setBorrowVault(x);
+        vm.expectRevert(unauth);
+        m.setEscrowVault(x);
+        vm.expectRevert(unauth);
+        m.setLpToken(x);
+        vm.expectRevert(unauth);
+        m.setUsdc(x);
+        vm.stopPrank();
+
+        // owner re-points take effect
+        vm.startPrank(owner);
+        m.setEvc(x);
+        assertEq(m.evc(), x, "evc re-pointed");
+        m.setBorrowVault(x);
+        assertEq(m.borrowVault(), x, "borrowVault re-pointed (the borrow market)");
+        m.setEscrowVault(x);
+        assertEq(m.escrowVault(), x, "escrowVault re-pointed (the collateral box)");
+        m.setLpToken(x);
+        assertEq(m.lpToken(), x, "lpToken re-pointed (the collateral asset)");
+        m.setUsdc(x);
+        assertEq(m.usdc(), x, "usdc re-pointed");
+
+        // setJuniorTrancheEngine keeps avatar/target in lockstep (borrower-of-record invariant)
+        address newEngine = makeAddr("newEngineSafe");
+        m.setJuniorTrancheEngine(newEngine);
+        assertEq(m.juniorTrancheEngine(), newEngine, "juniorTrancheEngine re-pointed");
+        assertEq(m.avatar(), newEngine, "avatar synced to juniorTrancheEngine");
+        assertEq(m.target(), newEngine, "target synced to juniorTrancheEngine");
+
+        // zero rejected on every setter
+        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        m.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        m.setEvc(address(0));
+        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        m.setBorrowVault(address(0));
+        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        m.setEscrowVault(address(0));
+        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        m.setLpToken(address(0));
+        vm.expectRevert(ReservoirLoopModule.ZeroAddress.selector);
+        m.setUsdc(address(0));
+        vm.stopPrank();
+    }
+
     function test_zero_amount_reverts() public {
         ReservoirLoopModule m = _deployModule(address(0xBEEF), address(0xB), address(0xE), BORROW_CAP);
         vm.startPrank(operator);
@@ -921,6 +982,47 @@ contract ReservoirLoopModuleTest is ForkConfig, SummonSubstrate {
         address proxy = factory.createProxy(address(0), false, abi.encodePacked(USDC, address(0), address(0)));
         vm.prank(proxy);
         assertEq(g.isHookTarget(), g.isHookTarget.selector);
+    }
+
+    /// @dev The guard's admin surface (security-relevant: `setJuniorTrancheEngine` is the borrow allowlist). The
+    ///      `onlyOwner` gate uses the RAW `msg.sender` (NOT the EVK `_msgSender()` decoder, to avoid the `Context`
+    ///      collision), so a non-owner caller reverts `NotOwner`. The constructor sets `owner = msg.sender` (this).
+    function test_guard_admin_onlyOwner_transfer_and_wiring() public {
+        ReservoirBorrowGuard g = new ReservoirBorrowGuard(address(factory), address(0xBEEF));
+        assertEq(g.owner(), address(this), "deployer is the build-phase admin");
+
+        address newFactory = makeAddr("newFactory");
+        address newEngine = makeAddr("newEngineSafe");
+
+        // raw-msg.sender onlyOwner: a non-owner reverts NotOwner on every admin function
+        vm.startPrank(rando);
+        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        g.setEVaultFactory(newFactory);
+        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        g.setJuniorTrancheEngine(newEngine);
+        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        g.transferOwnership(rando);
+        vm.stopPrank();
+
+        // zero-guard on each (owner caller = this)
+        vm.expectRevert(ReservoirBorrowGuard.ZeroAddress.selector);
+        g.setEVaultFactory(address(0));
+        vm.expectRevert(ReservoirBorrowGuard.ZeroAddress.selector);
+        g.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(ReservoirBorrowGuard.ZeroAddress.selector);
+        g.transferOwnership(address(0));
+
+        // owner re-points take effect (setJuniorTrancheEngine is the borrow allowlist)
+        g.setEVaultFactory(newFactory);
+        assertEq(address(g.eVaultFactory()), newFactory, "eVaultFactory re-pointed");
+        g.setJuniorTrancheEngine(newEngine);
+        assertEq(g.juniorTrancheEngine(), newEngine, "borrow allowlist re-pointed");
+
+        // transferOwnership hands the admin to the Timelock; the old owner then loses the gate
+        g.transferOwnership(owner);
+        assertEq(g.owner(), owner, "ownership transferred to the Timelock");
+        vm.expectRevert(ReservoirBorrowGuard.NotOwner.selector);
+        g.setJuniorTrancheEngine(address(0xCAFE)); // old owner (this) no longer authorized
     }
 
     // =================================================================== deployer wiring (fork)

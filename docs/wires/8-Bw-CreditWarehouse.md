@@ -27,6 +27,30 @@ decodes the §4.4/§8.5 CRE report envelope into exactly one of the four pinned 
 `Roles.execTransactionWithRole(to, 0, data, Call, roleKey, true)`. **The security boundary is the Roles scope,
 not this bytecode** (the user-ratified "no bespoke privileged contract" decision, 2026-06-06).
 
+## Custody character — the Safe accumulates SHARES; USDC is pure pass-through (load-bearing)
+The warehouseSafe is a **share-accumulator, not a USDC account.** It holds `EulerEarn` shares; free USDC lives
+inside the EE vault (the reservoir line), never as a standing Safe balance. The Safe's value grows two ways, both
+in **shares**: (1) its existing shares **appreciate** as credit-line interest (loan APR) accrues into the vault
+(`convertToAssets` rises); (2) it is wired as the EE pool's **`feeRecipient`** (`DeployMainnet.s.sol:153` /
+`DeployLocal.s.sol:146` / `SiloDeployer.s.sol:163` — `eePool.setFeeRecipient(warehouseSafe)`), so EE mints its
+performance-fee cut as **fresh shares to the Safe**.
+
+**The ONLY USDC that ever lands naked in the Safe is REDEEM proceeds** (`eePool.redeem(shares, warehouseSafe,
+warehouseSafe)`, the REDEEM op below). Every other inflow is shares or read-only, verified across the tree:
+- **Supplier deposits/zap** bypass the Safe — `ZipDepositModule` calls `eePool.deposit(usdcIn, warehouseSafe)`
+  (`ZipDepositModule.sol:125,152`): USDC → EE, **shares** → Safe. Same for the engine's `RecycleModule` recycle
+  stream (`eePool.deposit(amount, warehouseSafe)`).
+- **Loss-recovery** slash proceeds route to the **`adminSafe`**, not here (`LienXAlphaEscrow.sol:23,62`).
+- **The 0.5% draw fee** (`EulerVenueAdapter.sol:451-452`, `feeBps=50`) routes to the **`adminSafe`** — a DIFFERENT
+  destination from the EE pool fee above (which is shares → warehouseSafe). Do not conflate the two fees.
+- `SeniorNavAggregator` only **reads** `convertToAssets(balanceOf(warehouseSafe))` / `maxWithdraw(warehouseSafe)`.
+
+**Consequence (why the CRE-02b funding leg is safe):** because REDEEM is the sole USDC source, the Safe's standing
+USDC balance *is* redemption proceeds — so the funding loop's REPAY can size its sink off `usdc.balanceOf(Safe)`
+with nothing to conflate it with (no recovery/deposit cash is ever parked here). The SUPPLY op only ever consumes
+Safe USDC back into EE. (Barring an out-of-band manual transfer to the Safe, which is an ops concern, not a path
+the contracts create.)
+
 ## Contracts involved (what each does)
 | Contract | What it does |
 |---|---|

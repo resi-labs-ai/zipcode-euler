@@ -167,7 +167,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 | Metric | Value | Source |
 |--------|-------|--------|
 | Test files (this scope) | 1 dedicated | `WarehouseAdminModule.t.sol` — **fork integration** vs the real deployed Roles modifier |
-| Test functions (this scope) | 24 | integration (not isolated unit) — incl. the full scope-rejection matrix |
+| Test functions (this scope) | 28 | integration (not isolated unit) — full scope-rejection matrix + avatar-parity fail-closed + all six setters |
 | Line coverage | Unavailable — project-wide `Stack too deep` (fails even with `--ir-minimum`) | Coverage tool |
 | Branch coverage | Unavailable — same reason | Coverage tool |
 
@@ -175,7 +175,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 | Category | Count | Contracts Covered |
 |----------|-------|-------------------|
-| Unit | 24 | WarehouseAdminModule |
+| Unit | 28 | WarehouseAdminModule |
 | Stateless Fuzz | 0 | none |
 | Stateful Fuzz (Foundry invariant) | 0 | none |
 | Formal Verification | 0 | none |
@@ -185,8 +185,8 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 > **CORRECTION (2026-06-20):** an earlier draft of this report claimed the decisive Roles-scope integration test was "not present." That was wrong. `test/WarehouseAdminModule.t.sol` is a **fork integration suite against the real deployed Roles modifier** and already covers the full scope-rejection matrix: `test_Scope_PinsParams_DepositReceiver`/`_TransferTo` (param pins), `test_CallOnly_RejectsValueAndDelegatecall` (value + **delegatecall** rejected), `test_Escalation_Blocked` (enableModule/addOwner/wrong-target/wrong-selector), `test_NonMember_Reverts`, forwarder-gate, reentrancy, atomicity, malformed-payload. The decisive control IS proven.
 
 - **No fuzz/invariant tests** — low priority: a deterministic stateless encoder with no arithmetic; fuzzing adds little.
-- **`warehouseSafe ↔ roles.avatar()` parity is untested** — the contract's own documented #1 hazard (`:43-48`) has no test that a one-sided re-point fails closed (SUPPLY/REDEEM revert, no leak). **This is the one real test gap.**
-- **The six `onlyOwner` setters are untested** — no coverage that `setRoles`/`setRoleKey`/`setWarehouseSafe`/`setEePool`/`setUsdc`/`setRedemptionBox` reject non-owners and take effect. Minor but worth a few lines.
+- **`warehouseSafe ↔ roles.avatar()` parity — NOW TESTED (was the one real gap)** — the contract's own documented #1 hazard (`:43-48`) is covered fail-closed by `test_Parity_OneSidedRepoint_SupplyFailsClosed` / `_RedeemFailsClosed`: a one-sided re-point makes SUPPLY/REDEEM revert at the scope check with nothing leaked. Residual: no *on-chain* parity assertion (the docstring + runbook mandate the paired re-point instead) — defense-in-depth, not a test gap.
+- **The six `onlyOwner` setters — NOW TESTED** — `test_Setters_RejectNonOwner` (all six revert for a non-owner) and `test_Setters_OwnerUpdates_AndRejectsZero` (each takes effect + zero/zero-key guards).
 
 ---
 
@@ -239,7 +239,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 ## X-Ray Verdict
 
-**ADEQUATE** *(revised up from FRAGILE — see correction below)* — clean, well-documented, defensively hardcoded encoder with clear roles + Timelock, and its decisive control (the Zodiac Roles scope) is **proven by a fork integration suite** that exercises the full scope-rejection matrix against the real deployed modifier. Held at ADEQUATE (not HARDENED) only by the two real gaps: the `warehouseSafe ↔ avatar` parity is untested and the `onlyOwner` setters are untested; no fuzz/invariant (low value for a deterministic router).
+**ADEQUATE** *(a hair from HARDENED; revised up from an initial FRAGILE — see correction below)* — clean, well-documented, defensively hardcoded encoder with clear roles + Timelock, and its decisive control (the Zodiac Roles scope) is **proven by a fork integration suite** that exercises the full scope-rejection matrix against the real deployed modifier. The two gaps the first draft flagged (avatar-parity fail-closed, the six `onlyOwner` setters) are **now both covered** (28 tests). Capped at ADEQUATE (not HARDENED) only by: no in-scope spec/README, no *on-chain* avatar-parity assertion (mandated by runbook instead), and the deferred pre-prod immutable re-freeze; no fuzz/invariant (correctly low-value for a deterministic router).
 
 > **CORRECTION (2026-06-20):** the first draft graded this FRAGILE on the reasoning that the Roles-scope integration test was absent. That was a misread — `WarehouseAdminModule.t.sol` is a fork integration suite that already proves the scope rejects redirected receivers, wrong REPAY dests, value, delegatecall, and target/selector escalation. With the decisive control demonstrably covered, the honest tier is ADEQUATE.
 
@@ -247,5 +247,5 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 1. 107 nSLOC, 1 non-upgradeable contract holding no custody; 0 permissionless entry points.
 2. 6 `onlyOwner` (Timelock) wiring setters + 1 Forwarder-gated `_processReport` dispatching 4 hardcoded ops.
 3. `value`/`operation`/`shouldRevert` are literals (0 / Call / true) at the single call site — never payload-decoded.
-4. 24 **fork integration** tests vs the real Roles modifier (full scope-rejection matrix); 0 fuzz, 0 invariant. Untested: avatar-parity fail-closed + the six setters.
+4. 28 **fork integration** tests vs the real Roles modifier (full scope-rejection matrix + avatar-parity fail-closed + all six setters); 0 fuzz, 0 invariant. No real on-chain test gap remains.
 5. Coverage uninstrumentable — project-wide stack-too-deep even under `--ir-minimum`.

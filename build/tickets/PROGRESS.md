@@ -10,6 +10,20 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
+**NEXT = CRE-02c — cross-silo redemption solver** (`build/tickets/cre/CRE-02c-redemption-solver.md`). The
+multi-warehouse generalization of the just-built CRE-02b: enumerate the N silos, decide WHICH EE pool(s) to
+REDEEM from + the split (the open policy fork — pro-rata by free liquidity recommended for M1), respecting each
+pool's free-liquidity + coverage gate, fire per-silo REDEEM→REPAY into the one shared queue. Ships default-OFF.
+**Pre-verified this session (2026-06-20):** the on-chain accounting it binds to is BUILT — `SiloRegistry`
+(CTR-02, DONE) enumerates silos (`allSiloIds()`/`getSilo(id)`, per-silo `{eePool, warehouseSafe, active}`), and
+`SeniorNavAggregator` (CTR-05, DONE) already does the per-silo donation-immune free-liquidity read
+(`eePool.maxWithdraw(warehouseSafe)` + `convertToAssets(balanceOf)`). The unbuilt piece is purely the off-chain
+split orchestration. **Topology note:** it is N independent `{eePool, warehouseSafe}` pairs (one Safe per silo,
+each holding its own EE pool's shares), NOT one Safe holding many pools — REDEEM is per-silo, all REPAY into the
+shared `ZipRedemptionQueue`. CRE-02b is the single-pool base to generalize (it reads one warehouse adapter per
+tick by design). Adjacent open decision: **CTR-14** (N junior Safes vs the single-requester queue — keeper-half
+prepared, contract fork still open); the solver sequences multi-Safe escrows under option (a).
+
 - **CRE-02b note (2026-06-20) — the reserve-gated redemption-funding leg, folded into `cre/warehouse` (default-OFF).**
   The (R) funding twin of CRE-02's reactive (K) `RedemptionJob`: it sizes + fires the warehouse REDEEM→REPAY so the
   redemption→buyback cycle runs without a human POSTing events. **Off-chain Go only — NO contract changed** (no

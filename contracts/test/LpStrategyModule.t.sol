@@ -346,6 +346,70 @@ contract LpStrategyModuleUnitTest is Test {
         m.setTarget(rando);
     }
 
+    /// @dev The six build-phase wiring setters (besides `setCoverageGate`, covered by the coverage-gate test): each is
+    ///      `onlyOwner`, non-zero-guarded, and takes effect. Also pins the two LpStrategy-specific behaviors its
+    ///      siblings test but this suite was missing: `setOperator`'s SEC-15 owner-recheck, and
+    ///      `setJuniorTrancheEngine` keeping `avatar`/`target` in lockstep.
+    function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
+        address x = makeAddr("rewire");
+
+        // non-owner rejected on every setter
+        vm.startPrank(rando);
+        bytes memory unauth = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando);
+        vm.expectRevert(unauth);
+        m.setJuniorTrancheEngine(x);
+        vm.expectRevert(unauth);
+        m.setOperator(x);
+        vm.expectRevert(unauth);
+        m.setIchiVault(x);
+        vm.expectRevert(unauth);
+        m.setGauge(x);
+        vm.expectRevert(unauth);
+        m.setToken0(x);
+        vm.expectRevert(unauth);
+        m.setToken1(x);
+        vm.stopPrank();
+
+        // owner re-point takes effect
+        vm.startPrank(owner);
+        m.setOperator(x);
+        assertEq(m.operator(), x, "operator re-pointed");
+        m.setIchiVault(x);
+        assertEq(m.ichiVault(), x, "ichiVault re-pointed");
+        m.setGauge(x);
+        assertEq(m.gauge(), x, "gauge re-pointed");
+        m.setToken0(x);
+        assertEq(m.token0(), x, "token0 re-pointed");
+        m.setToken1(x);
+        assertEq(m.token1(), x, "token1 re-pointed");
+
+        // setJuniorTrancheEngine keeps avatar/target in lockstep
+        address newEngine = makeAddr("newEngine");
+        m.setJuniorTrancheEngine(newEngine);
+        assertEq(m.juniorTrancheEngine(), newEngine, "juniorTrancheEngine re-pointed");
+        assertEq(m.avatar(), newEngine, "avatar synced to juniorTrancheEngine");
+        assertEq(m.target(), newEngine, "target synced to juniorTrancheEngine");
+
+        // SEC-15: setOperator must preserve owner != operator (re-pointing operator to owner reverts)
+        vm.expectRevert(LpStrategyModule.OwnerIsOperator.selector);
+        m.setOperator(owner);
+
+        // zero rejected on every setter
+        vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
+        m.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
+        m.setOperator(address(0));
+        vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
+        m.setIchiVault(address(0));
+        vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
+        m.setGauge(address(0));
+        vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
+        m.setToken0(address(0));
+        vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
+        m.setToken1(address(0));
+        vm.stopPrank();
+    }
+
     function test_mastercopy_inert() public {
         LpStrategyModule mc = _cloneLpStrategyModule();
         assertEq(mc.operator(), address(0));

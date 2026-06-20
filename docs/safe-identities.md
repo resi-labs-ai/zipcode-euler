@@ -22,9 +22,14 @@ because they play different roles (and a future deploy could split them onto dif
 
 == Senior side (the warehouse) ==
 
-- warehouseSafe — the CreditWarehouse Safe: custodies the EulerEarn senior shares + USDC; the senior backing for
-  zipUSD. Asserted DISTINCT from every junior Safe (non-commingling: `warehouseSafe != juniorTrancheSafe` and
-  `!= juniorTrancheSidecar`). (formerly three names for this one Safe: `warehouseSafe`, `warehouse`, and `safe`.)
+- warehouseSafe — the CreditWarehouse Safe: the senior backing for zipUSD. It is a SHARE-accumulator — it
+  custodies EulerEarn senior shares (which appreciate with loan APR + grow as the EE pool's `feeRecipient` mints
+  perf-fee shares to it); free USDC lives inside the EE vault, NOT here. USDC is pure pass-through: the only USDC
+  that ever lands naked in the Safe is REDEEM proceeds (`eePool.redeem → warehouseSafe`), on its way out via REPAY
+  to the redemptionBox. Deposits bypass it into EE; recovery + the draw fee go to adminSafe. Asserted DISTINCT
+  from every junior Safe (non-commingling: `warehouseSafe != juniorTrancheSafe` and `!= juniorTrancheSidecar`).
+  (formerly three names for this one Safe: `warehouseSafe`, `warehouse`, and `safe`.) See
+  `docs/wires/8-Bw-CreditWarehouse.md` "Custody character".
 
 - redemptionBox — the locked address the warehouse is hard-wired to send freed USDC to: the par-redemption queue
   (`ZipRedemptionQueue`). The only place redemption cash may go; the USDC raised here funds the CoW buy-burn bid.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
+import {Test} from "forge-std/Test.sol";
 import {ForkConfig} from "./ForkConfig.sol";
 import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
 import {IBaal} from "../src/interfaces/baal/IBaal.sol";
@@ -94,6 +95,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
     SzipNavOracle internal oracle;
     ExitGate internal gate;
     SzipUSD internal szip;
+    ExitGateHandler internal handler;
 
     function setUp() public {
         _selectBaseFork();
@@ -141,6 +143,11 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
 
         // 7. Push leg prices so the oracle is fresh (alphaUSD=$1, hydxUSD=$0.5).
         _pushBoth(1e18, 5e17);
+
+        // 8. Stateful-invariant handler: bounded random deposit/transfer/burn against the REAL gate+Baal.
+        //    targetContract restricts the fuzzer to the handler; it is inert for the deterministic `test_*` above.
+        handler = new ExitGateHandler(gate, szip, zip, xa, sub.loot, engine, keeper);
+        targetContract(address(handler));
     }
 
     // ----------------------------------------------------------------- helpers
@@ -225,6 +232,39 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         vm.prank(alice);
         vm.expectRevert(SzipUSD.NotGate.selector);
         szip.burn(alice, 1e18);
+    }
+
+    /// @dev SzipUSD's own admin surface: the constructor zero-guards `gate`, and `setGate` (the re-point of who may
+    ///      mint/burn the user token) is `onlyOwner` + zero-guarded + takes effect. `szip` was deployed by this test,
+    ///      so `address(this)` is its owner.
+    function test_szipUSD_setGate_and_ctor_zero_guard() public {
+        // constructor rejects a zero gate
+        vm.expectRevert(SzipUSD.ZeroAddress.selector);
+        new SzipUSD(address(0));
+
+        SzipUSD t = new SzipUSD(address(gate)); // this = owner
+        assertEq(t.gate(), address(gate), "ctor wired the gate");
+
+        // non-owner cannot re-point
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
+        t.setGate(alice);
+
+        // zero rejected
+        vm.expectRevert(SzipUSD.ZeroAddress.selector);
+        t.setGate(address(0));
+
+        // owner re-point takes effect (and the new gate becomes the sole minter)
+        address newGate = makeAddr("newGate");
+        t.setGate(newGate);
+        assertEq(t.gate(), newGate, "gate re-pointed");
+        vm.prank(newGate);
+        t.mint(alice, 1e18);
+        assertEq(t.balanceOf(alice), 1e18, "new gate can mint");
+        // the OLD gate can no longer mint
+        vm.prank(address(gate));
+        vm.expectRevert(SzipUSD.NotGate.selector);
+        t.mint(alice, 1e18);
     }
 
     // ----------------------------------------------------------------- manager-grant obligation (8-B1 F4.2)
@@ -403,5 +443,109 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         gate.burnFor(4e18);
         _assertInvariants();
         assertEq(szip.totalSupply(), 12e18, "supply down by the retired amount");
+    }
+
+    // ----------------------------------------------------------------- path coverage gap-fills (2026-06-20)
+    /// @notice The xALPHA deposit branch: the whitelist accepts {zipUSD, xALPHA} but the rest of the suite only
+    ///         deposits zip. Exercise the `valueOf(xAlpha, …)` issuance path — shares match `previewDeposit`, the
+    ///         xALPHA lands in the basket, and the two-token invariant holds.
+    function test_depositFor_xAlpha_path() public {
+        uint256 amount = 7e18;
+        uint256 q = gate.previewDeposit(address(xa), amount); // mirrors depositFor pricing exactly
+        assertGt(q, 0, "xAlpha deposit prices to non-zero shares");
+
+        xa.mint(alice, amount);
+        vm.startPrank(alice);
+        xa.approve(address(gate), amount);
+        uint256 shares = gate.depositFor(address(xa), amount, alice);
+        vm.stopPrank();
+
+        assertEq(shares, q, "realized shares == previewDeposit (xAlpha path)");
+        assertEq(szip.balanceOf(alice), shares, "receiver got the szipUSD");
+        assertEq(xa.balanceOf(sub.juniorTrancheSafe), amount, "xALPHA landed in the basket");
+        _assertInvariants();
+    }
+
+    /// @notice `burnFor` for more szipUSD than the engine Safe holds must revert (the inner `SzipUSD.burn` underflows)
+    ///         and roll back atomically — the prior `burnLoot` does not leak, and the two-token invariant survives.
+    function test_burnFor_reverts_when_engine_underfunded() public {
+        _deposit(alice, 10e18);
+        vm.prank(alice);
+        szip.transfer(engine, 3e18); // engine holds only 3e18
+
+        uint256 supplyBefore = szip.totalSupply();
+        vm.prank(keeper);
+        vm.expectRevert(); // SzipUSD.burn -> ERC20 insufficient balance on the engine
+        gate.burnFor(5e18); // > engine's 3e18
+
+        assertEq(szip.totalSupply(), supplyBefore, "supply intact after rolled-back burnFor");
+        assertEq(szip.balanceOf(engine), 3e18, "engine szipUSD untouched");
+        _assertInvariants();
+    }
+
+    // ----------------------------------------------------------------- stateful invariant (the map's ask)
+    /// @notice The two-token conservation `szipUSD.totalSupply() == loot.balanceOf(gate)` AND zero-shares, across
+    ///         ARBITRARY interleavings of deposit / transfer-to-engine / burnFor by multiple actors — not just the
+    ///         deterministic `test_invariant_sequence`. Driven by `ExitGateHandler` against the REAL Baal + oracle.
+    /// forge-config: default.invariant.runs = 128
+    /// forge-config: default.invariant.depth = 50
+    /// forge-config: default.invariant.fail-on-revert = false
+    function invariant_twoToken_conservation_and_zeroShares() public view {
+        assertEq(szip.totalSupply(), MockERC20(sub.loot).balanceOf(address(gate)), "two-token invariant under fuzz");
+        assertEq(IBaal(sub.baal).totalShares(), 0, "shares stay 0 under fuzz");
+    }
+}
+
+// ============================================================================ stateful-invariant handler
+
+/// @notice Drives bounded random deposit / transfer-to-engine / burnFor against the REAL gate + Baal substrate so
+///         the two-token conservation + zero-shares invariants are checked across arbitrary interleavings. Reverts
+///         are swallowed (`fail-on-revert = false`): a deposit can hit the TVL cap / ZeroShares, a burn the engine
+///         balance — those are legitimately skipped, not invariant violations.
+contract ExitGateHandler is Test {
+    ExitGate internal gate;
+    SzipUSD internal szip;
+    MockERC20 internal zip;
+    MockXAlpha internal xa;
+    address internal engine;
+    address internal keeper;
+    address[3] internal actors;
+
+    constructor(ExitGate gate_, SzipUSD szip_, MockERC20 zip_, MockXAlpha xa_, address, address engine_, address keeper_) {
+        gate = gate_;
+        szip = szip_;
+        zip = zip_;
+        xa = xa_;
+        engine = engine_;
+        keeper = keeper_;
+        actors = [makeAddr("inv_alice"), makeAddr("inv_bob"), makeAddr("inv_carol")];
+    }
+
+    function deposit(uint256 actorSeed, bool useXAlpha, uint256 amount) external {
+        address who = actors[actorSeed % actors.length];
+        amount = bound(amount, 1e6, 1e21);
+        MockERC20 asset = useXAlpha ? MockERC20(address(xa)) : zip;
+        asset.mint(who, amount);
+        vm.startPrank(who);
+        asset.approve(address(gate), amount);
+        try gate.depositFor(address(asset), amount, who) {} catch {}
+        vm.stopPrank();
+    }
+
+    function transferToEngine(uint256 actorSeed, uint256 amount) external {
+        address who = actors[actorSeed % actors.length];
+        uint256 bal = szip.balanceOf(who);
+        if (bal == 0) return;
+        amount = bound(amount, 1, bal);
+        vm.prank(who);
+        szip.transfer(engine, amount);
+    }
+
+    function burn(uint256 amount) external {
+        uint256 eng = szip.balanceOf(engine);
+        if (eng == 0) return;
+        amount = bound(amount, 1, eng);
+        vm.prank(keeper);
+        try gate.burnFor(amount) {} catch {}
     }
 }

@@ -433,6 +433,65 @@ contract SellModuleUnitTest is Test {
         m.setMaxSellHydx(0);
     }
 
+    /// @dev The six build-phase wiring setters (besides `setOperator`/`setMaxSellHydx`, covered above): each is
+    ///      `onlyOwner`, non-zero-guarded, and takes effect. `setJuniorTrancheEngine` additionally keeps `avatar`/
+    ///      `target` in lockstep (the module is enabled ON, and only mutates, the engine Safe).
+    function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
+        address x = makeAddr("rewire");
+
+        // non-owner rejected on every setter
+        vm.startPrank(rando);
+        bytes memory unauth = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando);
+        vm.expectRevert(unauth);
+        m.setJuniorTrancheEngine(x);
+        vm.expectRevert(unauth);
+        m.setSwapRouter(x);
+        vm.expectRevert(unauth);
+        m.setHydx(x);
+        vm.expectRevert(unauth);
+        m.setUsdc(x);
+        vm.expectRevert(unauth);
+        m.setZipUSD(x);
+        vm.expectRevert(unauth);
+        m.setXAlpha(x);
+        vm.stopPrank();
+
+        // owner re-points take effect
+        vm.startPrank(owner);
+        m.setSwapRouter(x);
+        assertEq(m.swapRouter(), x, "swapRouter re-pointed");
+        m.setHydx(x);
+        assertEq(m.hydx(), x, "hydx re-pointed");
+        m.setUsdc(x);
+        assertEq(m.usdc(), x, "usdc re-pointed");
+        m.setZipUSD(x);
+        assertEq(m.zipUSD(), x, "zipUSD re-pointed");
+        m.setXAlpha(x);
+        assertEq(m.xAlpha(), x, "xAlpha re-pointed");
+
+        // setJuniorTrancheEngine keeps avatar/target in lockstep
+        address newEngine = makeAddr("newEngineSafe");
+        m.setJuniorTrancheEngine(newEngine);
+        assertEq(m.juniorTrancheEngine(), newEngine, "juniorTrancheEngine re-pointed");
+        assertEq(m.avatar(), newEngine, "avatar synced to juniorTrancheEngine");
+        assertEq(m.target(), newEngine, "target synced to juniorTrancheEngine");
+
+        // zero rejected on every setter
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setSwapRouter(address(0));
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setHydx(address(0));
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setUsdc(address(0));
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setZipUSD(address(0));
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setXAlpha(address(0));
+        vm.stopPrank();
+    }
+
     // ----------------------------------------------------------------- exec discipline (fully pinned) — sellHydx
 
     function test_sellHydx_exec_shape_fully_pinned() public {

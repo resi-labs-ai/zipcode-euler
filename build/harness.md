@@ -53,7 +53,11 @@ These are settled. Build to them; do not re-litigate.
 - **zipUSD = $1 utility dollar.** **szipUSD = a transferable ERC-20 share** the **Exit Gate** mints
   **NAV-proportionally** vs soulbound gate-held Loot. **NAV (`SzipNavOracle`, §7) is the pricing primitive.**
 - **Exit = a CoW-book secondary + 8-B14 buy-and-burn** (full ragequit is for winding the vault down, not a
-  normal exit). The senior exit is the par epoch queue (`ZipRedemptionQueue`, §12).
+  normal exit). **A real holder ALWAYS exits by selling on the CoW book — there is no holder-facing senior
+  redemption door.** `ZipRedemptionQueue` (§6.1, NOT §12) is **single-requester treasury-internal plumbing**: its
+  ONLY requester is the rq Safe, which converts the basket's idle zipUSD into par USDC **to fund the CoW
+  buy-burn bid**. zipUSD-at-par is the *instrument/pricing*, not a holder exit path. Do NOT frame the par queue as
+  "the senior exit" — that two-doors picture is wrong (it feeds CoW, it is not parallel to it).
 - **First-loss = a pari-passu conservative provision-that-recovers** (`SzipNavOracle`, §11) — NOT
   withhold-no-markdown. The coverage floor is the **structural freeze** (`DurationFreezeModule`), not a knob.
 - **No on-chain economic liquidation** — `liquidate` is a defensive gate; resolution is off-chain →

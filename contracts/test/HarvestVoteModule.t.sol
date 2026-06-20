@@ -288,6 +288,61 @@ contract HarvestVoteModuleUnitTest is Test {
         m.setOperator(address(0));
     }
 
+    /// @dev The six build-phase wiring setters (besides `setOperator`, covered by SEC-15): each is `onlyOwner`,
+    ///      non-zero-guarded, and takes effect. A non-owner reverts `OwnableUnauthorizedAccount`; zero reverts
+    ///      `ZeroAddress`; an owner re-point updates the slot.
+    function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
+        address rando = makeAddr("rando");
+        address x = makeAddr("rewire");
+
+        // non-owner rejected on every setter
+        vm.startPrank(rando);
+        bytes memory unauth = abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando);
+        vm.expectRevert(unauth);
+        m.setJuniorTrancheEngine(x);
+        vm.expectRevert(unauth);
+        m.setGauge(x);
+        vm.expectRevert(unauth);
+        m.setVoter(x);
+        vm.expectRevert(unauth);
+        m.setRewardsDistributor(x);
+        vm.expectRevert(unauth);
+        m.setOHYDX(x);
+        vm.expectRevert(unauth);
+        m.setVe(x);
+        vm.stopPrank();
+
+        // owner re-point takes effect
+        vm.startPrank(owner);
+        m.setJuniorTrancheEngine(x);
+        assertEq(m.juniorTrancheEngine(), x, "juniorTrancheEngine re-pointed");
+        m.setGauge(x);
+        assertEq(m.gauge(), x, "gauge re-pointed");
+        m.setVoter(x);
+        assertEq(m.voter(), x, "voter re-pointed");
+        m.setRewardsDistributor(x);
+        assertEq(m.rewardsDistributor(), x, "rewardsDistributor re-pointed");
+        m.setOHYDX(x);
+        assertEq(m.oHYDX(), x, "oHYDX re-pointed");
+        m.setVe(x);
+        assertEq(m.ve(), x, "ve re-pointed");
+
+        // zero rejected on every setter
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setGauge(address(0));
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setVoter(address(0));
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setRewardsDistributor(address(0));
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setOHYDX(address(0));
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setVe(address(0));
+        vm.stopPrank();
+    }
+
     function test_setUp_rejects_owner_equals_operator() public {
         HarvestVoteModule x = _cloneHarvestVoteModule();
         vm.expectRevert(HarvestVoteModule.OwnerIsOperator.selector);

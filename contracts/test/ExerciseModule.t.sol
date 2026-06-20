@@ -241,6 +241,79 @@ contract ExerciseModuleUnitTest is Test {
         m.setOperator(address(0));
     }
 
+    /// @dev `setOHYDX` re-points the option AND re-reads `paymentToken` LIVE off the new option (fail-closed) so the
+    ///      `approve` target can never drift. A non-owner is rejected; a new option with a different payment token
+    ///      updates BOTH slots; a new option whose `paymentToken()` is zero reverts ZeroAddress.
+    function test_setOHYDX_repoints_and_rederives_paymentToken() public {
+        // non-owner rejected
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando));
+        m.setOHYDX(address(oToken));
+
+        // a fresh option with a DIFFERENT payment token -> both oHYDX and the live-derived paymentToken update
+        MockUSDC usdc2 = new MockUSDC();
+        MockOHYDX oToken2 = new MockOHYDX(address(usdc2));
+        vm.prank(owner);
+        m.setOHYDX(address(oToken2));
+        assertEq(m.oHYDX(), address(oToken2), "oHYDX re-pointed");
+        assertEq(m.paymentToken(), address(usdc2), "paymentToken re-derived LIVE off the new option");
+
+        // a new option whose paymentToken() is zero -> fail closed
+        MockOHYDX bad = new MockOHYDX(address(0));
+        vm.prank(owner);
+        vm.expectRevert(ExerciseModule.ZeroAddress.selector);
+        m.setOHYDX(address(bad));
+
+        // zero option address rejected
+        vm.prank(owner);
+        vm.expectRevert(ExerciseModule.ZeroAddress.selector);
+        m.setOHYDX(address(0));
+    }
+
+    /// @dev `setJuniorTrancheEngine` re-points the engine Safe AND keeps `avatar`/`target` in sync (the module is
+    ///      enabled ON, and only mutates, that Safe). A non-owner is rejected; zero reverts ZeroAddress.
+    function test_setJuniorTrancheEngine_syncs_avatar_and_target() public {
+        address newEngine = makeAddr("newEngineSafe");
+
+        // non-owner rejected
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando));
+        m.setJuniorTrancheEngine(newEngine);
+
+        // owner re-point updates all three slots in lockstep
+        vm.prank(owner);
+        m.setJuniorTrancheEngine(newEngine);
+        assertEq(m.juniorTrancheEngine(), newEngine, "juniorTrancheEngine re-pointed");
+        assertEq(m.avatar(), newEngine, "avatar synced to juniorTrancheEngine");
+        assertEq(m.target(), newEngine, "target synced to juniorTrancheEngine");
+
+        // zero rejected
+        vm.prank(owner);
+        vm.expectRevert(ExerciseModule.ZeroAddress.selector);
+        m.setJuniorTrancheEngine(address(0));
+    }
+
+    /// @dev `setPaymentToken` is the direct override (normally the token is LIVE-derived from `oHYDX`). A non-owner is
+    ///      rejected; a non-zero override takes effect; zero reverts ZeroAddress.
+    function test_setPaymentToken_override_onlyOwner_and_zeroGuard() public {
+        address newToken = makeAddr("overridePaymentToken");
+
+        // non-owner rejected
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando));
+        m.setPaymentToken(newToken);
+
+        // owner override takes effect
+        vm.prank(owner);
+        m.setPaymentToken(newToken);
+        assertEq(m.paymentToken(), newToken, "paymentToken overridden");
+
+        // zero rejected
+        vm.prank(owner);
+        vm.expectRevert(ExerciseModule.ZeroAddress.selector);
+        m.setPaymentToken(address(0));
+    }
+
     function test_setUp_rejects_owner_equals_operator() public {
         ExerciseModule x = _cloneExerciseModule();
         vm.expectRevert(ExerciseModule.OwnerIsOperator.selector);
