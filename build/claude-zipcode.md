@@ -637,6 +637,13 @@ not the amount. (`ZipRedemptionQueue.settleEpoch` is controller-gated, not renou
 it, §4.5.)
 
 ### 8.4 Default / recovery
+**(BUILT — CRE-01c, `cre/coordinator/`, 2026-06-20.)** The reportType-8 loss-action producer is a committed wasip1
+workflow: an off-chain loss event (`http.Trigger`) reaches identical consensus on a string-only `LossEvent`
+carrier, dispatches on the lowercase action key (`lock|release|default|recovery|resolve|writeoff`), validates the
+per-action required fields, and emits ONE `WriteReport` to the `DefaultCoordinator` via the shared `cre/zipreport`
+`Coord*` encoders. No boolean Proof gate (the identical consensus over the mocked-via-trigger facts IS the
+attestation — same posture as CRE-01a; the coordinator has no on-chain gate surface). All six actions are
+built+tested; the M1-live (LOCK/RELEASE) vs M2 (the economic family) distinction is operational, not a code gate.
 Delinquency status and recovery amounts are **off-chain truths** that arrive as DON-signed reports, **reportType 8**
 to the `DefaultCoordinator` (§4.4/§4.6) via `runtime.GenerateReport → evmClient.WriteReport(runtime, {receiver:
 DefaultCoordinator})`. The coordinator verifies the report (immutable CRE Forwarder + workflow identity) before acting.
@@ -885,7 +892,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 | Ticket | Scope (§) | Path | Gate |
 |---|---|---|---|
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) **+ the shared §8.0 `cre/zipreport` encoder package** — **BUILT 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; gate green) | — | none |
-| `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1) **— BUILT 2026-06-19** (`cre/revaluation`); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate) **— BUILT 2026-06-19** (`cre/controller`); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4) — remaining. Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
+| `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1) **— BUILT 2026-06-19** (`cre/revaluation`); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate) **— BUILT 2026-06-19** (`cre/controller`); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4) **— BUILT 2026-06-20** (`cre/coordinator`). **CRE-01 family COMPLETE** (01a/01b/01c). Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
 | `CRE-02` | Redemption-settle `cron` (§8.3) + the warehouse **REDEEM** funding call (§8.5) | report (Roles) + cron | 8-Bw reconcile |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REPAY** ops via the Roles adapter (§8.5) | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) |

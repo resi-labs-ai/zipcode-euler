@@ -35,8 +35,9 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   draw/close/status → controller (rt1/2/4/5,6; `http.Trigger` + the §8.9 mock Proof-gate + `equityMark` +
   CTR-03 `siloId`) — **DONE 2026-06-19** (note below); **CRE-01c** default/recovery → DefaultCoordinator
   (rt8 action family; LOCK/RELEASE M1-live, DEFAULT/RECOVERY/RESOLVE/WRITEOFF go live with the M2 demo, §8.4) —
-  **the remaining CRE-01 slice, a strong NEXT candidate** (the only un-built (R) controller-family producer;
-  encoders `zipreport.CoordLock/Release/Default/Recovery/Resolve/WriteOff` exist + are round-trip-tested).
+  **DONE 2026-06-20** (note below). **The CRE-01 family is now COMPLETE** (01a registry / 01b controller / 01c
+  coordinator); there is no further CRE-01 slice. Remaining (R) backlog: CRE-03 (feeds) / CRE-04 (warehouse ops);
+  CRE-02 (R+K hybrid) is blocked on CRE-04.
   ~~**Strong NEXT candidate: CRE-01**~~ (split) (origination/draw/close/status → controller; revaluation → registry,
   gas-bounded sharded; rt8 default/recovery → DefaultCoordinator) — the largest (R) producer, now that the
   encode handshake is a tested library.
@@ -71,6 +72,50 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   host is now READY for it). (**CTR-12 DONE 2026-06-19**; **CTR-13 DONE 2026-06-19**; **CTR-11 DONE 2026-06-19** —
   cohort slash-to-main-safe, note below. All contract-track tickets (CTR-01..13) are now landed except the deferred
   CTR-10c second-venue integration.)
+
+- **CRE-01c note (2026-06-20) — the loss-action producer (reportType 8 → `DefaultCoordinator`).** The THIRD and
+  LAST of the three CRE-01 (R) slices — **the CRE-01 family is now COMPLETE.** A committed wasip1 workflow at
+  **`cre/coordinator/`** (monorepo `cre/`, off-chain Go only — **NO contract changed**, so no backward `wires/`
+  edit owed). One `http.Trigger` carries an off-chain loss event; the workflow reaches **identical consensus** on
+  a string-only `LossEvent` carrier (7 fields), normalizes + **dispatches on the lowercase action discriminant**
+  (`lock`→0 / `release`→1 / `default`→2 / `recovery`→3 / `resolve`→4 / `writeoff`→5), validates the per-action
+  required fields, and emits **one `WriteReport`** to the coordinator via the shared `cre/zipreport` encoders
+  (`CoordLock/Release/Default/Recovery/Resolve/WriteOff`; no re-implemented handshake). **NO Proof gate** — unlike
+  CRE-01b's origination/draw, the loss family has no on-chain boolean gate surface (the coordinator's six decode
+  tuples carry no booleans; the §13 Forwarder/identity boundary is the entry guard), so the identical consensus
+  over the mocked-via-trigger facts IS the §8.9 attestation — the exact posture CRE-01a (revaluation) built.
+  Fail-safe no-op on unset Coordinator; unknown/empty-action + missing-required-field errors propagate.
+  **All six actions built+tested; the M1-live (LOCK/RELEASE) vs M2 (economic family) split is OPERATIONAL, not a
+  code gate** (the encode handshake is identical machinery for all six). **Harness loop ran:** 4 critics
+  (junior-dev / spec-fidelity / reference-verifier / cre-binding). **cre-binding = byte-exact** (the three-level
+  wire — envelope `(uint8,bytes)` → inner `(uint8 action,bytes)` → per-action tuple — matches `DefaultCoordinator`
+  `_lock/_release/_default/_recovery/_resolve/_writeOff` at `:207/:220/:235/:254/:277/:298` exactly; action bytes
+  ↔ enum ordinals `:52-60` ↔ `zipreport.Action*` constants all consistent; `parsePositiveBig`(>0) for lock-amount/
+  atRisk vs `parseNonNegBig`(≥0) for recovery-proceeds/capitalSlash matches every contract+escrow revert guard —
+  `ZeroAtRisk` `:237`, escrow `ZeroOriginator`/`ZeroAmount`, the `capitalSlashAmount==0`/`recoveryProceeds==0`
+  LEGAL paths). **spec-fidelity = FAITHFUL** (six actions/tuples/units verbatim §8.4 lines 645-662; the "no Proof
+  gate" reading verified against the BUILT CRE-01a precedent — `cre/revaluation/workflow.go` has no `Gates`
+  struct; rt8-only scoping with the rt5 controller status-marker correctly EXCLUDED as CRE-01b's, §8.4 line 651's
+  two-receivers-for-one-default; §17 honored). **reference-verifier = ALL resolve** (all six `Coord*` encoders +
+  the cloned `parseBytes32`/`parsePositiveBig`/`parseNonNegBig` helpers + the `parseLien` address-parse model +
+  the SDK surface). **Ticket tightened pre-cold-build** from the fan-out: two stale helper line-ranges fixed
+  (`parseBytes32` 266-286, `parse*Big` 288-312) + a clone-rename note (`controller`→`coordinator` in project.yaml/
+  .env/README) + the test chain-selector note. **Gate green (my own re-run, `-count=1`, not just the cold-build's):**
+  `cd cre/coordinator && go build ./... && go vet ./...` (host) + `GOOS=wasip1 GOARCH=wasm go build ./...` exit 0
+  + `go test -count=1 ./...` = PASS, **non-vacuous** (6 per-action handshake tests each independently `abi.Unpack`
+  the captured bytes down all three nesting levels to the exact contract tuple — NOT trusting `zipreport` —
+  asserting reportType==8/action-byte against BOTH the constant and the literal + the decoded scalars==input; the
+  full `RunInNodeMode` + `ConsensusIdenticalAggregation[LossEvent]` path runs, **proving the string-only carrier
+  Wraps**; 19 validation-error⇒0-write cases; 3 zero-magnitude-accepted⇒1-write cases; unset-Coordinator no-op;
+  `parseBytes32`/`parseAddress` unit tests). **Cold-build returned ZERO load-bearing guesses** (verified by my own
+  gate re-run + git inspection). Committed to `cre/coordinator` (`17661fb`) — code only (11 files); host build
+  artifact + `*.wasm` gitignored; no `build/`/`docs/`/`contracts/` staged in the code commit; HEAD verified (no
+  rogue commit). Ticket: `build/tickets/cre/CRE-01c-coordinator-producer.md`. **Doc-sync:** no contract changed →
+  no backward `wires/` edit; forward spec §8.4 gains a "(BUILT — CRE-01c)" producer note + §8.11's CRE-01 row
+  marks 01c BUILT / the family COMPLETE. **Addresses the open obligation "LOSS — the default/slash flow is M2"** —
+  this producer IS that rt8 driver; the live firing of the economic actions is M2 ops, the producer is built.
+  **NEXT:** reviewer picks among the remaining CRE backlog — CRE-03 (NAV/LP/xALPHA-APR feeds) or CRE-04
+  (warehouse SUPPLY/APPROVE/REPAY); CRE-02 stays blocked on CRE-04.
 
 - **CRE-01b note (2026-06-19) — the controller lifecycle producer (reportType 1/2/4/5,6 → `ZipcodeController`).**
   The SECOND of the three CRE-01 (R) slices — the headline/largest. A committed wasip1 workflow at
@@ -1183,9 +1228,11 @@ track on it.
 - **LOSS — the default/slash flow is M2, not M1-live (from `src/loss/` headers, recorded 2026-06-17).**
   `LienXAlphaEscrow`'s custody half (`lockXAlpha`/`releaseXAlpha`) is M1-live; the slash half
   (`slashXAlphaToCapital`/`slashXAlphaToCohort`) + the `DefaultCoordinator` driver are built + mock-tested but go
-  live in M2. The driver is **CRE-01's `rt8` default/recovery action family** (already in the CRE backlog above —
-  not a new workflow) plus the off-chain capital-sink liquidation account (xALPHA→USDC on Bittensor). No contract
-  code owed — it's CRE-01 sequencing + that operational account.
+  live in M2. The driver is **CRE-01's `rt8` default/recovery action family — now BUILT as CRE-01c
+  (`cre/coordinator/`, 2026-06-20; note above).** The off-chain producer is complete; what remains for M2 is
+  OPERATIONAL — firing the economic actions (DEFAULT/RECOVERY/RESOLVE/WRITEOFF) on a real default + the off-chain
+  capital-sink liquidation account (xALPHA→USDC on Bittensor). No contract code owed; no CRE code owed — it's M2
+  sequencing + that operational account.
 - **LOSS — cohort-premium routes to the MAIN Safe (CTR-11 DONE 2026-06-19; the CRE flow stays M2).** `LienXAlphaEscrow`
   now sends `slashXAlphaToCohort` to a `juniorTrancheSafe` slot wired to the engine/main basket Safe (was the
   inert `juniorTrancheSidecar`). The slot replaces the old `juniorTrancheSidecar` slot (distinct name — `juniorTrancheSidecar` is a freeze concept), with
