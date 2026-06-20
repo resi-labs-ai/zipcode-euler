@@ -33,6 +33,12 @@ type Config struct {
 	// unlike the scalar knobs, an explicit 0 is VALID here (no Validate rule).
 	MinBurnAmount *big.Int `json:"-"`
 
+	// RedeemTargetPending is the RedemptionJob escrow target (KEEPER_REDEEM_TARGET_PENDING,
+	// base-10, zipUSD 18dp). env-only `json:"-"` (a *big.Int does not round-trip the
+	// JSON overlay cleanly). Default 0 = escrow disabled; an explicit 0 is VALID
+	// here (no Validate rule), mirroring MinBurnAmount.
+	RedeemTargetPending *big.Int `json:"-"`
+
 	// ---- StrikeLoopJob knobs (KEEPER-01b, §8.7; TUNABLE / C4 reviewer-flagged) ----
 	// Pinned M1 defaults applied before env+Validate; an explicit env 0 is rejected
 	// for the bps/price knobs (mirrors the GasBufferBps rule).
@@ -62,6 +68,8 @@ func defaults() Config {
 		ConfirmTimeout:   60 * time.Second,
 		Modules:          map[string]common.Address{},
 		MinBurnAmount:    big.NewInt(0), // 0 = burn any non-zero fill (explicit 0 is valid)
+
+		RedeemTargetPending: big.NewInt(0), // 0 = escrow disabled (explicit 0 is valid)
 
 		// StrikeLoopJob M1 defaults (TUNABLE, C4).
 		CushionBps:         200,
@@ -159,6 +167,18 @@ func overlayEnv(cfg *Config) error {
 			return fmt.Errorf("config: KEEPER_MIN_BURN_AMOUNT %q is not a base-10 integer", v)
 		}
 		cfg.MinBurnAmount = n
+	}
+
+	// RedeemTargetPending: env-only, base-10 *big.Int (zipUSD 18dp). Replace the
+	// default ONLY if non-empty (so the seeded 0 survives). Reject only an
+	// unparseable non-empty value (a Load error, not a Validate rule — any parsed
+	// value ≥0 is valid; 0 = escrow disabled).
+	if v := os.Getenv("KEEPER_REDEEM_TARGET_PENDING"); v != "" {
+		n, ok := new(big.Int).SetString(v, 10)
+		if !ok {
+			return fmt.Errorf("config: KEEPER_REDEEM_TARGET_PENDING %q is not a base-10 integer", v)
+		}
+		cfg.RedeemTargetPending = n
 	}
 
 	// ---- StrikeLoopJob scalar knobs (uint bps/price; explicit 0 rejected by Validate) ----

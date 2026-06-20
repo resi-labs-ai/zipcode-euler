@@ -82,6 +82,19 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// RedemptionJob (CRE-02): the keeper's single signer must be BOTH the off-ramp
+	// operator() AND the queue controller(). The Job resolves the LIVE queue off
+	// offramp.queue() each tick (§17); the IdentityCheck validates the CONFIGURED
+	// ZipRedemptionQueue address — deploy must keep
+	// KEEPER_ADDR_ZipRedemptionQueue == offramp.queue() (assert at deploy).
+	offramp, err := cfg.MustAddr("OffRampModule")
+	if err != nil {
+		return err
+	}
+	redemptionQueue, err := cfg.MustAddr("ZipRedemptionQueue")
+	if err != nil {
+		return err
+	}
 	checks := []job.IdentityCheck{
 		{Name: "ExitGate", Addr: exitGate, AdminSig: "windowController()"},
 		{Name: "HarvestVoteModule", Addr: harvest, AdminSig: "operator()"},
@@ -90,6 +103,8 @@ func run(log *slog.Logger) error {
 		{Name: "SellModule", Addr: sellMod, AdminSig: "operator()"},
 		{Name: "RecycleModule", Addr: recycleMod, AdminSig: "operator()"},
 		{Name: "LpStrategyModule", Addr: lpMod, AdminSig: "operator()"},
+		{Name: "OffRampModule", Addr: offramp, AdminSig: "operator()"},
+		{Name: "ZipRedemptionQueue", Addr: redemptionQueue, AdminSig: "controller()"},
 	}
 	identity := job.NewIdentityJob(signer.Address(), checks)
 
@@ -126,6 +141,11 @@ func run(log *slog.Logger) error {
 		MaxBorrowPerCycle:  maxBorrow,
 	})
 
+	// Redemption job (CRE-02): the senior par-redemption operator path. offramp
+	// reused from MustAddr above; targetPending from cfg.RedeemTargetPending
+	// (0 = escrow disabled).
+	redemption := job.NewRedemptionJob(offramp, cfg.RedeemTargetPending)
+
 	// SIGINT/SIGTERM → graceful stop.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -138,11 +158,12 @@ func run(log *slog.Logger) error {
 		"ExitGate", exitGate.Hex(), "HarvestVoteModule", harvest.Hex(),
 		"ReservoirLoopModule", reservoir.Hex(), "ExerciseModule", exerciseMod.Hex(),
 		"SellModule", sellMod.Hex(), "RecycleModule", recycleMod.Hex(),
-		"LpStrategyModule", lpMod.Hex())
+		"LpStrategyModule", lpMod.Hex(),
+		"OffRampModule", offramp.Hex(), "ZipRedemptionQueue", redemptionQueue.Hex())
 
-	// 5. register the jobs (IdentityJob heartbeat first, then BurnJob, then the
-	//    StrikeLoopJob harvest loop) and run the loop.
-	runner := job.NewRunner(c, []job.Job{identity, burn, strikeLoop}, cfg.PollInterval, log)
+	// 5. register the jobs (IdentityJob heartbeat first, then BurnJob, the
+	//    StrikeLoopJob harvest loop, then the RedemptionJob) and run the loop.
+	runner := job.NewRunner(c, []job.Job{identity, burn, strikeLoop, redemption}, cfg.PollInterval, log)
 	runner.Run(ctx)
 	return nil
 }
