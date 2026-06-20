@@ -38,7 +38,9 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   **DONE 2026-06-20** (note below). **The CRE-01 family is now COMPLETE** (01a registry / 01b controller / 01c
   coordinator); there is no further CRE-01 slice. **CRE-04 (warehouse ops) — DONE 2026-06-20** (note below);
   this **UNBLOCKS CRE-02** (it reuses the `cre/warehouse` op package for the (R) REDEEM→REPAY funding). Remaining
-  (R) backlog: **CRE-03 (feeds)** + **CRE-02 (R+K hybrid, now unblocked)**.
+  (R) backlog: ~~**CRE-03 (feeds)**~~ **DONE 2026-06-20** (note below) + **CRE-02 (R+K hybrid, now unblocked)**.
+  **With CRE-03 done, there is NO standalone (R) producer left** — the remaining CRE work is the CRE-02b/02c
+  orchestration glue (already ticketed obligations) + the deferred SEAM-1 (CRE-03's material-move http trigger).
   ~~**Strong NEXT candidate: CRE-01**~~ (split) (origination/draw/close/status → controller; revaluation → registry,
   gas-bounded sharded; rt8 default/recovery → DefaultCoordinator) — the largest (R) producer, now that the
   encode handshake is a tested library.
@@ -46,7 +48,8 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   reactive `RedemptionJob` (`cre/keeper/internal/job/redemption_job.go`) drives `ZipRedemptionQueue.settleEpoch`
   + `OffRampModule.claim`/`requestRedeem` via (K). The (R) REDEEM→REPAY funding is the EXISTING `cre/warehouse`
   (CRE-04); **the cross-transport orchestration that fires it (sized off the §8.2 reserve) is the owed seam
-  CRE-02b** (see Open obligations). So the only remaining (R) backlog item is **CRE-03 (NAV/LP/xALPHA-APR feeds)**.
+  CRE-02b** (see Open obligations). ~~So the only remaining (R) backlog item is **CRE-03 (NAV/LP/xALPHA-APR feeds)**.~~
+  **CRE-03 DONE 2026-06-20** (note below) — no standalone (R) producer remains.
 - **CTR-06c / CTR-07** (NEW contracts workstream — credit-warehouse scaling + federation). **CTR-02 `SiloRegistry` +
   CTR-03 controller siloId routing + CTR-04 `closeLine` withdraw-queue reclaim + CTR-05 `SeniorNavAggregator` +
   CTR-06a reservoir borrow-vault governor handoff + CTR-06b `JuniorTrancheDeployer` are DONE** (2026-06-18/19, below). CTR-02/03's concurrent slot accounting is fully SOUND (CTR-04 physically frees the
@@ -124,6 +127,49 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   selector-revert tests + an `attacker` state-var refactor). It is **unrelated to CRE-02**, predates my window
   (last committed touch was `81df630`, before the CRE-04 commits), and I left it untouched + unstaged — decide
   whether it's leftover CRE-04 test-hardening to commit or to discard.
+
+- **CRE-03 note (2026-06-20) — the szipUSD share-price feeds producer (`NAV_LEG`+`LP_MARK`, both rt7 → one
+  coherent wasip1 producer).** A pure (R) producer through the two EXISTING `ReceiverTemplate` push-caches
+  (`SzipNavOracle` + `SzipReservoirLpOracle`) — no new contract, off-chain Go only → **NO backward `wires/` edit
+  owed**. Committed at **`cre/sharefeeds/`** (engine-epoch `cron` → node-mode identical consensus on the two
+  off-chain marks {`alphaUSD`, `HYDX/USD`} (§8.9 mock observe, the `cre/revaluation` idiom) → DON-mode `eth_call`
+  reads of every on-chain quantity {ICHI `getTotalAmounts`/`totalSupply`/`token0`/`token1`, `exchangeRate()`, the
+  prior `legCache(uint8)` for the band} (the `cre/buyburn-bid` read idiom) → **ONE coherent computation** → up to
+  two `WriteReport`s, encoded via `cre/zipreport` `NavLegReport`/`LpMarkReport`). **Coherence (§8.6, load-bearing):
+  the SAME band-clamped `alphaUSD` prices BOTH the NAV alpha leg AND the LP mark's xALPHA reserve valuation** — the
+  two feeds converge together (the LP feed inherits NAV's band rate-limit though its own receiver has no band).
+  **Scope narrowed vs the §8.11 row** (a FINDING, not a silent re-scope): the row's "xALPHA-APR feed" is NOT here
+  — APR is on-chain-derived (§8.8) and the raw RATE push is the separate `cre/szalpha-rate` (8x-02, R-1-blocked).
+  **Harness loop ran:** 4 critics (junior-dev / spec-fidelity / reference-verifier / cre-binding). **cre-binding =
+  byte-exact handshake on both rt7 payloads + the LP `mark`-units question RESOLVED definitively** (`mark` is
+  quote-native USDC 6-dp = `perShare_18dp / 1e12`, proven from `ScaleUtils.calcScale(18,6,6)`→feedScale=1e24/
+  priceScale=1e6 and the contract's own `1_000e6` test; band edge-clamp lands, strict `>`, no off-by-one).
+  **spec-fidelity = FAITHFUL** (no invention; FINDING-1 [HYDX pushed unconditionally — the as-built `SzipNavOracle`
+  has no on-chain HYDX read and REQUIRES leg 1 fresh] is a correct contract-wins reading; FINDING-2 [APR scope]
+  correct). **reference-verifier = ALL bindings resolve** (the real read idiom is `cre/buyburn-bid:288-367`, NOT
+  the comment-only `cre/szalpha-rate` stub; `CallContract` `BlockNumber` optional=latest; `WriteCreReportRequest`
+  is the live form). **Ticket tightened pre-cold-build** from the junior-dev fan-out (added `XAlpha`/`ZipUSD`
+  Config for the side-aware `token0`/`token1` mapping; pinned the exact band-clamp formula + the `LegMarks`
+  carrier struct; cited buyburn-bid for the reads). **Gate green (my own `-count=1` re-run, not just the
+  cold-build's):** `cd cre/sharefeeds && go build ./... && go vet ./... && go test -count=1 ./... && GOOS=wasip1
+  GOARCH=wasm go build ./...` — all pass. **Non-vacuous:** 13 tests incl. `TestSimEncodeHandshake` (decodes the
+  envelope, asserts rt==7 literal, legs==[0,1], prices match, and the LP mark == the hand-computed `38e6` =
+  $38/share 6-dp via BOTH the function and a literal), band-clamp (3 cases), LP math (both token orderings +
+  zero-supply), and the simulated handler with mocked `eth_call` replies + a writeCap asserting the 2 ordered
+  reports. **Cold-build returned ZERO load-bearing guesses** (verified by my own gate re-run + full code read; its
+  5 listed adjustments — the `MockMarks` config seam, a `defaultMaxDeviationBps` fallback, the legCache-skip when
+  no NAV oracle, the `uint48`→`uint64` ts local type, a defensive nil/zero-prior guard — are glue/defensive
+  defaults, NONE touching the handshake bytes or the load-bearing formulas). **Provenance note:** `cre/sharefeeds/`
+  source pre-existed this window (a ~10:00 prior build attempt, before the critic-tightened ticket); the cold-build
+  verified it line-by-line against the tightened ticket + ran gates rather than discarding correct work, and I
+  independently re-ran all 4 gates + read `workflow.go`/the encode test myself. Added a per-module `.gitignore`
+  (mirrors `cre/revaluation`) so the 16 MB build binary + `*.wasm` + secrets are never staged. Code only; no
+  `build/`/`docs/`/`contracts/` staged beyond the doc-sync below; HEAD verified post-commit (no rogue commit).
+  Ticket: `build/tickets/cre/CRE-03-share-price-feeds.md`. **Doc-sync:** no contract changed → no backward `wires/`
+  edit; forward `claude-zipcode.md` §8.6 gains a "(BUILT — CRE-03)" note (with FINDING-1 + the deferred-trigger
+  SEAM-1) + the §8.11 CRE-03 row marked DONE / scope-corrected. **NEXT:** reviewer picks — no standalone (R)
+  producer remains; the open CRE work is CRE-02b/02c (orchestration glue, ticketed obligations) + SEAM-1 (the
+  deferred material-move http trigger, Open obligations).
 
 - **CRE-04 note (2026-06-20) — the senior-warehouse op producer (opType 1/2/3/4 → `WarehouseAdminModule`/8-Bw).**
   A pure (R) producer through the EXISTING `WarehouseAdminModule` receiver (CRE-OPS-ROUTING: CRE-04 is pure (R);
@@ -1081,7 +1127,7 @@ Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) 
 | CRE-00 | Project + secrets scaffold (`cre-templates` layout, `wasip1` build, DON-only `GetSecret`) + the shared §8.0 report-encoding package the workflows reuse | §8.11 / §8.0 — **DONE 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; note below) |
 | CRE-01 | Origination / draw / close / status → controller (rt 1/2/4/5,6); revaluation → registry (rt3, gas-bounded sharded); default/recovery → `DefaultCoordinator` (rt8 action family). **SEC-01 constraint: must not co-locate two same-lien `seedPrice` writes (origination+draw / draw+draw) in one block — the registry monotonic guard reverts the second. See open obligations.** | §8.1 / §8.4 |
 | CRE-02 | Redemption-settle `cron` → `settleEpoch()` + the warehouse **REDEEM** funding call. *(2026-06-12: `settleEpoch` is now ON-DEMAND — the 30-day epoch gate was removed — so this can be event-driven off the queue's `RedemptionSettled` event rather than a fixed cron: settle → if backlog remains, sequence another REDEEM→REPAY. See `build/wires/9-ZipRedemptionQueue.md`.)* **Scope: `build/tickets/cre/CRE-02-redemption-settle.md`.** | §8.3 / §8.5 |
-| CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` — and the xALPHA-APR feed (the 8x-02 receiver is built; the Go producer remains) | §8.6 / §8.8 |
+| CRE-03 | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipReservoirLpOracle` (one coherent producer). **DONE 2026-06-20** (`cre/sharefeeds/`, note below). The "xALPHA-APR feed" the row used to bundle is NOT here: the APR is on-chain-derived (§8.8), and the raw RATE push is the separate `cre/szalpha-rate` (8x-02, R-1-blocked) — NOT owed by CRE-03. | §8.6 / §8.8 |
 | CRE-04 | Senior-warehouse **SUPPLY / APPROVE / REPAY** ops via the Roles adapter | §8.5 |
 | CRE-05 | Engine strategy-admin **operator** orchestrator (drives 8-B5…8-B10 `onlyOperator` + main↔juniorTrancheSidecar rotation; regime/split/cap policy). **SPLIT — exit half = CRE-05a (DONE); harvest + rotation remainder = KEEPER-01b (POLICY-BLOCKED) + KEEPER-01c (DEFERRED). CRE-05 is NOT complete; there is no CRE-05b/05c — the remainder lives under the KEEPER prefix.** *(2026-06-12 design inputs: (a) the DurationFreeze main↔juniorTrancheSidecar rotation needs an LP **unstake→commit** sequence — the freeze can't move staked LP; see the `TODO(freeze-lp)` in `DurationFreezeModule.sol` + `build/wires/DurationFreezeModule.md`; (b) the 8-B14 CoW **buy-burn bid-automation loop** — size the resting bid to `clamp(freeReservoir − harvestReserve, 0, buybackCap)`, repost on drift/`RedemptionSettled`/fill, optionally as **staggered clones** for laddered depth — the exit half SHIPPED as CRE-05a, `cre/buyburn-bid/`.)* **CLARIFICATION (2026-06-16): the freeze's physical lever (`commit`/`release`) is DORMANT by design.** `commit` is `onlyOperator` + discretionary (no auto-machinery), and the juniorTrancheSidecar is empty in normal operation because the dominant asset (the staked ICHI LP) can't be moved into it — it is counted toward the floor IN PLACE via the oracle's `pathLockedLpEquity()` (`coverageValue = committedValue + pathLockedLpEquity`). So CRE-05 should drive `commit` ONLY on a coverage shortfall (a price-drift breach where in-place LP + juniorTrancheSidecar < `requiredCommittedValue`), to top up with the movable plain legs (USDC/zipUSD preferred — stable backing). The live machinery is the **accounting + outflow gates** (`covered()` on `postBid`/`removeLiquidity`/`release`), not the physical rotation. | §8.7 |
 | CRE-06 | **DISCHARGED-as-config by CRE-05a (2026-06-16).** The exit-vs-harvest split is now the `harvestReserve` + `safetyBuffer` Config params in the buy-burn bid sizing (`clamp(freeReservoir − harvestReserve − safetyBuffer, 0, buybackCap)`) — M1 constants; a dynamic utilization-aware policy is a later parameter swap, not a redesign. No standalone workflow. (Cross-cutting coupling now recorded in the CRE-05a ticket + `build/wires/DurationFreezeModule.md`.) | §8.5 / §8.7 |
@@ -1118,6 +1164,13 @@ track on it.
 ---
 
 ## Open obligations / seams
+
+- **SEAM-1 — CRE-03's material-move http trigger (DEFERRED, additive own-later).** §8.6 cadence is "push on the
+  engine epoch **AND** on a material leg move." `cre/sharefeeds/` (CRE-03, DONE) ships the engine-epoch `cron`
+  handler only; the material-move `http.Trigger` second handler is an additive own-later — **liveness-safe to
+  defer** (the band clamp already converges large moves across epochs and the LP feed is liveness-only
+  fail-closed), but the "AND material move" clause is carried here so it isn't lost. When built it reuses the
+  same node-mode observe → DON-mode reads → coherent compose → two-WriteReport path; only the trigger differs.
 
 - **CRE-02b — redemption funding automation (TICKETED 2026-06-20, `build/tickets/cre/CRE-02b-redemption-funding.md`).**
   CRE-02's (K) `RedemptionJob` is REACTIVE (settles/claims what's there, never funds). Funding = the (R) warehouse

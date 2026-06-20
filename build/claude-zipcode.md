@@ -724,6 +724,19 @@ build's mock `observe` (the magnitudes arrive pre-sized on the trigger), exactly
 took. All four ops are built (incl. REDEEM) so **CRE-02 reuses this package** for its (R) REDEEM→REPAY funding.
 
 ### 8.6 szipUSD share-price feeds (NAV legs + LP mark — the push-cache producers)
+> **BUILT — CRE-03 (`cre/sharefeeds/`, 2026-06-20).** The two feeds below ship as ONE wasip1 producer: an
+> engine-epoch `cron` → node-mode identical consensus on the two off-chain marks (`alphaUSD`, `HYDX/USD`; §8.9
+> mock) → DON-mode `eth_call` reads of the on-chain quantities (ICHI reserves/supply/token sides, `exchangeRate()`,
+> the prior `legCache` for the band) → ONE coherent computation (the SAME band-clamped `alphaUSD` prices both the
+> NAV alpha leg AND the LP mark) → two `WriteReport`s (NAV_LEG + LP_MARK), encoded via `cre/zipreport`. **Two
+> as-built clarifications (contract wins, §1):** (1) **HYDX (leg 1) is pushed UNCONDITIONALLY every epoch**, NOT
+> "only if the pool is thin" — the as-built `SzipNavOracle` has no on-chain HYDX read and `navEntry`/`fresh`
+> REQUIRE leg 1 fresh; the thin-pool conditionality below is deferred spec intent pending an on-chain HYDX TWAP
+> read the contract does not have. (2) The **xALPHA-APR / RATE leg is NOT this producer** — the APR is derived
+> on-chain (`SzAlphaRateOracle.intrinsicAprBps()`, §8.8) and the raw RATE push is the separate `cre/szalpha-rate`
+> (8x-02, blocked on R-1). CRE-03 here = NAV_LEG + LP_MARK only. The "material leg move" http-trigger leg of the
+> cadence is a deferred additive seam (SEAM-1, PROGRESS) — liveness-safe to defer (the band clamp converges large
+> moves over epochs; the LP feed is liveness-only fail-closed).
 The szipUSD share price and the engine's LP-collateral price are **hybrid push-cache oracles** (§7): the
 contracts read every on-chain quantity/leg themselves, and CRE pushes **only** the off-chain leg marks it
 cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
