@@ -1128,6 +1128,19 @@ track on it.
   orchestrator vs. fold the sizing into `cre/warehouse`'s production `observe` (the hook CRE-04 left). **Ships
   default-OFF / unactivated** (flip on after more testing + real exit data); manual ops POSTs are the M1 path.
   Not blocking; the cycle is idempotent/self-healing.
+- **CRE-02c — cross-silo redemption solver (TICKETED 2026-06-20, `build/tickets/cre/CRE-02c-redemption-solver.md`).**
+  The mutualized senior has ONE shared queue but N warehouses (one EE pool per silo). Funding a redemption must
+  CHOOSE which pool(s) to REDEEM from + the split, respecting each pool's free liquidity + coverage gate (never
+  over-redeem into a freeze). That chooser = a solver (CRE-02b's multi-warehouse generalization). Open fork: split
+  policy (most-free-first / pro-rata / utilization-balancing / curator-ordered). Ships default-OFF; ops picks the
+  pool by hand in M1. No back-pressure expected.
+- **CTR-14 — multi-tranche redemption topology (TICKETED 2026-06-20, `build/tickets/contracts/CTR-14-multi-tranche-redemption-topology.md`).**
+  The off-ramp is built single-requester/single-Safe (`OffRampModule` clone pinned to one `juniorTrancheSafe`;
+  `ZipRedemptionQueue` reverts `MultipleRequesters` for a 2nd concurrent requester; single `redeemController`), but
+  the federation admits N silos with (plausibly) N junior Safes. So multiple products can't concurrently use the
+  one shared queue — they serialize. Throughput/liveness limit, NOT fund-safety. Open fork: (a) serialize through
+  one queue [M1 rec], (b) one queue per tranche, (c) multi-requester queue rebuild. Decision owed before a 2nd
+  product's redemption cadence contends.
 - **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
   The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
   while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
