@@ -799,7 +799,10 @@ waterfall leg (e), §11). It is bounded — TVL-capped, front-loaded, trailing-r
 > (KEEPER-01b, BUILT 2026-06-19** — `cre/keeper/internal/job/strike_loop_job.go`: the ordered
 > claim→borrow→exercise→sell→repay→creditFreeValue→recycle→addLiquidity→stake Plan, stateless, conservative
 > floors; `minShares` from the exact canonical ICHI deposit formula, the HYDX price from the pool `globalState()`)
-> shipped. **Own-later:** B1/B2/C1–C3/C5 + the restake token1-side generalization (PROGRESS).
+> shipped. **The restake leg is now side-aware (KEEPER-01b-R1, BUILT 2026-06-19):** the quoter resolves which
+> vault token is the recycled zipUSD each tick (`recycle.zipDepositModule().zipUSD()` vs `vault.token0()`) and
+> the Job builds `addLiquidity` on that side — `(expectedZip,0)` for token0, `(0,expectedZip)` for token1 — so
+> the compounder closes regardless of the zipUSD/xALPHA address sort. **Own-later:** B1/B2/C1–C3/C5 (PROGRESS).
 
 ### 8.8 xALPHA exchange-rate Base oracle + the DERIVED APR (8x-02)
 **The one fact that lives only on Bittensor is the xALPHA `exchangeRate()`** (`staked alpha ÷ supply`, StakingV2

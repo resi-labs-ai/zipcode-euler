@@ -18,10 +18,10 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
 - **KEEPER-01b own-later slices** (the policy-deferred remainder, each its own slice): **B1** regime classifier +
   EMA price source, **B2** keeper STATE store (an infra decision — required by any stateful policy), **C1–C3**
   vote/allocation weights + lock-vs-sell split + `claimRebase` set (§17-deferred economic knobs), **C5** explicit
-  per-epoch volume cap + epoch definition (+ A1's relocated 2h-TWAP cadence steer). Plus one **follow-up on the
-  built core slice:** generalize the restake leg to the token1-side case (the core slice assumes the recycled
-  zipUSD is the vault's token0 — see the KEEPER-01b note's known-limitation; fail-safe today, but the restake is
-  skipped if zipUSD deploys as token1). Rotation → KEEPER-01c (freeze rebuild).
+  per-epoch volume cap + epoch definition (+ A1's relocated 2h-TWAP cadence steer). ~~Plus one **follow-up on the
+  built core slice:** generalize the restake leg to the token1-side case~~ **KEEPER-01b-R1 DONE 2026-06-19**
+  (note below) — the restake is now side-aware; the token0-only known-limitation is RESOLVED. Rotation →
+  KEEPER-01c (freeze rebuild).
 - ~~**CRE-00 — the wasip1 workflow scaffold** + the shared §8.0 report-encoding package~~ **DONE 2026-06-19**
   (note below). The **(R)** workflows **CRE-01 / CRE-03 / CRE-04** are now UNBLOCKED and each imports the new
   `cre/zipreport` shared encoder (all through EXISTING report receivers — not blocked by anything). Independent
@@ -138,10 +138,51 @@ own-later slices remain — see note), **01c** freeze-`commit`-on-shortfall (def
   (logged as the follow-up in NEXT):** the restake leg hardcodes the recycled zipUSD as the vault's **token0**
   (`addLiquidity(deposit0=zip, 0, minShares)`); if zipUSD deploys as token1 the `addLiquidity` leg fail-safe
   reverts (recycle + all extraction legs still land, freeValueAccrued spent, zipUSD sits backed in the Safe) —
-  liveness-only, never unsafe. Generalize to the token1-side branch in the own-later restake follow-up.
+  liveness-only, never unsafe. ~~Generalize to the token1-side branch in the own-later restake follow-up.~~
+  **RESOLVED 2026-06-19 by KEEPER-01b-R1 (note below).**
   **Doc-sync:** NO contract changed this window → no backward `wires/` edit owed; `claude-zipcode.md` §8.7 gains a
   one-line "(core slice BUILT — KEEPER-01b)" note; the ratified policy record + §8.7 block (the reviewer's
   2026-06-19 ratification) land in the same docs commit.
+
+- **KEEPER-01b-R1 note (2026-06-19) — the restake leg is now side-aware (resolves the core-slice KNOWN
+  LIMITATION above).** The core slice hardcoded the recycled zipUSD as the LP vault's **token0**
+  (`addLiquidity(expectedZip, 0, minShares)`, and `ZipToShares` priced the token0 side). ICHI vault token
+  slotting is by ADDRESS SORT, fixed at pool creation — so if zipUSD's deployed address sorts ABOVE xALPHA's,
+  zipUSD is **token1** and the leg fail-safe reverted (recycle landed, restake skipped). Now the deposit side
+  follows the live slotting. **Off-chain Go only — NO contract changed** (no backward `wires/` edit owed).
+  Three changes, all in `cre/keeper`: (1) `internal/quote/quote.go` — `Quoter.ZipToShares` returns the side
+  flag (`(shares, zipIsToken0, err)`); the production `ProdQuoter` resolves the recycled zipUSD each tick off
+  `recycle.zipDepositModule()` → `zdm.zipUSD()` (both confirmed public getters: `RecycleModule.sol:80`,
+  `ZipDepositModule.sol:50` `address public immutable zipUSD`) and sets `zipIsToken0 = (zipUSD == vault.token0())`,
+  erroring loudly if zipUSD matches NEITHER vault token (a bad re-point); `ichiSingleSidedShares` now selects
+  the numerator by side — `depositZip·min(price,twap)/1e18` for token0, **raw `depositZip`** for token1 (already
+  in token1 terms — the unconditional token0-pricing was the bug). The denominator + the `price`/`twap`
+  direction (ALWAYS token0→token1) are side-independent and unchanged. (2) `internal/job/strike_loop_job.go` —
+  the Job builds `addLiquidity(expectedZip, 0, minShares)` when `zipIsToken0`, else `(0, expectedZip, minShares)`;
+  KNOWN-LIMITATION comment block deleted. (3) tests updated to the new signature + new token1-side/neither-match
+  coverage. **Side-resolution lives behind the `Quoter` seam, so the sim probe needed ZERO change** (the sim
+  injects a `fakeQuoter` carrying a configurable `zipIsToken0`); the `StrikeLoopProbe` bytecode is byte-identical.
+  **NOTHING else changed** — leg order, no-op gates, taper/halt, profit gate, and every scalar (exerciseAmount…
+  expectedZip/minShares/stakeAmount) are untouched (restake-side routing ONLY). §17 honored: the side is
+  re-read each tick, never cached. **Harness loop ran:** 4 critics (junior-dev/spec-fidelity/reference-verifier/
+  keeper-binding). spec-fidelity = FAITHFUL (single-sided `addLiquidity` on either side is the EXISTING §8.7
+  mechanism — no invention; the per-tick side re-read is §17-correct; no scalar/leg-order change). reference-
+  verifier = all 6 bindings resolve against live source (`zipDepositModule()`, `zipUSD()`, `token0()/token1()`,
+  `addLiquidity` symmetric single-sided, `chain.CallAddress`, and the recycle→zdm→zipUSD trace). keeper-binding =
+  the token1 numerator (raw, un-priced) is the correct algebraic consequence of the canonical ICHI formula; the
+  price/twap direction must NOT flip (confirmed). junior-dev surfaced the load-bearing TICKET gaps — ALL fixed
+  BEFORE cold-build: the "assert `numerator == depositZip`" acceptance (numerator is an unexported local →
+  rephrased to a shares-level assertion); the concrete `ProdQuoter` signature; the stale `quote.go` doc comment
+  + `depositSide0`→`depositZip` rename; and "update ALL existing `quote_test.go` callers + the scripted reader's
+  two new getters." **Gate green (my own re-run, `-count=1`, not just the cold-build's):** `cd cre/keeper &&
+  go build ./... && go vet ./... && go test ./...` — all pass (quote + job suites). Tests are non-vacuous: the
+  Job token1 case decodes the `addLiquidity` calldata and asserts `(0, expectedZip, minShares)`; the quote tests
+  recompute the share math independently and PROVE the token1 (raw) result differs from the token0 (priced)
+  result when `price≠twap`, plus the neither-match error. Cold-build returned ZERO load-bearing guesses; no
+  rogue commit (verified HEAD). Committed to `cre/keeper` — code only; no `build/`/`docs/`/`contracts/` staged in
+  the code commit. **Doc-sync:** NO contract changed → no backward `wires/` edit; forward `claude-zipcode.md` §8.7
+  the own-later "restake token1-side" item is now a "(BUILT — KEEPER-01b-R1)" side-aware note. Ticket:
+  `build/tickets/cre/KEEPER-01b-R1-restake-token1-side.md`.
 
 - **CTR-08 note (2026-06-19) — structure-2 revolving, zero contract change.** Resolved Key-req #5: NO new contract is
   needed. A revolving line is the same stack (`ZipcodeController` + `EulerVenueAdapter` + `ZipcodeOracleRegistry` +
