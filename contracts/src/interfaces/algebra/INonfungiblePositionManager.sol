@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
+/// @dev STATUS: STAGED — not yet wired. Reserved for a future Algebra range-sell ladder strategy (NOT the ICHI
+///      LP path); referenced by no src/script/test today. Intentional forward scaffolding, not dead code.
+///      See docs/interfaces/interfaces-algebra.md.
 /// @notice Minimal local interface for the Algebra Integral NonfungiblePositionManager.
 /// Source contract: NFPM @ Base 0xC63E9672f8e93234C73cE954a1d1292e4103Ab86.
 /// verified on-chain 2026-06-06:

@@ -180,4 +180,82 @@ contract SzAlphaRateOracleTest is Test {
         assertGt(apr, 0);
         assertApproxEqAbs(apr, 1137, 5);
     }
+
+    // --------------------------------------------------------------------- GAP: fuzz + invariant (tier-mover)
+
+    /// @notice Fuzz the anchor-roll + APR annualization across the rate/Δ domain: a push Δ ≥ WINDOW always rolls,
+    ///         so the APR derives `rNow` vs the rolled `prevAnchor` over Δ. Must never revert, must clamp to the
+    ///         cap, and must floor at 0 on a decline/flat (a slash is 0, not negative — `uint32`).
+    function testFuzz_aprBoundedAndNonNegative(uint256 rPrev, uint256 rNow, uint32 dtSeed) public {
+        rPrev = bound(rPrev, 1, 1e24);
+        rNow = bound(rNow, 1, 1e24);
+        uint256 dt = bound(uint256(dtSeed), WINDOW, 365 days); // ≥ WINDOW so push 2 rolls the anchor
+        _push(rPrev, uint48(T0));
+        vm.warp(T0 + dt);
+        _push(rNow, uint48(T0 + dt)); // rolls: prev=(rPrev,T0); latest=(rNow,T0+dt)
+        uint32 apr = oracle.intrinsicAprBps(); // must not revert / overflow
+        assertLe(uint256(apr), APR_CAP, "apr exceeds cap");
+        if (rNow <= rPrev) assertEq(apr, 0, "decline/flat must annualize to 0");
+    }
+}
+
+/// @dev Bounded action driver for the rate-oracle invariant suite. Pushes arbitrary (rate, ts) through the
+///      Forwarder (many get rejected: zero / future / not-strictly-newer) and advances time. On every ACCEPTED
+///      push it asserts the ts strictly increased — the I-1 monotonicity as a stateful property.
+contract RateOracleHandler is Test {
+    SzAlphaRateOracle public oracle;
+    address internal forwarder;
+    uint48 public ghostLastTs; // ts of the last accepted push (0 = none)
+    uint256 public accepted;
+
+    constructor(SzAlphaRateOracle o, address fwd) {
+        oracle = o;
+        forwarder = fwd;
+    }
+
+    function push(uint256 rate, uint256 tsSeed) external {
+        uint48 ts = uint48(bound(tsSeed, 1, block.timestamp));
+        rate = bound(rate, 0, 1e24); // include 0 to exercise the ZeroRate reject
+        bytes memory report = abi.encode(uint8(8), abi.encode(rate, ts));
+        vm.prank(forwarder);
+        try oracle.onReport("", report) {
+            // accepted ⇒ the contract required ts > prior latest.ts (== prior ghostLastTs) and rate != 0
+            assertGt(ts, ghostLastTs, "accepted a non-increasing ts (I-1 broken)");
+            ghostLastTs = ts;
+            accepted++;
+        } catch {}
+    }
+
+    function warp(uint256 dtSeed) external {
+        vm.warp(block.timestamp + bound(dtSeed, 1, 10 days));
+    }
+}
+
+/// @notice Invariant suite for SzAlphaRateOracle (the tier-mover): (a) `latest.ts` always equals the
+///         strictly-increasing last-accepted ts (I-1 monotonicity); (b) `intrinsicAprBps()` never reverts and
+///         stays ≤ cap in ANY reachable state — including every anchor-roll state the handler drives.
+contract SzAlphaRateOracleInvariantTest is Test {
+    SzAlphaRateOracle internal oracle;
+    RateOracleHandler internal handler;
+    address internal forwarder = makeAddr("invFwd");
+
+    uint256 internal constant MAX_STALENESS = 6 hours;
+    uint32 internal constant WINDOW = 30 days;
+    uint256 internal constant APR_CAP = 50_000;
+
+    function setUp() public {
+        vm.warp(1_000_000);
+        oracle = new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, APR_CAP);
+        handler = new RateOracleHandler(oracle, forwarder);
+        targetContract(address(handler));
+    }
+
+    function invariant_latestTsTracksMonotonicAccepted() public view {
+        assertEq(uint256(oracle.lastUpdate()), uint256(handler.ghostLastTs()), "latest.ts != last accepted ts");
+    }
+
+    function invariant_aprBoundedNeverReverts() public view {
+        uint256 apr = oracle.intrinsicAprBps(); // reverts here would fail the invariant
+        assertLe(apr, APR_CAP, "apr exceeds cap");
+    }
 }

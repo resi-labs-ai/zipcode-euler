@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
+/// @dev STATUS: STAGED — not yet wired. Forward scaffolding for the prod zipUSD/xALPHA ICHI pool: the vault is
+///      created out of band today and its address passed in, so no src contract calls this factory yet. Kept for
+///      the create/lookup path + fork-test setup. Intentional, not dead code. See docs/interfaces/interfaces-ichi.md.
 /// @notice Minimal local interface for the ICHI Vault Factory (the deployer/registry).
 /// verified on-chain 2026-06-06.
 /// Address constant: BaseAddresses.ICHI_VAULT_FACTORY = 0x2b52c416F723F16e883E53f3f16435B51300280a.

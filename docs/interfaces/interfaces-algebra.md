@@ -27,10 +27,10 @@ TWAP oracle plugin used by the fair-LP oracle and the NAV oracle.
 [wires/8-B4-SzipNavOracle.md]
 
 - INonfungiblePositionManager.sol → Algebra NFPM `0xC63E9672f8e93234C73cE954a1d1292e4103Ab86`
-Reserved for a range-sell ladder strategy — not yet implemented in any contract.
+STAGED (not yet wired): reserved for a future Algebra range-sell ladder strategy — referenced by no src/script/test today. Intentional forward scaffolding, not dead code.
 
 - IAlgebraFactory.sol → Algebra factory `0x36077D39cdC65E1e3FB65810430E5b2c4D5fA29E`
-Used in building to verify pool addresses — not implemented in any contract.
+STAGED (not yet wired): build-time pool-address verification for the prod ICHI/Algebra LP path — referenced by no src contract today. Intentional forward scaffolding, not dead code.
 
 Summaries:
 [../wires/interfaces-algebra.md]

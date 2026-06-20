@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
+/// @dev STATUS: STAGED — not yet wired. Documented alternative deposit/withdraw forwarder for the prod ICHI pool;
+///      the engine deposits into the vault directly today, so no src contract calls this guard yet. Intentional
+///      forward scaffolding, not dead code. See docs/interfaces/interfaces-ichi.md.
 /// @notice Minimal local interface for the ICHI Deposit Guard (deposit/withdraw forwarder).
 /// Source contract: ICHIDepositGuard @ Base 0x9A0EBEc47c85fD30F1fdc90F57d2b178e84DC8d8
 /// verified on-chain 2026-06-06: forwardDepositToICHIVault selector 0x5d123e3f present in

@@ -166,6 +166,23 @@ contract WarehouseAdminModuleTest is ForkConfig {
         deal(usdc, safe, amount);
     }
 
+    /// @dev Drive `onReport` as the Forwarder and assert it reverts with EXACTLY `expSel` (selector-only;
+    ///      ignores the error's args). Mirrors `_assertRawRevertSelector` but for the Forwarder-gated entry —
+    ///      `vm.expectRevert(bytes4)` demands an exact 4-byte payload, which fails for args-carrying errors
+    ///      like `ConditionViolation(uint8,bytes32)`.
+    function _onReportRevertsWithSelector(uint8 opType, bytes memory payload, bytes4 expSel) internal {
+        vm.prank(forwarder);
+        (bool ok, bytes memory ret) =
+            address(adapter).call(abi.encodeWithSignature("onReport(bytes,bytes)", bytes(""), abi.encode(opType, payload)));
+        assertFalse(ok, "expected revert");
+        assertGe(ret.length, 4, "revert payload too short");
+        bytes4 sel;
+        assembly {
+            sel := mload(add(ret, 0x20))
+        }
+        assertEq(sel, expSel, "wrong revert selector");
+    }
+
     // ============================================================
     // (1) Deploy/wire
     // ============================================================
@@ -281,7 +298,6 @@ contract WarehouseAdminModuleTest is ForkConfig {
     ///         (belt-and-suspenders), not only at the Roles scope.
     function test_Repay_RevertsOnWrongSink() public {
         _fundSafe(SUPPLY_AMT);
-        address attacker = makeAddr("attacker");
         vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.WrongRedemptionBox.selector, attacker));
         _onReport(REPAY, abi.encode(attacker, uint256(250_000e6)));
     }
@@ -554,5 +570,111 @@ contract WarehouseAdminModuleTest is ForkConfig {
 
         uint256 net = SUPPLY_AMT - redeemed;
         assertApproxEqAbs(ee.convertToAssets(ee.balanceOf(safe)), net, 1, "senior NAV mark == supplied net of redeemed");
+    }
+
+    // ============================================================
+    // (16) Parity: adapter.warehouseSafe MUST equal the Roles modifier's avatar
+    // ============================================================
+    // The adapter's `warehouseSafe` (injected as the deposit/redeem receiver+owner) and the Roles modifier's
+    // `avatar` (what the scope pins `receiver ==`) are INDEPENDENT slots (WarehouseAdminModule.sol:43-48). The
+    // contract's own #1 documented hazard: a ONE-SIDED re-point must FAIL CLOSED — SUPPLY/REDEEM revert at the
+    // scope check and nothing leaks. (The paired re-point that restores liveness — adapter.setWarehouseSafe +
+    // Roles.setAvatar to a fully-provisioned second Safe — is a deploy/runbook concern; here we prove fail-closed.)
+
+    function test_Parity_OneSidedRepoint_SupplyFailsClosed() public {
+        address newSafe = makeAddr("newWarehouseSafe");
+
+        // Re-point ONLY the adapter; leave the modifier's avatar on the original `safe`.
+        vm.prank(adapter.owner());
+        adapter.setWarehouseSafe(newSafe);
+        assertEq(adapter.warehouseSafe(), newSafe, "adapter re-pointed");
+
+        _fundSafe(SUPPLY_AMT);
+        _onReport(APPROVE, abi.encode(SUPPLY_AMT)); // spender==eePool is avatar-independent; still passes
+
+        // SUPPLY now injects receiver=newSafe, but the scope checks receiver==avatar(old safe)
+        // -> ParameterNotAllowed -> ConditionViolation bubbles up from the modifier.
+        _onReportRevertsWithSelector(SUPPLY, abi.encode(SUPPLY_AMT), CONDITION_VIOLATION_SEL);
+
+        // Fail closed: no shares minted anywhere, the Safe keeps its USDC (a dangling approve moves nothing).
+        assertEq(ee.balanceOf(safe), 0, "no shares to old safe");
+        assertEq(ee.balanceOf(newSafe), 0, "no shares to new safe - nothing leaked");
+        assertEq(ee.balanceOf(address(adapter)), 0, "no shares to adapter");
+        assertEq(IERC20(usdc).balanceOf(safe), SUPPLY_AMT, "Safe USDC intact");
+    }
+
+    function test_Parity_OneSidedRepoint_RedeemFailsClosed() public {
+        // First supply cleanly (parity intact), then break parity and prove REDEEM also fails closed.
+        _fundSafe(SUPPLY_AMT);
+        _onReport(APPROVE, abi.encode(SUPPLY_AMT));
+        _onReport(SUPPLY, abi.encode(SUPPLY_AMT));
+        assertEq(ee.balanceOf(safe), SUPPLY_AMT, "supplied while parity intact");
+
+        address newSafe = makeAddr("newWarehouseSafe2");
+        vm.prank(adapter.owner());
+        adapter.setWarehouseSafe(newSafe);
+
+        // REDEEM injects receiver==owner==newSafe; scope checks ==avatar(old safe) -> rejected.
+        _onReportRevertsWithSelector(REDEEM, abi.encode(SUPPLY_AMT), CONDITION_VIOLATION_SEL);
+
+        // Fail closed: the supplied shares are untouched, no USDC returned to either safe.
+        assertEq(ee.balanceOf(safe), SUPPLY_AMT, "shares untouched");
+        assertEq(IERC20(usdc).balanceOf(newSafe), 0, "nothing routed to the mismatched safe");
+    }
+
+    // ============================================================
+    // (17) Timelock setters — access control + effect + zero guards
+    // ============================================================
+
+    function test_Setters_RejectNonOwner() public {
+        vm.startPrank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTH_SEL, attacker));
+        adapter.setRoles(attacker);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTH_SEL, attacker));
+        adapter.setRoleKey(keccak256("k"));
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTH_SEL, attacker));
+        adapter.setWarehouseSafe(attacker);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTH_SEL, attacker));
+        adapter.setEePool(attacker);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTH_SEL, attacker));
+        adapter.setUsdc(attacker);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTH_SEL, attacker));
+        adapter.setRedemptionBox(attacker);
+        vm.stopPrank();
+    }
+
+    function test_Setters_OwnerUpdates_AndRejectsZero() public {
+        address x = makeAddr("rewire");
+        bytes32 nk = keccak256("newRoleKey");
+        address o = adapter.owner();
+
+        vm.startPrank(o);
+        adapter.setRoles(x);
+        assertEq(address(adapter.roles()), x, "roles re-pointed");
+        adapter.setRoleKey(nk);
+        assertEq(adapter.roleKey(), nk, "roleKey re-set");
+        adapter.setWarehouseSafe(x);
+        assertEq(adapter.warehouseSafe(), x, "warehouseSafe re-pointed");
+        adapter.setEePool(x);
+        assertEq(adapter.eePool(), x, "eePool re-pointed");
+        adapter.setUsdc(x);
+        assertEq(adapter.usdc(), x, "usdc re-pointed");
+        adapter.setRedemptionBox(x);
+        assertEq(adapter.redemptionBox(), x, "redemptionBox re-pointed");
+
+        // zero-address / zero-key guards on the setters (mirror the constructor)
+        vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
+        adapter.setRoles(address(0));
+        vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
+        adapter.setWarehouseSafe(address(0));
+        vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
+        adapter.setEePool(address(0));
+        vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
+        adapter.setUsdc(address(0));
+        vm.expectRevert(WarehouseAdminModule.ZeroAddress.selector);
+        adapter.setRedemptionBox(address(0));
+        vm.expectRevert(WarehouseAdminModule.ZeroRoleKey.selector);
+        adapter.setRoleKey(bytes32(0));
+        vm.stopPrank();
     }
 }

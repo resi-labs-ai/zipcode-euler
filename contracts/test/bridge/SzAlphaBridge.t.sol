@@ -740,6 +740,94 @@ contract SzAlphaBridgeTest is Test {
         mirror.mint(alice, 5 ether);
         assertEq(mirror.balanceOf(alice), 5 ether);
     }
+
+    // ================================================================
+    // │   GAP TESTS — #1 round-trip fuzz, #2 lying-mock, #3 edge guards │
+    // ================================================================
+
+    // --- #1: round-trip rounding always favors the protocol (deterministic-pinned -> fuzzed) ---
+    function testFuzz_roundTripFavorsProtocol(uint96 taoWeiSeed) public {
+        uint256 v = bound(uint256(taoWeiSeed), RAO, 100 ether);
+        vm.deal(alice, v);
+        vm.prank(alice);
+        uint256 shares = token.deposit{value: v}(0, MAX_DL);
+        vm.prank(alice);
+        uint256 out = token.redeem(shares, 0, MAX_DL);
+        // At par with floor rounding both legs, a deposit→redeem round-trip can never pay out more than it
+        // took in (dust stays staked, accruing to remaining holders). Protocol never loses on the round-trip.
+        assertLe(out, v, "round-trip paid out more than deposited");
+    }
+
+    // --- #2: the X-1 precompile-magnitude seam — a lying precompile inflates issuance verbatim ---
+    function test_lyingPrecompile_overReportInflatesShares() public {
+        // SzAlpha trusts the precompile's reported stake DELTA verbatim (only its SIGN is guarded, bridge X-1).
+        // Swap in a precompile that over-reports the addStake delta by 2x, then make the first deposit.
+        vm.etch(STAKING_V2, address(new MockLyingStaking()).code);
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        uint256 shares = token.deposit{value: 1 ether}(0, MAX_DL);
+        // An honest first deposit of 1 TAO mints 1e18 shares at par; the liar reports 2x the alpha delta, so
+        // the wrapper mints 2e18 — phantom backing, 1:1 with the over-report. Blast radius: dilutes honest
+        // holders now, and crashes the rate the moment a truthful getStake reports the real (lower) stake.
+        assertEq(shares, 2e18, "lying precompile inflates issuance 1:1 with its over-report (X-1)");
+    }
+
+    // --- #3a: G-9 NativeTransferFailed on the redeem payout ---
+    function test_g9_nativeTransferFailed_onRedeemPayout() public {
+        RevertingReceiver r = new RevertingReceiver(token);
+        vm.deal(address(r), 2 ether);
+        r.doDeposit{value: 2 ether}(); // 2 TAO: no sub-rao remainder, refund leg never fires
+        uint256 shares = token.balanceOf(address(r)); // read BEFORE expectRevert (it gates the NEXT call)
+        r.armRevert();
+        vm.expectRevert(SzAlpha.NativeTransferFailed.selector);
+        r.doRedeem(shares);
+    }
+
+    // --- #3b: G-9 NativeTransferFailed on the deposit sub-rao refund ---
+    function test_g9_nativeTransferFailed_onDepositRefund() public {
+        RevertingReceiver r = new RevertingReceiver(token);
+        r.armRevert();
+        vm.deal(address(r), 1 ether + 1); // +1 wei sub-rao remainder forces the refund interaction
+        vm.expectRevert(SzAlpha.NativeTransferFailed.selector);
+        r.doDeposit{value: 1 ether + 1}();
+    }
+
+    // --- #3c: G-16 PrecompileCallFailed when the staking precompile returns no word ---
+    function test_g16_precompileCallFailed_onEmptyStakingCode() public {
+        vm.etch(STAKING_V2, hex""); // no code -> staticcall returns (true, "") -> ret.length 0 < 32 -> revert
+        vm.expectRevert(SzAlpha.PrecompileCallFailed.selector);
+        token.totalStaked();
+    }
+
+    // --- #3d: G-17 AmountOverflowsUint64 on the preview swap-sim path ---
+    function test_g17_amountOverflowsUint64_onPreview() public {
+        uint256 raoTooBig = uint256(type(uint64).max) + 1;
+        vm.expectRevert(abi.encodeWithSelector(SzAlpha.AmountOverflowsUint64.selector, raoTooBig));
+        token.previewDeposit(raoTooBig * RAO); // taoWei whose /RAO exceeds uint64
+    }
+
+    // --- #3e: G-1/G-2 zero-address / zero-hotkey init guards ---
+    function test_g1_initRejectsZeroOwner() public {
+        SzAlpha impl = new SzAlpha();
+        bytes memory bad = abi.encodeCall(SzAlpha.initialize, ("n", "s", NETUID, HOTKEY, address(0), ccipAdmin));
+        vm.expectRevert(SzAlpha.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), bad);
+    }
+
+    function test_g1_initRejectsZeroCcipAdmin() public {
+        SzAlpha impl = new SzAlpha();
+        bytes memory bad = abi.encodeCall(SzAlpha.initialize, ("n", "s", NETUID, HOTKEY, timelock, address(0)));
+        vm.expectRevert(SzAlpha.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), bad);
+    }
+
+    function test_g2_initRejectsZeroHotkey() public {
+        SzAlpha impl = new SzAlpha();
+        bytes memory bad =
+            abi.encodeCall(SzAlpha.initialize, ("n", "s", NETUID, bytes32(0), timelock, ccipAdmin));
+        vm.expectRevert(SzAlpha.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), bad);
+    }
 }
 
 /// @title Base-fork deploy integration — exercises the REAL Base CCT registry/registration against a live
@@ -902,5 +990,151 @@ contract SzAlphaAdminHandoffTest is Test {
             )
         );
         reg.setPool(address(token), address(0xBEEF));
+    }
+}
+
+// ====================================================================
+// │  Gap-test helper contracts + the invariant suite (#1 / #2)        │
+// ====================================================================
+
+/// @dev A native-receiving caller whose `receive` can be armed to revert — exercises G-9 (NativeTransferFailed)
+///      on both the deposit sub-rao refund and the redeem payout legs.
+contract RevertingReceiver {
+    SzAlpha public immutable token;
+    bool public reverting;
+
+    constructor(SzAlpha t) {
+        token = t;
+    }
+
+    function armRevert() external {
+        reverting = true;
+    }
+
+    function doDeposit() external payable {
+        token.deposit{value: msg.value}(0, type(uint256).max);
+    }
+
+    function doRedeem(uint256 shares) external {
+        token.redeem(shares, 0, type(uint256).max);
+    }
+
+    receive() external payable {
+        if (reverting) revert("RevertingReceiver: no");
+    }
+}
+
+/// @dev A precompile that OVER-REPORTS the addStake delta by 2x (otherwise par). Etched at 0x805 to
+///      characterize the bridge X-1 blast radius: SzAlpha trusts the reported stake magnitude verbatim.
+///      `stake` sits at slot 0 to match `MockSubtensorStaking`'s layout (vm.etch keeps storage).
+contract MockLyingStaking {
+    uint256 internal constant RAO = 1e9;
+
+    mapping(bytes32 => mapping(bytes32 => mapping(uint256 => uint256))) public stake;
+
+    function _ck(address a) internal pure returns (bytes32) {
+        return keccak256(abi.encode(a));
+    }
+
+    function addStake(bytes32 hotkey, uint256 amountRao, uint256 netuid) external payable {
+        // LIE: credit 2x the par alpha (1e9 rao-price). Honest credit would be `amountRao`.
+        stake[hotkey][_ck(msg.sender)][netuid] += amountRao * 2;
+    }
+
+    function getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) external view returns (uint256) {
+        return stake[hotkey][coldkey][netuid];
+    }
+
+    function removeStake(bytes32, uint256, uint256) external payable {}
+
+    receive() external payable {}
+}
+
+/// @dev Bounded action driver for the invariant suite. NEVER slashes — so the "rate ≥ genesis" invariant
+///      holds. Tracks ghost mint/burn totals for the conservation invariant.
+contract SzAlphaInvariantHandler is Test {
+    SzAlpha internal token;
+    MockSubtensorStaking internal staking;
+    bytes32 internal hotkey;
+    uint256 internal netuid;
+    address[3] internal actors;
+
+    uint256 public ghostMinted;
+    uint256 public ghostBurned;
+
+    constructor(SzAlpha t, address staking_, bytes32 hk, uint256 nu) {
+        token = t;
+        staking = MockSubtensorStaking(payable(staking_));
+        hotkey = hk;
+        netuid = nu;
+        actors[0] = makeAddr("inv_a");
+        actors[1] = makeAddr("inv_b");
+        actors[2] = makeAddr("inv_c");
+    }
+
+    function deposit(uint256 seed, uint256 amt) external {
+        address a = actors[seed % 3];
+        amt = bound(amt, 1e9, 50 ether);
+        vm.deal(a, a.balance + amt);
+        vm.prank(a);
+        try token.deposit{value: amt}(0, type(uint256).max) returns (uint256 s) {
+            ghostMinted += s;
+        } catch {}
+    }
+
+    function redeem(uint256 seed, uint256 amt) external {
+        address a = actors[seed % 3];
+        uint256 bal = token.balanceOf(a);
+        if (bal == 0) return;
+        uint256 s = bound(amt, 1, bal);
+        vm.prank(a);
+        try token.redeem(s, 0, type(uint256).max) returns (uint256) {
+            ghostBurned += s;
+        } catch {}
+    }
+
+    function reward(uint256 amt) external {
+        amt = bound(amt, 0, 100e9); // 9-dp alpha: validator emission / donation, never a slash
+        staking.addReward(hotkey, keccak256(abi.encode(address(token))), netuid, amt);
+    }
+}
+
+/// @notice Invariant suite for SzAlpha (#1) — the tier-mover. Drives deposit/redeem/reward (no slash) and
+///         asserts: (a) supply == net minted−burned (conservation, no admin mint path); (b) the rate never
+///         falls below genesis 1:1 absent a slash (floor rounding + dust-stays-staked are monotone-up).
+contract SzAlphaInvariantTest is Test {
+    address internal constant STAKING_V2 = 0x0000000000000000000000000000000000000805;
+    address internal constant ALPHA_PRECOMPILE = 0x0000000000000000000000000000000000000808;
+    address internal constant ADDRESS_MAPPING = 0x000000000000000000000000000000000000080C;
+    uint256 internal constant NETUID = 99;
+    bytes32 internal constant HOTKEY = bytes32(uint256(0xABCD));
+
+    SzAlpha internal token;
+    SzAlphaInvariantHandler internal handler;
+
+    function setUp() public {
+        vm.etch(STAKING_V2, address(new MockSubtensorStaking()).code);
+        vm.etch(ALPHA_PRECOMPILE, address(new MockAlphaPrecompile()).code);
+        vm.etch(ADDRESS_MAPPING, address(new MockAddressMapping()).code);
+        vm.deal(STAKING_V2, 1_000_000 ether);
+        MockSubtensorStaking(payable(STAKING_V2)).setPrice(1e9);
+        MockAlphaPrecompile(ALPHA_PRECOMPILE).setPrice(1e9);
+
+        SzAlpha impl = new SzAlpha();
+        bytes memory initData = abi.encodeCall(
+            SzAlpha.initialize, ("Staked xALPHA", "szALPHA", NETUID, HOTKEY, makeAddr("tl"), makeAddr("ca"))
+        );
+        token = SzAlpha(payable(address(new ERC1967Proxy(address(impl), initData))));
+
+        handler = new SzAlphaInvariantHandler(token, STAKING_V2, HOTKEY, NETUID);
+        targetContract(address(handler));
+    }
+
+    function invariant_supplyEqualsNetMintedBurned() public view {
+        assertEq(token.totalSupply(), handler.ghostMinted() - handler.ghostBurned(), "supply != net mint-burn");
+    }
+
+    function invariant_rateNeverBelowGenesisAbsentSlash() public view {
+        assertGe(token.exchangeRate(), 1e18, "rate fell below genesis 1:1 with no slash");
     }
 }
