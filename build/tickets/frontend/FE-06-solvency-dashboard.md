@@ -32,9 +32,9 @@ throws** (only `navEntry` is try/caught; everything else is a real fault if it t
 ```ts
 interface ZipSolvency {
   // metric 1 — NAV (all 6-dp USDC)
-  reservoirCash: bigint | undefined        // reservoirBorrowVault.cash()        — idle reserve
-  reservoirBorrows: bigint | undefined     // reservoirBorrowVault.totalBorrows() — par loan value
-  protocolNavUsdc: bigint | undefined      // reservoirBorrowVault.totalAssets()  — cash + borrows (THE NAV)
+  farmUtilityCash: bigint | undefined        // farmUtilityVault.cash()        — idle reserve
+  farmUtilityBorrows: bigint | undefined     // farmUtilityVault.totalBorrows() — par loan value
+  protocolNavUsdc: bigint | undefined      // farmUtilityVault.totalAssets()  — cash + borrows (THE NAV)
   seniorAumUsdc: bigint | undefined        // eePool.totalAssets()                — senior allocation row
   // metric 2 — zipUSD (18-dp) + derived ratio
   zipSupply: bigint | undefined            // zipUsd.totalSupply()
@@ -48,10 +48,10 @@ interface ZipSolvency {
   lossProvision: bigint | undefined        // navOracle.provision()  — 18-dp junior markdown (NAV sub-line)
   // metric 4 — utilization (6-dp USDC + derived bps)
   utilizationBps: bigint | undefined       // DERIVED — borrows·10000/totalAssets (guard /0)
-  freeLiquidityUsdc: bigint | undefined    // = reservoirCash (the protocol-level free reserve)
+  freeLiquidityUsdc: bigint | undefined    // = farmUtilityCash (the protocol-level free reserve)
   // metric 5 — insurance (18-dp xALPHA)
   xAlphaEscrowBal: bigint | undefined      // xAlpha.balanceOf(<lienXAlphaEscrow address>)
-  reservoirRateRay: bigint | undefined     // reservoirBorrowVault.interestRate() — per-second ray (1e27); 0 on fork
+  farmUtilityRateRay: bigint | undefined     // farmUtilityVault.interestRate() — per-second ray (1e27); 0 on fork
 }
 ```
 The three **deferred-source** §12 fields have NO struct entry (no MVP-fork source): **zipUSD peg** (no AMM),
@@ -63,7 +63,7 @@ flagged state from constants, not from a read (see "Flagged-state rendering" bel
   — the `10n**12n` scales the 6-dp USDC NAV up to the 18-dp zipUSD denomination **before** the bps multiply, so units
   cancel to pure bps. Worked: `(8_000_000_000 · 1e12 · 10000) / 2_000e18 = 8e25 / 2e21 = 40000` bps = 4.00×. Guard
   `zipSupply == 0` (→ undefined, "no supply").
-- `utilizationBps = !protocolNavUsdc ? undefined : (reservoirBorrows * 10000n) / protocolNavUsdc` — both operands are
+- `utilizationBps = !protocolNavUsdc ? undefined : (farmUtilityBorrows * 10000n) / protocolNavUsdc` — both operands are
   6-dp USDC (same denomination → no scaling). Worked: `6000·10000/8000 = 7500` bps = 75%. Guard `protocolNavUsdc==0`.
 
 ### Flagged-state rendering (the three deferred metrics — be concrete, do NOT fabricate a number)
@@ -81,10 +81,10 @@ under the NAV card (e.g. "loss provision: $0.00", 18-dp via `formatUnits(v,18)`)
 
 ### `ZcVaultAllocationTable` rows (derived inside the panel; exactly two, fixed order)
 1. **Senior Warehouse** — `name:'Senior Warehouse'`, `balanceUsdc: seniorAumUsdc` (6-dp string),
-   `apy: rateToApyPct(reservoirRateRay)`, `status:'Active'`.
-2. **Reservoir Credit Market** — `name:'Reservoir Credit Market'`, `balanceUsdc: protocolNavUsdc` (6-dp string),
-   `apy: rateToApyPct(reservoirRateRay)`, `status:'Active'`.
-Both rows show the **same `apy`** = the reservoir per-second-ray rate annualized — which on the MVP fork is **`'0'`**
+   `apy: rateToApyPct(farmUtilityRateRay)`, `status:'Active'`.
+2. **Farm utility Credit Market** — `name:'Farm utility Credit Market'`, `balanceUsdc: protocolNavUsdc` (6-dp string),
+   `apy: rateToApyPct(farmUtilityRateRay)`, `status:'Active'`.
+Both rows show the **same `apy`** = the farm utility per-second-ray rate annualized — which on the MVP fork is **`'0'`**
 (ZeroIRM stand-in, `interestRate()==0` → `apy='0'` → the table renders `0% APY`). That both rows show 0% is correct
 for the fork (a single 0% IRM); the senior/borrow split only diverges once a non-zero IRM is wired. `rateToApyPct`:
 for `ray==0n` return `'0'` (no math); for a non-zero ray, annualize via the **euler-lite rate helper**
@@ -108,19 +108,19 @@ confirmed present in `lib/zipcode/generated/registry.ts`). Reads go through the 
 (CORS-fails in the browser). Live fork values (anvil up @ `127.0.0.1:8545`, block ~47096195) shown per read.
 
 ### Metric 1 — Total protocol NAV (cash + marked loan value), §12 ¶1
-- **`reservoirBorrowVault`** = `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267` (EVK `IEVault`, `external/IEVault.json`).
-  The reservoir credit market **is** the warehouse lending vault; §12's "idle USDC (cash/reserve) + outstanding loan
+- **`farmUtilityVault`** = `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267` (EVK `IEVault`, `external/IEVault.json`).
+  The farm utility credit market **is** the warehouse lending vault; §12's "idle USDC (cash/reserve) + outstanding loan
   value [par]" maps **exactly** to its `cash()` + `totalBorrows()`:
   - `cash() view → uint256` (6-dp USDC, idle reserve). Live `2000000000` = $2,000.
   - `totalBorrows() view → uint256` (6-dp USDC, outstanding loan value at **par**). Live `6000000000` = $6,000.
   - `totalAssets() view → uint256` = `cash + totalBorrows` (6-dp). Live `8000000000` = $8,000. **This single read is
     the headline Total Protocol NAV** (cash + marked loan value); show `cash` + `totalBorrows` as its two components.
-  - **Do NOT add the senior EE pool `totalAssets` to this** — the EE pool *supplies into* the reservoir vault, so its
-    claim already resolves to the reservoir's `cash + borrows`; summing them double-counts (§12 ¶1 explicitly forbids
+  - **Do NOT add the senior EE pool `totalAssets` to this** — the EE pool *supplies into* the farm utility vault, so its
+    claim already resolves to the farm utility's `cash + borrows`; summing them double-counts (§12 ¶1 explicitly forbids
     double-counting "the lent-out USDC and the lien collateral … are two sides of one loan"). The EE pool is read
     separately as the **senior AUM** allocation row (below), not folded into NAV.
   - The §11/§12 **recovery markdown** on an *impaired* loan lives in the **junior** `SzipNavOracle.provision()` (borne
-    by szipUSD via the lower `navExit`), **not** subtracted from the senior reservoir NAV. Read `provision()` and show
+    by szipUSD via the lower `navExit`), **not** subtracted from the senior farm utility NAV. Read `provision()` and show
     it as a separate "loss provision" line; live `0` (no default on the M1 fork → par == recovery).
 - **`eePool`** = `0x1a7A8A5a6A2B34895201CFBC997C4eC419ba8A3d` (`EulerEarn`, `external/EulerEarn.json`).
   `totalAssets() view → uint256` (6-dp USDC, senior warehouse AUM). Live `9000000000` = $9,000. → the senior
@@ -158,7 +158,7 @@ confirmed present in `lib/zipcode/generated/registry.ts`). Reads go through the 
   beside it. No new contract surface owed (the APR is a CRE-published figure by design, §8.6/§8.8).
 
 ### Metric 4 — Utilization / free liquidity, §12 ¶4
-- **`reservoirBorrowVault`** (same as metric 1): `utilizationBps = totalBorrows * 10000 / totalAssets` (guard
+- **`farmUtilityVault`** (same as metric 1): `utilizationBps = totalBorrows * 10000 / totalAssets` (guard
   `totalAssets == 0`). Live `6000/8000` ⇒ `7500` bps = 75%. **Free liquidity** = `cash()` (6-dp); live $2,000.
   (`maxWithdraw(address)` exists but is per-account; `cash()` is the protocol-level free reserve — bind `cash`.)
 
@@ -179,11 +179,11 @@ confirmed present in `lib/zipcode/generated/registry.ts`). Reads go through the 
 ### ZcVaultAllocationTable — real protocol rows
 Feed `ZcVaultAllocationTable` real protocol-capital rows (replacing the mock single `VAULT_NAME` row), each
 `{ name, balanceUsdc (6-dp string), apy, status }`:
-- **Senior Warehouse (EulerEarn)** — `balanceUsdc` = `eePool.totalAssets()`; `apy` from the reservoir
+- **Senior Warehouse (EulerEarn)** — `balanceUsdc` = `eePool.totalAssets()`; `apy` from the farm utility
   `interestRate()` (see note); `status: 'Active'`.
-- **Reservoir Credit Market (EVK)** — `balanceUsdc` = `reservoirBorrowVault.totalAssets()`; same `apy`;
+- **Farm utility Credit Market (EVK)** — `balanceUsdc` = `farmUtilityVault.totalAssets()`; same `apy`;
   `status: 'Active'`.
-- **APY note:** `reservoirBorrowVault.interestRate() view → uint256` is the EVK **per-second ray (1e27) borrow rate**;
+- **APY note:** `farmUtilityVault.interestRate() view → uint256` is the EVK **per-second ray (1e27) borrow rate**;
   live `0` (the MVP uses the `ZeroIRM` 0%-rate stand-in, PROGRESS). Render **`0%`** honestly (do not fabricate a yield;
   the real rate arrives when a non-zero IRM is wired). If a non-zero rate is ever read, annualize per the euler-lite
   rate helper (see Model-from) rather than re-deriving the SPY→APY math by hand.
@@ -206,7 +206,7 @@ Feed `ZcVaultAllocationTable` real protocol-capital rows (replacing the mock sin
 - FE-01..FE-05 done. FE-03's `useZipPosition` + `ZcPositionPanel` are the read template; `ZcStatCard` +
   `ZcVaultAllocationTable` exist but are fed **mock** data (`store.ts` protocol seed + `data.ts` `VAULT_NAME`/
   `VAULT_APY`). No `useZipSolvency` composable or `ZcSolvencyPanel` component exists.
-- FE-01 registry includes every key bound here: `reservoirBorrowVault`, `eePool`, `zipUsd`, `szipUsd`, `navOracle`,
+- FE-01 registry includes every key bound here: `farmUtilityVault`, `eePool`, `zipUsd`, `szipUsd`, `navOracle`,
   `lienXAlphaEscrow`, `xAlpha` (confirmed in `lib/zipcode/generated/registry.ts`).
 - Anvil up @ `127.0.0.1:8545` (block ~47096195); all five metric sources live-read OK (values above).
 
@@ -215,7 +215,7 @@ Feed `ZcVaultAllocationTable` real protocol-capital rows (replacing the mock sin
 - Do **not** fabricate a value for a deferred-source metric. The three back-pressure metrics (**zipUSD peg**,
   **szipUSD/Duration-Bond APR**, **off-chain insurance**) render an explicit "par"/"pending"/"off-chain" state — never
   a made-up number. The on-chain legs beside them (NAV/share, xALPHA escrow fund) ARE real and shown.
-- Do **not** add `eePool.totalAssets` to the reservoir NAV (double-count, §12 ¶1). NAV = reservoir
+- Do **not** add `eePool.totalAssets` to the farm utility NAV (double-count, §12 ¶1). NAV = farm utility
   `totalAssets` (= cash + borrows); the EE pool is a separate allocation row.
 - Do **not** bind `navPerShare()` (absent — FE-03 seam) or `LienXAlphaEscrow.bondAmount` for an aggregate (per-lien).
 - Do **not** subtract `provision()` from the senior NAV — it is the junior markdown (reflected in `navExit`), shown as

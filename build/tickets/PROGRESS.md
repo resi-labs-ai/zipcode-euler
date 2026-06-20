@@ -53,6 +53,24 @@ prepared, contract fork still open); the solver sequences multi-Safe escrows und
   vault IS resting USDC" — renamed in place, the factual claim deliberately NOT rewritten here). `audit/` (embedded
   skills clone) left untracked. **NEXT unchanged: CRE-02c.**
 
+- **FE-09 note (2026-06-20) — the frontend half of the rename, APPLIED in the layer repo.** Companion to CTR-15;
+  lands the FE `reservoir*`→`farmUtility*` rename so the layer binds the renamed contracts (same release). **Code
+  committed to the LAYER repo `resi-labs-ai/zipcode-finance-euler`, branch `merge-flow-and-function`** (`a7f5653`) —
+  NOT this monorepo (the layer has its own `.git`; monorepo gitignores it). Mechanics: re-ran the layer's
+  `scripts/gen-zipcode-abis.mjs` off the **freshly-regenerated monorepo catalog** (`build/anvil/abi/index.json`,
+  refreshed to the canonical DeployLocal addresses in `8d0930f`) after updating its `KEY_TABLE` (6 name→key renames)
+  → `registry.ts` + `lib/zipcode/abi/*.ts` regenerated with new keys (`farmUtilityVault`/`farmUtilityEscrowVault`/
+  `farmUtilityLpOracle`/`farmUtilityLoopModule`/`farmUtilityRouter`/`usdcReservoir`), new addresses, renamed ABI
+  files; swept composables/components/store/pages/labels; product slug `zipcode-reservoir`→`zipcode-farm-utility`.
+  **Gate: `npm run build` (nuxt) GREEN**; binding proven (`szipUsd.name()` resolves the new address; the verifier's
+  only error is `navEntry()` `StalePrice` — a fresh-deploy no-feeds state condition, not a binding fault).
+  `freeReservoir` (the idle `eePool.maxWithdraw` read in `ZcLiquidityGauge.vue`) LEFT verbatim (row-29 carve-out).
+  **Caveat (reviewer-directed):** the layer branch carried pre-existing flow/function WIP interleaved with the
+  rename in shared files; committed together in `a7f5653` (couldn't split by file). **Monorepo side (this commit):**
+  the 6 sibling FE tickets (FE-00/01/05/06/07/08) swept `reservoir*`→`farmUtility*` — the work deferred when CTR-15
+  restored them — and FE-09 marked APPLIED. **Redeploy done this session:** anvil re-forked clean + full DeployLocal
+  (113/113 txs) so the catalog + chain + FE all agree on the new names. **NEXT unchanged: CRE-02c.**
+
 - **CRE-02b note (2026-06-20) — the reserve-gated redemption-funding leg, folded into `cre/warehouse` (default-OFF).**
   The (R) funding twin of CRE-02's reactive (K) `RedemptionJob`: it sizes + fires the warehouse REDEEM→REPAY so the
   redemption→buyback cycle runs without a human POSTing events. **Off-chain Go only — NO contract changed** (no

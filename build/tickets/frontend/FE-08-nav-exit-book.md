@@ -16,15 +16,15 @@
 3. `components/zipcode/ZcNavExitBookChart.vue` — the chart.js depth chart: a **NAV line at 100%** (annotation),
    the **protocol bid block** at `navExit×(1−d)` sized to `currentBid.sellAmount` (the live CRE-05a bid), and
    **external CoW orders fanned below** the floor (the "stinkbids"). Axis = % of NAV, never absolute $.
-4. `components/zipcode/ZcLiquidityGauge.vue` — the liquidity gauge: **free reservoir** + **utilization** (the
+4. `components/zipcode/ZcLiquidityGauge.vue` — the liquidity gauge: **free farm utility** + **utilization** (the
    reads that *explain* the protocol block's depth; tightens visibly as `U` rises). Fail-soft if a read is
    unavailable (degrade to what's readable; do not throw).
 5. `pages/lender/szip-exit-book.vue` — the page: the chart + the gauge + a "Sell to floor" exit CTA that
    **reuses the shipped `ZcWithdrawModal` / `useCowExit`** (no new exit logic).
 6. Registry additions IF NEEDED for the gauge (the FE-01 pattern): add `eulerEarn`, the warehouse Safe, and/or
    `durationFreeze` to `lib/zipcode/generated/registry.ts` + an ABI under `lib/zipcode/abi/` so the gauge can read
-   `EulerEarn.maxWithdraw(warehouse)` / `convertToAssets(balanceOf(warehouse))` (free reservoir + `U`), the
-   donation-immune §8.2 way. If extending the registry balloons scope, ship the gauge as free-reservoir-only or
+   `EulerEarn.maxWithdraw(warehouse)` / `convertToAssets(balanceOf(warehouse))` (free farm utility + `U`), the
+   donation-immune §8.2 way. If extending the registry balloons scope, ship the gauge as free-farm utility-only or
    defer it and SHIP the depth chart + protocol bid + external book first (log what was deferred).
 
 ## Spec §
@@ -72,7 +72,7 @@
    when `currentBid` is empty (no live protocol bid → show just the NAV line + an empty/"no resting bid" state).
 2. **% of NAV axis.** x maps a CoW order's USDC-per-share price to `price / navExit × 100`. The protocol block sits
    at `(1 − dBps/10_000) × 100`. y = cumulative USDC depth.
-3. **Liquidity gauge** explains the protocol depth (free reservoir + `U`), fail-soft.
+3. **Liquidity gauge** explains the protocol depth (free farm utility + `U`), fail-soft.
 4. **One-click exit** reuses the FE-04 spine (open `ZcWithdrawModal` prefilled to "sell to floor" = the
    `quoteMaxPrice` limit). No new signing/submit code.
 5. **Reads are null-guarded** (the `useRpcClient().client` may be absent) and never throw on the page; `navEntry`

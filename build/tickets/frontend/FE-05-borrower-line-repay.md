@@ -14,12 +14,12 @@
 >   on the line's borrow account)."* `openLine` installs the gating hook at `OP_BORROW | OP_LIQUIDATE` and **never hooks
 >   `OP_REPAY`** (`EulerVenueAdapter.sol:220`), so repay is ungated. Bind to `IEVault(lineRef).repay(amount,
 >   borrowAccount)` against the per-line **borrow vault** (`lineRef`), preceded by `usdc.approve(lineRef, amount)` —
->   exactly the proven in-repo EVK repay (`ReservoirLoopModule.repay`, `:248-263`: `approve(borrowVault, amt)` →
+>   exactly the proven in-repo EVK repay (`FarmUtilityLoopModule.repay`, `:248-263`: `approve(borrowVault, amt)` →
 >   `repay(amt, account)`). The repayer is **any wallet** (it credits `receiver = borrowAccount`; no controller
 >   enablement, no operator bit required) — that is the §4.4e permissionless property.
 > - **No back-pressure obligation owed.** Every surface this UI needs EXISTS: reads `getLine`/`observeDebt`
 >   (adapter) + `getLien`/`LienOriginated`/`LienStatusUpdated` (controller); the repay write is the EVK `repay` the
->   per-line vault already exposes (same EVK proxy as `reservoirBorrowVault`, whose ABI we reuse). Nothing is missing;
+>   per-line vault already exposes (same EVK proxy as `farmUtilityVault`, whose ABI we reuse). Nothing is missing;
 >   the "draw" the original FE-05 row implied as a borrower write was never owed — it is CRE-driven by design.
 >
 > **Live-state caveat (logged as a hole, not a contract gap):** the only line on the current post-smoke fork is
@@ -94,8 +94,8 @@ null-guarded) exactly like FE-02/03/04. Writes go through **`useZipTx`** (never 
     `LienReleased(bytes32 indexed lienId)` — emitted at close. (Both optional for the panel; default "active" when no
     status event, "released" if `LienReleased` seen / `!open`.)
 - **per-line `lineRef`** (the borrow vault — a runtime address, NOT a registry key; **same EVK proxy** as
-  `reservoirBorrowVault`, so reuse its ABI): `IEVault` — `asset() → address` (= USDC, verified), `debtOf(account) →
-  uint256`. **ABI = `ZIPCODE_CONTRACTS.reservoirBorrowVault.abi`** (the EVK `IEVault.json`; it carries `repay`/`debtOf`/
+  `farmUtilityVault`, so reuse its ABI): `IEVault` — `asset() → address` (= USDC, verified), `debtOf(account) →
+  uint256`. **ABI = `ZIPCODE_CONTRACTS.farmUtilityVault.abi`** (the EVK `IEVault.json`; it carries `repay`/`debtOf`/
   `asset`). Bind it to the runtime `lineRef` address.
 - **`usdc`** = `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (registry key `usdc`, `ERC20.json`, **6-dp**):
   `balanceOf(user) → uint256`, `allowance(user, lineRef) → uint256`, `decimals()` (= 6).
@@ -103,10 +103,10 @@ null-guarded) exactly like FE-02/03/04. Writes go through **`useZipTx`** (never 
 **Writes (both via `useZipTx`; the 1.3× buffer is reused, never re-implemented):**
 - `usdc.approve(lineRef, amount)` → `sendZipTx({ key: 'usdc', functionName: 'approve', args: [lineRef, amount] })`
   (the spender is just an arg; `to` = USDC, which IS a registry key). The approve **spender is the line vault itself**
-  (`lineRef`) — direct, NOT Permit2 (mirrors `ReservoirLoopModule.repay:251` `approve(borrowVault, amt)`).
+  (`lineRef`) — direct, NOT Permit2 (mirrors `FarmUtilityLoopModule.repay:251` `approve(borrowVault, amt)`).
 - `IEVault(lineRef).repay(amount, borrowAccount)` → the new **`sendRawZipTx({ to: lineRef, abi: EVAULT_ABI,
   functionName: 'repay', args: [amount, borrowAccount] })`** (raw because `lineRef` is a runtime address, not a registry
-  key). `EVAULT_ABI = ZIPCODE_CONTRACTS.reservoirBorrowVault.abi`. EVK `repay(uint256,address)` (`IEVault.sol:240`):
+  key). `EVAULT_ABI = ZIPCODE_CONTRACTS.farmUtilityVault.abi`. EVK `repay(uint256,address)` (`IEVault.sol:240`):
   pulls `amount` USDC from the connected wallet (the EVC-authenticated caller; the vault is `callThroughEVC`) and
   reduces `borrowAccount`'s debt. **`amount = type(uint256).max` repays exactly the full accrued debt** (EVK clamps; a
   finite over-repay reverts `E_RepayTooMuch`, per SP-04) — use max for "repay full".
@@ -127,7 +127,7 @@ null-guarded) exactly like FE-02/03/04. Writes go through **`useZipTx`** (never 
   `useRuntimeConfig()`; `formatUnits`/`parseUnits`/`maxUint256` from `viem`.
 
 ## Starting state
-- FE-00..04 done: registry + typed ABIs (`reservoirBorrowVault` → `IEVault` ABI; `usdc` → `ERC20`; `venueAdapter`,
+- FE-00..04 done: registry + typed ABIs (`farmUtilityVault` → `IEVault` ABI; `usdc` → `ERC20`; `venueAdapter`,
   `controller` present); `useZipTx` (the 1.3× gas-buffer write spine, `sendZipTx({ key, … })`); `useZipPosition` +
   `ZcPositionPanel` (the FE-03 read-view template); `useCowExit` + the rewritten `ZcWithdrawModal` (FE-04). The
   lender portfolio mounts a real position panel; the **borrower portfolio is still all mock** (`ZcDrawModal`/
@@ -152,7 +152,7 @@ null-guarded) exactly like FE-02/03/04. Writes go through **`useZipTx`** (never 
 - Do **not** re-implement the 1.3× gas buffer — `approve` uses `sendZipTx`; `repay` uses the new `sendRawZipTx`, which
   reuses the SAME buffer core.
 - Do **not** approve/repay against Permit2 — the EVK pull is a **direct** `approve(lineRef, amount)` on USDC (proven by
-  `ReservoirLoopModule.repay:251`).
+  `FarmUtilityLoopModule.repay:251`).
 - Do **not** perpetually poll on-chain state (§17 no-heartbeat) — reads fire on mount + `refreshKey` bump + post-write,
   not on an interval.
 - Do **not** float-scale. USDC/`observeDebt`/`equityMark`/`drawAmount` are **6-dp**; `bigint` math; `formatUnits(x, 6)`
@@ -186,10 +186,10 @@ null-guarded) exactly like FE-02/03/04. Writes go through **`useZipTx`** (never 
    - read `allowance(user, lineRef)`. If `< amount` (partial) or always-ensure for `full` → approve via
      `sendZipTx({ key: 'usdc', functionName: 'approve', args: [lineRef, full ? maxUint256 : amount] })`.
    - then `sendRawZipTx({ to: lineRef, abi: EVAULT_ABI, functionName: 'repay', args: [full ? maxUint256 : amount,
-     borrowAccount] })` (`EVAULT_ABI = ZIPCODE_CONTRACTS.reservoirBorrowVault.abi`).
+     borrowAccount] })` (`EVAULT_ABI = ZIPCODE_CONTRACTS.farmUtilityVault.abi`).
    - **Partial:** approve exact `amount` (only if `allowance < amount`); `repay(amount, borrowAccount)`. **Full:**
      approve `maxUint256` (only if `allowance < currentOwed`); `repay(maxUint256, borrowAccount)` so EVK clamps to the
-     accrued debt atomically (no dust, no `E_RepayTooMuch`). No allowance reset (note: `ReservoirLoopModule` resets to 0
+     accrued debt atomically (no dust, no `E_RepayTooMuch`). No allowance reset (note: `FarmUtilityLoopModule` resets to 0
      for module conservatism; the UI omits it for a 2-tx UX — the lingering allowance is the user's own to a
      repay-only vault).
 4. **`ZcLinePanel.vue` — read-only on-chain line surface (FE-03 panel shape).** Props `{ user?: Address, refreshKey?:
@@ -230,7 +230,7 @@ null-guarded) exactly like FE-02/03/04. Writes go through **`useZipTx`** (never 
   only displays line state.
 - **Repay = native EVK `repay` on `lineRef`, permissionless.** `usdc.approve(lineRef, amount)` → `IEVault(lineRef).
   repay(amount, borrowAccount)`. Direct approve to the vault (not Permit2). Any wallet may repay (credits `borrowAccount`).
-- **`lineRef` is a runtime address → `sendRawZipTx`.** Reuse `ZIPCODE_CONTRACTS.reservoirBorrowVault.abi` (the EVK
+- **`lineRef` is a runtime address → `sendRawZipTx`.** Reuse `ZIPCODE_CONTRACTS.farmUtilityVault.abi` (the EVK
   `IEVault` ABI) bound to `lineRef`. The buffer is shared, not re-implemented.
 - **"Repay full" = `maxUint256`** (EVK clamps to accrued debt; avoids dust + `E_RepayTooMuch`); approve `maxUint256` for
   the full path. **Partial = exact `amount`** approve+repay, input capped at `observeDebt`.
@@ -270,7 +270,7 @@ The four critics returned **spec-fidelity ALL PASS** (faithful to §4/§4.4e/§9
 no inbound obligation), **reference-verifier all bindings resolve** (every ABI method/event, registry key, viem export,
 and layer auto-import confirmed usable; the RPC proxy `euler-lite/server/api/rpc/[chainId].ts` explicitly allows
 `eth_getLogs` in `ALLOWED_METHODS`), and **frontend-binding back-pressure PASS** (every demanded surface exists; repay
-mechanics + the permissionless property confirmed against `EulerVenueAdapter.sol:220`/`ReservoirLoopModule.sol:251`).
+mechanics + the permissionless property confirmed against `EulerVenueAdapter.sol:220`/`FarmUtilityLoopModule.sol:251`).
 The junior-dev gaps were **ticket-precision only** — pinned here so the cold-build guesses nothing:
 
 1. **Event query = viem `getContractEvents`** (the proxy supports `eth_getLogs`): `client.value.getContractEvents({
@@ -291,7 +291,7 @@ The junior-dev gaps were **ticket-precision only** — pinned here so the cold-b
    immutable `lienId`/`equityMark`/`drawAmount` from `prev` (they don't change). Used by the modal on open + the panel
    post-repay refresh.
 4. **`EVAULT_ABI` = a local const** at the top of `useZipLine.ts`: `const EVAULT_ABI =
-   ZIPCODE_CONTRACTS.reservoirBorrowVault.abi` (the EVK `IEVault` ABI, reused for the runtime `lineRef`). `maxUint256`
+   ZIPCODE_CONTRACTS.farmUtilityVault.abi` (the EVK `IEVault` ABI, reused for the runtime `lineRef`). `maxUint256`
    imported from `viem`.
 5. **`useZipTx` returns `{ sendZipTx, sendRawZipTx }`;** `sendRawZipTx(...): Promise<SendZipTxResult>` (same `{ hash,
    receipt }`). Refactor the estimate→buffer→send→wait body into one private `sendBuffered({ to, data, value })`; both
@@ -324,7 +324,7 @@ The junior-dev gaps were **ticket-precision only** — pinned here so the cold-b
     (read-only view).
 
 ## Depends on
-FE-00 (layer boots — DONE), FE-01 (address book + typed ABIs incl. `reservoirBorrowVault`/`venueAdapter`/`controller`/
+FE-00 (layer boots — DONE), FE-01 (address book + typed ABIs incl. `farmUtilityVault`/`venueAdapter`/`controller`/
 `usdc` — DONE), FE-02 (`useZipTx` write spine — DONE; this ticket extends it with `sendRawZipTx`), FE-03
 (`useZipPosition`/`ZcPositionPanel` read-view template — DONE). No open obligations against FE-05 in PROGRESS (confirmed
 during the back-pressure check — every needed surface exists; the implied borrower "draw" write was never owed, it is

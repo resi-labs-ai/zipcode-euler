@@ -1,8 +1,8 @@
-# FE-07 — Euler-native vault dashboard: surface the real reservoir EVK market + senior EE pool through euler-lite's OWN lend/borrow/earn pages
+# FE-07 — Euler-native vault dashboard: surface the real farm utility EVK market + senior EE pool through euler-lite's OWN lend/borrow/earn pages
 
 > The euler-native counterpart to FE-06 (the Zipcode-protocol dashboard). FE-06 read the Zipcode contracts directly;
 > FE-07 makes euler-lite's **own** lend/borrow/earn surfaces render the live fork's **real Euler markets** — the
-> reservoir EVK borrow + escrow vaults and the senior `EulerEarn` pool — through euler-lite's existing data layer.
+> farm utility EVK borrow + escrow vaults and the senior `EulerEarn` pool — through euler-lite's existing data layer.
 > **Config + labels only — no new Zipcode composables, no contract writes.** The contract is truth (harness §1): the
 > back-pressure check below confirms every surface already exists and the markets already *render* from FE-00's labels;
 > the new work is the `entities.json` **addresses map** that upgrades them from a rendered-but-**unverified** chip to a
@@ -16,10 +16,10 @@ already sources the vault list from FE-00's `public/labels/8453/{products,earn-v
 the **entity governance declaration** that euler-lite's verification gate matches against. Ship:
 
 1. **`public/labels/8453/entities.json`** — add an `addresses` map to the existing `zipcode` entity declaring the
-   real on-chain governance authorities of the reservoir vaults + EE pool (the exact addresses + the schema are below).
+   real on-chain governance authorities of the farm utility vaults + EE pool (the exact addresses + the schema are below).
    This is the whole functional change. Keep `name`/`description`/`url` as FE-00 set them.
 
-No other files change. (FE-00 already wrote `products.json` with the 3 reservoir EVK vaults under the `zipcode-reservoir`
+No other files change. (FE-00 already wrote `products.json` with the 3 farm utility EVK vaults under the `zipcode-farm utility`
 product and `earn-vaults.json` with the senior EE pool; FE-00 also repointed RPC + labels-base + vault-source. FE-07
 adds the one map FE-00 left empty.)
 
@@ -33,20 +33,20 @@ adds the one map FE-00 left empty.)
 ## Binds to (verified against the live fork @ `127.0.0.1:8545`, chainId 8453)
 | Surface | Address | ABI / source | Role |
 |---|---|---|---|
-| reservoir borrow vault (USDC) | `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267` | `external/IEVault.json` | the borrow market (lend + borrow pages) |
-| reservoir escrow vault (LP collateral) | `0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1` | `external/IEVault.json` | borrow-pair collateral |
+| farm utility borrow vault (USDC) | `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267` | `external/IEVault.json` | the borrow market (lend + borrow pages) |
+| farm utility escrow vault (LP collateral) | `0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1` | `external/IEVault.json` | borrow-pair collateral |
 | base USDC market (resting; supply-queue head) | `0x3A48aaaa90CF3938290f12F6A1E58C1aeb54699D` | `external/IEVault.json` | a lend market |
 | senior EulerEarn pool (USDC) | `0x1a7A8A5a6A2B34895201CFBC997C4eC419ba8A3d` | `external/EulerEarn.json` | the earn page |
 
-These are the contract-map addresses already in FE-00's `products.json` (`zipcode-reservoir.vaults[]`) and
+These are the contract-map addresses already in FE-00's `products.json` (`zipcode-farm utility.vaults[]`) and
 `earn-vaults.json`. FE-07 does NOT touch those two files — it binds to the **on-chain governors/owners** of these
 vaults (read live, below) and declares them on the entity.
 
 ### The governance addresses to declare (read live; EIP-55 checksummed — `hasEntityAddress` is a case-sensitive `Object.keys(...).includes()`)
 | Address | What it governs on-chain | Read |
 |---|---|---|
-| `0x77C2Cb207Ee27F8fB5Fc1586da3Bfef40Fba3ffa` | reservoir borrow vault `governorAdmin` (the `ReservoirMarketDeployer` instance — see Finding A) | `cast call 0x1aFc… "governorAdmin()(address)"` |
-| `0x89ae086561ed831C4f5ebF31d825f0364C8c3B27` | TimelockController — the reservoir EulerRouter `governor()` (and the protocol root, contract-map "Roots") | `cast call 0x5a451f… "governor()(address)"` |
+| `0x77C2Cb207Ee27F8fB5Fc1586da3Bfef40Fba3ffa` | farm utility borrow vault `governorAdmin` (the `FarmUtilityMarketDeployer` instance — see Finding A) | `cast call 0x1aFc… "governorAdmin()(address)"` |
+| `0x89ae086561ed831C4f5ebF31d825f0364C8c3B27` | TimelockController — the farm utility EulerRouter `governor()` (and the protocol root, contract-map "Roots") | `cast call 0x5a451f… "governor()(address)"` |
 | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | `team` — base USDC market `governorAdmin` **and** the EE pool `owner()` | `cast call 0x3A48… "governorAdmin()"` / `cast call 0x1a7A… "owner()"` |
 
 Every declared address is a **real, live zipcode-controlled address on the fork** (the contract-map principals /
@@ -66,7 +66,7 @@ EIP-55 checksummed.
     "description": "On-chain home-equity credit warehouse on Base.",
     "url": "https://zipcode.finance",
     "addresses": {
-      "0x77C2Cb207Ee27F8fB5Fc1586da3Bfef40Fba3ffa": "Reservoir market deployer (borrow-vault governor)",
+      "0x77C2Cb207Ee27F8fB5Fc1586da3Bfef40Fba3ffa": "Farm utility market deployer (borrow-vault governor)",
       "0x89ae086561ed831C4f5ebF31d825f0364C8c3B27": "Timelock (router governor / protocol root)",
       "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": "Team multisig (base-market governor / EE owner)"
     }
@@ -90,7 +90,7 @@ Keep `name`/`description`/`url` exactly as FE-00 set them; only the `addresses` 
   fetches them via the SDK, and the client hydrate marks every snapshot vault `verified:true` from membership
   (`composables/useVaults.ts:200,255,615`; `verifiedAddresses = new Set(eVaultAddresses…)` at `:712-717`).
   `getVerifiedEVaults()` (`useVaultRegistry.ts:174`) and `isVerifiedVault()` (`:198`) filter on that membership flag.
-  ⇒ **the reservoir + EE vaults already render on lend/borrow/earn from FE-00 alone** (the lend list at
+  ⇒ **the farm utility + EE vaults already render on lend/borrow/earn from FE-00 alone** (the lend list at
   `pages/lend/index.vue:27`, the borrow pairs at `pages/borrow/index.vue:62` via `borrowList`, the earn list at
   `pages/earn/index.vue:30`).
 - **Verified BADGE = governor/owner ∈ the product's declared entity addresses.** The display components
@@ -100,19 +100,19 @@ Keep `name`/`description`/`url` exactly as FE-00 set them; only the `addresses` 
   (`isVaultGovernorVerified`): for a vault in a product, `getDeclaredEntityKeys` → the product's `entity` (`"zipcode"`)
   → and `hasEntityAddress("zipcode", governorAdmin)` must be true, plus the EulerRouter `governor` must also match.
   `hasEntityAddress` (`useVaults.ts:1076-1078`) = `Object.keys(entities["zipcode"].addresses ?? {}).includes(address)`
-  where `address` is `getAddress(governor)` (checksummed). With no `addresses` map, this is false ⇒ the reservoir
+  where `address` is `getAddress(governor)` (checksummed). With no `addresses` map, this is false ⇒ the farm utility
   market currently shows an **unverified** chip. Declaring the three governors above flips it to **verified**.
 - **EE pool**: `isEarnVaultOwnerVerified` — the EE pool is in `earn-vaults.json` but NOT in `products.json`, so
   `getDeclaredEntityKeys` returns `undefined` ⇒ the rule trusts it on earn-list membership alone and returns `true`
   **even without** an entities address (`governor-verification.ts:99-107`). Declaring its owner (`team`,
   `0xf39Fd…`) is harmless and future-proofs the pool if it is ever added to a product, but is not strictly required for
-  the earn page. (It IS required so the base USDC market and reservoir borrow vault verify — see the table.)
+  the earn page. (It IS required so the base USDC market and farm utility borrow vault verify — see the table.)
 
 ## Key requirements
 1. **Edit only `public/labels/8453/entities.json` in the layer.** Add `"addresses"` to the `zipcode` entity as a
    `Record<checksummedAddress, label>` (the `EulerLabelEntity.addresses: Record<string,string>` type,
    `euler-lite/entities/euler/labels.ts:6`). Keys = the three checksummed addresses from the table; values = short
-   honest labels (e.g. `"Reservoir market deployer (governor)"`, `"Timelock (router governor / protocol root)"`,
+   honest labels (e.g. `"Farm utility market deployer (governor)"`, `"Timelock (router governor / protocol root)"`,
    `"Team multisig (base-market governor / EE owner)"`). Do not invent addresses not read from the fork.
 2. **Checksum the keys.** They must byte-equal `getAddress(governor)`. The three `cast` outputs above are already
    EIP-55; if regenerating, run each through `viem getAddress`. A lowercase key silently fails the badge.
@@ -125,16 +125,16 @@ Keep `name`/`description`/`url` exactly as FE-00 set them; only the `addresses` 
    around anything.
 
 ## Findings to record (NOT FE-07 scope to fix — log at Conclude)
-- **Finding A — contract obligation (back-pressure owed to the contract track, NOT FE-07):** the reservoir **borrow
-  vault's `governorAdmin` is the throwaway `ReservoirMarketDeployer` instance `0x77C2Cb…`, never transferred to the
-  Timelock.** `ReservoirMarketDeployer.sol:88` transfers only the **router** governance to `p.governor` (the Timelock);
+- **Finding A — contract obligation (back-pressure owed to the contract track, NOT FE-07):** the farm utility **borrow
+  vault's `governorAdmin` is the throwaway `FarmUtilityMarketDeployer` instance `0x77C2Cb…`, never transferred to the
+  Timelock.** `FarmUtilityMarketDeployer.sol:88` transfers only the **router** governance to `p.governor` (the Timelock);
   the borrow vault is created via `factory.createProxy` (deployer = governor at birth, `:77`) and never gets
   `setGovernorAdmin(p.governor)`. The comment at `:75` ("Governor RETAINED so the Timelock can tune LTV/caps") is wrong
   for the borrow vault — the Timelock cannot govern it. FE workaround: declare the live deployer address so the market
   verifies today; once the contract transfers borrow-vault governance to the Timelock, the live `governorAdmin` becomes
   `0x89ae…` (already declared) and the deployer entry can be dropped. **Fragility note:** `0x77C2Cb…` is nonce-derived;
   a deploy-script change can move it → re-read `governorAdmin()` and update the entity after any redeploy.
-- **Finding B — fork-state limitation (no obligation, no config fix):** the reservoir **escrow collateral vault
+- **Finding B — fork-state limitation (no obligation, no config fix):** the farm utility **escrow collateral vault
   `0x8A5F…` is fork-deployed, so it is absent from Base's real `escrowedCollateralPerspective`** that
   `utils/vault/categories.ts:fetchEscrowAddressSet` reads → euler-lite classifies it `evk`, not `escrow`. Escrow vaults
   auto-pass `isVaultGovernorVerified` (`governor-verification.ts:64`), but this one won't, and its `governorAdmin` is
@@ -146,7 +146,7 @@ Keep `name`/`description`/`url` exactly as FE-00 set them; only the `addresses` 
 - `npm run build` (`nuxt build`) green in `frontend/zipcode-finance-euler/` — the gate is the build process exiting 0
   with no errors (NOT `npm run dev`, which EMFILE-floods; NOT a test-suite run — the JSON edit can't break TS types).
 - Against the live anvil (build + `node .output/server/index.mjs`, env exported per FE-00's `.env`, `HOST=127.0.0.1
-  PORT=3000`): `/api/vaults?chainId=8453` returns a snapshot containing the reservoir borrow vault, base USDC market,
+  PORT=3000`): `/api/vaults?chainId=8453` returns a snapshot containing the farm utility borrow vault, base USDC market,
   escrow vault (as evk), and the EE pool; and `/api/labels/entities.json?chainId=8453` returns the `zipcode` entity
   with the three addresses. (Page-route render is the same data path; the `/api/*` reads are the headless-verifiable
   proof — wallet-connect needs a Reown id per FE-00, out of scope here.)

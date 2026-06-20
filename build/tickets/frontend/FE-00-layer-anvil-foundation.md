@@ -15,7 +15,7 @@ UI. Concretely, three things, all committed to the layer repo:
 1. **`.env.example`** (committed) at the layer root: the documented anvil dev config. The running `.env` is
    `cp .env.example .env` (gitignored per the layer's HARD RULE #2 — commit the template, not the secrets/host
    file). The example must carry every var the boot needs (below).
-2. **A local euler-labels base** under `public/labels/8453/` — `products.json` (lists the deployed reservoir
+2. **A local euler-labels base** under `public/labels/8453/` — `products.json` (lists the deployed farm utility
    borrow + escrow + base-USDC EVK vaults → they resolve **verified**), `earn-vaults.json` (lists the senior
    **EulerEarn** pool → it appears on the earn page), `entities.json` (a `zipcode` entity for branding). Served
    statically at the layer origin and pointed at by `NUXT_PUBLIC_CONFIG_LABELS_BASE_URL`.
@@ -39,8 +39,8 @@ No `Zc*` Zipcode screens are touched this window. This is the foundation FE-01..
 | Wallet connect | `plugins/00.wagmi.ts:14-19,70` — needs `NUXT_PUBLIC_APP_KIT_PROJECT_ID` (Reown); empty ⇒ AppKit inits degraded | document the var; a real projectId is the operator's to supply |
 
 **Anvil address board** (`build/anvil/contract-map.md`, real-contract deploy 2026-06-10):
-- reservoir borrow vault (EVK) `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267`
-- reservoir escrow vault (EVK) `0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1`
+- farm utility borrow vault (EVK) `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267`
+- farm utility escrow vault (EVK) `0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1`
 - base USDC market (EVK, supply-queue head) `0x3A48aaaa90CF3938290f12F6A1E58C1aeb54699D`
 - senior **EulerEarn** pool (USDC) `0x1a7A8A5a6A2B34895201CFBC997C4eC419ba8A3d`
 
@@ -108,7 +108,7 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/                   
 curl -s -X POST http://127.0.0.1:3000/api/rpc/8453 \
   -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'                # → {"result":"0x2105"}
-curl -s 'http://127.0.0.1:3000/api/labels/products.json?chainId=8453'                 # → the 3 reservoir vaults
+curl -s 'http://127.0.0.1:3000/api/labels/products.json?chainId=8453'                 # → the 3 farm utility vaults
 curl -s 'http://127.0.0.1:3000/api/labels/earn-vaults.json?chainId=8453'              # → the senior pool
 ```
 
@@ -121,7 +121,7 @@ in `public/labels/` BEFORE `npm run build` (public/ is copied into `.output/publ
 2. `node .output/server/index.mjs` serves; `GET /` → **200**.
 3. `GET /api/rpc/8453` proxies to anvil: a JSON-RPC `eth_chainId` POST through it returns `0x2105` (8453),
    proving the browser read path reaches the fork (not live Base).
-4. `GET /api/labels/products.json?chainId=8453` returns the 3 reservoir vaults;
+4. `GET /api/labels/products.json?chainId=8453` returns the 3 farm utility vaults;
    `GET /api/labels/earn-vaults.json?chainId=8453` returns the senior pool — proving the local labels resolve.
 5. The committed artifacts (`.env.example`, `public/labels/8453/*.json`) are committed to the **layer repo**.
 

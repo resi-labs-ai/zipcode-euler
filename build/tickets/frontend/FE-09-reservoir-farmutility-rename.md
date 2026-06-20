@@ -5,8 +5,17 @@
 >
 > **SELF-EXCLUSION:** this ticket + CTR-15 are the rename SPEC — their old→new tables are excluded from the
 > history sweep (a blanket sweep collapses "X → Y" into "Y → Y"). Old names below are the rename SOURCE.
-> **STATUS 2026-06-20:** CTR-15 (the monorepo contract/CRE/ABI/doc side) is **APPLIED** on branch
-> `rename/reservoir-to-farmutility`; this FE side is **still PENDING in the layer repo** and must land same release.
+> **STATUS 2026-06-20:** CTR-15 (monorepo) **APPLIED** on `rename/reservoir-to-farmutility`. **FE-09 APPLIED**
+> on layer branch `merge-flow-and-function` (`resi-labs-ai/zipcode-finance-euler`): regenerated `registry.ts` +
+> `lib/zipcode/abi/*.ts` via `gen-zipcode-abis.mjs` off the refreshed catalog (new keys `farmUtilityVault`/
+> `farmUtilityEscrowVault`/`farmUtilityLpOracle`/`farmUtilityLoopModule`/`farmUtilityRouter`/`usdcReservoir`; old
+> ABI `.ts` cleared); swept composables/components/store/pages/labels off the new keys; fixed the product slug
+> `zipcode-reservoir`→`zipcode-farm-utility`. **Gate: `npm run build` GREEN** (nuxt build). `freeReservoir` (the
+> idle `eePool.maxWithdraw` read in `ZcLiquidityGauge.vue`) LEFT verbatim — the row-29 carve-out. Binding proven
+> live: `getZipcodeContract('szipUsd').read.name()` resolves the new address (`navEntry()` reverts `StalePrice`
+> only because the fresh deploy has no CRE feeds — a state condition, not a binding fault). The 6 sibling FE
+> tickets (FE-00/01/05/06/07/08) were swept `reservoir*`→`farmUtility*` in the monorepo (the work deferred in
+> CTR-15). MUST deploy same-release as CTR-15.
 
 ## Context — why
 The frontend is built against the OLD `reservoir*` vocabulary (~98 hits) and calls contract getters whose

@@ -78,17 +78,17 @@ in this table, the generator MUST throw (no silent guess) so the table is extend
 | `ZipcodeController` | `controller` | `xALPHA (MockERC20)` | `xAlpha` |
 | `EulerVenueAdapter` | `venueAdapter` | `ZeroIRM` | `zeroIrm` |
 | `ZipcodeOracleRegistry` | `oracleRegistry` | `EulerEarn pool` | `eePool` |
-| `CREGatingHook` | `creGatingHook` | `base USDC market (EVault)` | `baseUsdcMarket` |
-| `LienTokenFactory` | `lienTokenFactory` | `reservoir borrow vault (EVault)` | `reservoirBorrowVault` |
-| `zipUSD (ESynth)` | `zipUsd` | `reservoir escrow vault (EVault)` | `reservoirEscrowVault` |
-| `szipUSD` | `szipUsd` | `reservoir EulerRouter` | `reservoirRouter` |
+| `CREGatingHook` | `creGatingHook` | `base USDC market (EVault)` | `usdcReservoir` |
+| `LienTokenFactory` | `lienTokenFactory` | `farm utility borrow vault (EVault)` | `farmUtilityVault` |
+| `zipUSD (ESynth)` | `zipUsd` | `farm utility escrow vault (EVault)` | `farmUtilityEscrowVault` |
+| `szipUSD` | `szipUsd` | `farm utility EulerRouter` | `farmUtilityRouter` |
 | `ZipDepositModule` | `depositModule` | `main Safe` | `mainSafe` |
 | `ExitGate` | `exitGate` | `sidecar Safe` | `sidecarSafe` |
 | `SzipNavOracle` | `navOracle` | `warehouse Safe` | `warehouseSafe` |
 | `ZipRedemptionQueue` | `redemptionQueue` | `Baal DAO` | `baalDao` |
-| `SzipReservoirLpOracle` | `reservoirLpOracle` | `Loot` | `loot` |
+| `SzipFarmUtilityLpOracle` | `farmUtilityLpOracle` | `Loot` | `loot` |
 | `SzipBuyBurnModule` | `buyBurnModule` | `Shares` | `shares` |
-| `ReservoirLoopModule` | `reservoirLoopModule` | `USDC` | `usdc` |
+| `FarmUtilityLoopModule` | `farmUtilityLoopModule` | `USDC` | `usdc` |
 | `LpStrategyModule` | `lpStrategyModule` | `CoW GPv2Settlement` | `cowSettlement` |
 | `HarvestVoteModule` | `harvestVoteModule` | `POL ICHI vault` | `ichiVault` |
 | `ExerciseModule` | `exerciseModule` | `Hydrex ALM gauge` | `hydrexGauge` |
@@ -155,8 +155,8 @@ re-run the generator — out of scope for FE-01.
    `protocol`, `standin`, `external`, `demo`) so FE-02..07 each need only this one import. Keys come from the
    **Canonical key table** above (do not re-derive). Spot the FE-02..07 needs: `depositModule`, `zipUsd`,
    `szipUsd` (FE-02); `navOracle`, `szipUsd`, `zipUsd` (FE-03); `exitGate`, `redemptionQueue` (FE-04);
-   `venueAdapter`, `controller` (FE-05); `navOracle`, `zipUsd`, `reservoirBorrowVault`, `warehouseSafe`
-   (FE-06); `reservoirBorrowVault`, `eePool` (FE-07) — all present.
+   `venueAdapter`, `controller` (FE-05); `navOracle`, `zipUsd`, `farmUtilityVault`, `warehouseSafe`
+   (FE-06); `farmUtilityVault`, `eePool` (FE-07) — all present.
 3. **Typed.** Each address is a viem `Address` (`0x…`); each abi is `as const`;
    `ZipcodeContractKey = keyof typeof ZIPCODE_CONTRACTS`. `getZipcodeContract('szipUsd')` returns a typed
    contract whose `.read.name()` is inferred.
