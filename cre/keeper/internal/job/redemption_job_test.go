@@ -27,10 +27,11 @@ type redemptionStubReader struct {
 	zipUSD   common.Address
 	usdcAddr common.Address
 
-	scaleUp   *big.Int
-	pending   *big.Int
-	reserved  *big.Int
-	claimable *big.Int
+	scaleUp          *big.Int
+	pending          *big.Int
+	reserved         *big.Int
+	claimable        *big.Int
+	pendingRequester common.Address // zero = queue free
 
 	usdcBalQueue *big.Int // balanceOf on usdcAddr
 	idleZip      *big.Int // balanceOf on zipUSD
@@ -64,6 +65,8 @@ func (s redemptionStubReader) CallContract(ctx context.Context, call ethereum.Ca
 		return encodeUint(s.reserved), nil
 	case sel("maxWithdraw(address)"):
 		return encodeUint(s.claimable), nil
+	case sel("pendingRequester()"):
+		return encodeAddr(s.pendingRequester), nil
 	case sel("balanceOf(address)"):
 		// Key by call.To: usdcAddr → usdcBalQueue, zipUSD → idleZip.
 		if call.To != nil && *call.To == s.usdcAddr {
@@ -288,6 +291,69 @@ func TestRedemptionJob_EscrowGating(t *testing.T) {
 		}
 		if len(plan.Actions) != 0 {
 			t.Fatalf("expected no escrow leg (target 0), got %d actions", len(plan.Actions))
+		}
+	})
+}
+
+// Group 4b: escrow serialization guard (CTR-14 option a prep). Escrow fires only when
+// the queue is free for us (pendingRequester == 0 || == rqSafe); a FOREIGN requester
+// blocks escrow but NOT settle/claim.
+func TestRedemptionJob_EscrowSerialization(t *testing.T) {
+	scaleUp := bigStr("1000000000000")
+	foreign := common.HexToAddress("0xF0re190000000000000000000000000000000009")
+
+	base := func() redemptionStubReader {
+		r := redBaseReader()
+		r.scaleUp = scaleUp
+		r.pending = big.NewInt(0)
+		r.idleZip = bigStr("5000000000000") // 5e12
+		return r
+	}
+	target := bigStr("3000000000000")
+
+	// foreign pendingRequester ⇒ NO escrow leg.
+	t.Run("foreign_requester_blocks_escrow", func(t *testing.T) {
+		r := base()
+		r.pendingRequester = foreign
+		plan, err := NewRedemptionJob(redOfframp, target).Evaluate(context.Background(), r)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if len(plan.Actions) != 0 {
+			t.Fatalf("expected no escrow (foreign requester), got %d actions", len(plan.Actions))
+		}
+	})
+
+	// pendingRequester == our rqSafe ⇒ escrow fires.
+	t.Run("own_requester_allows_escrow", func(t *testing.T) {
+		r := base()
+		r.pendingRequester = redRqSafe
+		plan, err := NewRedemptionJob(redOfframp, target).Evaluate(context.Background(), r)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if len(plan.Actions) != 1 || selPrefix(plan.Actions[0].Data) != sel("requestRedeem(uint256)") {
+			t.Fatalf("expected lone requestRedeem (own requester), got %d actions", len(plan.Actions))
+		}
+	})
+
+	// foreign requester must NOT block settle/claim — only escrow is serialized.
+	t.Run("foreign_requester_does_not_block_settle_claim", func(t *testing.T) {
+		r := base()
+		r.pendingRequester = foreign
+		r.pending = bigStr("3000000000000")          // settle-able
+		r.usdcBalQueue = bigStr("1000000000000000000") // freeUsdc > 0
+		r.claimable = big.NewInt(7)
+		plan, err := NewRedemptionJob(redOfframp, target).Evaluate(context.Background(), r)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		// settle + claim fire; escrow blocked by the foreign requester ⇒ exactly 2 actions.
+		if len(plan.Actions) != 2 {
+			t.Fatalf("expected settle+claim (escrow blocked), got %d actions", len(plan.Actions))
+		}
+		if selPrefix(plan.Actions[0].Data) != sel("settleEpoch()") || selPrefix(plan.Actions[1].Data) != sel("claim(uint256)") {
+			t.Errorf("expected [settleEpoch, claim], got [%x, %x]", selPrefix(plan.Actions[0].Data), selPrefix(plan.Actions[1].Data))
 		}
 	})
 }

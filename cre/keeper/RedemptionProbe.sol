@@ -44,6 +44,9 @@ contract RedemptionProbe {
 
     // ---- scripted address getters (all resolve to THIS probe so reads hit here) ----
     function juniorTrancheSafe() external view returns (address) { return rqSafe; }
+    // pendingRequester() returns rqSafe so the escrow serialization guard (pendingRequester == 0 || == rqSafe)
+    // passes in the sim (escrow fires). A foreign value is exercised in the unit test, not here.
+    function pendingRequester() external view returns (address) { return rqSafe; }
     function queue() external view returns (address) { return address(this); }
     function zipUSD() external view returns (address) { return address(this); }
     function usdc() external view returns (address) { return address(this); }

@@ -89,6 +89,18 @@ func (j *RedemptionJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	if err != nil {
 		return chain.Plan{}, err
 	}
+	// The queue's current open requester (single-requester topology). The escrow leg
+	// only fires when the queue is FREE FOR US — pendingRequester is zero (no open
+	// request) or already our own rqSafe. Today (one junior Safe) this is always true,
+	// so it's a no-op; it PREPARES for serialization (CTR-14 option a): when a second
+	// junior Safe shares this one queue, each keeper waits its turn here instead of
+	// emitting a requestRedeem that the queue hard-reverts MultipleRequesters
+	// (ZipRedemptionQueue.sol:181-185). settle/claim are NOT gated on this — they act
+	// on whatever is pending/claimable regardless of requester.
+	pendingRequester, err := chain.CallAddress(ctx, r, queue, "pendingRequester()")
+	if err != nil {
+		return chain.Plan{}, err
+	}
 	reserved, err := chain.CallUint(ctx, r, queue, "reservedAssets()")
 	if err != nil {
 		return chain.Plan{}, err
@@ -145,7 +157,8 @@ func (j *RedemptionJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	// requestRedeem (escrow; default-OFF) — emit IFF escrow enabled (targetPending>0)
 	// AND gap = targetPending − pending > 0 AND escrow = floorToUnit(min(gap,idleZip),
 	// scaleUp) >= scaleUp (a sub-unit escrow would revert NotWholeUnit/ZeroAmount).
-	if j.targetPending.Sign() > 0 {
+	queueFreeForUs := pendingRequester == (common.Address{}) || pendingRequester == rqSafe
+	if j.targetPending.Sign() > 0 && queueFreeForUs {
 		gap := new(big.Int).Sub(j.targetPending, pending)
 		if gap.Sign() > 0 {
 			minGapIdle := gap
