@@ -68,6 +68,17 @@ type Config struct {
 	HarvestReserve   string `json:"harvestReserve"`   // 6-dp USDC held back for the harvest engine (CRE-06 constant)
 	SafetyBuffer     string `json:"safetyBuffer"`     // 6-dp USDC operational buffer (CRE-06 constant)
 	MaxRedeemPerTick string `json:"maxRedeemPerTick"` // 6-dp USDC per-tick REDEEM ceiling; "" / "0" ⇒ no upper clamp
+
+	// CRE-02c — the cross-silo redemption solver (the multi-pool generalization of the CRE-02b funding leg).
+	// DEFAULT-OFF: SolverEnabled is false unless explicitly set, so onSolverTick is a no-op (zero reads, zero
+	// writes) until ops activate it. K2 MUTUAL EXCLUSION: enable exactly ONE of FundingEnabled / SolverEnabled —
+	// both target the SAME shared-queue shortfall, so onFundingTick no-ops when SolverEnabled is true. REUSES the
+	// per-pool HarvestReserve / SafetyBuffer / MaxRedeemPerTick knobs above (NO CoverageGate — per-silo freeze is
+	// read from the registry).
+	SolverEnabled  bool     `json:"solverEnabled"`  // K3: false (default) ⇒ onSolverTick emits ZERO reports
+	SolverSchedule string   `json:"solverSchedule"` // cron schedule for onSolverTick (e.g. "0 */5 * * * *")
+	SiloRegistry   string   `json:"siloRegistry"`   // SiloRegistry address — the live silo set + per-silo gate source
+	Warehouses     []string `json:"warehouses"`     // the writable WAM set (the silo→WAM binding, joined by warehouseSafe)
 }
 
 // WarehouseOp is the consensus carrier (K2): STRING fields ONLY — unambiguously isIdenticalType
@@ -93,9 +104,13 @@ func initFn(cfg *Config, _ *slog.Logger, _ cre.SecretsProvider) (cre.Workflow[*C
 	//     AuthorizedKeys) is valid for the build; keys are Config-driven when wired live.
 	//   - cron.Trigger → onFundingTick: the reserve-gated redemption funding leg (CRE-02b), DEFAULT-OFF via
 	//     FundingEnabled. The cron fires regardless; onFundingTick returns immediately when funding is disabled.
+	//   - cron.Trigger → onSolverTick: the CRE-02c cross-silo redemption solver, DEFAULT-OFF via SolverEnabled
+	//     (the THIRD handler, K1). The cron fires regardless; onSolverTick returns immediately when disabled. K2:
+	//     enable exactly one of FundingEnabled / SolverEnabled (both fund the same shared-queue shortfall).
 	return cre.Workflow[*Config]{
 		cre.Handler(httpcap.Trigger(&httpcap.Config{}), onWarehouseOp),
 		cre.Handler(cron.Trigger(&cron.Config{Schedule: cfg.FundingSchedule}), onFundingTick),
+		cre.Handler(cron.Trigger(&cron.Config{Schedule: cfg.SolverSchedule}), onSolverTick),
 	}, nil
 }
 
@@ -265,10 +280,17 @@ func parsePositiveBig(s string) (*big.Int, error) {
 
 // ──────────────────────────────────────────────────────────────────────── the write path
 
-// writeReport generates a §8.0 report from the pre-encoded envelope and writes it to the warehouse receiver.
-// Copied from cre/coordinator/workflow.go (the proven WriteReport idiom), with the gas limit + receiver taken
-// from Config.
+// writeReport generates a §8.0 report from the pre-encoded envelope and writes it to the single configured
+// warehouse receiver (cfg.Warehouse). It delegates to writeReportTo — the CRE-04 / CRE-02b call sites are
+// unchanged.
 func writeReport(cfg *Config, runtime cre.Runtime, envelope []byte) error {
+	return writeReportTo(cfg, runtime, common.HexToAddress(cfg.Warehouse), envelope)
+}
+
+// writeReportTo generates a §8.0 report from the pre-encoded envelope and writes it to an EXPLICIT receiver
+// (CRE-02c: each silo's own WarehouseAdminModule). Copied from cre/coordinator/workflow.go (the proven
+// WriteReport idiom), with the gas limit from Config and the receiver passed in.
+func writeReportTo(cfg *Config, runtime cre.Runtime, receiver common.Address, envelope []byte) error {
 	report, err := runtime.GenerateReport(&cre.ReportRequest{
 		EncodedPayload: envelope,
 		EncoderName:    "evm",
@@ -284,7 +306,7 @@ func writeReport(cfg *Config, runtime cre.Runtime, envelope []byte) error {
 	}
 	client := &evm.Client{ChainSelector: cfg.ChainSelector}
 	_, err = client.WriteReport(runtime, &evm.WriteCreReportRequest{
-		Receiver:  common.HexToAddress(cfg.Warehouse).Bytes(),
+		Receiver:  receiver.Bytes(),
 		Report:    report,
 		GasConfig: &evm.GasConfig{GasLimit: gasLimit},
 	}).Await()

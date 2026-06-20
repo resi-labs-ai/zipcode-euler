@@ -56,6 +56,12 @@ func onFundingTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{},
 		logger.Info("warehouse funding: no-op (disabled)")
 		return struct{}{}, nil
 	}
+	// K2 (CRE-02c mutual exclusion): the multi-pool solver supersedes the single-pool funding leg — both fund the
+	// SAME shared-queue shortfall, so enabling both would double-count. SolverEnabled wins; funding no-ops.
+	if cfg.SolverEnabled {
+		logger.Info("warehouse funding: no-op (solver enabled — supersedes single-pool funding)")
+		return struct{}{}, nil
+	}
 	if strings.TrimSpace(cfg.Warehouse) == "" {
 		logger.Info("warehouse funding: no-op (warehouse unset)")
 		return struct{}{}, nil
