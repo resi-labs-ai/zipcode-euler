@@ -8,6 +8,7 @@ require (
 	github.com/smartcontractkit/cre-sdk-go v1.0.1-0.20251111122439-00032d582c18
 	github.com/smartcontractkit/cre-sdk-go/capabilities/blockchain/evm v1.0.0-beta.0
 	github.com/smartcontractkit/cre-sdk-go/capabilities/networking/http v0.0.0
+	github.com/smartcontractkit/cre-sdk-go/capabilities/scheduler/cron v0.9.0
 )
 
 require (
@@ -32,9 +33,13 @@ replace github.com/smartcontractkit/cre-sdk-go => ../../reference/cre-sdk-go
 
 replace github.com/smartcontractkit/cre-sdk-go/capabilities/blockchain/evm => ../../reference/cre-sdk-go/capabilities/blockchain/evm
 
-// This slice is http/event-driven (§8.5: no cron heartbeat). The networking/http capability replaces the
-// in-tree snapshot via the same relative-replace idiom (swapped in for the scaffold's scheduler/cron).
+// This slice carries TWO triggers (CRE-04 http manual-ops path + CRE-02b cron funding heartbeat) under the one
+// pinned workflow id. The networking/http capability replaces the in-tree snapshot via the relative-replace idiom.
 replace github.com/smartcontractkit/cre-sdk-go/capabilities/networking/http => ../../reference/cre-sdk-go/capabilities/networking/http
+
+// The scheduler/cron capability (CRE-02b funding heartbeat) replaces the in-tree snapshot — same relative-replace
+// idiom buyburn-bid uses.
+replace github.com/smartcontractkit/cre-sdk-go/capabilities/scheduler/cron => ../../reference/cre-sdk-go/capabilities/scheduler/cron
 
 // The shared §8.0 report-encoding library (CRE-00), via the same relative-replace idiom the SDK pins use.
 replace cre-zipreport => ../zipreport

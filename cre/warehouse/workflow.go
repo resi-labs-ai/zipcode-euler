@@ -40,6 +40,7 @@ import (
 
 	"github.com/smartcontractkit/cre-sdk-go/capabilities/blockchain/evm"
 	httpcap "github.com/smartcontractkit/cre-sdk-go/capabilities/networking/http"
+	"github.com/smartcontractkit/cre-sdk-go/capabilities/scheduler/cron"
 	"github.com/smartcontractkit/cre-sdk-go/cre"
 
 	zipreport "cre-zipreport"
@@ -56,6 +57,17 @@ type Config struct {
 	Warehouse      string   `json:"warehouse"`      // the WarehouseAdminModule receiver address (§17) — NOTE: Warehouse
 	WriteGasLimit  uint64   `json:"writeGasLimit"`  // WriteReport gas limit; 0 falls back to 600_000
 	AuthorizedKeys []string `json:"authorizedKeys"` // optional; reserved for http.Config (left empty here)
+
+	// CRE-02b — the reserve-gated redemption funding leg (the cron path). DEFAULT-OFF: FundingEnabled is false
+	// unless explicitly set, so onFundingTick is a no-op (zero reads, zero writes) until ops activate it. No new
+	// ADDRESS slots for safe/eePool/usdc/queue — those are read OFF the warehouse adapter (re-pointable, §17). The
+	// EXCEPTION is CoverageGate (the adapter has no gate getter), Config-sourced like buyburn-bid (zero ⇒ covered).
+	FundingEnabled   bool   `json:"fundingEnabled"`   // K3: false (default) ⇒ onFundingTick emits ZERO reports
+	FundingSchedule  string `json:"fundingSchedule"`  // cron schedule for onFundingTick (e.g. "0 */5 * * * *")
+	CoverageGate     string `json:"coverageGate"`     // ICoverageGate (DurationFreezeModule); zero ⇒ treat covered() = true
+	HarvestReserve   string `json:"harvestReserve"`   // 6-dp USDC held back for the harvest engine (CRE-06 constant)
+	SafetyBuffer     string `json:"safetyBuffer"`     // 6-dp USDC operational buffer (CRE-06 constant)
+	MaxRedeemPerTick string `json:"maxRedeemPerTick"` // 6-dp USDC per-tick REDEEM ceiling; "" / "0" ⇒ no upper clamp
 }
 
 // WarehouseOp is the consensus carrier (K2): STRING fields ONLY — unambiguously isIdenticalType
@@ -71,12 +83,19 @@ type WarehouseOp struct {
 	Dest   string `json:"dest"`   // 0x… 40-hex; repay ONLY (the pinned REPAY sink — must be redemptionBox on-chain)
 }
 
-func initFn(_ *Config, _ *slog.Logger, _ cre.SecretsProvider) (cre.Workflow[*Config], error) {
-	// One trigger: http.Trigger (§8.5 — the senior-warehouse ops are driven on demand by the off-chain
-	// redemption/recovery sequencer, NO cron heartbeat). An empty &httpcap.Config{} (no AuthorizedKeys) is
-	// valid for the build; keys are Config-driven when wired live.
+func initFn(cfg *Config, _ *slog.Logger, _ cre.SecretsProvider) (cre.Workflow[*Config], error) {
+	// TWO triggers, ONE workflow id (P1 — the option-(b) premise). The workflow id is per deployed binary, NOT per
+	// handler: a cre.Workflow[*Config] registers multiple cre.Handlers in one binary, so BOTH the http manual-ops
+	// path (onWarehouseOp, CRE-04) and the cron funding heartbeat (onFundingTick, CRE-02b) write under the
+	// warehouse's single pinned expectedWorkflowId. A separate CRE-02b binary could NOT WriteReport (the
+	// ReceiverTemplate pins exactly one author), which is why the sizing folds in here.
+	//   - http.Trigger → onWarehouseOp: the §8.5 manual-ops path (UNCHANGED). Empty &httpcap.Config{} (no
+	//     AuthorizedKeys) is valid for the build; keys are Config-driven when wired live.
+	//   - cron.Trigger → onFundingTick: the reserve-gated redemption funding leg (CRE-02b), DEFAULT-OFF via
+	//     FundingEnabled. The cron fires regardless; onFundingTick returns immediately when funding is disabled.
 	return cre.Workflow[*Config]{
 		cre.Handler(httpcap.Trigger(&httpcap.Config{}), onWarehouseOp),
+		cre.Handler(cron.Trigger(&cron.Config{Schedule: cfg.FundingSchedule}), onFundingTick),
 	}, nil
 }
 
