@@ -10,19 +10,72 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**NEXT = CRE-02c — cross-silo redemption solver** (`build/tickets/cre/CRE-02c-redemption-solver.md`). The
-multi-warehouse generalization of the just-built CRE-02b: enumerate the N silos, decide WHICH EE pool(s) to
-REDEEM from + the split (the open policy fork — pro-rata by free liquidity recommended for M1), respecting each
-pool's free-liquidity + coverage gate, fire per-silo REDEEM→REPAY into the one shared queue. Ships default-OFF.
-**Pre-verified this session (2026-06-20):** the on-chain accounting it binds to is BUILT — `SiloRegistry`
-(CTR-02, DONE) enumerates silos (`allSiloIds()`/`getSilo(id)`, per-silo `{eePool, warehouseSafe, active}`), and
-`SeniorNavAggregator` (CTR-05, DONE) already does the per-silo donation-immune free-liquidity read
-(`eePool.maxWithdraw(warehouseSafe)` + `convertToAssets(balanceOf)`). The unbuilt piece is purely the off-chain
-split orchestration. **Topology note:** it is N independent `{eePool, warehouseSafe}` pairs (one Safe per silo,
-each holding its own EE pool's shares), NOT one Safe holding many pools — REDEEM is per-silo, all REPAY into the
-shared `ZipRedemptionQueue`. CRE-02b is the single-pool base to generalize (it reads one warehouse adapter per
-tick by design). Adjacent open decision: **CTR-14** (N junior Safes vs the single-requester queue — keeper-half
-prepared, contract fork still open); the solver sequences multi-Safe escrows under option (a).
+**NEXT = reviewer picks.** With CRE-02c DONE (note below), the CRE redemption (R)/(K) stack is COMPLETE — CRE-02
+(K settle/claim) + CRE-02b (single-pool R funding) + CRE-02c (cross-silo R solver) + CRE-04 (warehouse op
+producer). There is **no standalone CRE producer left**. The remaining concrete candidates (reviewer releases one):
+- **SEAM-1** — CRE-03's material-move http trigger (additive, own-later; deferred by design).
+- **CTR-15 follow-up (b)** — the `FarmUtilityBorrowGuard.sol:12-13` accuracy-discrepancy ticket ("borrow vault IS
+  resting USDC" — renamed in place, the factual claim deliberately NOT rewritten during the rename). A small
+  contract-comment doc-accuracy fix.
+- **FE track** — frontend tickets in `build/tickets/frontend/` (anvil-grounded; FE-09 rename already APPLIED).
+- **CTR-14** — N junior Safes vs the single-requester queue (contract fork still open; keeper-half prepared). NOTE:
+  CRE-02c is unaffected — the solver writes only REDEEM/REPAY (no escrow leg), so it does not depend on CTR-14.
+
+- **CRE-02c note (2026-06-20) — the cross-silo redemption solver (`onSolverTick` → per-silo `WarehouseAdminModule`,
+  default-OFF), folded into `cre/warehouse`.** The multi-warehouse generalization of CRE-02b. **Off-chain Go only —
+  NO contract changed** (no backward `wires/` edit owed). Committed at `cre/warehouse/` (4 files: `solver.go` +
+  `solver_test.go` new, `funding.go` + `workflow.go` touched). **Both open forks RESOLVED at scoping:**
+  **Fork A (split policy) → pro-rata by GATED free-liquidity** (M-N1): the REDEEM shortfall splits across pools
+  proportional to each pool's `availP` (coverage-gated, reserve-netted, per-tick-clamped redeemable — NOT raw
+  `maxWithdraw`), so a starved/undercovered pool has `availP=0` ⇒ weight 0 ⇒ **skipped automatically** (the invariant
+  falls out of the weight). Utilization-balancing + curator-priority are own-later upgrades. **Fork B (topology) →
+  option (i), one binary, per-silo loop:** a THIRD default-OFF `cron` handler in the SAME binary writes REDEEM/REPAY
+  to EACH silo's own WAM — feasible because `ReceiverTemplate.onReport` gates on `msg.sender==forwarder` (shared by
+  deploy) + `workflowId==expectedWorkflowId` (a per-WAM deploy-config slot), so ONE workflow id is accepted by all
+  WAMs once each WAM's `expectedWorkflowId` is pinned to it (the OPERATIONAL precondition — the multi-silo echo of
+  the same single-id pin that forced CRE-02b's fold-in). **The silo→WAM binding is a CONFIG SEAM, not back-pressure:**
+  `SiloRegistry.Silo` has NO `warehouseAdminModule` field (the WAM is off-registry CRE plumbing), so the registry
+  gives the live-silo set + per-silo `freeze` and `cfg.Warehouses[]` gives the writable WAM set, joined 1:1 by the
+  unique `warehouseSafe` (a future on-chain-authoritative field is logged as a low-priority OPEN, not owed). **Each
+  tick (stateless/idempotent):** read the ONE shared-queue shortfall (CRE-02b math); enumerate `allSiloIds()`/`getSilo`,
+  skip `!active`; per pool `availP = covered(its freeze) ? clamp(maxWithdraw(safe) − HarvestReserve − SafetyBuffer,
+  0, MaxRedeemPerTick) : 0`; **REPAY** greedily drains each Safe's already-held USDC (global-bounded ⇒ Σ ≤ shortfall);
+  **REDEEM** splits the remainder pro-rata by `availP`, sized to shares via the same 4626 ratio (`redeemSharesP =
+  floor(redeemAssetsP·balanceOf(safe)/convertToAssets(balanceOf(safe)))`, conservative). **K2 mutual exclusion:**
+  enable exactly ONE of `fundingEnabled`/`solverEnabled` (both target the same shortfall — `onFundingTick` no-ops when
+  the solver is on; one-line guard). **Harness loop ran:** 4 critics (junior-dev / spec-fidelity / reference-verifier
+  / cre-binding). **spec-fidelity = FAITHFUL** (no invention; REPAY-un-gated/REDEEM-gated is the spec-correct split;
+  pro-rata-by-`availP` consistent with §6.3 contention + §8.2 reserve math; §17 honored; the (R)-routing + fold-in
+  consistent with CRE-02b; the "config seam not back-pressure" framing is honest — every input exists). **cre-binding
+  = byte-exact, NO mismatches** (REDEEM `(uint256 shares)` / REPAY `(address dest, uint256 amount)` match
+  `WarehouseAdminModule._processReport` `:172/:176`; `redeemSharesP` resolves to 18-dp EE shares, floors doubly
+  conservative ⇒ never over-redeems; `scaleUp=1e12` correct + read live; the N-receiver/one-workflow-id gate
+  admissible; REPAY `dest==queue` guaranteed by the per-WAM `redemptionBox()==queue` filter). **reference-verifier =
+  all 8 bindings resolve** (`SiloRegistry.allSiloIds/getSilo` + the 11-field struct ORDER verified; WAM getters;
+  `DurationFreezeModule.covered()`; queue getters; `zipreport.WhRedeem/WhRepayReport`; the reused Go helpers; the
+  3-handler `cre.Workflow` slice; the `bytes32[]`+tuple decode buildable under go-ethereum v1.17.2 — NET-NEW, no
+  in-repo precedent). **Ticket tightened pre-cold-build** with pins P1–P7 (the load-bearing P1: decode `getSilo` by
+  WORD OFFSET — the 11-field all-static tuple is an inline 352-byte blob, field i at word i, safe=1/eePool=2/freeze=7/
+  active=10 — NO go-ethereum tuple reflection, no precedent to mimic; P2 `readSiloIds → [][32]byte`; P3 assert per-WAM
+  `usdc()==usdc0` + `redemptionBox()==queue`; P4 file names; P5 the per-WAM-writeCap test idiom; P6 citation fixes;
+  P7 no-regression). **Gate green (my own `-count=1` re-run, not just the cold-build's):** `cd cre/warehouse &&
+  go build ./... && go vet ./... && GOOS=wasip1 GOARCH=wasm go build ./... && go test -count=1 ./...` — all pass (41
+  RUN; the 7 new `Solver*` tests + the unchanged `Funding*`/`Sim*`/`ParseAddress` op tests). **Non-vacuous:** the
+  test ENCODES its `getSilo` mock via the canonical 11-field abi tuple Pack (proving the word-offset decode against
+  the real layout), decodes the CAPTURED report bytes per silo (op asserted vs BOTH constant + literal, NOT trusting
+  zipreport), and proves K5(a)–(f): starved + undercovered pools skipped; exact 3:1 pro-rata (`shares1==3·shares2`);
+  Σfunded ≤ shortfall; `redeemAssetsP ≤ availP`; default-OFF/empty/no-shortfall/no-active ⇒ zero writes; per-WAM
+  routing correct. **Cold-build returned ZERO load-bearing guesses** (verified by my own gate re-run + full read of
+  solver.go/solver_test.go; its 2 "judgment calls" — using the registry's `eePool` given the `addSilo` topology
+  assert pins it == the WAM's, and test-fixture magnitudes derived from the pinned `availP` formula — are forced, not
+  invented). Committed — code only; no `build/`/`docs/`/`contracts/` staged in the code commit; HEAD verified (no
+  rogue commit). Ticket: `build/tickets/cre/CRE-02c-redemption-solver.md`. **Doc-sync:** no contract changed → no
+  backward `wires/` edit; forward `claude-zipcode.md` §8.5 gains a "(BUILT — CRE-02c)" note + the §8.11 CRE-02 row
+  marks 02c BUILT. ⚠️ **FLAG for reviewer (not mine, not committed):** the working tree carries pre-existing
+  uncommitted changes UNRELATED to CRE-02c — deleted `build/superintendent*.md`/`build/supply.md`, a modified
+  `contracts/test/AlgebraIchiFairLpOracle.t.sol`, and untracked `audit/` + `contracts/src/supply/x-ray/`. Left
+  untouched + unstaged (the long-standing parallel audit-prep noted in earlier windows). Decide whether to commit or
+  discard. **NEXT: reviewer picks** (candidates above).
 
 - **CTR-15 note (2026-06-20) — the "reservoir" → purpose-true rename (monorepo, naming-only, ZERO behavior change).**
   An interjected naming task (NOT a build-NEXT advance — NEXT stays CRE-02c). Headline: the idle-USDC store

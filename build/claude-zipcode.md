@@ -737,7 +737,22 @@ safetyBuffer, 0, maxRedeemPerTick) : 0`, and `redeemShares = redeemAssets·balan
 getter (that would fight the freeze over the same cash); this is the §8.2 `U = 1 − maxWithdraw/convertToAssets(balanceOf)`
 relationship read via the coverage surface, the load-bearing caution honored.** Ships inert (`fundingEnabled=false`
 ⇒ zero reports; manual ops POSTs remain the M1 path). The cross-silo chooser (which pool to REDEEM from) is the
-still-owed CRE-02c solver.
+CRE-02c solver (below — BUILT).
+
+**BUILT — CRE-02c cross-silo redemption solver (`cre/warehouse`, default-OFF, 2026-06-20):** the multi-warehouse
+generalization of CRE-02b, a THIRD default-OFF `cron` handler (`onSolverTick`) in the SAME binary (same
+single-`expectedWorkflowId` logic — one binary writes to every silo's `WarehouseAdminModule` iff each WAM's
+`expectedWorkflowId` is set to this workflow + the forwarder is shared, which the deploy already does). Each tick:
+read the ONE shared-queue shortfall (as CRE-02b); enumerate live silos off `SiloRegistry` (`allSiloIds()`/`getSilo`,
+skip `!active`); per silo compute `availP = covered(its freeze) ? clamp(maxWithdraw(safe) − harvestReserve −
+safetyBuffer, 0, maxRedeemPerTick) : 0`; **REPAY** greedily drains each Safe's already-held USDC toward the queue
+(global-bounded by the shortfall); **REDEEM** splits the remaining shortfall **pro-rata by `availP`** (Fork A,
+M-N1 policy — a starved/undercovered pool has `availP=0` ⇒ weight 0 ⇒ skipped), sized to shares via the same 4626
+ratio. Per-silo REPAY→REDEEM writes to each silo's own WAM. The silo→WAM binding is config (`cfg.Warehouses`) joined
+by `warehouseSafe` — the registry has no `warehouseAdminModule` field (a config seam, not back-pressure; the WAM is
+off-registry CRE plumbing). K2: enable exactly one of `fundingEnabled`/`solverEnabled` (both target the same
+shortfall — `onFundingTick` no-ops when the solver is on). Utilization-balancing + curator-priority splits are the
+own-later upgrades.
 
 ### 8.6 szipUSD share-price feeds (NAV legs + LP mark — the push-cache producers)
 > **BUILT — CRE-03 (`cre/sharefeeds/`, 2026-06-20).** The two feeds below ship as ONE wasip1 producer: an
@@ -943,7 +958,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 |---|---|---|---|
 | `CRE-00` | Project + secrets scaffold (DON-only `GetSecret`; `reference/cre-templates` layout) **+ the shared §8.0 `cre/zipreport` encoder package** — **BUILT 2026-06-19** (`cre/zipreport` lib + `cre/scaffold` template; gate green) | — | none |
 | `CRE-01` | **SPLIT into three (R) slices 2026-06-19** (cannot cold-build to zero guesses as one ticket — CTR-06/CTR-10 pattern): **CRE-01a** revaluation → registry (3, **gas-bounded sharded**, §8.1) **— BUILT 2026-06-19** (`cre/revaluation`); **CRE-01b** origination/draw/close/status → controller (1/2/4/5,6, §8.1, http+Proof-gate) **— BUILT 2026-06-19** (`cre/controller`); **CRE-01c** default/recovery → `DefaultCoordinator` (8, action family §8.4) **— BUILT 2026-06-20** (`cre/coordinator`). **CRE-01 family COMPLETE** (01a/01b/01c). Live status in PROGRESS. | report | DEC-01 (§8.9, RESOLVED) |
-| `CRE-02` | Redemption-settle: **(K) operator half BUILT 2026-06-20** (`cre/keeper` `RedemptionJob` — `settleEpoch`/`claim`/optional `requestRedeem`, reactive+idempotent, escrow default-OFF; gate green). The **(R) warehouse REDEEM→REPAY funding** is `cre/warehouse` (CRE-04, DONE); the cross-transport orchestration glue that fires it is the owed seam **CRE-02b**. | keeper (K) + report (R, CRE-04) | 8-Bw reconcile — DONE |
+| `CRE-02` | Redemption-settle: **(K) operator half BUILT 2026-06-20** (`cre/keeper` `RedemptionJob` — `settleEpoch`/`claim`/optional `requestRedeem`, reactive+idempotent, escrow default-OFF; gate green). The **(R) warehouse REDEEM→REPAY funding** is `cre/warehouse` (CRE-04, DONE); the single-pool funding glue **CRE-02b** is BUILT (`onFundingTick`, default-OFF), and the cross-silo chooser **CRE-02c** is BUILT (`onSolverTick`, default-OFF, pro-rata by gated free-liquidity). | keeper (K) + report (R, CRE-04/02b/02c) | 8-Bw reconcile — DONE |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipFarmUtilityLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REDEEM/REPAY** ops via the Roles adapter (§8.5) **— BUILT 2026-06-20** (`cre/warehouse`; http op-discriminant producer → `WarehouseAdminModule` opType 1/2/3/4 via `cre/zipreport`; all four ops incl. REDEEM so CRE-02 reuses the package; gate green). | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) — DONE |
 | `CRE-05` | Engine strategy-admin **operator** orchestrator (§8.7). **SPLIT:** exit half = **CRE-05a (DONE)**; the harvest loop (8-B5…8-B10) + main↔juniorTrancheSidecar rotation = **KEEPER-01b/01c** on the (K) keeper track (POLICY-BLOCKED/deferred). Live status in PROGRESS. | operator / (K) | none (operator-trusted; engine modules built) |
