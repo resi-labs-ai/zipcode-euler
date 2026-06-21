@@ -42,6 +42,13 @@ The CRE redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (C
   `FarmUtilityLoopModule.sol:18`+`:44` (committed source calling the borrow vault "the warehouse resting USDC
   vault" / borrowing "from the warehouse resting vault"); `x-ray/FarmUtilityBorrowGuard.md:11` (the x-ray doc's
   "is the warehouse's shared resting USDC"). All comment/doc-only.
+  **Pass 3 (final, own sweep):** tightened one borderline x-ray header (`FarmUtilityLoopModule.md:6` "borrow against
+  the warehouse's resting USDC" → "borrow OF … JIT-funded into the farm utility vault, collateralized by the LP").
+  **VERIFIED (not asserted) clean:** `claude-zipcode.md` never carried the identity claim (its "resting" hits are
+  all the CoW-book junior-exit order); the `freeReservoir = maxWithdraw` CRE reads (`cre/buyburn-bid`,
+  `cre/warehouse/solver.go`) are the intentional row-29 carve-out (the idle store, correctly named);
+  `CTR-02-SiloRegistry.md:83` (`30 − resting market − farm utility vault = 28`) corroborates the model (both are
+  enabled withdraw-queue markets; only `usdcReservoir` is in the SUPPLY queue). Final repo-wide sweep CLEAN.
   **Gate:** `forge build` green (comment-only ⇒ no bytecode change; the CTR-16 run's `forge test` 1041/0/3 stands).
   **Doc-sync:** the owning wire doc (8-B5) + the propagated siblings are the fix itself; `claude-zipcode.md`
   unaffected (it never carried the identity claim). Not committed yet (this note's commit pending). NEXT: reviewer

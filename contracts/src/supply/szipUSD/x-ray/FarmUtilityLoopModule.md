@@ -3,7 +3,8 @@
 > FarmUtilityLoopModule | 170 nSLOC | 2109fe5 (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE**
 
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/FarmUtilityLoopModule.sol`, the **#4 drill** — the
-8-B5 strike-financing **leverage loop** (EVK borrow against the warehouse's resting USDC). The highest-consequence
+8-B5 strike-financing **leverage loop** (EVK borrow of the warehouse's resting USDC — JIT-funded into the farm
+utility vault from `usdcReservoir`, collateralized by the LP). The highest-consequence
 fleet module after the value-out path: it borrows shared depositor cash. Connected to
 `test/FarmUtilityLoopModule.t.sol` — a 42-test suite that **also** covers adjacent contracts (the `SzipFarmUtilityLpOracle`,
 the already-drilled `FarmUtilityBorrowGuard`, and a farm utility-funding surface, CTR-07). The loop module's own coverage:
