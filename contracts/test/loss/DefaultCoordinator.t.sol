@@ -3,9 +3,9 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {DefaultCoordinator} from "../src/loss/DefaultCoordinator.sol";
-import {LienXAlphaEscrow} from "../src/loss/LienXAlphaEscrow.sol";
-import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
+import {DefaultCoordinator} from "../../src/loss/DefaultCoordinator.sol";
+import {LienXAlphaEscrow} from "../../src/loss/LienXAlphaEscrow.sol";
+import {SzipNavOracle} from "../../src/supply/SzipNavOracle.sol";
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 

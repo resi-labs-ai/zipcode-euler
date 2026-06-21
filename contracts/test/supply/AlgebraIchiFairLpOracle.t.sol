@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {ForkConfig} from "./ForkConfig.sol";
-import {AlgebraIchiFairLpOracle} from "../src/supply/AlgebraIchiFairLpOracle.sol";
-import {IchiAlgebraFairReserves} from "../src/supply/lib/IchiAlgebraFairReserves.sol";
-import {IICHIVault} from "../src/interfaces/ichi/IICHIVault.sol";
-import {IAlgebraPool} from "../src/interfaces/algebra/IAlgebraPool.sol";
-import {TickMath, FullMath} from "../src/libraries/ConcentratedLiquidity.sol";
+import {ForkConfig} from "../ForkConfig.sol";
+import {AlgebraIchiFairLpOracle} from "../../src/supply/AlgebraIchiFairLpOracle.sol";
+import {IchiAlgebraFairReserves} from "../../src/supply/lib/IchiAlgebraFairReserves.sol";
+import {IICHIVault} from "../../src/interfaces/ichi/IICHIVault.sol";
+import {IAlgebraPool} from "../../src/interfaces/algebra/IAlgebraPool.sol";
+import {TickMath, FullMath} from "../../src/libraries/ConcentratedLiquidity.sol";
 import {Errors} from "euler-price-oracle/adapter/BaseAdapter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {EulerRouter} from "euler-price-oracle/EulerRouter.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {FarmUtilityMarketDeployer} from "../script/FarmUtilityMarketDeployer.sol";
+import {BaseAddresses} from "../../script/BaseAddresses.sol";
+import {FarmUtilityMarketDeployer} from "../../script/FarmUtilityMarketDeployer.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 
 /// @notice A zero-rate IRM (EVK `IIRM` face) for the farm utility-market deploy-path test.

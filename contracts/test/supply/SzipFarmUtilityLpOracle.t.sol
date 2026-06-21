@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
+import {SzipFarmUtilityLpOracle} from "../../src/supply/SzipFarmUtilityLpOracle.sol";
 import {Errors} from "euler-price-oracle/adapter/BaseAdapter.sol";
 
 /// @notice A minimal mock whose `decimals()` returns a configurable value (the LP oracle reads it on the USDC quote).

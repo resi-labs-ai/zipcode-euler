@@ -2,21 +2,21 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
+import {ForkConfig} from "../ForkConfig.sol";
+import {BaseAddresses} from "../../script/BaseAddresses.sol";
 
-import {JuniorTrancheDeployer} from "../script/JuniorTrancheDeployer.s.sol";
-import {FarmUtilityMarketDeployer} from "../script/FarmUtilityMarketDeployer.sol";
-import {SiloRegistry} from "../src/SiloRegistry.sol";
+import {JuniorTrancheDeployer} from "../../script/JuniorTrancheDeployer.s.sol";
+import {FarmUtilityMarketDeployer} from "../../script/FarmUtilityMarketDeployer.sol";
+import {SiloRegistry} from "../../src/SiloRegistry.sol";
 
-import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
-import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
+import {SzipNavOracle} from "../../src/supply/SzipNavOracle.sol";
+import {SzipFarmUtilityLpOracle} from "../../src/supply/SzipFarmUtilityLpOracle.sol";
 
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
+import {ISafe} from "../../src/interfaces/safe/ISafe.sol";
 
 // =========================================================================== mocks
 

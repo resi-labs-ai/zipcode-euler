@@ -2,13 +2,13 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {IBaal} from "../src/interfaces/baal/IBaal.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
-import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
-import {ExitGate} from "../src/supply/szipUSD/ExitGate.sol";
-import {SzipUSD} from "../src/supply/szipUSD/SzipUSD.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {SummonSubstrate} from "../../../script/SummonSubstrate.s.sol";
+import {IBaal} from "../../../src/interfaces/baal/IBaal.sol";
+import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
+import {SzipNavOracle} from "../../../src/supply/SzipNavOracle.sol";
+import {ExitGate} from "../../../src/supply/szipUSD/ExitGate.sol";
+import {SzipUSD} from "../../../src/supply/szipUSD/SzipUSD.sol";
 
 // ---------------------------------------------------------------------------- mocks
 contract MockERC20 {

@@ -2,14 +2,14 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
-import {IModuleProxyFactory} from "../src/interfaces/zodiac/IModuleProxyFactory.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {BaseAddresses} from "../../../script/BaseAddresses.sol";
+import {SummonSubstrate} from "../../../script/SummonSubstrate.s.sol";
+import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
+import {IModuleProxyFactory} from "../../../src/interfaces/zodiac/IModuleProxyFactory.sol";
 
-import {DurationFreezeModule} from "../src/supply/szipUSD/DurationFreezeModule.sol";
-import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
+import {DurationFreezeModule} from "../../../src/supply/szipUSD/DurationFreezeModule.sol";
+import {SzipNavOracle} from "../../../src/supply/SzipNavOracle.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 

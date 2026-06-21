@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
-import {IBaal} from "../src/interfaces/baal/IBaal.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {BaseAddresses} from "../../../script/BaseAddresses.sol";
+import {SummonSubstrate} from "../../../script/SummonSubstrate.s.sol";
+import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
+import {IBaal} from "../../../src/interfaces/baal/IBaal.sol";
 
-import {FarmUtilityLoopModule} from "../src/supply/szipUSD/FarmUtilityLoopModule.sol";
-import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
-import {FarmUtilityBorrowGuard} from "../src/supply/szipUSD/FarmUtilityBorrowGuard.sol";
-import {FarmUtilityMarketDeployer} from "../script/FarmUtilityMarketDeployer.sol";
+import {FarmUtilityLoopModule} from "../../../src/supply/szipUSD/FarmUtilityLoopModule.sol";
+import {SzipFarmUtilityLpOracle} from "../../../src/supply/SzipFarmUtilityLpOracle.sol";
+import {FarmUtilityBorrowGuard} from "../../../src/supply/szipUSD/FarmUtilityBorrowGuard.sol";
+import {FarmUtilityMarketDeployer} from "../../../script/FarmUtilityMarketDeployer.sol";
 
-import {EulerVenueAdapter} from "../src/venue/EulerVenueAdapter.sol";
+import {EulerVenueAdapter} from "../../../src/venue/EulerVenueAdapter.sol";
 
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault, IBorrowing} from "evk/EVault/IEVault.sol";

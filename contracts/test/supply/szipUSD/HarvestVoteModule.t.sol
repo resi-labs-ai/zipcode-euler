@@ -3,17 +3,17 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {BaseAddresses} from "../../../script/BaseAddresses.sol";
+import {SummonSubstrate} from "../../../script/SummonSubstrate.s.sol";
+import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
 
-import {HarvestVoteModule} from "../src/supply/szipUSD/HarvestVoteModule.sol";
-import {IGauge} from "../src/interfaces/hydrex/IGauge.sol";
-import {IVoter} from "../src/interfaces/hydrex/IVoter.sol";
-import {IVotingEscrow} from "../src/interfaces/hydrex/IVotingEscrow.sol";
-import {IOptionToken} from "../src/interfaces/hydrex/IOptionToken.sol";
-import {IRewardsDistributor} from "../src/interfaces/hydrex/IRewardsDistributor.sol";
+import {HarvestVoteModule} from "../../../src/supply/szipUSD/HarvestVoteModule.sol";
+import {IGauge} from "../../../src/interfaces/hydrex/IGauge.sol";
+import {IVoter} from "../../../src/interfaces/hydrex/IVoter.sol";
+import {IVotingEscrow} from "../../../src/interfaces/hydrex/IVotingEscrow.sol";
+import {IOptionToken} from "../../../src/interfaces/hydrex/IOptionToken.sol";
+import {IRewardsDistributor} from "../../../src/interfaces/hydrex/IRewardsDistributor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 

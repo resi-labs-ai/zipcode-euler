@@ -2,15 +2,15 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {BaseAddresses} from "../../../script/BaseAddresses.sol";
+import {SummonSubstrate} from "../../../script/SummonSubstrate.s.sol";
+import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
 
-import {LpStrategyModule} from "../src/supply/szipUSD/LpStrategyModule.sol";
-import {IICHIVault} from "../src/interfaces/ichi/IICHIVault.sol";
-import {IGauge} from "../src/interfaces/hydrex/IGauge.sol";
-import {IVoter} from "../src/interfaces/hydrex/IVoter.sol";
+import {LpStrategyModule} from "../../../src/supply/szipUSD/LpStrategyModule.sol";
+import {IICHIVault} from "../../../src/interfaces/ichi/IICHIVault.sol";
+import {IGauge} from "../../../src/interfaces/hydrex/IGauge.sol";
+import {IVoter} from "../../../src/interfaces/hydrex/IVoter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 

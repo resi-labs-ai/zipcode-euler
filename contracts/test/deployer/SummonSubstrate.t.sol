@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {ForkConfig} from "./ForkConfig.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {IBaal} from "../src/interfaces/baal/IBaal.sol";
-import {IBaalToken} from "../src/interfaces/baal/IBaalToken.sol";
-import {IBaalAndVaultSummoner} from "../src/interfaces/baal/IBaalAndVaultSummoner.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
+import {ForkConfig} from "../ForkConfig.sol";
+import {SummonSubstrate} from "../../script/SummonSubstrate.s.sol";
+import {BaseAddresses} from "../../script/BaseAddresses.sol";
+import {IBaal} from "../../src/interfaces/baal/IBaal.sol";
+import {IBaalToken} from "../../src/interfaces/baal/IBaalToken.sol";
+import {IBaalAndVaultSummoner} from "../../src/interfaces/baal/IBaalAndVaultSummoner.sol";
+import {ISafe} from "../../src/interfaces/safe/ISafe.sol";
 
 /// @notice 8-B1 substrate scaffold — Base-mainnet fork test. Summons against the LIVE
 /// `BaalAndVaultSummoner` and proves the substrate is correctly configured AND driveable (the whole point:

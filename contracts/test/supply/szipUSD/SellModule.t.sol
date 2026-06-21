@@ -3,14 +3,14 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {BaseAddresses} from "../../../script/BaseAddresses.sol";
+import {SummonSubstrate} from "../../../script/SummonSubstrate.s.sol";
+import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
 
-import {SellModule} from "../src/supply/szipUSD/SellModule.sol";
-import {ISwapRouter} from "../src/interfaces/algebra/ISwapRouter.sol";
-import {IAlgebraPool} from "../src/interfaces/algebra/IAlgebraPool.sol";
+import {SellModule} from "../../../src/supply/szipUSD/SellModule.sol";
+import {ISwapRouter} from "../../../src/interfaces/algebra/ISwapRouter.sol";
+import {IAlgebraPool} from "../../../src/interfaces/algebra/IAlgebraPool.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 

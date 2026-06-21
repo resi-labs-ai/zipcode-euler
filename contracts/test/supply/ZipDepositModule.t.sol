@@ -2,17 +2,17 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
+import {ForkConfig} from "../ForkConfig.sol";
+import {SummonSubstrate} from "../../script/SummonSubstrate.s.sol";
 import {EthereumVaultConnector} from "ethereum-vault-connector/EthereumVaultConnector.sol";
 import {ESynth} from "evk/Synths/ESynth.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IBaal} from "../src/interfaces/baal/IBaal.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
-import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
-import {ExitGate} from "../src/supply/szipUSD/ExitGate.sol";
-import {SzipUSD} from "../src/supply/szipUSD/SzipUSD.sol";
-import {ZipDepositModule} from "../src/supply/ZipDepositModule.sol";
+import {IBaal} from "../../src/interfaces/baal/IBaal.sol";
+import {ISafe} from "../../src/interfaces/safe/ISafe.sol";
+import {SzipNavOracle} from "../../src/supply/SzipNavOracle.sol";
+import {ExitGate} from "../../src/supply/szipUSD/ExitGate.sol";
+import {SzipUSD} from "../../src/supply/szipUSD/SzipUSD.sol";
+import {ZipDepositModule} from "../../src/supply/ZipDepositModule.sol";
 
 // =========================================================================================== mocks
 /// @dev Minimal configurable-decimals ERC20 (USDC stand-in, EE share base, mock szipUSD). No fee-on-transfer.

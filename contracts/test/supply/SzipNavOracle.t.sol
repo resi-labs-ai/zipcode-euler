@@ -2,14 +2,14 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
+import {SzipNavOracle} from "../../src/supply/SzipNavOracle.sol";
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {IICHIVault} from "../src/interfaces/ichi/IICHIVault.sol";
-import {IAlgebraPool} from "../src/interfaces/algebra/IAlgebraPool.sol";
-import {IAlgebraOraclePlugin} from "../src/interfaces/algebra/IAlgebraOraclePlugin.sol";
-import {IGauge} from "../src/interfaces/hydrex/IGauge.sol";
-import {IOptionToken} from "../src/interfaces/hydrex/IOptionToken.sol";
+import {IICHIVault} from "../../src/interfaces/ichi/IICHIVault.sol";
+import {IAlgebraPool} from "../../src/interfaces/algebra/IAlgebraPool.sol";
+import {IAlgebraOraclePlugin} from "../../src/interfaces/algebra/IAlgebraOraclePlugin.sol";
+import {IGauge} from "../../src/interfaces/hydrex/IGauge.sol";
+import {IOptionToken} from "../../src/interfaces/hydrex/IOptionToken.sol";
 
 // --------------------------------------------------------------------------- mocks
 contract MockToken {

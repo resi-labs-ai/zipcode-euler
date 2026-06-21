@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {DeployZipcode} from "../script/DeployZipcode.s.sol";
+import {ForkConfig} from "../ForkConfig.sol";
+import {BaseAddresses} from "../../script/BaseAddresses.sol";
+import {DeployZipcode} from "../../script/DeployZipcode.s.sol";
 
 /// @title DeployZipcode.t.sol — item-10 deploy/wiring FORK-EXECUTION harness (SCAFFOLD)
 /// @notice Runnable skeleton for the NEXT window. The deploy orchestrator

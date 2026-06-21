@@ -3,16 +3,16 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
-import {SummonSubstrate} from "../script/SummonSubstrate.s.sol";
-import {ISafe} from "../src/interfaces/safe/ISafe.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {BaseAddresses} from "../../../script/BaseAddresses.sol";
+import {SummonSubstrate} from "../../../script/SummonSubstrate.s.sol";
+import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
 
 import {EthereumVaultConnector} from "ethereum-vault-connector/EthereumVaultConnector.sol";
 import {ESynth} from "evk/Synths/ESynth.sol";
 
-import {RecycleModule, IZipDepositModule, IEulerEarn} from "../src/supply/szipUSD/RecycleModule.sol";
-import {ZipDepositModule} from "../src/supply/ZipDepositModule.sol";
+import {RecycleModule, IZipDepositModule, IEulerEarn} from "../../../src/supply/szipUSD/RecycleModule.sol";
+import {ZipDepositModule} from "../../../src/supply/ZipDepositModule.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 

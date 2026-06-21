@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {LienXAlphaEscrow} from "../src/loss/LienXAlphaEscrow.sol";
+import {LienXAlphaEscrow} from "../../src/loss/LienXAlphaEscrow.sol";
 
 // =========================================================================================== mocks
 /// @dev Minimal configurable-decimals ERC20 (xALPHA stand-in). No fee-on-transfer, non-rebasing — matches the

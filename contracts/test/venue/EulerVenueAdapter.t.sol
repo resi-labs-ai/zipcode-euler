@@ -2,17 +2,17 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {ForkConfig} from "./ForkConfig.sol";
-import {BaseAddresses} from "../script/BaseAddresses.sol";
+import {ForkConfig} from "../ForkConfig.sol";
+import {BaseAddresses} from "../../script/BaseAddresses.sol";
 
-import {EulerVenueAdapter} from "../src/venue/EulerVenueAdapter.sol";
-import {IZipcodeVenue} from "../src/venue/IZipcodeVenue.sol";
-import {LineAccount} from "../src/venue/LineAccount.sol";
-import {CREGatingHook} from "../src/CREGatingHook.sol";
-import {ZipcodeOracleRegistry} from "../src/ZipcodeOracleRegistry.sol";
-import {LienCollateralToken} from "../src/LienCollateralToken.sol";
-import {SzipPerspectiveProbe} from "../script/SzipPerspectiveProbe.sol";
-import {LineIrm} from "../script/LineIrm.sol";
+import {EulerVenueAdapter} from "../../src/venue/EulerVenueAdapter.sol";
+import {IZipcodeVenue} from "../../src/venue/IZipcodeVenue.sol";
+import {LineAccount} from "../../src/venue/LineAccount.sol";
+import {CREGatingHook} from "../../src/CREGatingHook.sol";
+import {ZipcodeOracleRegistry} from "../../src/ZipcodeOracleRegistry.sol";
+import {LienCollateralToken} from "../../src/LienCollateralToken.sol";
+import {SzipPerspectiveProbe} from "../../script/SzipPerspectiveProbe.sol";
+import {LineIrm} from "../../script/LineIrm.sol";
 
 import {RPow} from "evk/EVault/shared/lib/RPow.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";

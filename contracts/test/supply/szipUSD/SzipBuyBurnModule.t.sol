@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-import {ForkConfig} from "./ForkConfig.sol";
-import {SzipBuyBurnModule} from "../src/supply/szipUSD/SzipBuyBurnModule.sol";
-import {CloneReportReceiver} from "../src/supply/szipUSD/CloneReportReceiver.sol";
+import {ForkConfig} from "../../ForkConfig.sol";
+import {SzipBuyBurnModule} from "../../../src/supply/szipUSD/SzipBuyBurnModule.sol";
+import {CloneReportReceiver} from "../../../src/supply/szipUSD/CloneReportReceiver.sol";
 import {IReceiver} from "x402-cre-price-alerts/interfaces/IReceiver.sol";
 import {IERC165} from "x402-cre-price-alerts/interfaces/IERC165.sol";
-import {IGPv2Settlement} from "../src/interfaces/cow/IGPv2Settlement.sol";
-import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
+import {IGPv2Settlement} from "../../../src/interfaces/cow/IGPv2Settlement.sol";
+import {SzipNavOracle} from "../../../src/supply/SzipNavOracle.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
