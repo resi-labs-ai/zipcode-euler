@@ -30,8 +30,14 @@ The CRE redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (C
   `:12-13` + the `juniorTrancheEngine` field `@notice`); `docs/wires/8-B5-FarmUtilityLoop.md` (Role para + the
   `borrowVault` cross-component bullet); `docs/wires/8-Bw-CreditWarehouse.md` (the row-333 supply-queue bullet);
   `docs/wires/WOOF-04.md` (the stale `farm-utility-borrow-vault-as-resting-vault` obligation → superseded-by-CTR-07);
-  `build/pending-docs/auto-compounder.md` (6 spots — the borrow source named the "USDC Resting Vault"). **Gate:**
-  `forge build` green (comment-only ⇒ no bytecode change; the CTR-16 run's `forge test` 1041/0/3 stands).
+  `build/pending-docs/auto-compounder.md` (6 spots — the borrow source named the "USDC Resting Vault"). **Double-check
+  correction (caught on review):** the as-built EE config (`DeployLocal._configureEulerEarn:155-162`) caps BOTH
+  `usdcReservoir` and the farm utility borrow vault as markets but sets the **supply queue to `[usdcReservoir]`
+  ONLY** — the borrow vault is reallocate-reachable but deliberately OUT of the supply queue (so deposits never
+  auto-route into a borrowable vault). My first pass wrongly wrote "both markets sit in the supply queue" in
+  `8-Bw`/`WOOF-04`; corrected. Also fixed a THIRD stale claim missed in pass 1: `DeployZipcode.s.sol:70` said
+  "pointing the EE supply queue at the farm utility borrow vault" → corrected to the resting `usdcReservoir`.
+  **Gate:** `forge build` green (comment-only ⇒ no bytecode change; the CTR-16 run's `forge test` 1041/0/3 stands).
   **Doc-sync:** the owning wire doc (8-B5) + the propagated siblings are the fix itself; `claude-zipcode.md`
   unaffected (it never carried the identity claim). Not committed yet (this note's commit pending). NEXT: reviewer
   picks (SEAM-1 / FE track / CTR-14).

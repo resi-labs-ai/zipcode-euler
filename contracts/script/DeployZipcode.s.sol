@@ -67,7 +67,9 @@ import {ISafe} from "../src/interfaces/safe/ISafe.sol";
 ///      broadcaster MUST be `TEAM_MULTISIG` (the Safe `v==1` pre-validated path needs `msg.sender == owner`).
 ///
 ///      EE-pool ABI avoidance: `EULER_EARN_FACTORY.createEulerEarn(...)` and the EE admin config (setIsAllocator /
-///      setCurator / setFeeRecipient / setFee, and pointing the EE supply queue at the farm utility borrow vault) are
+///      setCurator / setFeeRecipient / setFee, capping the resting `usdcReservoir` + the farm utility borrow vault as
+///      EE markets, and pointing the EE supply queue at the resting `usdcReservoir` ONLY — the borrow vault is
+///      capped/reallocate-reachable but kept OUT of the supply queue so deposits never auto-route into it) are
 ///      FORK-ONLY curator ops whose admin ABI is intentionally NOT in the local `IEulerEarn` shim (we do not compile
 ///      EulerEarn source). They are taken as PRE-STEP env inputs here: `EE_POOL` (the created USDC EulerEarn pool)
 ///      and `USDC_RESERVOIR` (the no-borrow USDC EVault at the EE supply-queue head) are env addresses. The EE

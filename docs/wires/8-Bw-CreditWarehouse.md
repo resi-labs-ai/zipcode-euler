@@ -166,13 +166,15 @@ blindly (a front-run with different init params resolves to a different address;
   infinite); verify at item-10 whether the live EulerEarn is upgradeable / curator-controlled.
 - **Non-commingling asserts (row 364f, §11):** assert `redemptionBox != juniorBaalSafe` **and** `safe !=
   juniorBaalSafe` at deploy.
-- **EE supply-queue allocation (row 333):** the EulerEarn supply queue holds idle depositor USDC in the no-borrow
-  `usdcReservoir` market (the warehouse resting vault); the 8-B5 **farm utility borrow vault**
-  (`FarmUtilityMarketDeployer.deploy`'s vault) sits in the same queue but holds ≈0 at rest and is JIT-funded from
-  the reservoir via `EulerVenueAdapter.fundFarmUtility` (re-absorbed by `defundFarmUtility`) — the "combined"
-  always-funded topology was rejected (CTR-07). Allocator config is an EulerEarn **curator/allocator** step, NOT a
-  `WarehouseAdminModule` op — the adapter's op-set never configures the allocator. Keep the module's
-  `borrowVault`/governor at the Timelock.
+- **EE supply-queue allocation (row 333):** both the no-borrow `usdcReservoir` and the 8-B5 **farm utility borrow
+  vault** (`FarmUtilityMarketDeployer.deploy`'s vault) are capped as EE markets, but the **supply queue is set to
+  `[usdcReservoir]` ONLY** (`DeployLocal._configureEulerEarn`) — so idle depositor USDC rests in `usdcReservoir`
+  (the warehouse resting vault) and deposits never auto-route into the borrowable vault. The borrow vault holds
+  ≈0 at rest and is JIT-funded from the reservoir via `EulerVenueAdapter.fundFarmUtility` (re-absorbed by
+  `defundFarmUtility` — it stays reallocate-reachable as a capped market without being in the supply queue); the
+  "combined" always-funded topology was rejected (CTR-07). This cap/queue config is an EulerEarn
+  **curator/allocator** step, NOT a `WarehouseAdminModule` op — the adapter's op-set never configures the
+  allocator. Keep the module's `borrowVault`/governor at the Timelock.
 - **CRE §8 reconcile (row 370/CRE-04):** author the warehouse envelope (opType 1/2/3/4, payloads per §8.5) into
   the §8 producer spec; reconcile the on-chain `keccak256("ZIPCODE_WAREHOUSE_CRE")` with the off-chain sdk key.
 
