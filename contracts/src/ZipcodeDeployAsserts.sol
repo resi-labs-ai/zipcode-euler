@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.24;
 
-/// @notice The single read face the deploy-time gate needs on the controller (the representative
-///         `ReceiverTemplate`): the workflow-identity getter. Declared inline to avoid pulling
-///         `ReceiverTemplate`/`BaseAdapter` into the library's compile unit.
+/// @notice The read face the deploy-time gate needs on every sealed `ReceiverTemplate`: the author + workflow-name
+///         identity getters. Declared inline to avoid pulling `ReceiverTemplate`/`BaseAdapter` into the library's
+///         compile unit. CTR-16: the gate now keys on author + workflowName (the per-receiver separate-daemon
+///         posture), NOT the dropped shared `workflowId` pin.
 interface IReceiverIdentity {
-    function getExpectedWorkflowId() external view returns (bytes32);
+    function getExpectedAuthor() external view returns (address);
+    function getExpectedWorkflowName() external view returns (bytes10);
 }
 
 /// @notice The single read face the deploy-time gate needs on the registry: the set-once controller getter
@@ -16,45 +18,54 @@ interface IOracleRegistryController {
 
 /// @title ZipcodeDeployAsserts (§9 / audit S11)
 /// @notice The one load-bearing deploy-time assertion the item-10 deploy script calls IMMEDIATELY before the
-///         irreversible `controller.renounceOwnership()` / `registry.renounceOwnership()`. It is the only defense
-///         against the dormant-identity vuln (§4.4 / audit/3-results.md F1): `ReceiverTemplate.onReport`'s
-///         workflow-identity check is CONDITIONAL (runs only when an expected value is non-zero) and `onReport` /
-///         `setForwarderAddress` are non-virtual, so a deploy that renounces BEFORE wiring identity freezes the
-///         receiver in a Forwarder-sender-only state any co-tenant workflow can drive. Symmetrically, renouncing
-///         before `registry.setController` leaves `controller == address(0)` so the registry is unseedable forever.
+///         irreversible ownership hand-off / renounce. It is the only defense against the dormant-identity vuln
+///         (§4.4 / audit/3-results.md F1): `ReceiverTemplate.onReport`'s identity check is CONDITIONAL (each
+///         expected slot is enforced only when set) and `onReport` / `setForwarderAddress` are non-virtual, so a
+///         deploy that seals BEFORE wiring identity freezes the receiver in a Forwarder-sender-only state any
+///         co-tenant workflow can drive. Symmetrically, sealing before `registry.setController` leaves
+///         `controller == address(0)` so the registry is unseedable forever.
+///
+///         CTR-16: the gate asserts EACH sealed receiver individually (author + workflowName both set), dropping
+///         the old "same WORKFLOW_ID on every subclass ⇒ one representative id ⇒ all wired" inference. Under the
+///         separate-daemon model each receiver carries its OWN workflowName, so a missing/empty name on any one
+///         (e.g. an unset `vm.envString`) must fail closed — a representative-only check would miss it.
 ///         A `library` `internal` view is the minimal shape: it compiles INTO the deploy script (no extra deployed
-///         bytecode), spans the two contracts, and is purely a deploy-time concern.
+///         bytecode) and is purely a deploy-time concern.
 library ZipcodeDeployAsserts {
-    /// @notice Either the controller's workflow identity is unset (F-3 dormancy) OR the registry's controller is
-    ///         unseeded (F7 brick) — a `renounceOwnership()` here is fail-closed BLOCKED.
-    error IdentityNotWired(address controller, address registry);
-
-    /// @notice A single `ReceiverTemplate` (here: the un-looped CRE-push `lpOracle`) whose workflow identity is
-    ///         unset — its dormant-identity check would let any co-tenant Forwarder workflow push its mark (M4).
+    /// @notice A sealed `ReceiverTemplate` whose identity is incomplete: author unset OR workflowName unset. Either
+    ///         leaves a co-tenant Forwarder workflow able to drive the receiver (F-3 dormancy / M4).
     error ReceiverIdentityNotWired(address receiver);
 
-    /// @notice The combined fail-closed S11 pre-gate. Reverts `IdentityNotWired` if EITHER the controller's
-    ///         `getExpectedWorkflowId()` is `bytes32(0)` (identity unset) OR the registry's `controller()` is
-    ///         `address(0)` (registry unseedable). Passes only when BOTH are wired.
-    /// @param controller The representative `ReceiverTemplate` receiver (§9/S10b sets the same WORKFLOW_ID on every
-    ///        subclass, so a non-zero controller id ⇒ the registry id was wired in the same loop).
-    /// @param registry The `ZipcodeOracleRegistry` (the only contract with a set-once `controller` getter).
-    function requireIdentityWired(address controller, address registry) internal view {
+    /// @notice The registry's set-once controller is unseeded (`controller() == address(0)`) — the registry is
+    ///         unseedable once ownership is handed off (F7 brick).
+    error RegistryControllerUnset(address registry);
+
+    /// @notice Fail-closed per-receiver identity gate for a single `ReceiverTemplate`. Reverts
+    ///         `ReceiverIdentityNotWired` unless BOTH `getExpectedAuthor()` is non-zero AND
+    ///         `getExpectedWorkflowName()` is non-zero (the CTR-16 author+name posture; `onReport` enforces the name
+    ///         only when the author is also set, so both are load-bearing).
+    /// @param receiver A sealed CRE `ReceiverTemplate` (controller / registry / warehouse adapter / coordinator /
+    ///        navOracle / rateOracle / the un-looped CRE-push lpOracle).
+    function requireReceiverIdentityWired(address receiver) internal view {
         if (
-            IReceiverIdentity(controller).getExpectedWorkflowId() == bytes32(0)
-                || IOracleRegistryController(registry).controller() == address(0)
-        ) revert IdentityNotWired(controller, registry);
+            IReceiverIdentity(receiver).getExpectedAuthor() == address(0)
+                || IReceiverIdentity(receiver).getExpectedWorkflowName() == bytes10(0)
+        ) revert ReceiverIdentityNotWired(receiver);
     }
 
-    /// @notice Fail-closed per-receiver identity gate for a `ReceiverTemplate` NOT covered by the S10b
-    ///         "same WORKFLOW_ID on every subclass" assumption of `requireIdentityWired`. Reverts
-    ///         `ReceiverIdentityNotWired` when the receiver's `getExpectedWorkflowId()` is `bytes32(0)`
-    ///         (dormant identity ⇒ any co-tenant Forwarder workflow can push its mark, M4).
-    /// @param receiver The un-looped CRE-push `SzipFarmUtilityLpOracle` (the deploy guards the call on
-    ///        `lpOracle != address(0)`; the fair-LP branch has no identity surface to assert).
-    function requireReceiverIdentityWired(address receiver) internal view {
-        if (IReceiverIdentity(receiver).getExpectedWorkflowId() == bytes32(0)) {
-            revert ReceiverIdentityNotWired(receiver);
+    /// @notice The combined fail-closed S11 pre-gate. Asserts EACH receiver in `receivers` is fully sealed
+    ///         (author + workflowName) AND the registry's set-once controller is seeded. Reverts on the FIRST
+    ///         unwired receiver (`ReceiverIdentityNotWired`) or on the unseeded registry (`RegistryControllerUnset`).
+    ///         Passes only when every receiver is sealed and the registry is seeded.
+    /// @param receivers Every sealed `ReceiverTemplate` in the fleet (asserted individually — CTR-16 drops the
+    ///        representative-id inference). The registry is itself a receiver and SHOULD appear here too.
+    /// @param registry The `ZipcodeOracleRegistry` (the only contract with a set-once `controller` getter).
+    function requireIdentityWired(address[] memory receivers, address registry) internal view {
+        for (uint256 k = 0; k < receivers.length; k++) {
+            requireReceiverIdentityWired(receivers[k]);
+        }
+        if (IOracleRegistryController(registry).controller() == address(0)) {
+            revert RegistryControllerUnset(registry);
         }
     }
 }

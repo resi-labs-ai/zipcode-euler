@@ -28,6 +28,17 @@ interface IRoles {
         bytes compValue;
     }
 
+    /// @notice The address that ultimately executes forwarded calls (Zodiac `Module.avatar`, Module.sol:
+    ///         `address public avatar`). The warehouse policy pins `receiver == avatar` in its scope, so the
+    ///         adapter's injected `warehouseSafe` MUST equal this — enforced on-chain by
+    ///         `WarehouseAdminModule.setWarehouseSafe` (reverts `AvatarMismatch` otherwise).
+    function avatar() external view returns (address);
+
+    /// @notice Re-point the avatar (Zodiac `Module.setAvatar`, Module.sol: `onlyOwner`). In an avatar-parity
+    ///         re-point this MUST run on the modifier BEFORE `WarehouseAdminModule.setWarehouseSafe`, which reverts
+    ///         unless `avatar() == warehouseSafe_`.
+    function setAvatar(address avatar_) external;
+
     function assignRoles(address module, bytes32[] calldata roleKeys, bool[] calldata memberOf) external;
 
     function execTransactionWithRole(

@@ -49,7 +49,7 @@ Scope: `WarehouseAdminModule`. View/pure excluded. No permissionless entry point
 |----------|-----------|----------------|-------|
 | `setRoles()` | roles_ | `roles` | re-point the Roles modifier instance |
 | `setRoleKey()` | roleKey_ (`!= 0`) | `roleKey` | must match the modifier's `assignRoles` |
-| `setWarehouseSafe()` | warehouseSafe_ | `warehouseSafe` | **MUST be paired with `setAvatar` on the modifier** (parity; else SUPPLY/REDEEM brick, fail-closed) |
+| `setWarehouseSafe()` | warehouseSafe_ | `warehouseSafe` | **reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`** — pair `Roles.setAvatar(new)` FIRST, then this (parity enforced on-chain; `docs/roles.md`) |
 | `setEePool()` | eePool_ | `eePool` | re-point the EulerEarn pool |
 | `setUsdc()` | usdc_ | `usdc` | re-point the asset |
 | `setRedemptionBox()` | redemptionBox_ | `redemptionBox` | re-point the REPAY sink |

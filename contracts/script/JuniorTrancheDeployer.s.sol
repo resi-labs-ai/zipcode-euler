@@ -84,8 +84,11 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         address team; // the persistent admin multisig the two Safes are handed to (§4.5)
         address creOperator; // module `operator` + the ExitGate windowController (M1 CRE hot key)
         uint256 saltNonce; // DISTINCT per silo (CREATE2)
-        address workflowAuthor; // CRE identity seal (step 16)
-        bytes32 workflowId; // CRE identity seal (step 16)
+        address workflowAuthor; // CRE identity seal (step 16; shared deploy wallet)
+        // CTR-16: per-receiver workflow NAMES for the two junior receivers this deployer seals (the shared
+        // `workflowId` pin is dropped). navOracle ← the sharefeeds daemon; coord ← the coordinator daemon.
+        string workflowNameSharefeeds; // SzipNavOracle (sharefeeds daemon, rt7 NAV leg)
+        string workflowNameCoordinator; // DefaultCoordinator (coordinator daemon, rt8)
         // -- shared hub handles (NOT deployed here) --
         address zipUSD; // the shared senior $1 unit (Timelock-owned; setCapacity is the D2 runbook, not here)
         address rateOracle; // the shared SzAlphaRateOracle (hub; an input, never owned/transferred by this deployer)
@@ -320,8 +323,8 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         //        ReceiverTemplates (navOracle, coord) also get the CRE identity seal. The engine modules are ALREADY
         //        Timelock-owned from setUp (owner_ == p.timelock) — do NOT re-transfer. ZipDepositModule has no
         //        ownable surface. Do NOT transfer p.rateOracle (a shared hub input this deployer never owned).
-        _sealIdentity(address(t.navOracle), p.workflowAuthor, p.workflowId);
-        _sealIdentity(address(t.coord), p.workflowAuthor, p.workflowId);
+        _sealIdentity(address(t.navOracle), p.workflowAuthor, p.workflowNameSharefeeds);
+        _sealIdentity(address(t.coord), p.workflowAuthor, p.workflowNameCoordinator);
         t.navOracle.transferOwnership(p.timelock);
         t.gate.transferOwnership(p.timelock);
         t.szip.transferOwnership(p.timelock);
@@ -369,10 +372,13 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         _execAsSelf(juniorTrancheSafe, baal, setShamans);
     }
 
-    /// @notice Set the CRE identity (author + workflow id) on a `ReceiverTemplate` (selectors inherited from it).
-    function _sealIdentity(address receiver, address workflowAuthor, bytes32 workflowId) internal {
+    /// @notice Set the CRE identity (author + per-receiver workflow NAME) on a `ReceiverTemplate` (selectors
+    ///         inherited from it). CTR-16: the shared `workflowId` pin is dropped (left bytes32(0)); the name string
+    ///         is hashed to bytes10 on-chain (matching the DON metadata's hashing). Author goes first because
+    ///         `onReport` requires the author to be set whenever the name is.
+    function _sealIdentity(address receiver, address workflowAuthor, string memory name) internal {
         IReceiverIdentitySet(receiver).setExpectedAuthor(workflowAuthor);
-        IReceiverIdentitySet(receiver).setExpectedWorkflowId(workflowId);
+        IReceiverIdentitySet(receiver).setExpectedWorkflowName(name);
     }
 
     /// @notice Hand `safe` from this transient deployer owner to `team` via `swapOwner`. The `prevOwner` pointer for
@@ -406,8 +412,8 @@ contract JuniorTrancheDeployer is SummonSubstrate {
     }
 }
 
-/// @notice The `ReceiverTemplate` identity-seal surface (inherited; onlyOwner).
+/// @notice The `ReceiverTemplate` identity-seal surface (inherited; onlyOwner). CTR-16: name-posture.
 interface IReceiverIdentitySet {
     function setExpectedAuthor(address author) external;
-    function setExpectedWorkflowId(bytes32 id) external;
+    function setExpectedWorkflowName(string calldata name) external;
 }

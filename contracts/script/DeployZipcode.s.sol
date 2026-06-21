@@ -100,8 +100,16 @@ contract DeployZipcode is SummonSubstrate {
         address polGauge; // POL_GAUGE — the Hydrex gauge the LP stakes in
         address adminSafe; // ADMIN_SAFE — the protocol treasury Safe (loss-side xALPHA recovery custody, §11)
         address curatorSafe; // CURATOR_SAFE — the per-line EVK feeReceiver: curator pay for running the vaults (CTR-13)
-        address workflowAuthor; // WORKFLOW_AUTHOR — the CRE workflow owner (all receivers)
-        bytes32 workflowId; // WORKFLOW_ID — the CRE workflow id (all receivers; one author/id family)
+        address workflowAuthor; // WORKFLOW_AUTHOR — the CRE workflow owner (shared deploy wallet; all receivers)
+        // CTR-16: per-receiver workflow NAMES (the shared `workflowId` pin is DROPPED — author+name survive workflow
+        // redeploys, and per-receiver names are what separate the SEPARATE daemons a shared author cannot). Each is
+        // the registered name string of the daemon that writes to the matching receiver (see the §13 map).
+        string workflowNameController; // WORKFLOW_NAME_CONTROLLER — ZipcodeController (controller daemon, rt1/2/4/5/6)
+        string workflowNameRevaluation; // WORKFLOW_NAME_REVALUATION — ZipcodeOracleRegistry (revaluation daemon, rt3)
+        string workflowNameCoordinator; // WORKFLOW_NAME_COORDINATOR — DefaultCoordinator (coordinator daemon, rt8)
+        string workflowNameSharefeeds; // WORKFLOW_NAME_SHAREFEEDS — SzipNavOracle + SzipFarmUtilityLpOracle (rt7)
+        string workflowNameWarehouse; // WORKFLOW_NAME_WAREHOUSE — WarehouseAdminModule (warehouse daemon, CRE-04/02b/02c)
+        string workflowNameRate; // WORKFLOW_NAME_RATE — SzAlphaRateOracle (szalpha-rate daemon, 8x-02)
         // EE-factory ABI avoidance (pre-step env inputs; see contract NatSpec):
         address eePool; // EE_POOL — the created USDC EulerEarn pool
         address usdcReservoir; // USDC_RESERVOIR — the no-borrow USDC EVault at the EE supply-queue head
@@ -529,26 +537,32 @@ contract DeployZipcode is SummonSubstrate {
 
     // ================================================================= P9 — seal (identity -> pre-gate -> transfer)
     function _phaseP9() internal {
-        // 30. set the CRE identity on every ReceiverTemplate (controller, registry, warehouse adapter, coord,
-        //     navOracle, rateOracle). setExpectedAuthor / setExpectedWorkflowId (inherited from ReceiverTemplate).
-        _sealIdentity(address(d.controller));
-        _sealIdentity(address(d.registry));
-        _sealIdentity(d.warehouse.adapter);
-        _sealIdentity(address(d.coord));
-        _sealIdentity(address(d.navOracle));
-        _sealIdentity(address(d.rateOracle));
-        // The CRE-push lpOracle is a `ReceiverTemplate` too, but it is NOT in the S10b same-WORKFLOW_ID loop the
-        // pre-gate's "representative controller" assertion covers — seal it explicitly (M4 dormant-identity). The
+        // 30. set the CRE identity on every ReceiverTemplate — author + PER-RECEIVER workflowName (CTR-16). The
+        //     shared `workflowId` pin is DROPPED (left bytes32(0) ⇒ `onReport` skips it); the per-receiver names are
+        //     what separate the separate daemons that share this one deploy wallet (the §13 map).
+        _sealIdentity(address(d.controller), i.workflowNameController);
+        _sealIdentity(address(d.registry), i.workflowNameRevaluation);
+        _sealIdentity(d.warehouse.adapter, i.workflowNameWarehouse);
+        _sealIdentity(address(d.coord), i.workflowNameCoordinator);
+        _sealIdentity(address(d.navOracle), i.workflowNameSharefeeds);
+        _sealIdentity(address(d.rateOracle), i.workflowNameRate);
+        // The CRE-push lpOracle is a `ReceiverTemplate` too (sharefeeds daemon — same producer as the NAV leg). The
         // fair-LP branch leaves `d.lpOracle == address(0)` (an ownerless `AlgebraIchiFairLpOracle`, no identity).
-        if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle));
+        if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle), i.workflowNameSharefeeds);
 
-        // 31. the fail-closed pre-gate (identity unset OR registry controller unset => revert).
-        ZipcodeDeployAsserts.requireIdentityWired(address(d.controller), address(d.registry));
-        // ...and the un-looped lpOracle's identity, explicitly (the representative-controller assert above does
-        // not cover it). Conditional on the CRE-push branch — the fair-LP oracle has no identity surface (M4).
-        if (address(d.lpOracle) != address(0)) {
-            ZipcodeDeployAsserts.requireReceiverIdentityWired(address(d.lpOracle));
-        }
+        // 31. the fail-closed pre-gate — assert EACH sealed receiver individually (author + workflowName both set,
+        //     CTR-16) plus the registry's set-once controller seed. A missing/empty per-receiver name (e.g. an unset
+        //     env var) now fails closed; the old representative-id inference would have missed it.
+        uint256 n = address(d.lpOracle) != address(0) ? 7 : 6;
+        address[] memory receivers = new address[](n);
+        receivers[0] = address(d.controller);
+        receivers[1] = address(d.registry);
+        receivers[2] = d.warehouse.adapter;
+        receivers[3] = address(d.coord);
+        receivers[4] = address(d.navOracle);
+        receivers[5] = address(d.rateOracle);
+        if (address(d.lpOracle) != address(0)) receivers[6] = address(d.lpOracle);
+        ZipcodeDeployAsserts.requireIdentityWired(receivers, address(d.registry));
 
         // 32. transferOwnership(timelock) on every owned contract — NOT renounce (build-phase §17).
         address tl = address(d.timelock);
@@ -608,10 +622,13 @@ contract DeployZipcode is SummonSubstrate {
         _execAsTeam(juniorTrancheSafe, baal, setShamans);
     }
 
-    /// @notice Set the CRE identity (author + workflow id) on a `ReceiverTemplate` (selectors inherited from it).
-    function _sealIdentity(address receiver) internal {
+    /// @notice Set the CRE identity (author + per-receiver workflow NAME) on a `ReceiverTemplate` (selectors
+    ///         inherited from it). The shared `workflowId` pin is dropped (left bytes32(0)); `setExpectedWorkflowName`
+    ///         hashes the registered name string to bytes10 on-chain (matching the DON metadata's same hashing), so
+    ///         we pass the string directly. `onReport` requires author whenever name is set, so author goes first.
+    function _sealIdentity(address receiver, string memory name) internal {
         IReceiverIdentitySet(receiver).setExpectedAuthor(i.workflowAuthor);
-        IReceiverIdentitySet(receiver).setExpectedWorkflowId(i.workflowId);
+        IReceiverIdentitySet(receiver).setExpectedWorkflowName(name);
     }
 
     /// @notice OZ `Ownable.transferOwnership` on an engine module proxy (the zodiac `Module` base is OZ-Ownable).
@@ -654,7 +671,15 @@ contract DeployZipcode is SummonSubstrate {
         i.polGauge = vm.envAddress("POL_GAUGE");
         i.adminSafe = vm.envAddress("ADMIN_SAFE");
         i.workflowAuthor = vm.envAddress("WORKFLOW_AUTHOR");
-        i.workflowId = vm.envBytes32("WORKFLOW_ID");
+        // CTR-16: per-receiver registered daemon NAMES (the `WORKFLOW_ID` env read is dropped). Required env — the
+        // operator supplies the names of the deployed daemons at deploy time (they do not exist in source; the
+        // `project.yaml`s are templates). The setters stay owner-callable post-deploy (§17 re-pointable).
+        i.workflowNameController = vm.envString("WORKFLOW_NAME_CONTROLLER");
+        i.workflowNameRevaluation = vm.envString("WORKFLOW_NAME_REVALUATION");
+        i.workflowNameCoordinator = vm.envString("WORKFLOW_NAME_COORDINATOR");
+        i.workflowNameSharefeeds = vm.envString("WORKFLOW_NAME_SHAREFEEDS");
+        i.workflowNameWarehouse = vm.envString("WORKFLOW_NAME_WAREHOUSE");
+        i.workflowNameRate = vm.envString("WORKFLOW_NAME_RATE");
         i.eePool = vm.envAddress("EE_POOL");
         i.usdcReservoir = vm.envAddress("USDC_RESERVOIR");
 
@@ -676,10 +701,11 @@ contract DeployZipcode is SummonSubstrate {
     }
 }
 
-/// @notice The `ReceiverTemplate` identity-seal surface (inherited; onlyOwner).
+/// @notice The `ReceiverTemplate` identity-seal surface (inherited; onlyOwner). CTR-16: name-posture — the
+///         `setExpectedWorkflowId` selector is no longer used by the deploy (the pin is dropped).
 interface IReceiverIdentitySet {
     function setExpectedAuthor(address author) external;
-    function setExpectedWorkflowId(bytes32 id) external;
+    function setExpectedWorkflowName(string calldata name) external;
 }
 
 /// @notice A minimal `transferOwnership` face (OZ Ownable + the manual-owner hook share the selector).

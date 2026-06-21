@@ -255,6 +255,75 @@ contract ZipRedemptionQueueTest is QueueBase {
         assertEq(queue.redeemController(), bob, "re-pointed");
     }
 
+    // -------------------------------------------------------------- setTokens (auth + zero + DecimalsTooFew + scaleUp re-derive)
+    /// @notice `setTokens` is `onlyOwner`, zero-guards both args, rejects USDC finer than zipUSD (`DecimalsTooFew`),
+    ///         and RE-DERIVES `scaleUp` from the new tokens' `decimals()` — the par-scale source for every fill. Proven
+    ///         live: after re-pointing to an 8-dp/6-dp pair, `scaleUp == 100` and the whole-unit guard uses it.
+    function test_setTokens_guards_and_scaleUp_rederive() public {
+        // onlyOwner
+        vm.prank(alice);
+        vm.expectRevert(); // OwnableUnauthorizedAccount
+        queue.setTokens(address(zip), address(usdc));
+        // zero-guards (both args)
+        vm.expectRevert(ZipRedemptionQueue.ZeroAddress.selector);
+        queue.setTokens(address(0), address(usdc));
+        vm.expectRevert(ZipRedemptionQueue.ZeroAddress.selector);
+        queue.setTokens(address(zip), address(0));
+        // DecimalsTooFew: USDC finer than zipUSD
+        MockERC20 fatUsdc = new MockERC20(24);
+        vm.expectRevert(ZipRedemptionQueue.DecimalsTooFew.selector);
+        queue.setTokens(address(zip), address(fatUsdc));
+
+        // effect: re-point to an 8-dp zip / 6-dp usdc pair -> scaleUp re-derived to 10**2, emits TokensSet
+        MockERC20 zip8 = new MockERC20(8);
+        MockERC20 usdc6 = new MockERC20(6);
+        vm.expectEmit(true, true, false, false, address(queue));
+        emit ZipRedemptionQueue.TokensSet(address(zip8), address(usdc6));
+        queue.setTokens(address(zip8), address(usdc6));
+        assertEq(queue.zipUSD(), address(zip8), "zipUSD re-pointed");
+        assertEq(queue.usdc(), address(usdc6), "usdc re-pointed");
+        assertEq(queue.scaleUp(), 100, "scaleUp re-derived to 10**(8-6), NOT the stale 1e12");
+
+        // the re-derived scale is LIVE: the whole-unit guard now floors at 100, not 1e12.
+        queue.setRedeemController(alice);
+        zip8.mint(alice, 1000);
+        vm.prank(alice);
+        zip8.approve(address(queue), 1000);
+        vm.prank(alice);
+        vm.expectRevert(ZipRedemptionQueue.NotWholeUnit.selector);
+        queue.requestRedeem(150, alice, alice); // 150 % 100 != 0
+        vm.prank(alice);
+        queue.requestRedeem(200, alice, alice); // exact multiple of the new scaleUp
+        assertEq(queue.totalPending(), 200, "escrowed at the re-derived scale");
+        assertEq(zip8.balanceOf(address(queue)), 200);
+    }
+
+    // -------------------------------------------------------------- setController (auth + zero + effect)
+    /// @notice `setController` is `onlyOwner`, zero-guarded, and re-points the sole `settleEpoch` caller: after the
+    ///         re-point the NEW controller settles and the OLD one reverts `NotController`.
+    function test_setController_guards_and_effect() public {
+        // onlyOwner
+        vm.prank(alice);
+        vm.expectRevert(); // OwnableUnauthorizedAccount
+        queue.setController(alice);
+        // zero-guard
+        vm.expectRevert(ZipRedemptionQueue.ZeroAddress.selector);
+        queue.setController(address(0));
+        // effect + emit
+        address newController = makeAddr("newController");
+        vm.expectEmit(true, false, false, false, address(queue));
+        emit ZipRedemptionQueue.ControllerSet(newController);
+        queue.setController(newController);
+        assertEq(queue.controller(), newController, "controller re-pointed");
+        // the OLD controller can no longer settle
+        vm.prank(controller);
+        vm.expectRevert(ZipRedemptionQueue.NotController.selector);
+        queue.settleEpoch();
+        // the NEW controller can (no pending -> clean no-op, no revert)
+        vm.prank(newController);
+        queue.settleEpoch();
+    }
+
     function test_requestRedeem_succeeds_when_authorized() public {
         _giveZip(alice, 1000e18);
         vm.prank(alice);

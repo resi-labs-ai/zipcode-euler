@@ -271,6 +271,9 @@ contract ZipDepositModuleTest is ZipModuleBase {
         assertEq(zip.balanceOf(address(module)), 0);
         assertEq(zip.balanceOf(address(gate)), 200_000e18, "gate pulled the basket zipUSD");
         assertEq(zip.allowance(address(module), address(gate)), 0, "per-zap allowance reset to 0");
+        // the documented no-reset asymmetry: the USDC->eePool approval is exact-amount and fully pulled, so it
+        // settles to 0 on its own (the zap never resets it explicitly, unlike the zip->gate allowance above).
+        assertEq(usdc.allowance(address(module), address(ee)), 0, "zap usdc->eePool allowance settled to 0");
         assertEq(ee.balanceOf(WAREHOUSE_SAFE), 200_000e6, "shares -> warehouseSafe");
         assertEq(ee.balanceOf(address(module)), 0);
         assertEq(ee.balanceOf(address(gate)), 0);
@@ -521,6 +524,37 @@ contract ZipDepositModuleTest is ZipModuleBase {
         new ZipDepositModule(address(zip), address(fatUsdc), address(ee), WAREHOUSE_SAFE);
     }
 
+    // -------------------------------------------------------------- scaleUp is DERIVED from decimals() (not 1e12 literal)
+    /// @notice The ctor derives `scaleUp = 10**(zipDec - usdcDec)` from the tokens' own `decimals()`, NOT a hard-coded
+    ///         `1e12`. Exercise three non-default pairs and prove a realized `deposit` mints `usdcIn * scaleUp` zipUSD
+    ///         at each — a regression that hard-coded the scale would fail every case but the 18/6 default.
+    function test_scaleUp_derived_from_decimals_nonDefault() public {
+        _assertScale(18, 18, 1); // equal decimals -> scaleUp == 1 (the decisive non-1e12 case)
+        _assertScale(8, 6, 100); // 8-dp over 6-dp -> 10**2
+        _assertScale(18, 0, 1e18); // 18-dp over 0-dp -> 10**18
+    }
+
+    function _assertScale(uint8 zipDec, uint8 usdcDec, uint256 expScale) internal {
+        MockERC20 z = new MockERC20(zipDec); // mock zipUSD (mint == IESynth.mint, no capacity gate)
+        MockERC20 u = new MockERC20(usdcDec); // mock USDC at the test's decimals
+        EEMock customEe = new EEMock(address(u), 1, 1); // par venue over this USDC
+        ZipDepositModule m = new ZipDepositModule(address(z), address(u), address(customEe), WAREHOUSE_SAFE);
+        assertEq(m.scaleUp(), expScale, "scaleUp derived from decimals()");
+        assertEq(m.previewDeposit(1234), 1234 * expScale, "preview uses the derived scale");
+
+        uint256 usdcIn = 1234;
+        u.mint(LP, usdcIn);
+        vm.startPrank(LP);
+        u.approve(address(m), usdcIn);
+        uint256 ret = m.deposit(usdcIn);
+        vm.stopPrank();
+        assertEq(ret, usdcIn * expScale, "minted zipUSD == usdcIn * derived scaleUp");
+        assertEq(z.balanceOf(LP), usdcIn * expScale, "user holds the scaled zipUSD");
+        assertEq(customEe.balanceOf(WAREHOUSE_SAFE), usdcIn, "USDC parked (par EE shares)");
+        assertEq(z.balanceOf(address(m)), 0, "module holds no zipUSD");
+        assertEq(u.balanceOf(address(m)), 0, "module holds no USDC");
+    }
+
     // -------------------------------------------------------------- zero-amount guards
     function test_zero_amount_guards() public {
         vm.expectRevert(ZipDepositModule.ZeroAmount.selector);
@@ -583,7 +617,7 @@ contract ZipDepositModuleTest is ZipModuleBase {
         module.zap(200_000e6);
         vm.stopPrank();
         _assertModuleEmpty();
-        assertEq(zip.allowance(address(module), address(ee)), 0);
+        assertEq(usdc.allowance(address(module), address(ee)), 0, "usdc->eePool allowance settled across deposits + zaps");
         assertEq(zip.allowance(address(module), address(gate)), 0);
     }
 

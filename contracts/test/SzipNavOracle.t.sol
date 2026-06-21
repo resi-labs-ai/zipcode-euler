@@ -1136,6 +1136,81 @@ contract SzipNavOracleTest is Test {
         freshOracle.setLpTwapWindow(0); // unconditionally valid
         assertEq(freshOracle.lpTwapWindow(), 0);
     }
+
+    // ----------------------------------------------------------------- I-15: setter auth + zero-guards (full sweep)
+    /// @notice Every Timelock wiring setter is `onlyOwner` and zero-guards its non-optional args. The effect/re-point
+    ///         of these is covered elsewhere; this closes the auth + zero-guard gap on the five setters whose gate was
+    ///         previously only exercised for effect (`setFarmUtilityLeg`, `setLpTwapWindow`, `setXAlphaRateOracle`,
+    ///         `setJuniorTrancheEngine`, `setDefaultCoordinator`).
+    function test_setters_onlyOwner_and_zeroGuards() public {
+        address rando = makeAddr("rando");
+        address a1 = makeAddr("a1");
+        address a2 = makeAddr("a2");
+
+        // --- onlyOwner gate (a non-owner cannot touch any setter) ---
+        vm.startPrank(rando);
+        vm.expectRevert();
+        oracle.setFarmUtilityLeg(a1, a2);
+        vm.expectRevert();
+        oracle.setLpTwapWindow(0); // 0 is a VALID value, so this isolates the onlyOwner gate from the validation
+        vm.expectRevert();
+        oracle.setXAlphaRateOracle(a1);
+        vm.expectRevert();
+        oracle.setJuniorTrancheEngine(a1);
+        vm.expectRevert();
+        oracle.setDefaultCoordinator(a1);
+        vm.stopPrank();
+
+        // --- zero-guards (owner = this) ---
+        vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
+        oracle.setFarmUtilityLeg(address(0), a2); // zero escrow
+        vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
+        oracle.setFarmUtilityLeg(a1, address(0)); // zero borrow
+        vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
+        oracle.setJuniorTrancheEngine(address(0));
+        vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
+        oracle.setDefaultCoordinator(address(0));
+        // setXAlphaRateOracle(0) is a VALID "unset / use fallback" value — must NOT revert for the owner.
+        oracle.setXAlphaRateOracle(address(0));
+        assertEq(oracle.xAlphaRateOracle(), address(0));
+    }
+
+    // ----------------------------------------------------------------- I-16: committedValue + freeValue == gross
+    /// @notice For the five plain legs the per-Safe decomposition is EXACT: `committedValue() + freeValue()` equals
+    ///         `grossBasketValue()` to the wei (no LP ⇒ no double-floor). This is the additive identity the freeze
+    ///         module's coverage floor (`committedValue` + `pathLockedLpEquity`) relies on for double-count-freedom.
+    function test_committed_plus_free_equals_gross_plainLegs() public {
+        _wireFullBasket(); // zip on both Safes; usdc/xa/hydx/ohydx on the main Safe; no LP, no debt
+        uint256 gross = oracle.grossBasketValue();
+        assertEq(oracle.committedValue() + oracle.freeValue(), gross, "plain legs: decomposition is EXACT");
+        // sanity: the split is non-trivial (the sidecar owns the 50e18 zip leg).
+        assertEq(oracle.committedValue(), 50e18, "sidecar = its zip leg");
+        assertEq(oracle.freeValue(), gross - 50e18, "main = the rest");
+    }
+
+    /// @notice For a SPLIT LP the per-Safe pro-rata floors twice vs once, so `committedValue()+freeValue()` is within
+    ///         ≤2 wei of `grossBasketValue()` (and never above it). Constructed to force the worst case: supply 7e18,
+    ///         reserves 1e18/1e18, both legs priced exactly $1, and L_safe=L_sidecar=4e18 — each per-Safe leg floors
+    ///         away 4/7 of a wei (×2 legs), and the two halves sum to exactly 2 wei below the combined floor.
+    function test_committed_plus_free_equals_gross_splitLp_within_2wei() public {
+        MockICHIVault iv = new MockICHIVault();
+        MockGauge g = new MockGauge();
+        iv.set(address(zip), address(xa), 7e18, 1e18, 1e18); // supply 7e18, total0=total1=1e18
+        oracle.setLpPosition(address(iv), address(g));
+        oracle.setShareToken(address(szip));
+        szip.setTotalSupply(1000e18);
+        xa.setExchangeRate(1e18); // xAlpha price = exchangeRate × alphaUSD = 1 × 1 = $1
+        _pushBoth(1e18, 1e18); // both LP legs (zip, xAlpha) at exactly $1 ⇒ a 1-wei amt floor == 1-wei USD
+
+        g.setBalance(juniorTrancheSafe, 4e18); // free LP
+        g.setBalance(juniorTrancheSidecar, 4e18); // committed LP (combined 8e18 of 7e18 supply)
+
+        uint256 gross = oracle.grossBasketValue();
+        uint256 sum = oracle.committedValue() + oracle.freeValue();
+        assertLe(sum, gross, "per-Safe floors never over-count");
+        assertApproxEqAbs(sum, gross, 2, "split-LP decomposition within <=2 wei");
+        assertEq(gross - sum, 2, "the constructed worst case is exactly 2 wei (1 per LP reserve leg)");
+    }
 }
 
 /// @notice Minimal stand-in for `SzAlphaRateOracle` — exposes `exchangeRate()` + `fresh()` for the gate test and

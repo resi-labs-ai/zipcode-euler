@@ -21,19 +21,21 @@ contract MockUSDC {
     }
 }
 
-/// @notice Thin external wrapper so `vm.expectRevert` can target the `internal` library call (an internal library
-///         fn cannot be `vm.expectRevert`-pranked directly).
+/// @notice Thin external wrapper so `vm.expectRevert` can target the `internal` combined-fleet library call (an
+///         internal library fn cannot be `vm.expectRevert`-pranked directly).
 contract GateHarness {
-    function gate(address c, address r) external view {
-        ZipcodeDeployAsserts.requireIdentityWired(c, r);
+    function gate(address[] calldata receivers, address registry) external view {
+        ZipcodeDeployAsserts.requireIdentityWired(receivers, registry);
     }
 }
 
-/// @title ZipcodeDeployIdentityGate test (WOOF-10a — the S11 renounce-before-identity pre-gate, §9)
+/// @title ZipcodeDeployIdentityGate test (CTR-16 — the S11 seal-before-identity pre-gate, author+name posture, §9/§13)
 /// @notice Proves `ZipcodeDeployAsserts.requireIdentityWired` against the REAL keepsake contracts
 ///         (`ZipcodeOracleRegistry` WOOF-02 + `ZipcodeController` WOOF-05), in three classes:
-///         NEGATIVE (gate reverts when unwired), POSITIVE (gate passes → renounce → frozen), and NEGATIVE-CONTROL
-///         (the dormant-identity vuln the gate prevents). No fork: the registry ctor only reads `quote.decimals()`
+///         NEGATIVE (gate reverts when a receiver is unwired or the registry is unseeded), POSITIVE (gate passes →
+///         renounce → frozen), and NEGATIVE-CONTROL (the dormant-identity vuln the gate prevents). CTR-16: the gate
+///         now asserts EACH receiver's author + workflowName individually (the shared `workflowId` pin is dropped),
+///         so a missing name on any one fails closed. No fork: the registry ctor only reads `quote.decimals()`
 ///         (satisfied by a 6-dp mock) and the controller ctor only stores immutables.
 contract ZipcodeDeployIdentityGateTest is Test {
     GateHarness internal harness;
@@ -50,8 +52,8 @@ contract ZipcodeDeployIdentityGateTest is Test {
     address internal WORKFLOW_OWNER = makeAddr("workflowOwner");
 
     uint256 internal constant VALIDITY = 365 days;
-    bytes32 internal constant WID = bytes32(uint256(0xC0FFEE));
-    bytes32 internal constant WRONG_WID = bytes32(uint256(0xBAD1D));
+    string internal constant NAME_CONTROLLER = "zip-controller";
+    string internal constant NAME_REVALUATION = "zip-revaluation";
 
     function setUp() public {
         harness = new GateHarness();
@@ -59,8 +61,7 @@ contract ZipcodeDeployIdentityGateTest is Test {
         usdc = new MockUSDC();
         lienFactory = new LienTokenFactory();
 
-        // CONTROLLER_OWNER = address(this): the test is the deployer/owner of both receivers, so it can set
-        // identity / setController / renounce.
+        // The test is the deployer/owner of both receivers, so it can set identity / setController / renounce.
         registry = new ZipcodeOracleRegistry(FORWARDER, address(usdc), VALIDITY);
         controller = new ZipcodeController(
             FORWARDER, VENUE_STUB, address(lienFactory), address(registry), EREBOR
@@ -70,51 +71,65 @@ contract ZipcodeDeployIdentityGateTest is Test {
         assertEq(registry.owner(), address(this), "test owns registry");
     }
 
+    /// @dev The full sealed fleet for the combined gate (controller + registry, both `ReceiverTemplate`s). The
+    ///      registry is asserted as a receiver AND separately for its set-once `controller()` seed.
+    function _receivers() internal view returns (address[] memory r) {
+        r = new address[](2);
+        r[0] = address(controller);
+        r[1] = address(registry);
+    }
+
+    /// @dev Seal one receiver with author + workflowName (the CTR-16 posture the deploy's `_sealIdentity` applies).
+    function _seal(address receiver, string memory name) internal {
+        ReceiverTemplate(receiver).setExpectedAuthor(WORKFLOW_OWNER);
+        ReceiverTemplate(receiver).setExpectedWorkflowName(name);
+    }
+
     // ============================================================
-    // NEGATIVE — the tested gate (the obligations' REQUIRED negative)
+    // NEGATIVE — the tested gate
     // ============================================================
 
-    /// @dev F-3 case: identity unset (getExpectedWorkflowId == 0) but registry seeded. Gate BLOCKS renounce.
-    function test_Negative_IdentityUnset_GateReverts() public {
-        // registry.setController DONE (controller() != 0)...
+    /// @dev F-3 case: a receiver's identity unset (author+name both zero) while the registry is seeded. The gate
+    ///      BLOCKS on the FIRST unwired receiver (the controller).
+    function test_Negative_ReceiverUnsealed_GateReverts() public {
+        // registry sealed + seeded...
+        _seal(address(registry), NAME_REVALUATION);
         registry.setController(address(controller));
-        // ...but controller identity NEVER set.
-        assertEq(controller.getExpectedWorkflowId(), bytes32(0), "identity unset");
-        assertTrue(registry.controller() != address(0), "registry seeded");
+        // ...but the controller identity is NEVER set.
+        assertEq(controller.getExpectedAuthor(), address(0), "controller author unset");
+        assertEq(controller.getExpectedWorkflowName(), bytes10(0), "controller name unset");
 
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ZipcodeDeployAsserts.IdentityNotWired.selector, address(controller), address(registry)
-            )
+            abi.encodeWithSelector(ZipcodeDeployAsserts.ReceiverIdentityNotWired.selector, address(controller))
         );
-        harness.gate(address(controller), address(registry));
+        harness.gate(_receivers(), address(registry));
     }
 
-    /// @dev F7 case: controller identity set (id != 0) but registry.setController SKIPPED (controller() == 0).
-    function test_Negative_ControllerUnset_GateReverts() public {
-        controller.setExpectedWorkflowId(WID);
-        assertTrue(controller.getExpectedWorkflowId() != bytes32(0), "identity set");
+    /// @dev Author set but workflowName unset still fails closed (the name is load-bearing under the per-daemon
+    ///      separation model — author alone cannot separate co-tenant daemons sharing the deploy wallet).
+    function test_Negative_NameUnset_GateReverts() public {
+        _seal(address(registry), NAME_REVALUATION);
+        registry.setController(address(controller));
+        controller.setExpectedAuthor(WORKFLOW_OWNER); // author only — NO name
+        assertTrue(controller.getExpectedAuthor() != address(0), "author set");
+        assertEq(controller.getExpectedWorkflowName(), bytes10(0), "name still unset");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ZipcodeDeployAsserts.ReceiverIdentityNotWired.selector, address(controller))
+        );
+        harness.gate(_receivers(), address(registry));
+    }
+
+    /// @dev F7 case: every receiver sealed but `registry.setController` SKIPPED (`controller() == 0`).
+    function test_Negative_RegistryControllerUnset_GateReverts() public {
+        _seal(address(controller), NAME_CONTROLLER);
+        _seal(address(registry), NAME_REVALUATION);
         assertEq(registry.controller(), address(0), "registry unseeded");
 
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ZipcodeDeployAsserts.IdentityNotWired.selector, address(controller), address(registry)
-            )
+            abi.encodeWithSelector(ZipcodeDeployAsserts.RegistryControllerUnset.selector, address(registry))
         );
-        harness.gate(address(controller), address(registry));
-    }
-
-    /// @dev Sanity: both unset → reverts.
-    function test_Negative_BothUnset_GateReverts() public {
-        assertEq(controller.getExpectedWorkflowId(), bytes32(0), "identity unset");
-        assertEq(registry.controller(), address(0), "registry unseeded");
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ZipcodeDeployAsserts.IdentityNotWired.selector, address(controller), address(registry)
-            )
-        );
-        harness.gate(address(controller), address(registry));
+        harness.gate(_receivers(), address(registry));
     }
 
     // ============================================================
@@ -122,77 +137,33 @@ contract ZipcodeDeployIdentityGateTest is Test {
     // ============================================================
 
     function test_Positive_GatePasses_ThenRenounce_ThenFrozen() public {
-        // S10b: set identity. S6: seed the registry controller.
-        controller.setExpectedAuthor(WORKFLOW_OWNER);
-        controller.setExpectedWorkflowId(WID);
+        // Seal both receivers (author + per-receiver name) and seed the registry controller.
+        _seal(address(controller), NAME_CONTROLLER);
+        _seal(address(registry), NAME_REVALUATION);
         registry.setController(address(controller));
 
-        // The gate passes (no revert) when BOTH are wired.
-        harness.gate(address(controller), address(registry));
+        // The gate passes (no revert) when every receiver is sealed AND the registry is seeded.
+        harness.gate(_receivers(), address(registry));
 
         // S11: renounce succeeds.
         controller.renounceOwnership();
         assertEq(controller.owner(), address(0), "controller owner renounced");
 
         // Post-renounce every inherited owner-gated setter reverts OwnableUnauthorizedAccount.
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
-        );
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
         controller.setForwarderAddress(makeAddr("anything"));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
-        );
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
         controller.setExpectedAuthor(makeAddr("anything"));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
-        );
-        controller.setExpectedWorkflowId(bytes32(uint256(0xDEAD)));
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
+        controller.setExpectedWorkflowName("anything");
 
         // The registry's set-once is frozen too.
         registry.renounceOwnership();
         assertEq(registry.owner(), address(0), "registry owner renounced");
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
-        );
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
         registry.setController(makeAddr("anything"));
-    }
-
-    // ============================================================
-    // NEGATIVE-CONTROL — demonstrate the vuln the gate prevents (dormant identity)
-    // ============================================================
-
-    function test_NegativeControl_DormantVsActiveIdentity_SelectorDifference() public {
-        // Packed metadata with a WRONG workflowId (_decodeMetadata reads fixed offsets 32/64/74 → abi.encodePacked,
-        // NOT abi.encode).
-        bytes memory metadataWrongId = abi.encodePacked(WRONG_WID, bytes10(0), WORKFLOW_OWNER);
-
-        // (a) Dormant: identity NEVER set, controller renounced from owner → permanently unwired. A wrong-id
-        //     reportType-3 onReport gets PAST the (skipped) identity gate and reverts on DISPATCH:
-        //     UnsupportedReportType(3). This IS the vuln the S11 gate prevents.
-        assertEq(controller.getExpectedWorkflowId(), bytes32(0), "identity dormant");
-        controller.renounceOwnership();
-
-        vm.prank(FORWARDER);
-        vm.expectRevert(
-            abi.encodeWithSelector(ZipcodeController.UnsupportedReportType.selector, uint8(3))
-        );
-        controller.onReport(metadataWrongId, abi.encode(uint8(3), bytes("")));
-
-        // (b) Gate-active: a SEPARATE controller (NOT renounced → identity still settable). After
-        //     setExpectedWorkflowId(WID), the SAME wrong-id report reverts InvalidWorkflowId FIRST (identity gate
-        //     fires before dispatch). The SELECTOR DIFFERENCE is the proof.
-        ZipcodeController controller2 = new ZipcodeController(
-            FORWARDER, VENUE_STUB, address(lienFactory), address(registry), EREBOR
-        );
-        controller2.setExpectedWorkflowId(WID);
-
-        vm.prank(FORWARDER);
-        vm.expectRevert(
-            abi.encodeWithSelector(ReceiverTemplate.InvalidWorkflowId.selector, WRONG_WID, WID)
-        );
-        controller2.onReport(metadataWrongId, abi.encode(uint8(3), bytes("")));
     }
 }
 
@@ -203,18 +174,19 @@ contract LpGateHarness {
     }
 }
 
-/// @title SEC-05 — seal the un-looped CRE-push `lpOracle` identity + extend the pre-gate (kill-list M4)
-/// @notice Proves the M4 fix against the REAL `SzipFarmUtilityLpOracle` (a `ReceiverTemplate` NOT in the deploy's
-///         S10b same-WORKFLOW_ID seal loop), in four classes mirroring the harness Done-when:
-///           1. IDENTITY SEALED — after the P9 seal, `getExpectedWorkflowId() == WID` (pre-fix: bytes32(0)).
+/// @title CTR-16 — per-receiver author+name seal + the K5 privilege-separation proof
+/// @notice Proves the CTR-16 posture against the REAL `SzipFarmUtilityLpOracle` (a `ReceiverTemplate`), in four
+///         classes:
+///           1. IDENTITY SEALED — after the seal, `getExpectedAuthor()`/`getExpectedWorkflowName()` are non-zero.
 ///           2. BEHAVIORAL fail-closed — an unsealed lpOracle ACCEPTS a wrong-identity LP_MARK push (the dormant
-///              vuln); a sealed one REJECTS it `InvalidWorkflowId` (the accept-vs-revert difference is the proof).
-///           3. PRE-GATE bites — `requireReceiverIdentityWired` reverts when identity unset, passes once sealed.
-///           4. FAIR-LP branch — the new P9 calls are guarded `if (d.lpOracle != address(0))`, identical to the
-///              already-exercised `:544` ownership-transfer guard, so the ownerless `AlgebraIchiFairLpOracle`
-///              branch (`d.lpOracle == address(0)`) neither seals nor asserts (guard-by-construction; see below).
+///              vuln); a sealed one REJECTS a mismatched workflowName `InvalidWorkflowName`.
+///           3. PRE-GATE bites — `requireReceiverIdentityWired` reverts when author OR name is unset, passes sealed.
+///           4. K5 PRIVILEGE SEPARATION — two receivers, SAME author, DIFFERENT names: a report bearing daemon-A's
+///              name is ACCEPTED by the receiver sealed to daemon-A and REJECTED (`InvalidWorkflowName`) by the
+///              receiver sealed to daemon-B. This is the whole point of per-receiver names (a shared author cannot
+///              separate the separate daemons).
 ///         No fork: the oracle ctor only reads `quote.decimals()` (6-dp `MockUSDC`) and stores `lpToken`.
-contract SEC05LpOracleIdentityTest is Test {
+contract CTR16ReceiverIdentityTest is Test {
     LpGateHarness internal harness;
     MockUSDC internal usdc;
     SzipFarmUtilityLpOracle internal lpOracle;
@@ -225,27 +197,28 @@ contract SEC05LpOracleIdentityTest is Test {
 
     uint256 internal constant VALIDITY = 365 days;
     uint8 internal constant LP_MARK = 7;
-    bytes32 internal constant WID = bytes32(uint256(0xC0FFEE));
-    bytes32 internal constant WRONG_WID = bytes32(uint256(0xBAD1D));
+    string internal constant NAME_A = "zip-sharefeeds-a";
+    string internal constant NAME_B = "zip-sharefeeds-b";
 
     function setUp() public {
         harness = new LpGateHarness();
         usdc = new MockUSDC();
-        // The test is the deployer/owner ⇒ it can seal identity (mirrors P9's team broadcaster pre-transfer).
+        // The test is the deployer/owner ⇒ it can seal identity (mirrors the deploy's team broadcaster pre-transfer).
         lpOracle = new SzipFarmUtilityLpOracle(FORWARDER, address(usdc), VALIDITY, LP_TOKEN);
         assertEq(lpOracle.owner(), address(this), "test owns lpOracle");
     }
 
-    /// @dev Replicates the deploy's `_sealIdentity(address(d.lpOracle))`: set author + workflowId.
-    function _seal() internal {
-        lpOracle.setExpectedAuthor(WORKFLOW_OWNER);
-        lpOracle.setExpectedWorkflowId(WID);
+    /// @dev Replicates the deploy's `_sealIdentity(receiver, name)`: set author + workflowName.
+    function _seal(SzipFarmUtilityLpOracle o, string memory name) internal {
+        o.setExpectedAuthor(WORKFLOW_OWNER);
+        o.setExpectedWorkflowName(name);
     }
 
     /// @dev `abi.encodePacked(workflowId, workflowName, workflowOwner)` — the Forwarder metadata layout
-    ///      `ReceiverTemplate._decodeMetadata` reads at fixed offsets 32/64/74.
-    function _metadata(bytes32 wid) internal view returns (bytes memory) {
-        return abi.encodePacked(wid, bytes10(0), WORKFLOW_OWNER);
+    ///      `ReceiverTemplate._decodeMetadata` reads at fixed offsets 32/64/74. `workflowId` is left zero (the pin
+    ///      is dropped; `onReport` skips a zero expected id).
+    function _metadata(bytes10 name, address owner) internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes32(0), name, owner);
     }
 
     /// @dev A well-formed `LP_MARK` report envelope (`abi.encode(uint8 reportType, abi.encode(mark, ts))`).
@@ -254,58 +227,63 @@ contract SEC05LpOracleIdentityTest is Test {
     }
 
     // ============================================================
-    // 1. IDENTITY SEALED — the P9 seal sets a non-zero workflow id
+    // 1. IDENTITY SEALED — the seal sets a non-zero author + name
     // ============================================================
-    function test_SEC05_IdentitySealed_AfterSeal() public {
-        assertEq(lpOracle.getExpectedWorkflowId(), bytes32(0), "pre-fix: identity dormant");
-        _seal();
-        assertEq(lpOracle.getExpectedWorkflowId(), WID, "post-fix: identity sealed");
+    function test_IdentitySealed_AfterSeal() public {
+        assertEq(lpOracle.getExpectedAuthor(), address(0), "pre-seal: author dormant");
+        assertEq(lpOracle.getExpectedWorkflowName(), bytes10(0), "pre-seal: name dormant");
+        _seal(lpOracle, NAME_A);
         assertEq(lpOracle.getExpectedAuthor(), WORKFLOW_OWNER, "author sealed");
+        assertTrue(lpOracle.getExpectedWorkflowName() != bytes10(0), "name sealed");
     }
 
     // ============================================================
-    // 2. BEHAVIORAL — dormant accepts wrong identity; sealed rejects it
+    // 2. BEHAVIORAL — dormant accepts wrong identity; sealed rejects a mismatched name
     // ============================================================
 
-    /// @dev The vuln (pre-fix): identity dormant ⇒ a wrong-workflowId LP_MARK from the (shared) Forwarder is
-    ///      ACCEPTED and writes the cache. Any co-tenant workflow clearing the Forwarder can push the LP mark.
-    function test_SEC05_Behavioral_DormantAcceptsWrongIdentity() public {
-        assertEq(lpOracle.getExpectedWorkflowId(), bytes32(0), "identity dormant");
+    /// @dev The vuln (dormant): NO identity ⇒ a wrong-identity LP_MARK from the (shared) Forwarder is ACCEPTED and
+    ///      writes the cache. Any co-tenant workflow clearing the Forwarder can push the LP mark.
+    function test_Behavioral_DormantAcceptsWrongIdentity() public {
+        assertEq(lpOracle.getExpectedAuthor(), address(0), "identity dormant");
 
         vm.warp(VALIDITY + 100); // so a `ts` in range is non-zero and <= now
         uint32 ts = uint32(block.timestamp);
         vm.prank(FORWARDER);
-        lpOracle.onReport(_metadata(WRONG_WID), _lpMarkReport(15e6, ts));
+        lpOracle.onReport(_metadata(bytes10("whatever"), makeAddr("strangerDaemon")), _lpMarkReport(15e6, ts));
 
         (uint208 price, uint48 cachedTs) = lpOracle.cache();
         assertEq(price, 15e6, "wrong-identity mark was accepted (the dormant vuln)");
         assertEq(cachedTs, ts, "cache timestamp written by an unauthorized workflow");
     }
 
-    /// @dev The fix: once sealed, the SAME wrong-workflowId report reverts `InvalidWorkflowId` BEFORE dispatch.
-    function test_SEC05_Behavioral_SealedRejectsWrongIdentity() public {
-        _seal();
+    /// @dev The fix: once sealed, a report whose author matches but whose workflowName does NOT reverts
+    ///      `InvalidWorkflowName` BEFORE dispatch.
+    function test_Behavioral_SealedRejectsWrongName() public {
+        _seal(lpOracle, NAME_A);
+        bytes10 sealedName = lpOracle.getExpectedWorkflowName();
+        bytes10 wrongName = bytes10(keccak256("some-other-daemon")); // != sealedName
 
         vm.warp(VALIDITY + 100);
         uint32 ts = uint32(block.timestamp);
         vm.prank(FORWARDER);
         vm.expectRevert(
-            abi.encodeWithSelector(ReceiverTemplate.InvalidWorkflowId.selector, WRONG_WID, WID)
+            abi.encodeWithSelector(ReceiverTemplate.InvalidWorkflowName.selector, wrongName, sealedName)
         );
-        lpOracle.onReport(_metadata(WRONG_WID), _lpMarkReport(15e6, ts));
+        lpOracle.onReport(_metadata(wrongName, WORKFLOW_OWNER), _lpMarkReport(15e6, ts));
 
         (, uint48 cachedTs) = lpOracle.cache();
-        assertEq(cachedTs, 0, "no mark written - the unauthorized push was rejected");
+        assertEq(cachedTs, 0, "no mark written - the mismatched-name push was rejected");
     }
 
-    /// @dev The authorized workflow still pushes through the sealed gate (no false-positive lockout).
-    function test_SEC05_Behavioral_SealedAcceptsCorrectIdentity() public {
-        _seal();
+    /// @dev The authorized workflow (matching author AND name) still pushes through the sealed gate.
+    function test_Behavioral_SealedAcceptsCorrectIdentity() public {
+        _seal(lpOracle, NAME_A);
+        bytes10 sealedName = lpOracle.getExpectedWorkflowName();
 
         vm.warp(VALIDITY + 100);
         uint32 ts = uint32(block.timestamp);
         vm.prank(FORWARDER);
-        lpOracle.onReport(_metadata(WID), _lpMarkReport(15e6, ts));
+        lpOracle.onReport(_metadata(sealedName, WORKFLOW_OWNER), _lpMarkReport(15e6, ts));
 
         (uint208 price, uint48 cachedTs) = lpOracle.cache();
         assertEq(price, 15e6, "authorized mark accepted");
@@ -313,38 +291,70 @@ contract SEC05LpOracleIdentityTest is Test {
     }
 
     // ============================================================
-    // 3. PRE-GATE — requireReceiverIdentityWired reverts unset, passes sealed
+    // 3. PRE-GATE — requireReceiverIdentityWired reverts unset (author OR name), passes sealed
     // ============================================================
-    function test_SEC05_PreGate_RevertsWhenIdentityUnset() public {
-        assertEq(lpOracle.getExpectedWorkflowId(), bytes32(0), "identity unset");
+    function test_PreGate_RevertsWhenAuthorUnset() public {
+        // name set, author unset (the WorkflowNameRequiresAuthorValidation hazard the gate forecloses).
+        lpOracle.setExpectedWorkflowName(NAME_A);
+        assertEq(lpOracle.getExpectedAuthor(), address(0), "author unset");
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ZipcodeDeployAsserts.ReceiverIdentityNotWired.selector, address(lpOracle)
-            )
+            abi.encodeWithSelector(ZipcodeDeployAsserts.ReceiverIdentityNotWired.selector, address(lpOracle))
         );
         harness.gate(address(lpOracle));
     }
 
-    function test_SEC05_PreGate_PassesWhenSealed() public {
-        _seal();
+    function test_PreGate_RevertsWhenNameUnset() public {
+        lpOracle.setExpectedAuthor(WORKFLOW_OWNER); // author only
+        assertEq(lpOracle.getExpectedWorkflowName(), bytes10(0), "name unset");
+        vm.expectRevert(
+            abi.encodeWithSelector(ZipcodeDeployAsserts.ReceiverIdentityNotWired.selector, address(lpOracle))
+        );
+        harness.gate(address(lpOracle));
+    }
+
+    function test_PreGate_PassesWhenSealed() public {
+        _seal(lpOracle, NAME_A);
         harness.gate(address(lpOracle)); // no revert
     }
 
     // ============================================================
-    // 4. FAIR-LP branch — the new P9 calls are guarded by `lpOracle != address(0)`
+    // 4. K5 — PRIVILEGE SEPARATION (the load-bearing proof): same author, different names
     // ============================================================
 
-    /// @dev On the fair-LP branch the deploy leaves `d.lpOracle == address(0)`, so the script's
-    ///      `if (address(d.lpOracle) != address(0))` guard skips BOTH the seal and this pre-gate — exactly as it
-    ///      already skips the `:544` ownership transfer. This test pins the guard's load-bearing half: WERE the
-    ///      gate ever invoked on an unsealed receiver it reverts (proven above), so the `address(0)` skip is what
-    ///      keeps the fair-LP deploy from fail-closing. The full fair-LP deploy path is the (skipped) WOOF-10
-    ///      fork harness's bar; here we fix the guard semantics the script depends on.
-    function test_SEC05_FairLpBranch_GuardSemantics() public pure {
-        // The deployment struct's default `lpOracle` is the zero address (never assigned on the fair-LP branch),
-        // and the script gates both new calls on `!= address(0)`. The library is therefore never reached.
-        address fairLpBranchOracle = address(0);
-        assertEq(fairLpBranchOracle, address(0), "fair-LP branch: no SzipFarmUtilityLpOracle to seal/assert");
-        // (No harness.gate(address(0)) call — that is precisely what the script's guard prevents.)
+    /// @dev Two receivers sealed to the SAME author but DIFFERENT names (daemon-A vs daemon-B). A report bearing
+    ///      daemon-A's name is ACCEPTED by receiver-A (writes its cache) and REJECTED by receiver-B
+    ///      (`InvalidWorkflowName`). The author is identical in both — only the per-receiver NAME separates them,
+    ///      which is exactly what CTR-16 buys (a shared deploy wallet ⇒ shared author ⇒ author cannot separate).
+    function test_K5_PrivilegeSeparation_NameSeparatesSameAuthorDaemons() public {
+        SzipFarmUtilityLpOracle oracleA = lpOracle; // sealed to daemon-A below
+        SzipFarmUtilityLpOracle oracleB =
+            new SzipFarmUtilityLpOracle(FORWARDER, address(usdc), VALIDITY, LP_TOKEN);
+
+        _seal(oracleA, NAME_A);
+        _seal(oracleB, NAME_B);
+
+        // identical author, distinct on-chain names.
+        assertEq(oracleA.getExpectedAuthor(), oracleB.getExpectedAuthor(), "same author (shared deploy wallet)");
+        bytes10 nameA = oracleA.getExpectedWorkflowName();
+        bytes10 nameB = oracleB.getExpectedWorkflowName();
+        assertTrue(nameA != nameB, "distinct per-receiver names");
+
+        vm.warp(VALIDITY + 100);
+        uint32 ts = uint32(block.timestamp);
+        bytes memory metaA = _metadata(nameA, WORKFLOW_OWNER); // a report from daemon-A
+
+        // (a) ACCEPTED by the receiver sealed to daemon-A.
+        vm.prank(FORWARDER);
+        oracleA.onReport(metaA, _lpMarkReport(15e6, ts));
+        (uint208 priceA, uint48 tsA) = oracleA.cache();
+        assertEq(priceA, 15e6, "daemon-A's report accepted by receiver-A");
+        assertEq(tsA, ts, "receiver-A cache written");
+
+        // (b) REJECTED by the receiver sealed to daemon-B — same author, wrong name.
+        vm.prank(FORWARDER);
+        vm.expectRevert(abi.encodeWithSelector(ReceiverTemplate.InvalidWorkflowName.selector, nameA, nameB));
+        oracleB.onReport(metaA, _lpMarkReport(15e6, ts));
+        (, uint48 tsB) = oracleB.cache();
+        assertEq(tsB, 0, "receiver-B rejected daemon-A's report (no cache write)");
     }
 }

@@ -196,7 +196,8 @@ contract JuniorTrancheDeployerTest is ForkConfig {
     address internal adminSafe = makeAddr("adminSafe");
     address internal workflowAuthor = makeAddr("workflowAuthor");
     address internal rateOracle = makeAddr("rateOracle"); // a shared hub input (never owned/transferred here)
-    bytes32 internal workflowId = keccak256("zipcode.cre.workflow.junior");
+    string internal workflowNameSharefeeds = "zip-sharefeeds";
+    string internal workflowNameCoordinator = "zip-coordinator";
 
     uint256 internal constant SALT = uint256(keccak256("zipcode.junior.ctr06b.salt.a"));
 
@@ -277,7 +278,8 @@ contract JuniorTrancheDeployerTest is ForkConfig {
             creOperator: creOperator,
             saltNonce: SALT,
             workflowAuthor: workflowAuthor,
-            workflowId: workflowId,
+            workflowNameSharefeeds: workflowNameSharefeeds,
+            workflowNameCoordinator: workflowNameCoordinator,
             zipUSD: address(zip),
             rateOracle: rateOracle,
             eePool: address(ee),

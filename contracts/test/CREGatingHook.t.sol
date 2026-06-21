@@ -44,6 +44,10 @@ contract CREGatingHookTest is Test {
     address foreignAccount = makeAddr("foreignAccount"); // an external account (unauthorized)
     address spoofedAccount = makeAddr("spoofedAccount"); // appended-bytes spoof target (authorized)
 
+    // mirrors of the contract events (for vm.expectEmit)
+    event WiringSet(bytes32 indexed slot, address value);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
     function setUp() public {
         factory = new MockFactory();
         evc = new MockEVC();
@@ -140,5 +144,97 @@ contract CREGatingHookTest is Test {
     // Records the actual custom-error selector for the evidence trail.
     function test_errorSelector() public pure {
         assertEq(CREGatingHook.NotAuthorizedOperator.selector, bytes4(0x3d9adf1c), "NotAuthorizedOperator() selector");
+    }
+
+    // ============================================================
+    // (I-6) Build-phase admin surface — onlyOwner + ZeroAddress + effect/event
+    // ============================================================
+    // The owner == this test (deployed the hook in setUp). The bespoke onlyOwner checks the RAW msg.sender.
+
+    /// @notice Every admin function is `onlyOwner` — a non-owner reverts `NotOwner`.
+    function test_f_admin_onlyOwner() public {
+        address bad = makeAddr("notOwner");
+        vm.startPrank(bad);
+        vm.expectRevert(CREGatingHook.NotOwner.selector);
+        hook.transferOwnership(bad);
+        vm.expectRevert(CREGatingHook.NotOwner.selector);
+        hook.setEVaultFactory(bad);
+        vm.expectRevert(CREGatingHook.NotOwner.selector);
+        hook.setEvc(bad);
+        vm.expectRevert(CREGatingHook.NotOwner.selector);
+        hook.setBorrowDriver(bad);
+        vm.stopPrank();
+    }
+
+    /// @notice Every admin function zero-guards: `address(0)` reverts `ZeroAddress` (as the owner).
+    function test_f_admin_zeroGuards() public {
+        vm.expectRevert(CREGatingHook.ZeroAddress.selector);
+        hook.transferOwnership(address(0));
+        vm.expectRevert(CREGatingHook.ZeroAddress.selector);
+        hook.setEVaultFactory(address(0));
+        vm.expectRevert(CREGatingHook.ZeroAddress.selector);
+        hook.setEvc(address(0));
+        vm.expectRevert(CREGatingHook.ZeroAddress.selector);
+        hook.setBorrowDriver(address(0));
+    }
+
+    /// @notice The three wiring setters re-point their slot and emit `WiringSet(slot, value)`.
+    function test_f_setters_effect_and_events() public {
+        address x = makeAddr("rewire");
+
+        vm.expectEmit(true, false, false, true, address(hook));
+        emit WiringSet("eVaultFactory", x);
+        hook.setEVaultFactory(x);
+        assertEq(address(hook.eVaultFactory()), x, "eVaultFactory re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(hook));
+        emit WiringSet("evc", x);
+        hook.setEvc(x);
+        assertEq(address(hook.evc()), x, "evc re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(hook));
+        emit WiringSet("borrowDriver", x);
+        hook.setBorrowDriver(x);
+        assertEq(hook.borrowDriver(), x, "borrowDriver re-pointed");
+    }
+
+    /// @notice `transferOwnership` hands off the admin (emits `OwnershipTransferred`); the old owner then loses power.
+    function test_f_transferOwnership_effect() public {
+        address newOwner = makeAddr("timelock");
+        vm.expectEmit(true, true, false, false, address(hook));
+        emit OwnershipTransferred(address(this), newOwner);
+        hook.transferOwnership(newOwner);
+        assertEq(hook.owner(), newOwner, "owner handed off");
+
+        // the OLD owner (this test) can no longer call an admin function.
+        vm.expectRevert(CREGatingHook.NotOwner.selector);
+        hook.setBorrowDriver(makeAddr("x"));
+
+        // the NEW owner can.
+        vm.prank(newOwner);
+        hook.setBorrowDriver(makeAddr("d"));
+    }
+
+    /// @notice The highest-stakes re-point: `setBorrowDriver` changes WHICH operator the gate authorizes against.
+    ///         After the re-point, an account that authorized the NEW driver passes the fallback gate, while the
+    ///         line account that only authorized the OLD driver is now rejected `NotAuthorizedOperator`.
+    function test_f_setBorrowDriver_repoint_changes_gate() public {
+        address newDriver = makeAddr("newBorrowDriver");
+        address acctNew = makeAddr("acctAuthorizedToNewDriver");
+        evc.setAuthorized(acctNew, newDriver, true); // authorizes only the NEW driver
+        // sanity: lineAccount authorized the OLD driver (setUp), not the new one.
+        assertTrue(evc.isAccountOperatorAuthorized(lineAccount, borrowDriver), "lineAccount -> old driver");
+        assertFalse(evc.isAccountOperatorAuthorized(lineAccount, newDriver), "lineAccount NOT -> new driver");
+
+        hook.setBorrowDriver(newDriver);
+
+        // the old line account (only authorized to the old driver) is now rejected.
+        (bool okOld, bytes memory retOld) = _callFallbackAs(vault, bytes4(0xaabbccdd), lineAccount);
+        assertFalse(okOld, "old-driver account rejected after re-point");
+        assertEq(bytes4(retOld), CREGatingHook.NotAuthorizedOperator.selector, "reverts NotAuthorizedOperator");
+
+        // an account authorized to the NEW driver now passes.
+        (bool okNew,) = _callFallbackAs(vault, bytes4(0xaabbccdd), acctNew);
+        assertTrue(okNew, "new-driver account passes the re-pointed gate");
     }
 }

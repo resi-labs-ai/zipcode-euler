@@ -74,7 +74,14 @@ contract DeployLocal is DeployZipcode {
         i.adminSafe = ANVIL_5;
         i.curatorSafe = ANVIL_6; // CTR-13: per-line EVK feeReceiver (curator pay)
         i.saltNonce = 1;
-        i.workflowId = bytes32(uint256(1)); // non-zero (identity pre-gate)
+        // CTR-16: per-receiver workflow NAMES (local anvil labels — there is no real CRE registration here; these
+        // satisfy the reworked author+name identity pre-gate). The `workflowId` pin is dropped (left bytes32(0)).
+        i.workflowNameController = "zip-controller";
+        i.workflowNameRevaluation = "zip-revaluation";
+        i.workflowNameCoordinator = "zip-coordinator";
+        i.workflowNameSharefeeds = "zip-sharefeeds";
+        i.workflowNameWarehouse = "zip-warehouse";
+        i.workflowNameRate = "zip-szalpha-rate";
 
         // live LP legs (matched pair)
         i.polIchiVault = LIVE_ICHI_VAULT;

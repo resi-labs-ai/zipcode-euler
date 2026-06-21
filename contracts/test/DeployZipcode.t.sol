@@ -67,7 +67,14 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         vm.setEnv("GOD_OWNER", vm.toString(godOwner));
         vm.setEnv("CRE_OPERATOR", vm.toString(creOperator));
         vm.setEnv("WORKFLOW_AUTHOR", vm.toString(workflowAuthor));
-        vm.setEnv("WORKFLOW_ID", vm.toString(bytes32(uint256(1)))); // non-zero (identity pre-gate)
+        // CTR-16: per-receiver workflow NAMES (the dropped `WORKFLOW_ID` pin); each non-empty so the reworked
+        // author+name identity pre-gate passes.
+        vm.setEnv("WORKFLOW_NAME_CONTROLLER", "zip-controller");
+        vm.setEnv("WORKFLOW_NAME_REVALUATION", "zip-revaluation");
+        vm.setEnv("WORKFLOW_NAME_COORDINATOR", "zip-coordinator");
+        vm.setEnv("WORKFLOW_NAME_SHAREFEEDS", "zip-sharefeeds");
+        vm.setEnv("WORKFLOW_NAME_WAREHOUSE", "zip-warehouse");
+        vm.setEnv("WORKFLOW_NAME_RATE", "zip-szalpha-rate");
         vm.setEnv("EREBOR", vm.toString(erebor));
         vm.setEnv("ADMIN_SAFE", vm.toString(adminSafe));
         vm.setEnv("SUMMON_SALT_NONCE", vm.toString(uint256(1)));
@@ -117,12 +124,14 @@ contract DeployZipcodeForkTest is DeployZipcodeForkBase {
         // ... seam assertions here ...
     }
 
-    /// @notice The identity pre-gate is a TESTED NEGATIVE: sealing with `expectedWorkflowId` unset MUST revert.
-    /// TODO(next window): run the deploy up to P9 with WORKFLOW_ID==bytes32(0) (or controller unset) and assert
-    ///   `ZipcodeDeployAsserts.requireIdentityWired` reverts `IdentityNotWired` (not just "didn't seal").
+    /// @notice The identity pre-gate is a TESTED NEGATIVE: sealing with a per-receiver workflowName unset (or the
+    ///   author unset) MUST revert (CTR-16 author+name posture). The focused unit proof lives in
+    ///   `ZipcodeDeployIdentityGate.t.sol`; this fork-level negative is the integration echo.
+    /// TODO(next window): run the deploy up to P9 with e.g. WORKFLOW_NAME_CONTROLLER="" and assert
+    ///   `ZipcodeDeployAsserts.requireIdentityWired` reverts `ReceiverIdentityNotWired` (not just "didn't seal").
     function test_identityPregate_revertsWhenUnset() public {
         vm.skip(true); // SCAFFOLD
-        // vm.setEnv("WORKFLOW_ID", vm.toString(bytes32(0)));
+        // vm.setEnv("WORKFLOW_NAME_CONTROLLER", "");
         // vm.prank(team); vm.expectRevert(); dep.deploy();
     }
 

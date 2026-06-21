@@ -1477,6 +1477,135 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(adapter.adminSafe(), address(0), "recipient disabled back to address(0)");
     }
 
+    // ============================================================
+    // (I-16) Build-phase infra wiring setters — onlyOwner + ZeroAddress + effect/event
+    // ============================================================
+    // The 11 ZeroAddress-guarded infra re-points (controller/evc/eulerEarn/eVaultFactory/oracleRegistry/gatingHook/
+    // irm/usdc/erebor/usdcReservoir/farmUtilityAllocator). The CTR-09/CTR-13 setters (feeBps/adminSafe/curatorSafe)
+    // and setFarmUtilityVault's CTR-07 hook guard are covered elsewhere; these are pure store-and-emit setters with
+    // no external call, so re-pointing to a fresh address is safe.
+
+    /// @notice Every infra setter is `onlyOwner` — a non-owner reverts `OwnableUnauthorizedAccount`.
+    function test_I16_InfraSetters_RejectNonOwner() public {
+        address bad = makeAddr("notOwner");
+        vm.startPrank(bad);
+        vm.expectRevert();
+        adapter.setController(bad);
+        vm.expectRevert();
+        adapter.setEvc(bad);
+        vm.expectRevert();
+        adapter.setEulerEarn(bad);
+        vm.expectRevert();
+        adapter.setEVaultFactory(bad);
+        vm.expectRevert();
+        adapter.setOracleRegistry(bad);
+        vm.expectRevert();
+        adapter.setGatingHook(bad);
+        vm.expectRevert();
+        adapter.setIrm(bad);
+        vm.expectRevert();
+        adapter.setUsdc(bad);
+        vm.expectRevert();
+        adapter.setErebor(bad);
+        vm.expectRevert();
+        adapter.setUsdcReservoir(bad);
+        vm.expectRevert();
+        adapter.setFarmUtilityAllocator(bad);
+        vm.stopPrank();
+    }
+
+    /// @notice Every infra setter zero-guards: `address(0)` reverts `ZeroAddress` (as the owner).
+    function test_I16_InfraSetters_RejectZeroAddress() public {
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setController(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setEvc(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setEulerEarn(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setEVaultFactory(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setOracleRegistry(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setGatingHook(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setIrm(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setUsdc(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setErebor(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setUsdcReservoir(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setFarmUtilityAllocator(address(0));
+    }
+
+    /// @notice Each infra setter re-points its slot and emits `WiringSet(slot, value)` (as the owner).
+    function test_I16_InfraSetters_OwnerRepointsAndEmits() public {
+        address x = makeAddr("rewire");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("controller", x);
+        adapter.setController(x);
+        assertEq(adapter.controller(), x, "controller re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("evc", x);
+        adapter.setEvc(x);
+        assertEq(address(adapter.evc()), x, "evc re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("eulerEarn", x);
+        adapter.setEulerEarn(x);
+        assertEq(address(adapter.eulerEarn()), x, "eulerEarn re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("eVaultFactory", x);
+        adapter.setEVaultFactory(x);
+        assertEq(address(adapter.eVaultFactory()), x, "eVaultFactory re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("oracleRegistry", x);
+        adapter.setOracleRegistry(x);
+        assertEq(adapter.oracleRegistry(), x, "oracleRegistry re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("gatingHook", x);
+        adapter.setGatingHook(x);
+        assertEq(adapter.gatingHook(), x, "gatingHook re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("irm", x);
+        adapter.setIrm(x);
+        assertEq(adapter.irm(), x, "irm re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("usdc", x);
+        adapter.setUsdc(x);
+        assertEq(adapter.usdc(), x, "usdc re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("erebor", x);
+        adapter.setErebor(x);
+        assertEq(adapter.erebor(), x, "erebor re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("usdcReservoir", x);
+        adapter.setUsdcReservoir(x);
+        assertEq(adapter.usdcReservoir(), x, "usdcReservoir re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("farmUtilityAllocator", x);
+        adapter.setFarmUtilityAllocator(x);
+        assertEq(adapter.farmUtilityAllocator(), x, "farmUtilityAllocator re-pointed");
+    }
+
+    /// @notice The CTR-10b venue-agnostic senior surface: `seniorPool()` returns the EulerEarn pool (4626 satisfies
+    ///         `ISeniorPool` directly), the address the `SiloRegistry` admission gate asserts against.
+    function test_seniorPool_ReturnsEulerEarn() public view {
+        assertEq(adapter.seniorPool(), address(ee), "seniorPool == the EulerEarn pool");
+    }
+
     /// @dev F2 intact: even with the fee live, the PRINCIPAL leg still sends `amount` to `erebor`, and a draw with
     ///      `receiver != erebor` still reverts BadReceiver (the fee leg's distinct receiver does not relax the pin).
     function test_CTR09_F2_PinIntactWithFeeOn() public {

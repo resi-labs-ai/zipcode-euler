@@ -66,7 +66,7 @@ Signals: routes USDC supply/redeem against an EulerEarn 4626 pool (Vault adapter
 **Adversary Ranking** (ordered for this protocol type, adjusted by git evidence):
 
 1. **Mis-scoped Roles policy** — if the off-chain Roles scope is wrong (a param left wildcarded, a delegatecall option granted, the wrong avatar), this contract's hardcoding is the *only* remaining defense. The scope is where the real risk lives.
-2. **`warehouseSafe` ↔ `roles.avatar()` parity break** — these are independent slots; a one-sided re-point bricks SUPPLY/REDEEM. Fail-closed (a liveness failure, not a leak), but a live risk.
+2. **`warehouseSafe` ↔ `roles.avatar()` parity break** — these are independent slots; a one-sided re-point would brick SUPPLY/REDEEM (fail-closed). **Now caught on-chain**: `setWarehouseSafe` reverts `AvatarMismatch` unless `roles.avatar()` already equals the new safe, so the mismatch can't be saved (paired re-point: `Roles.setAvatar` first).
 3. **Compromised CRE workflow** — bounded by the scope + the injection/hardcoding; can grief (e.g. ill-timed redeem) within the permitted ops.
 4. **Compromised Timelock owner** — build-phase wiring is re-pointable; the destination guarantees are conditional on correct wiring + the pre-prod re-freeze.
 
@@ -76,14 +76,14 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 - **The Roles scope (off-chain config)** — `_processReport:189` forwards through `roles.execTransactionWithRole`; the param-pinning (`receiver==avatar`, `spender==eePool`, `EqualTo(redemptionBox)`, Call-only) is enforced by the modifier's *scope*, **not** this file. This is the single most important thing to audit, and it is out of this scope.
 - **Operation hardcoding** — `value=0`, `OP_CALL=0`, `shouldRevert=true` are literals at the call site (`:189`), never payload-decoded; this is the on-chain half of the no-delegatecall/no-value guarantee.
-- **`warehouseSafe` parity** — `warehouseSafe` (here) and the modifier's `avatar` are independent (`:43-48`); SUPPLY/REDEEM inject `warehouseSafe` while the scope checks `receiver==avatar`, so they must match. Not checked on-chain. *Git signal: 7 source-touching commits, top fix-score 19 — high churn.*
+- **`warehouseSafe` parity** — `warehouseSafe` (here) and the modifier's `avatar` are independent slots; SUPPLY/REDEEM inject `warehouseSafe` while the scope checks `receiver==avatar`, so they must match. **Now checked on-chain** — `setWarehouseSafe` reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_` (`docs/roles.md`). *Git signal: 7 source-touching commits, top fix-score 19 — high churn.*
 - **Build-phase wiring** — all six slots are `onlyOwner` re-pointable (§17), to be re-frozen to immutable at pre-prod (off-chain process, not enforced here).
 
 ### Key Attack Surfaces
 
 - **The Roles scope is the real control, and it's out of scope** &nbsp;[[X-1](invariants.md#x-1)] — `_processReport:189` trusts the modifier's scope for param-pinning; this contract's injections are explicitly "belt-and-suspenders." Worth auditing the deployed Roles scope tree (receiver/spender/`EqualTo` pins, Call-only, no delegatecall option) as the primary artifact — the bytecode here is secondary.
 
-- **`warehouseSafe` ↔ `avatar` parity is unverified on-chain** &nbsp;[[X-2](invariants.md#x-2)] — `setWarehouseSafe:126` writes `warehouseSafe` but never reads/asserts `roles.avatar()`; the docstring says it MUST be paired with `setAvatar` on the modifier. Worth confirming the runbook/deploy enforces the pair and ideally adding a post-condition parity check.
+- **`warehouseSafe` ↔ `avatar` parity is enforced on-chain** &nbsp;[[X-2/I-4](invariants.md#x-2-now-enforced-on-chain--see-i-4)] — `setWarehouseSafe` now reads `roles.avatar()` and reverts `AvatarMismatch` unless it equals `warehouseSafe_`, so a one-sided re-point can't be saved. The paired re-point is order-dependent (`Roles.setAvatar` first), documented in `docs/roles.md`; proven by `test_Parity_OneSidedRepoint_RevertsAtSetter` + `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`.
 
 - **REPAY `dest` is the one payload-carried address** &nbsp;[[I-3](invariants.md#i-3)] — `_processReport:176-182` decodes `dest` then both reverts on `dest != redemptionBox` and re-injects `redemptionBox` into the actual calldata. Worth confirming the injected (not the decoded) value is what's transferred (it is — `:182` uses `redemptionBox`), so even a scope gap can't redirect REPAY.
 
@@ -142,12 +142,12 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 > ### 📋 Full invariant map: **[invariants.md](invariants.md)**
 >
-> - **9 Enforced Guards** (`G-1` … `G-9`)
-> - **3 Single-Contract Invariants** (`I-1` … `I-3`) — operation hardcoding, op allow-list, REPAY injection
-> - **3 Cross-Contract Invariants** (`X-1` … `X-3`) — Roles-scope-is-the-boundary, avatar parity, mutable wiring
+> - **10 Enforced Guards** (`G-1` … `G-10`, incl. the new avatar-parity `AvatarMismatch`)
+> - **4 Single-Contract Invariants** (`I-1` … `I-4`) — operation hardcoding, op allow-list, REPAY injection, **avatar parity (now on-chain)**
+> - **3 Cross-Contract Invariants** (`X-1` … `X-3`) — Roles-scope-is-the-boundary, avatar parity (X-2 now enforced on-chain → I-4), mutable wiring
 > - **0 Economic Invariants** — this is a router; the economic invariants live in EulerEarn / the loss + NAV subsystems
 >
-> The high-signal blocks are all **On-chain=No** cross-contract ones — the security genuinely lives outside this file.
+> The primary control (X-1, param-pinning) is still **On-chain=No** — it lives in the Roles scope; X-2 (avatar parity) moved on-chain as of 2026-06-20.
 
 ---
 
@@ -185,7 +185,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 > **CORRECTION (2026-06-20):** an earlier draft of this report claimed the decisive Roles-scope integration test was "not present." That was wrong. `test/WarehouseAdminModule.t.sol` is a **fork integration suite against the real deployed Roles modifier** and already covers the full scope-rejection matrix: `test_Scope_PinsParams_DepositReceiver`/`_TransferTo` (param pins), `test_CallOnly_RejectsValueAndDelegatecall` (value + **delegatecall** rejected), `test_Escalation_Blocked` (enableModule/addOwner/wrong-target/wrong-selector), `test_NonMember_Reverts`, forwarder-gate, reentrancy, atomicity, malformed-payload. The decisive control IS proven.
 
 - **No fuzz/invariant tests** — low priority: a deterministic stateless encoder with no arithmetic; fuzzing adds little.
-- **`warehouseSafe ↔ roles.avatar()` parity — NOW TESTED (was the one real gap)** — the contract's own documented #1 hazard (`:43-48`) is covered fail-closed by `test_Parity_OneSidedRepoint_SupplyFailsClosed` / `_RedeemFailsClosed`: a one-sided re-point makes SUPPLY/REDEEM revert at the scope check with nothing leaked. Residual: no *on-chain* parity assertion (the docstring + runbook mandate the paired re-point instead) — defense-in-depth, not a test gap.
+- **`warehouseSafe ↔ roles.avatar()` parity — NOW ENFORCED ON-CHAIN (the last residual)** — the contract's own documented #1 hazard is closed in code: `setWarehouseSafe` reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`. Proven by `test_Parity_OneSidedRepoint_RevertsAtSetter` (one-sided re-point reverts, slot unchanged) + `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds` (avatar-first → accepted). The scope-level rejection backstop stays covered by `test_Scope_PinsParams_DepositReceiver`. The defense-in-depth assertion the earlier draft suggested is implemented; runbook + invariant documented in `docs/roles.md`.
 - **The six `onlyOwner` setters — NOW TESTED** — `test_Setters_RejectNonOwner` (all six revert for a non-owner) and `test_Setters_OwnerUpdates_AndRejectsZero` (each takes effect + zero/zero-key guards).
 
 ---
@@ -239,13 +239,14 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 ## X-Ray Verdict
 
-**ADEQUATE** *(a hair from HARDENED; revised up from an initial FRAGILE — see correction below)* — clean, well-documented, defensively hardcoded encoder with clear roles + Timelock, and its decisive control (the Zodiac Roles scope) is **proven by a fork integration suite** that exercises the full scope-rejection matrix against the real deployed modifier. The two gaps the first draft flagged (avatar-parity fail-closed, the six `onlyOwner` setters) are **now both covered** (28 tests). Capped at ADEQUATE (not HARDENED) only by: no in-scope spec/README, no *on-chain* avatar-parity assertion (mandated by runbook instead), and the deferred pre-prod immutable re-freeze; no fuzz/invariant (correctly low-value for a deterministic router).
+**HARDENED** *(modulo the pre-prod immutable re-freeze + no external audit; revised up from ADEQUATE — see correction below)* — clean, defensively hardcoded encoder with clear roles + Timelock, and its decisive control (the Zodiac Roles scope) is **proven by a fork integration suite** that exercises the full scope-rejection matrix against the real deployed modifier. All three gaps prior drafts flagged are now closed: the six `onlyOwner` setters (tested), avatar parity (**now enforced on-chain** — `setWarehouseSafe` reverts `AvatarMismatch`), and the missing in-scope doc (`docs/roles.md`). The only residuals are process — the deferred pre-prod immutable re-freeze of the build-phase wiring — and the absence of an external audit; no code or coverage gap remains. No fuzz/invariant (correctly low-value for a deterministic router).
 
 > **CORRECTION (2026-06-20):** the first draft graded this FRAGILE on the reasoning that the Roles-scope integration test was absent. That was a misread — `WarehouseAdminModule.t.sol` is a fork integration suite that already proves the scope rejects redirected receivers, wrong REPAY dests, value, delegatecall, and target/selector escalation. With the decisive control demonstrably covered, the honest tier is ADEQUATE.
 
 **Structural facts:**
-1. 107 nSLOC, 1 non-upgradeable contract holding no custody; 0 permissionless entry points.
+1. 110 nSLOC, 1 non-upgradeable contract holding no custody; 0 permissionless entry points.
 2. 6 `onlyOwner` (Timelock) wiring setters + 1 Forwarder-gated `_processReport` dispatching 4 hardcoded ops.
 3. `value`/`operation`/`shouldRevert` are literals (0 / Call / true) at the single call site — never payload-decoded.
-4. 28 **fork integration** tests vs the real Roles modifier (full scope-rejection matrix + avatar-parity fail-closed + all six setters); 0 fuzz, 0 invariant. No real on-chain test gap remains.
-5. Coverage uninstrumentable — project-wide stack-too-deep even under `--ir-minimum`.
+4. `setWarehouseSafe` enforces avatar parity on-chain (`AvatarMismatch`): the re-point is order-dependent (`Roles.setAvatar` first), closing the X-2 silent-brick hazard; documented in `docs/roles.md`.
+5. 28 **fork integration** tests vs the real Roles modifier (full scope-rejection matrix + avatar-parity enforcement + all six setters); 0 fuzz, 0 invariant. No code or coverage gap remains.
+6. Coverage uninstrumentable — project-wide stack-too-deep even under `--ir-minimum`.

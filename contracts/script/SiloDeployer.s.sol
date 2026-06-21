@@ -62,7 +62,12 @@ contract SiloDeployer is Script {
         address godOwner;
         address receiverAdmin;
         address workflowAuthor;
-        bytes32 workflowId;
+        // CTR-16: per-receiver workflow NAMES (the shared `workflowId` pin is dropped). The warehouse name seals
+        // THIS silo's WAM (folded-in hole: silos 2+ shipped it forwarder-only); the sharefeeds + coordinator names
+        // thread through to `JuniorTrancheDeployer` for the per-silo navOracle + coordinator seals.
+        string workflowNameWarehouse;
+        string workflowNameSharefeeds;
+        string workflowNameCoordinator;
         uint256 saltNonce; // DISTINCT per silo (CREATE2 across Safe factory + Baal summoner + EVK proxies + EE salt)
         // shared hub handles (NOT built here)
         address controller;
@@ -117,6 +122,7 @@ contract SiloDeployer is Script {
         // -- runbook / observability (NOT part of SiloConfig) --
         address depositModule; // the D2 zipUSD.setCapacity target
         address warehouseRoles; // the warehouse Roles modifier (observability)
+        address warehouseAdmin; // the per-silo WarehouseAdminModule (a CRE ReceiverTemplate — CTR-16 sealed; observability)
         address hook; // the per-silo CREGatingHook (observability)
     }
 
@@ -153,11 +159,19 @@ contract SiloDeployer is Script {
         (s.adapter, s.hook) = _deployVenueFront(p, s.eePool, usdcReservoir);
 
         // -- 6. Warehouse (verbatim CreditWarehouseDeployer). redemptionBox MUST be the shared queue (D5/§6).
+        //       CTR-16: take TRANSIENT ownership of the WAM (a CRE ReceiverTemplate) by passing `address(this)` as
+        //       `receiverAdmin`, so we can seal its identity here (the folded-in hole: silos 2+ shipped the WAM
+        //       forwarder-only — DeployZipcode only sealed silo-0's). Then hand it to the real `p.receiverAdmin`.
         CreditWarehouseDeployer.Warehouse memory warehouse = new CreditWarehouseDeployer().deploy(
-            p.godOwner, p.receiverAdmin, s.eePool, p.usdc, p.forwarder, p.redemptionBox, p.saltNonce
+            p.godOwner, address(this), s.eePool, p.usdc, p.forwarder, p.redemptionBox, p.saltNonce
         );
         s.warehouseSafe = warehouse.warehouseSafe;
         s.warehouseRoles = warehouse.roles;
+        s.warehouseAdmin = warehouse.adapter;
+        // seal the per-silo WAM (author + the warehouse daemon's name) while this deployer owns it, then re-home it
+        // to the interim receiverAdmin (preserving the as-built WAM→receiverAdmin posture).
+        _sealIdentity(warehouse.adapter, p.workflowAuthor, p.workflowNameWarehouse);
+        IOwnableLike(warehouse.adapter).transferOwnership(p.receiverAdmin);
 
         // -- 4b. EE admin config needing the warehouse Safe + venue adapter (built in steps 5–6).
         _eeCall(s.eePool, abi.encodeWithSignature("setFeeRecipient(address)", s.warehouseSafe));
@@ -296,7 +310,8 @@ contract SiloDeployer is Script {
             creOperator: p.creOperator,
             saltNonce: p.saltNonce,
             workflowAuthor: p.workflowAuthor,
-            workflowId: p.workflowId,
+            workflowNameSharefeeds: p.workflowNameSharefeeds,
+            workflowNameCoordinator: p.workflowNameCoordinator,
             zipUSD: p.zipUSD,
             rateOracle: p.rateOracle,
             eePool: eePool,
@@ -333,6 +348,14 @@ contract SiloDeployer is Script {
             }
         }
     }
+
+    /// @dev CTR-16 WAM seal: set the CRE identity (author + per-receiver workflow NAME) on a `ReceiverTemplate`.
+    ///      The shared `workflowId` pin is dropped (left bytes32(0)); author goes first because `onReport` requires
+    ///      the author whenever the name is set. Callable only while this deployer transiently owns the receiver.
+    function _sealIdentity(address receiver, address workflowAuthor, string memory name) internal {
+        IReceiverIdentitySet(receiver).setExpectedAuthor(workflowAuthor);
+        IReceiverIdentitySet(receiver).setExpectedWorkflowName(name);
+    }
 }
 
 // =========================================================================================== topology getters
@@ -359,4 +382,15 @@ interface INavWriter {
 /// @notice `EulerVenueAdapter.eulerEarn()`.
 interface IAdapter {
     function eulerEarn() external view returns (address);
+}
+
+/// @notice The `ReceiverTemplate` identity-seal surface (inherited; onlyOwner). CTR-16: name-posture.
+interface IReceiverIdentitySet {
+    function setExpectedAuthor(address author) external;
+    function setExpectedWorkflowName(string calldata name) external;
+}
+
+/// @notice OZ `Ownable.transferOwnership` — used to re-home the sealed WAM to the interim receiverAdmin.
+interface IOwnableLike {
+    function transferOwnership(address newOwner) external;
 }

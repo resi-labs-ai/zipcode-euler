@@ -145,3 +145,41 @@ design is spec-faithful (§9 recipe, §13 boundary, §17 settable). Verified cor
   surface; permissioned at `setUp`, not `_sealIdentity`). Unifying it onto author+name would need a CONTRACT change
   (add a name slot + setter to `CloneReportReceiver`) — a separate ticket/decision. For now it stays on its
   existing author(+id) permissioning.
+
+## CONCLUDED (2026-06-20) — BUILT, gate green
+
+Cold-built directly (no rogue commits; edits made in-session). **Gate met: `cd contracts && forge build` green;
+`forge test` = 1039 passed / 0 failed / 3 skipped** (the 3 are the pre-existing `DeployZipcode.t.sol` fork
+scaffolds — untouched by scope). Files changed:
+- **`src/ZipcodeDeployAsserts.sol`** (K4/K7) — `IReceiverIdentity` now exposes `getExpectedAuthor()`+
+  `getExpectedWorkflowName()`; `requireReceiverIdentityWired` asserts author≠0 **AND** name≠0 (`ReceiverIdentityNotWired`);
+  `requireIdentityWired(address[] receivers, address registry)` asserts EACH receiver individually + the registry
+  controller seed (`RegistryControllerUnset`) — the representative-id inference is gone.
+- **`script/DeployZipcode.s.sol`** (K1/K2/K3/K10) — `Inputs` drops `workflowId`, gains the six `workflowName*`
+  strings; `_sealIdentity(receiver, name)` sets author+name (id pin dropped → `bytes32(0)`); P9 seals the 6 (+lpOracle
+  when set) with their mapped names and calls the new array pre-gate; `_loadInputs` reads `WORKFLOW_NAME_*`;
+  `IReceiverIdentitySet` swaps `setExpectedWorkflowId`→`setExpectedWorkflowName`.
+- **`script/JuniorTrancheDeployer.s.sol`** (K2/K3) — `JuniorParams` drops `workflowId`, gains
+  `workflowNameSharefeeds`+`workflowNameCoordinator`; `_sealIdentity` is name-posture; navOracle←sharefeeds,
+  coord←coordinator.
+- **`script/SiloDeployer.s.sol`** (K8) — `SiloParams` drops `workflowId`, gains warehouse/sharefeeds/coordinator
+  names; step 6 takes TRANSIENT WAM ownership (`receiverAdmin=address(this)`), **seals the per-silo WAM**
+  (author+`WORKFLOW_NAME_WAREHOUSE`), then re-homes it to the real `receiverAdmin` (closing the folded-in hole —
+  silos 2+ shipped the WAM forwarder-only); `Silo` gains an observability `warehouseAdmin` field.
+- **`script/DeployLocal.s.sol`** (K9) — drops the `workflowId=1` pin; sets the six local name labels.
+- **`script/DeployMainnet.s.sol`** (K10) — reads `WORKFLOW_NAME_*` (drops `vm.envBytes32("WORKFLOW_ID")`).
+- **`script/DeployShowcaseVAMM.s.sol`** (K10) — `WORKFLOW_ID` const → `WORKFLOW_NAME="zip-sharefeeds"`;
+  `setExpectedWorkflowId`→`setExpectedWorkflowName`.
+- **Tests** — `ZipcodeDeployIdentityGate.t.sol` rewritten to the author+name posture (12 tests incl. **K5
+  privilege-separation**: two receivers, same author, different names — daemon-A's report accepted by A, rejected
+  `InvalidWorkflowName` by B); `SiloDeployer.t.sol` asserts the WAM is sealed + re-homed (K8); param structs in
+  `SiloDeployer.t.sol`/`JuniorTrancheDeployer.t.sol`/`DeployZipcode.t.sol` updated to the name posture.
+
+**Untouched (correct):** the per-receiver unit tests that exercise the inherited `setExpectedWorkflowId` surface
+(`SzipNavOracle`/`ZipcodeController`/`DefaultCoordinator`/`SzipBuyBurnModule`/`ZipcodeOracleRegistry` `.t.sol`) — the
+contract surface is unchanged (K6 no-regression); only the DEPLOY posture moved. `SzipBuyBurnModule`/`CloneReportReceiver`
+stay OUT (no name surface).
+
+**Doc-sync done:** `docs/wires/DeployZipcode.md` (P9 seal + env keys), `claude-zipcode.md` §9 recipe + §13 inbound
+note, `contracts/.env.example`, `script/RUNBOOK-mainnet-deploy.md`. **Discharged:** the
+[[wam-permissioning-workflowid-vs-author]] memory note (recorded RESOLVED).

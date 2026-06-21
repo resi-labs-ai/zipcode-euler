@@ -1,8 +1,8 @@
 # Invariant Map
 
-> CreditWarehouse Admin | 9 guards | 6 inferred | 3 not enforced on-chain
+> CreditWarehouse Admin | 10 guards | 6 inferred | 2 not enforced on-chain (X-1 scope, X-3 re-freeze)
 
-> The defining feature of this scope: the load-bearing invariants are **cross-contract and On-chain=No** — the enforcement lives in the Zodiac Roles scope, not this bytecode. The single-contract invariants below are real but secondary (they are the "belt" to the scope's "suspenders").
+> The defining feature of this scope: the load-bearing invariants are **cross-contract** — the primary enforcement (param-pinning, Call-only) lives in the Zodiac Roles scope, not this bytecode (X-1, On-chain=No). The avatar-parity invariant (X-2) was On-chain=No but is now **enforced on-chain** in `setWarehouseSafe` (`AvatarMismatch`); the single-contract guards below are the "belt" to the scope's "suspenders".
 
 ---
 
@@ -21,7 +21,7 @@
 `if (roleKey_ == bytes32(0)) revert ZeroRoleKey()` · `WarehouseAdminModule.sol:117` · `setRoleKey` preserves the non-zero-key invariant.
 
 #### G-5
-`if (warehouseSafe_ == address(0)) revert ZeroAddress()` · `WarehouseAdminModule.sol:127` · `setWarehouseSafe` non-zero (but does NOT assert avatar parity — see X-2).
+`if (warehouseSafe_ == address(0)) revert ZeroAddress()` · `WarehouseAdminModule.sol:145` · `setWarehouseSafe` non-zero (the avatar-parity check follows — see G-10).
 
 #### G-6
 `if (eePool_ == address(0)) revert ZeroAddress()` · `WarehouseAdminModule.sol:134` · `setEePool` non-zero.
@@ -33,9 +33,12 @@
 `if (redemptionBox_ == address(0)) revert ZeroAddress()` · `WarehouseAdminModule.sol:148` · `setRedemptionBox` non-zero.
 
 #### G-9
-`if (dest != redemptionBox) revert WrongRedemptionBox(dest)` · `WarehouseAdminModule.sol:180` · REPAY self-enforces the sink even before the Roles scope checks it.
+`if (dest != redemptionBox) revert WrongRedemptionBox(dest)` · `WarehouseAdminModule.sol:189` · REPAY self-enforces the sink even before the Roles scope checks it.
 
-*Plus the `UnsupportedOpType` revert (`:184`) and the unreachable `RoleExecFailed` (`:190`, defense-in-depth — the modifier already reverts with `shouldRevert=true`).*
+#### G-10
+`if (roles.avatar() != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av)` · `WarehouseAdminModule.sol:148` · `setWarehouseSafe` enforces avatar parity on-chain (X-2 / I-4): a one-sided re-point cannot be saved; the paired re-point is `Roles.setAvatar` first.
+
+*Plus the `UnsupportedOpType` revert and the unreachable `RoleExecFailed` (defense-in-depth — the modifier already reverts with `shouldRevert=true`).*
 
 ---
 
@@ -87,17 +90,17 @@ On-chain: **No** (enforcement is in the external Roles scope)
 
 **If violated** — a mis-scoped policy (wildcarded param, granted delegatecall option, wrong selector set) removes the primary control; only this contract's hardcoding/injection remains. This is the #1 audit artifact and it is not in this file.
 
-#### X-2
+#### X-2 (now enforced on-chain — see I-4)
 
-On-chain: **No**
+On-chain: **Yes** (as of 2026-06-20)
 
-> `warehouseSafe` (this contract's injected deposit/redeem owner) MUST equal the Roles modifier's `avatar` (which the scope checks `receiver == avatar` against). They are independent slots and this contract never reads `roles.avatar()`.
+> `warehouseSafe` (this contract's injected deposit/redeem owner) MUST equal the Roles modifier's `avatar` (which the scope checks `receiver == avatar` against). They are independent slots, but `setWarehouseSafe` now **reads and asserts `roles.avatar()`**: it reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`.
 
-**Caller side** — `setWarehouseSafe:126` / the SUPPLY+REDEEM injection (`:166,174`).
+**Caller side** — `setWarehouseSafe` (`AvatarMismatch` guard) / the SUPPLY+REDEEM injection.
 
-**Callee side** — the modifier's `avatar` slot, set via its own `setAvatar` — **out of scope**.
+**Callee side** — the modifier's `avatar` slot, set via its own `setAvatar`. The paired re-point is order-dependent: `Roles.setAvatar(new)` FIRST, then `setWarehouseSafe(new)` (else the setter reverts). Documented in `docs/roles.md`.
 
-**If violated** — a one-sided re-point bricks SUPPLY/REDEEM (the scope rejects the mismatched receiver) — fail-closed (liveness loss, no leak). Not asserted on-chain; the docstring (`:43-48`) mandates pairing.
+**If violated** — it can no longer be saved via the setter (the one-sided re-point reverts). Were the slots ever mismatched through another path, SUPPLY/REDEEM still fail-closed at the scope (the modifier rejects the mismatched receiver — no leak). Proven by `test_Parity_OneSidedRepoint_RevertsAtSetter` + `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`.
 
 #### X-3
 

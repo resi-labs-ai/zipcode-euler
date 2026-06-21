@@ -573,53 +573,33 @@ contract WarehouseAdminModuleTest is ForkConfig {
     }
 
     // ============================================================
-    // (16) Parity: adapter.warehouseSafe MUST equal the Roles modifier's avatar
+    // (16) Parity: adapter.warehouseSafe MUST equal the Roles modifier's avatar — ENFORCED on-chain (X-2 hardening)
     // ============================================================
     // The adapter's `warehouseSafe` (injected as the deposit/redeem receiver+owner) and the Roles modifier's
-    // `avatar` (what the scope pins `receiver ==`) are INDEPENDENT slots (WarehouseAdminModule.sol:43-48). The
-    // contract's own #1 documented hazard: a ONE-SIDED re-point must FAIL CLOSED — SUPPLY/REDEEM revert at the
-    // scope check and nothing leaks. (The paired re-point that restores liveness — adapter.setWarehouseSafe +
-    // Roles.setAvatar to a fully-provisioned second Safe — is a deploy/runbook concern; here we prove fail-closed.)
+    // `avatar` (what the scope pins `receiver ==`) are INDEPENDENT slots. `setWarehouseSafe` now REJECTS a one-sided
+    // re-point at set-time (`AvatarMismatch`), so the silent-brick can no longer be saved; the paired re-point is
+    // `Roles.setAvatar(new)` FIRST, then `adapter.setWarehouseSafe(new)`. The modifier's scope rejection of a
+    // mismatched receiver (test_Scope_PinsParams_DepositReceiver) remains the backstop, now unreachable here.
 
-    function test_Parity_OneSidedRepoint_SupplyFailsClosed() public {
+    function test_Parity_OneSidedRepoint_RevertsAtSetter() public {
         address newSafe = makeAddr("newWarehouseSafe");
-
-        // Re-point ONLY the adapter; leave the modifier's avatar on the original `safe`.
+        // the modifier's avatar is still `safe`; re-pointing ONLY the adapter must revert AvatarMismatch.
+        assertEq(IRoles(roles).avatar(), safe, "precondition: avatar == safe");
         vm.prank(adapter.owner());
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.AvatarMismatch.selector, newSafe, safe));
         adapter.setWarehouseSafe(newSafe);
-        assertEq(adapter.warehouseSafe(), newSafe, "adapter re-pointed");
-
-        _fundSafe(SUPPLY_AMT);
-        _onReport(APPROVE, abi.encode(SUPPLY_AMT)); // spender==eePool is avatar-independent; still passes
-
-        // SUPPLY now injects receiver=newSafe, but the scope checks receiver==avatar(old safe)
-        // -> ParameterNotAllowed -> ConditionViolation bubbles up from the modifier.
-        _onReportRevertsWithSelector(SUPPLY, abi.encode(SUPPLY_AMT), CONDITION_VIOLATION_SEL);
-
-        // Fail closed: no shares minted anywhere, the Safe keeps its USDC (a dangling approve moves nothing).
-        assertEq(ee.balanceOf(safe), 0, "no shares to old safe");
-        assertEq(ee.balanceOf(newSafe), 0, "no shares to new safe - nothing leaked");
-        assertEq(ee.balanceOf(address(adapter)), 0, "no shares to adapter");
-        assertEq(IERC20(usdc).balanceOf(safe), SUPPLY_AMT, "Safe USDC intact");
+        // unchanged: the adapter still points at the avatar, so SUPPLY/REDEEM stay live (no silent drift).
+        assertEq(adapter.warehouseSafe(), safe, "warehouseSafe unchanged after the rejected one-sided re-point");
     }
 
-    function test_Parity_OneSidedRepoint_RedeemFailsClosed() public {
-        // First supply cleanly (parity intact), then break parity and prove REDEEM also fails closed.
-        _fundSafe(SUPPLY_AMT);
-        _onReport(APPROVE, abi.encode(SUPPLY_AMT));
-        _onReport(SUPPLY, abi.encode(SUPPLY_AMT));
-        assertEq(ee.balanceOf(safe), SUPPLY_AMT, "supplied while parity intact");
-
+    function test_Parity_PairedRepoint_SetAvatarFirst_Succeeds() public {
         address newSafe = makeAddr("newWarehouseSafe2");
+        // pair it: set the modifier's avatar FIRST (as the Roles owner == this test), THEN the adapter accepts it.
+        IRoles(roles).setAvatar(newSafe);
         vm.prank(adapter.owner());
-        adapter.setWarehouseSafe(newSafe);
-
-        // REDEEM injects receiver==owner==newSafe; scope checks ==avatar(old safe) -> rejected.
-        _onReportRevertsWithSelector(REDEEM, abi.encode(SUPPLY_AMT), CONDITION_VIOLATION_SEL);
-
-        // Fail closed: the supplied shares are untouched, no USDC returned to either safe.
-        assertEq(ee.balanceOf(safe), SUPPLY_AMT, "shares untouched");
-        assertEq(IERC20(usdc).balanceOf(newSafe), 0, "nothing routed to the mismatched safe");
+        adapter.setWarehouseSafe(newSafe); // parity holds -> succeeds
+        assertEq(adapter.warehouseSafe(), newSafe, "paired re-point applied");
+        assertEq(IRoles(roles).avatar(), adapter.warehouseSafe(), "parity restored: avatar == warehouseSafe");
     }
 
     // ============================================================
@@ -648,13 +628,19 @@ contract WarehouseAdminModuleTest is ForkConfig {
         bytes32 nk = keccak256("newRoleKey");
         address o = adapter.owner();
 
+        // setWarehouseSafe is now avatar-parity-guarded, so prove its happy path FIRST (while `roles` is still the
+        // real modifier): pair the modifier's avatar, then the adapter accepts the re-point. Done before re-pointing
+        // `roles` to a non-modifier address below (after which `roles.avatar()` would no longer be callable).
+        IRoles(roles).setAvatar(x); // test == Roles owner (godOwner)
+        vm.prank(o);
+        adapter.setWarehouseSafe(x);
+        assertEq(adapter.warehouseSafe(), x, "warehouseSafe re-pointed (avatar-paired)");
+
         vm.startPrank(o);
         adapter.setRoles(x);
         assertEq(address(adapter.roles()), x, "roles re-pointed");
         adapter.setRoleKey(nk);
         assertEq(adapter.roleKey(), nk, "roleKey re-set");
-        adapter.setWarehouseSafe(x);
-        assertEq(adapter.warehouseSafe(), x, "warehouseSafe re-pointed");
         adapter.setEePool(x);
         assertEq(adapter.eePool(), x, "eePool re-pointed");
         adapter.setUsdc(x);

@@ -65,7 +65,13 @@ contract DeployMainnet is DeployZipcode {
         i.adminSafe = vm.envAddress("ADMIN_SAFE");
         i.curatorSafe = vm.envOr("CURATOR_SAFE", address(0)); // CTR-13: 0 ⇒ no curator fee (forfeit to Euler)
         i.saltNonce = vm.envUint("SUMMON_SALT_NONCE");
-        i.workflowId = vm.envBytes32("WORKFLOW_ID");
+        // CTR-16: per-receiver registered daemon NAMES (the `WORKFLOW_ID` env read is dropped). Required env.
+        i.workflowNameController = vm.envString("WORKFLOW_NAME_CONTROLLER");
+        i.workflowNameRevaluation = vm.envString("WORKFLOW_NAME_REVALUATION");
+        i.workflowNameCoordinator = vm.envString("WORKFLOW_NAME_COORDINATOR");
+        i.workflowNameSharefeeds = vm.envString("WORKFLOW_NAME_SHAREFEEDS");
+        i.workflowNameWarehouse = vm.envString("WORKFLOW_NAME_WAREHOUSE");
+        i.workflowNameRate = vm.envString("WORKFLOW_NAME_RATE");
 
         // --- live LP legs (matched ICHI-vault + ALM gauge pair; REQUIRED) ---
         i.polIchiVault = vm.envAddress("POL_ICHI_VAULT");

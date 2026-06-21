@@ -10,33 +10,39 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**NEXT = CTR-16 — CRE receiver permissioning: author + per-receiver workflowName (drop shared workflowId)**
-(`build/tickets/contracts/CTR-16-receiver-name-permissioning.md`). Build-ready + critic-vetted this session
-(2026-06-20); reviewer-directed. Deploy-track (contracts/script + the asserts lib + tests — NO receiver-contract
-code change; `ReceiverTemplate` already exposes `setExpectedWorkflowName`). **Scope (settled after a 4-critic loop +
-two verified critic-misread corrections):**
-- **In:** the `ReceiverTemplate` fleet (controller, registry, coordinator, navOracle, lpOracle, rateOracle) + the
-  **per-silo WAM** → swap `setExpectedWorkflowId(SHARED_ID)` for author + **per-receiver** `setExpectedWorkflowName`,
-  drop the workflowId pin. Author+name survive workflow redeploys (no fleet re-seal footgun); per-receiver NAMES are
-  what separate the SEPARATE daemons (shared author can't). Mapping table + env-name vars in the ticket.
-- **Folds in a real pre-existing hole (reviewer-approved):** `SiloDeployer` never seals the per-silo WAM
-  (`warehouse.adapter`) — silos 2+ ship it forwarder-only. K8 adds the seal.
-- **Pre-gate redesign (K7):** `ZipcodeDeployAsserts.requireIdentityWired`/`requireReceiverIdentityWired` are
-  representative-only + keyed on workflowId (its own comment admits the "same id on every subclass" assumption,
-  invalid under per-receiver names) — rework to assert author+name on EACH sealed receiver, fail-closed.
-- **`DeployLocal` (anvil/FE foundation) must change (K9):** it pins `workflowId=1` to pass the gate today; after the
-  rework it'd revert → give it name labels, drop the id pin.
-- **OUT (both verified critic misreads):** `EulerVenueAdapter` is NOT a receiver (no `onReport`); `SzipBuyBurnModule`
-  is a `CloneReportReceiver` with NO `setExpectedWorkflowName` surface, permissioned at `setUp` not the seal loop —
-  unifying it onto author+name is a CONTRACT change = a separate ticket.
-- **Gate:** `cd contracts && forge build && forge test` green (incl. updated `ZipcodeDeployIdentityGate.t.sol` +
-  `DeployZipcode.t.sol` + a NEW K5 privilege-separation test: daemon-A's name rejected by daemon-B's receiver,
-  accepted by its own). RESOLVES the [[wam-permissioning-workflowid-vs-author]] memory note.
+**NEXT = reviewer picks** among the deferred candidates below — CTR-16 is DONE (record immediately under). One item
+moves at a time; the reviewer selects the next forward edge.
 
-Deferred candidates (after CTR-16): **SEAM-1** (CRE-03 material-move http trigger, own-later); **CTR-15 follow-up
+Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); **CTR-15 follow-up
 (b)** (`FarmUtilityBorrowGuard.sol:12-13` accuracy doc-fix); the **FE track**; **CTR-14** (N junior Safes vs the
 single-requester queue — CRE-02c is unaffected, it writes only REDEEM/REPAY, no escrow leg). The CRE redemption
 (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04.
+
+- **CTR-16 DONE (2026-06-20) — CRE receiver permissioning: author + per-receiver workflowName, shared workflowId
+  pin dropped** (`build/tickets/contracts/CTR-16-receiver-name-permissioning.md`). Deploy-track only (NO
+  receiver-contract code change — `ReceiverTemplate` already exposed `setExpectedWorkflowName`). The whole
+  `ReceiverTemplate` fleet (controller, registry, coordinator, navOracle, lpOracle, rateOracle, **+ the per-silo
+  WAM**) is now sealed with `setExpectedAuthor` + `setExpectedWorkflowName(<daemon name>)` and the `workflowId` pin is
+  left `bytes32(0)`: author+name survive workflow redeploys (no fleet re-seal footgun) and the **per-receiver names**
+  separate the SEPARATE daemons that share the one deploy wallet (the shared author cannot). **Folded-in hole closed:**
+  `SiloDeployer` now takes transient WAM ownership, seals the per-silo WAM (author + `WORKFLOW_NAME_WAREHOUSE`), and
+  re-homes it to `receiverAdmin` — silos 2+ no longer ship the WAM forwarder-only. **Pre-gate reworked (K7):**
+  `ZipcodeDeployAsserts.requireIdentityWired(address[] receivers, address registry)` asserts EACH sealed receiver
+  (author≠0 AND name≠0) individually + the registry controller seed — the representative-id inference is gone, so a
+  missing/empty per-receiver name now fails closed. **OUT (verified critic misreads):** `EulerVenueAdapter` is NOT a
+  receiver (no `onReport`); `SzipBuyBurnModule`/`CloneReportReceiver` have NO `setExpectedWorkflowName` surface
+  (permissioned at `setUp`) — unifying them onto author+name is a CONTRACT change = a separate ticket. **Gate green
+  (my own run):** `forge build` + `forge test` = 1039 passed / 0 failed / 3 skipped (the 3 = pre-existing
+  `DeployZipcode.t.sol` fork scaffolds, untouched). Files: `ZipcodeDeployAsserts.sol` + `DeployZipcode`/
+  `JuniorTrancheDeployer`/`SiloDeployer`/`DeployLocal`/`DeployMainnet`/`DeployShowcaseVAMM` scripts + the
+  `ZipcodeDeployIdentityGate`/`SiloDeployer`/`JuniorTrancheDeployer`/`DeployZipcode` tests. **NEW K5
+  privilege-separation test:** two receivers, same author, different names — daemon-A's report accepted by receiver-A,
+  rejected `InvalidWorkflowName` by receiver-B. **Doc-sync:** `docs/wires/DeployZipcode.md`, `claude-zipcode.md`
+  §9 recipe + §13 inbound note, `contracts/.env.example`, `RUNBOOK-mainnet-deploy.md`. **RESOLVES the
+  [[wam-permissioning-workflowid-vs-author]] memory note.** Not committed (left for reviewer). ⚠️ **FLAG (unchanged,
+  not mine):** the working tree still carries the pre-existing uncommitted parallel audit-prep (deleted
+  `build/superintendent*.md`/`build/supply.md`, modified `contracts/test/AlgebraIchiFairLpOracle.t.sol` et al.,
+  untracked `audit/` + `contracts/src/supply/x-ray/`) — left untouched + unstaged.
 
 - **CRE-02c note (2026-06-20) — the cross-silo redemption solver (`onSolverTick` → per-silo `WarehouseAdminModule`,
   default-OFF), folded into `cre/warehouse`.** The multi-warehouse generalization of CRE-02b. **Off-chain Go only —

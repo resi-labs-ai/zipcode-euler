@@ -283,7 +283,9 @@ contract SiloDeployerTest is ForkConfig {
     address internal rateOracle = makeAddr("rateOracle"); // hub SzAlphaRateOracle (input)
     address internal redemptionBox = makeAddr("redemptionBox"); // the shared ZipRedemptionQueue (input)
     address internal erebor = makeAddr("erebor"); // the immutable line receiver (input)
-    bytes32 internal workflowId = keccak256("zipcode.cre.workflow.silo");
+    string internal workflowNameWarehouse = "zip-warehouse";
+    string internal workflowNameSharefeeds = "zip-sharefeeds";
+    string internal workflowNameCoordinator = "zip-coordinator";
 
     uint256 internal constant SALT = uint256(keccak256("zipcode.silo.ctr06c.salt.a"));
     uint256 internal constant SALT2 = uint256(keccak256("zipcode.silo.ctr06c.salt.b"));
@@ -344,7 +346,9 @@ contract SiloDeployerTest is ForkConfig {
             godOwner: godOwner,
             receiverAdmin: receiverAdmin,
             workflowAuthor: workflowAuthor,
-            workflowId: workflowId,
+            workflowNameWarehouse: workflowNameWarehouse,
+            workflowNameSharefeeds: workflowNameSharefeeds,
+            workflowNameCoordinator: workflowNameCoordinator,
             saltNonce: salt,
             controller: controller,
             oracleRegistry: oracleRegistry,
@@ -453,6 +457,15 @@ contract SiloDeployerTest is ForkConfig {
         assertTrue(ISafe(s.warehouseSafe).isOwner(godOwner), "warehouseSafe Safe owned by godOwner");
         assertFalse(ISafe(s.warehouseSafe).isOwner(address(dep)), "warehouseSafe Safe NOT owned by deployer");
         assertEq(IOwnableView(s.warehouseRoles).owner(), godOwner, "warehouseSafe Roles -> godOwner");
+
+        // CTR-16 (K8): the per-silo WAM is SEALED (author + a non-zero workflowName) and re-homed to receiverAdmin —
+        // not left forwarder-only as silos 2+ shipped pre-fix. The deployer took transient ownership only to seal.
+        assertEq(IReceiverIdentityView(s.warehouseAdmin).getExpectedAuthor(), workflowAuthor, "WAM author sealed");
+        assertTrue(
+            IReceiverIdentityView(s.warehouseAdmin).getExpectedWorkflowName() != bytes10(0), "WAM workflowName sealed"
+        );
+        assertEq(IReceiverIdentityView(s.warehouseAdmin).owner(), receiverAdmin, "WAM -> receiverAdmin");
+        assertTrue(s.warehouseAdmin != address(0), "WAM address exposed on the handle");
 
         // both Baal Safes → team, NOT the deployer.
         assertTrue(ISafe(s.juniorBasket).isOwner(team), "junior main owned by team");
@@ -605,5 +618,12 @@ interface INavWriterView {
 }
 
 interface IOwnableView {
+    function owner() external view returns (address);
+}
+
+/// @notice CTR-16: the WAM identity getters (inherited from `ReceiverTemplate`).
+interface IReceiverIdentityView {
+    function getExpectedAuthor() external view returns (address);
+    function getExpectedWorkflowName() external view returns (bytes10);
     function owner() external view returns (address);
 }

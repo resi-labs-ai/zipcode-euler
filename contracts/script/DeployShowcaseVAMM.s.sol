@@ -38,9 +38,11 @@ contract DeployShowcaseVAMM is Script {
     uint256 internal constant MAX_AGE = 86400;
     uint256 internal constant MAX_DEV_BPS = 1000;
 
-    // --- CRE identity (so the same reportType-7 leg pushes feed the demo oracle) ---
+    // --- CRE identity (so the same reportType-7 sharefeeds leg pushes feed the demo oracle) ---
+    // CTR-16: author + workflowName (the shared `workflowId` pin is dropped). The demo NAV oracle is fed by the
+    // sharefeeds daemon, so it shares the sharefeeds local label.
     address internal constant WORKFLOW_AUTHOR = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
-    bytes32 internal constant WORKFLOW_ID = bytes32(uint256(1));
+    string internal constant WORKFLOW_NAME = "zip-sharefeeds";
 
     // --- the live vAMM substitute (HYDX/USDC pair + its ALM-style gauge; verified alive on the fork) ---
     address internal constant VAMM_PAIR = 0x605abD1873737CA9a9Ec1CFa52CDfc8ef62c2E1d;
@@ -74,8 +76,8 @@ contract DeployShowcaseVAMM is Script {
         oracle.setJuniorTrancheEngine(MAIN_SAFE); // the buy-burn denominator-excluded address (mirrors prod)
         oracle.setLpPosition(VAMM_PAIR, VAMM_GAUGE); // <-- prices/staked-reads the vAMM HYDX/USDC LP
         oracle.setXAlphaRateOracle(SZALPHA_RATE_ORACLE); // value the xALPHA leg (else grossBasketValue reverts on the mock mirror)
-        oracle.setExpectedAuthor(WORKFLOW_AUTHOR); // CRE identity (reportType-7 legs feed it)
-        oracle.setExpectedWorkflowId(WORKFLOW_ID);
+        oracle.setExpectedAuthor(WORKFLOW_AUTHOR); // CRE identity (reportType-7 sharefeeds legs feed it)
+        oracle.setExpectedWorkflowName(WORKFLOW_NAME);
 
         // 2. demo LP-manager module — clone (mastercopy + setUp) and enable on the EXISTING engine Safe.
         address lpStrategy = _cloneModule(

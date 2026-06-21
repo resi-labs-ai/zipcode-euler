@@ -49,11 +49,13 @@ contract WarehouseAdminModule is ReceiverTemplate {
     bytes32 public roleKey;
     /// @notice The warehouse Safe — the Roles `avatar`/`target`; the EE-share + USDC custodian.
     /// @dev PARITY — load-bearing: this injected `warehouseSafe` and the Roles modifier's own `avatar` slot are
-    ///      INDEPENDENT (`warehouseSafe` is set here via `setWarehouseSafe`; `avatar` is set on the Roles instance via its own
-    ///      `setAvatar`). SUPPLY/REDEEM inject this `warehouseSafe` as the deposit/redeem owner while the Roles scope checks
-    ///      `receiver == avatar`, so they MUST be the same address. A one-sided re-point (change one, not the other)
-    ///      silently bricks SUPPLY/REDEEM — incl. senior par-redemption → a liveness failure that FAILS CLOSED (the
-    ///      Roles scope rejects the mismatched receiver, nothing leaks). Always re-point them as a pair (see runbook).
+    ///      INDEPENDENT storage (`warehouseSafe` is set here via `setWarehouseSafe`; `avatar` is set on the Roles
+    ///      instance via its own `setAvatar`). SUPPLY/REDEEM inject this `warehouseSafe` as the deposit/redeem owner
+    ///      while the Roles scope checks `receiver == avatar`, so they MUST be the same address. `setWarehouseSafe`
+    ///      now ENFORCES this on-chain (reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`), so a
+    ///      one-sided re-point can no longer be saved — the paired re-point is `Roles.setAvatar` FIRST, then
+    ///      `setWarehouseSafe`. Were the slots ever mismatched anyway, SUPPLY/REDEEM still FAIL CLOSED (the scope
+    ///      rejects the mismatched receiver, nothing leaks). See `docs/roles.md` and the runbook.
     address public warehouseSafe;
     /// @notice The `EulerEarn` pool the warehouse supplies into / redeems from.
     address public eePool;
@@ -70,6 +72,12 @@ contract WarehouseAdminModule is ReceiverTemplate {
     error UnsupportedOpType(uint8 opType);
     /// @notice A REPAY payload carried a `dest` other than the wired `redemptionBox` (self-enforced, not just scoped).
     error WrongRedemptionBox(address dest);
+    /// @notice `setWarehouseSafe` was called with a `warehouseSafe_` that does not equal the Roles modifier's current
+    ///         `avatar()`. The two slots are independent (see the `warehouseSafe` docstring), and SUPPLY/REDEEM inject
+    ///         this address as the receiver/owner while the scope pins `receiver == avatar` — so a one-sided re-point
+    ///         would silently brick senior par-redemption (fail-closed liveness). This guard converts that into a hard
+    ///         revert at set-time: the operator MUST run `Roles.setAvatar(new)` FIRST, then this. See `docs/roles.md`.
+    error AvatarMismatch(address warehouseSafe, address avatar);
     /// @notice The inner `execTransactionWithRole` returned false (unreachable defense-in-depth: with
     ///         `shouldRevert=true` the modifier already reverts `ModuleTransactionFailed` on a failed exec).
     error RoleExecFailed();
@@ -128,11 +136,17 @@ contract WarehouseAdminModule is ReceiverTemplate {
     }
 
     /// @notice Re-point the warehouse Safe (Roles avatar/custodian). `onlyOwner` (Timelock).
-    /// @dev this re-point MUST be paired with `setAvatar(warehouseSafe_)` on the Roles modifier instance (and a
-    ///      post-condition parity check `roles.avatar() == warehouseSafe`), or SUPPLY/REDEEM brick (fail-closed). See the
-    ///      `warehouseSafe` storage docstring above and the warehouse runbook.
+    /// @dev AVATAR PARITY (enforced on-chain): the re-point is REJECTED unless the Roles modifier's `avatar()`
+    ///      already equals `warehouseSafe_`. SUPPLY/REDEEM inject this address as the deposit/redeem receiver+owner
+    ///      while the scope pins `receiver == avatar`, so the two slots MUST agree; a one-sided re-point would
+    ///      otherwise silently brick senior par-redemption (fail-closed liveness). This makes the paired re-point
+    ///      ORDER-DEPENDENT: run `Roles.setAvatar(warehouseSafe_)` on the modifier FIRST, then this. The modifier's
+    ///      own scope rejection of a mismatched receiver remains the backstop, now unreachable-by-construction here.
+    ///      See `docs/roles.md` and the `warehouseSafe` storage docstring above.
     function setWarehouseSafe(address warehouseSafe_) external onlyOwner {
         if (warehouseSafe_ == address(0)) revert ZeroAddress();
+        address av = roles.avatar();
+        if (av != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av);
         warehouseSafe = warehouseSafe_;
         emit WiringSet("warehouseSafe", warehouseSafe_);
     }

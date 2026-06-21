@@ -32,7 +32,7 @@ Execution order is P0 → P1 → P2 → **P4 → P3** (warehouse before the depo
 | **P6 engine modules** | all 9 Zodiac modules cloned via `ModuleProxyFactory.deployModule(mastercopy, setUp, salt)` + `_enableModuleOnSafe`; DurationFreeze enabled on BOTH Safes, OffRamp + the rest on the main Safe. Sets `navOracle.setJuniorTrancheEngine` / `gate.setJuniorTrancheEngine`. Asserts `SeamEngineSafe`, `SeamOneBank`, `SeamSharedLp`; `owner=timelock != operator=CRE`. |
 | **P7 loss** | `LienXAlphaEscrow` (coordinator placeholder) → `DefaultCoordinator` → close the cycle via `escrow.setCoordinator` / `coord.setEscrow` (the latter `forceApprove(max)`s the escrow) → `navOracle.setDefaultCoordinator`. Asserts `SeamEscrowCoordinator`. |
 | **P8 NAV final** | `navOracle.setLpPosition` + `navOracle.setXAlphaRateOracle`. Asserts `SeamNavShareTokenUnset`. |
-| **P9 seal** | `setExpectedAuthor`/`setExpectedWorkflowId` on every `ReceiverTemplate` (controller, registry, warehouse adapter, coord, navOracle, rateOracle, **and the CRE-push `lpOracle` when `lpOracle != address(0)`** — SEC-05/M4) → `ZipcodeDeployAsserts.requireIdentityWired` pre-gate **+ `requireReceiverIdentityWired(d.lpOracle)` when set** → `transferOwnership(timelock)` everywhere. The lpOracle seal+assert are guarded `!= address(0)` so the fair-LP branch (ownerless `AlgebraIchiFairLpOracle`) neither seals nor asserts. |
+| **P9 seal** (CTR-16) | `setExpectedAuthor` + **`setExpectedWorkflowName(<per-receiver daemon name>)`** on every `ReceiverTemplate` (controller, registry, warehouse adapter, coord, navOracle, rateOracle, **and the CRE-push `lpOracle` when `lpOracle != address(0)`** — SEC-05/M4). The shared `setExpectedWorkflowId` pin is **DROPPED** (left `bytes32(0)` ⇒ `onReport` skips it): `author`+`workflowName` survive workflow redeploys, and the **per-receiver names** are what separate the SEPARATE daemons that share the one deploy wallet (the shared author cannot). Names are env inputs (`WORKFLOW_NAME_*`); the per-receiver→daemon map: controller→`CONTROLLER`, registry→`REVALUATION`, WAM→`WAREHOUSE`, coord→`COORDINATOR`, navOracle/lpOracle→`SHAREFEEDS`, rateOracle→`RATE`. Then `ZipcodeDeployAsserts.requireIdentityWired(receivers[], registry)` asserts **EACH** receiver (author+name) + the registry controller seed (no representative-id inference), → `transferOwnership(timelock)` everywhere. The lpOracle seal+assert are guarded `!= address(0)` so the fair-LP branch (ownerless `AlgebraIchiFairLpOracle`) neither seals nor asserts. |
 
 ## The 8 asserted seams (the cross-cutting invariants, inline custom errors)
 `SeamVenue` · `SeamRegistryController` · `SeamSharesNonZero` · `SeamGateShareToken` ·
@@ -42,7 +42,8 @@ reverts — the script connects documented pins, it does not rediscover them.
 
 ## Inputs (env / stand-ins)
 ~30 env keys via `_loadInputs()`: principals (`TEAM_MULTISIG`, `GOD_OWNER`, `CRE_OPERATOR`, `WORKFLOW_AUTHOR`,
-`WORKFLOW_ID`, `EREBOR`, `ADMIN_SAFE`, `SUMMON_SALT_NONCE`), live-infra stand-ins (`IRM`, `XALPHA_MIRROR`,
+the six per-receiver `WORKFLOW_NAME_*` names — CTR-16, replacing the dropped `WORKFLOW_ID`,
+`EREBOR`, `ADMIN_SAFE`, `SUMMON_SALT_NONCE`), live-infra stand-ins (`IRM`, `XALPHA_MIRROR`,
 `POL_ICHI_VAULT`, `POL_GAUGE`, `EE_POOL`, `USDC_RESERVOIR`), and numeric knobs (NAV window/maxAge/deviation,
 TVL cap, recovery floor, borrow cap, LTVs, buy-burn discount/cap, rate staleness/window/cap). Mirrors
 `contracts/.env.example`.

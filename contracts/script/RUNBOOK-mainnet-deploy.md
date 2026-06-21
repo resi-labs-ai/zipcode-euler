@@ -19,10 +19,10 @@ use). `DeployLocal` = anvil fork only. `DeployMainnet` = THIS, the live-network 
 - [ ] `TEAM_MULTISIG`   — broadcaster; becomes owner/signer on both summoned Safes
 - [ ] `GOD_OWNER`       — transient pre-multisig (warehouse Safe/Roles handoff target)
 - [ ] `CRE_OPERATOR`    — engine-module operator + M1 stand-in for the ExitGate window controller & redemption controller
-- [ ] `WORKFLOW_AUTHOR` — CRE workflow owner sealed on every ReceiverTemplate
+- [ ] `WORKFLOW_AUTHOR` — CRE workflow owner sealed on every ReceiverTemplate (shared deploy wallet)
 - [ ] `EREBOR`          — the draw off-ramp
 - [ ] `ADMIN_SAFE`    — the protocol treasury Safe (loss-side xALPHA recovery custody, §11)
-- [ ] `WORKFLOW_ID`     — non-zero bytes32 (the identity pre-gate reverts on zero)
+- [ ] `WORKFLOW_NAME_{CONTROLLER,REVALUATION,COORDINATOR,SHAREFEEDS,WAREHOUSE,RATE}` — CTR-16: the registered daemon NAME per receiver (replaces the dropped `WORKFLOW_ID`). Each non-empty — the identity pre-gate reverts on an empty name. author+name survive workflow redeploys; per-receiver names separate the separate daemons.
 - [ ] `SUMMON_SALT_NONCE` — single-use unpredictable nonce (also reused by the sub-deployers)
 
 ### Live LP legs (matched ICHI-vault + ALM gauge pair) — REQUIRED env
