@@ -1422,12 +1422,14 @@ track on it.
   alongside CRE-04's unchanged http path — see the window note below. **Ships default-OFF** (`fundingEnabled=false`
   ⇒ zero reports); manual ops POSTs are the M1 path. Idempotent/self-healing. The cross-silo chooser is the still-
   owed **CRE-02c** (below).
-- **CRE-02c — cross-silo redemption solver (TICKETED 2026-06-20, `build/tickets/cre/CRE-02c-redemption-solver.md`).**
+- **CRE-02c — cross-silo redemption solver — BUILT (default-OFF) 2026-06-20** (committed; ticket
+  `build/tickets/cre/CRE-02c-redemption-solver.md`; window note near the top of this file).
   The mutualized senior has ONE shared queue but N warehouses (one EE pool per silo). Funding a redemption must
   CHOOSE which pool(s) to REDEEM from + the split, respecting each pool's free liquidity + coverage gate (never
-  over-redeem into a freeze). That chooser = a solver (CRE-02b's multi-warehouse generalization). Open fork: split
-  policy (most-free-first / pro-rata / utilization-balancing / curator-ordered). Ships default-OFF; ops picks the
-  pool by hand in M1. No back-pressure expected.
+  over-redeem into a freeze). That chooser = the solver (CRE-02b's multi-warehouse generalization), a third
+  default-OFF `cron` handler in `cre/warehouse`. **Open fork RESOLVED at scoping → pro-rata by GATED free-liquidity**
+  (`availP`): a starved/undercovered pool gets weight 0 ⇒ skipped automatically. Utilization-balancing +
+  curator-priority are own-later upgrades. Ships default-OFF; ops picks the pool by hand in M1.
 - **CTR-14 — multi-tranche redemption topology (TICKETED 2026-06-20, `build/tickets/contracts/CTR-14-multi-tranche-redemption-topology.md`).**
   The off-ramp is built single-requester/single-Safe (`OffRampModule` clone pinned to one `juniorTrancheSafe`;
   `ZipRedemptionQueue` reverts `MultipleRequesters` for a 2nd concurrent requester; single `redeemController`), but
