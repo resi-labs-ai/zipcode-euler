@@ -60,7 +60,6 @@ contract SiloDeployer is Script {
         address team;
         address creOperator;
         address godOwner;
-        address receiverAdmin;
         address workflowAuthor;
         // CTR-16: per-receiver workflow NAMES (the shared `workflowId` pin is dropped). The warehouse name seals
         // THIS silo's WAM (folded-in hole: silos 2+ shipped it forwarder-only); the sharefeeds + coordinator names
@@ -160,8 +159,9 @@ contract SiloDeployer is Script {
 
         // -- 6. Warehouse (verbatim CreditWarehouseDeployer). redemptionBox MUST be the shared queue (D5/§6).
         //       CTR-16: take TRANSIENT ownership of the WAM (a CRE ReceiverTemplate) by passing `address(this)` as
-        //       `receiverAdmin`, so we can seal its identity here (the folded-in hole: silos 2+ shipped the WAM
-        //       forwarder-only — DeployZipcode only sealed silo-0's). Then hand it to the real `p.receiverAdmin`.
+        //       the warehouse deployer's `receiverAdmin`, so we can seal its identity here (the folded-in hole:
+        //       silos 2+ shipped the WAM forwarder-only — DeployZipcode only sealed silo-0's). Then hand it to the
+        //       Timelock, uniform with silo-0's WAM (DeployZipcode P9) and the rest of the fleet (§17 re-pointable).
         CreditWarehouseDeployer.Warehouse memory warehouse = new CreditWarehouseDeployer().deploy(
             p.godOwner, address(this), s.eePool, p.usdc, p.forwarder, p.redemptionBox, p.saltNonce
         );
@@ -169,9 +169,9 @@ contract SiloDeployer is Script {
         s.warehouseRoles = warehouse.roles;
         s.warehouseAdmin = warehouse.adapter;
         // seal the per-silo WAM (author + the warehouse daemon's name) while this deployer owns it, then re-home it
-        // to the interim receiverAdmin (preserving the as-built WAM→receiverAdmin posture).
+        // to the Timelock (uniform with silo-0).
         _sealIdentity(warehouse.adapter, p.workflowAuthor, p.workflowNameWarehouse);
-        IOwnableLike(warehouse.adapter).transferOwnership(p.receiverAdmin);
+        IOwnableLike(warehouse.adapter).transferOwnership(p.timelock);
 
         // -- 4b. EE admin config needing the warehouse Safe + venue adapter (built in steps 5–6).
         _eeCall(s.eePool, abi.encodeWithSignature("setFeeRecipient(address)", s.warehouseSafe));
@@ -390,7 +390,7 @@ interface IReceiverIdentitySet {
     function setExpectedWorkflowName(string calldata name) external;
 }
 
-/// @notice OZ `Ownable.transferOwnership` — used to re-home the sealed WAM to the interim receiverAdmin.
+/// @notice OZ `Ownable.transferOwnership` — used to re-home the sealed WAM to the Timelock.
 interface IOwnableLike {
     function transferOwnership(address newOwner) external;
 }

@@ -51,8 +51,11 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
 - **5. Per-silo venue front** — `new CREGatingHook(factory, evc, address(0))` → `new EulerVenueAdapter(controller, evc,
   eePool, factory, oracleRegistry, hook, lineIrm, usdc, erebor, usdcReservoir)` → `hook.setBorrowDriver(adapter)` →
   `hook.transferOwnership(timelock)`.
-- **6. Warehouse** — `new CreditWarehouseDeployer().deploy(godOwner, receiverAdmin, eePool, usdc, forwarder,
-  redemptionBox=SHARED queue, saltNonce)` (Safe/Roles → `godOwner`; the CRE warehouse admin adapter → `receiverAdmin`).
+- **6. Warehouse** — `new CreditWarehouseDeployer().deploy(godOwner, address(this), eePool, usdc, forwarder,
+  redemptionBox=SHARED queue, saltNonce)` (Safe/Roles → `godOwner`). **CTR-16:** the deployer takes TRANSIENT
+  ownership of the WAM (the CRE warehouse admin adapter) to seal its identity (`setExpectedAuthor` +
+  `setExpectedWorkflowName(WORKFLOW_NAME_WAREHOUSE)` — closing the folded-in hole where silos 2+ shipped the WAM
+  forwarder-only), then `transferOwnership(timelock)` — uniform with silo-0's WAM (`DeployZipcode` P9).
 - **7. Junior tranche** — `jr.deploy(JuniorParams{... eePool, warehouseSafe, escrowVault, borrowVault, shared
   zipUSD/rateOracle/POL, NAV-leg tokens ...})` (all 25 fields threaded from `SiloParams`).
 - **8. Fail-closed post-asserts** — §2 non-commingling (`redemptionBox != juniorTrancheSafe`, `warehouseSafe != juniorTrancheSafe/juniorTrancheSidecar` —

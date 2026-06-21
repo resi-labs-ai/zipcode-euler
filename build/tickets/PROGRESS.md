@@ -26,7 +26,8 @@ single-requester queue — CRE-02c is unaffected, it writes only REDEEM/REPAY, n
   left `bytes32(0)`: author+name survive workflow redeploys (no fleet re-seal footgun) and the **per-receiver names**
   separate the SEPARATE daemons that share the one deploy wallet (the shared author cannot). **Folded-in hole closed:**
   `SiloDeployer` now takes transient WAM ownership, seals the per-silo WAM (author + `WORKFLOW_NAME_WAREHOUSE`), and
-  re-homes it to `receiverAdmin` — silos 2+ no longer ship the WAM forwarder-only. **Pre-gate reworked (K7):**
+  `transferOwnership(timelock)` — uniform with silo-0's WAM (reviewer-directed; the dead `receiverAdmin` param was
+  dropped); silos 2+ no longer ship the WAM forwarder-only. **Pre-gate reworked (K7):**
   `ZipcodeDeployAsserts.requireIdentityWired(address[] receivers, address registry)` asserts EACH sealed receiver
   (author≠0 AND name≠0) individually + the registry controller seed — the representative-id inference is gone, so a
   missing/empty per-receiver name now fails closed. **OUT (verified critic misreads):** `EulerVenueAdapter` is NOT a

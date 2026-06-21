@@ -162,10 +162,11 @@ scaffolds — untouched by scope). Files changed:
 - **`script/JuniorTrancheDeployer.s.sol`** (K2/K3) — `JuniorParams` drops `workflowId`, gains
   `workflowNameSharefeeds`+`workflowNameCoordinator`; `_sealIdentity` is name-posture; navOracle←sharefeeds,
   coord←coordinator.
-- **`script/SiloDeployer.s.sol`** (K8) — `SiloParams` drops `workflowId`, gains warehouse/sharefeeds/coordinator
-  names; step 6 takes TRANSIENT WAM ownership (`receiverAdmin=address(this)`), **seals the per-silo WAM**
-  (author+`WORKFLOW_NAME_WAREHOUSE`), then re-homes it to the real `receiverAdmin` (closing the folded-in hole —
-  silos 2+ shipped the WAM forwarder-only); `Silo` gains an observability `warehouseAdmin` field.
+- **`script/SiloDeployer.s.sol`** (K8) — `SiloParams` drops `workflowId` AND the now-dead `receiverAdmin`, gains
+  warehouse/sharefeeds/coordinator names; step 6 takes TRANSIENT WAM ownership (`address(this)`), **seals the
+  per-silo WAM** (author+`WORKFLOW_NAME_WAREHOUSE`), then `transferOwnership(timelock)` — uniform with silo-0's WAM
+  (`DeployZipcode` P9), closing the folded-in hole where silos 2+ shipped the WAM forwarder-only; `Silo` gains an
+  observability `warehouseAdmin` field. (Reviewer-directed: silo WAMs land on the Timelock, not `receiverAdmin`.)
 - **`script/DeployLocal.s.sol`** (K9) — drops the `workflowId=1` pin; sets the six local name labels.
 - **`script/DeployMainnet.s.sol`** (K10) — reads `WORKFLOW_NAME_*` (drops `vm.envBytes32("WORKFLOW_ID")`).
 - **`script/DeployShowcaseVAMM.s.sol`** (K10) — `WORKFLOW_ID` const → `WORKFLOW_NAME="zip-sharefeeds"`;

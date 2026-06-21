@@ -274,7 +274,6 @@ contract SiloDeployerTest is ForkConfig {
     address internal team = makeAddr("teamMultisig");
     address internal creOperator = makeAddr("creOperator");
     address internal godOwner = makeAddr("godOwner");
-    address internal receiverAdmin = makeAddr("receiverAdmin");
     address internal adminSafe = makeAddr("adminSafe");
     address internal curatorSafe = makeAddr("curatorSafe");
     address internal workflowAuthor = makeAddr("workflowAuthor");
@@ -344,7 +343,6 @@ contract SiloDeployerTest is ForkConfig {
             team: team,
             creOperator: creOperator,
             godOwner: godOwner,
-            receiverAdmin: receiverAdmin,
             workflowAuthor: workflowAuthor,
             workflowNameWarehouse: workflowNameWarehouse,
             workflowNameSharefeeds: workflowNameSharefeeds,
@@ -433,8 +431,8 @@ contract SiloDeployerTest is ForkConfig {
     // ----------------------------------------------------------------- 2. ownership handoff
 
     /// @notice Every transferred owner lands away from the deployer: junior OZ-ownables + the per-silo hook + the
-    ///         farm utility borrow-vault governor → Timelock; warehouseSafe Safe/Roles → godOwner; warehouseSafe adapter →
-    ///         receiverAdmin; both Baal Safes → team & NOT the deployer.
+    ///         farm utility borrow-vault governor → Timelock; warehouseSafe Safe/Roles → godOwner; the per-silo WAM →
+    ///         Timelock (CTR-16, uniform with silo-0); both Baal Safes → team & NOT the deployer.
     function test_ownership_handoff() public {
         (SiloDeployerHarness dep, SiloDeployer.Silo memory s,) = _deploySilo(SALT);
         address tl = address(timelock);
@@ -453,18 +451,19 @@ contract SiloDeployerTest is ForkConfig {
         // the ticket does not direct an adapter handoff), and the borrow vault governor was asserted == TL in step 8.
         // (the borrow vault address is not on the handle; the step-8 SeamFarmUtilityGovernor pass proves governor==TL.)
 
-        // warehouseSafe Safe → godOwner; Roles → godOwner; warehouseSafe admin adapter → receiverAdmin.
+        // warehouseSafe Safe → godOwner; Roles → godOwner.
         assertTrue(ISafe(s.warehouseSafe).isOwner(godOwner), "warehouseSafe Safe owned by godOwner");
         assertFalse(ISafe(s.warehouseSafe).isOwner(address(dep)), "warehouseSafe Safe NOT owned by deployer");
         assertEq(IOwnableView(s.warehouseRoles).owner(), godOwner, "warehouseSafe Roles -> godOwner");
 
-        // CTR-16 (K8): the per-silo WAM is SEALED (author + a non-zero workflowName) and re-homed to receiverAdmin —
-        // not left forwarder-only as silos 2+ shipped pre-fix. The deployer took transient ownership only to seal.
+        // CTR-16 (K8): the per-silo WAM is SEALED (author + a non-zero workflowName) and re-homed to the Timelock —
+        // uniform with silo-0, not left forwarder-only as silos 2+ shipped pre-fix. The deployer took transient
+        // ownership only to seal.
         assertEq(IReceiverIdentityView(s.warehouseAdmin).getExpectedAuthor(), workflowAuthor, "WAM author sealed");
         assertTrue(
             IReceiverIdentityView(s.warehouseAdmin).getExpectedWorkflowName() != bytes10(0), "WAM workflowName sealed"
         );
-        assertEq(IReceiverIdentityView(s.warehouseAdmin).owner(), receiverAdmin, "WAM -> receiverAdmin");
+        assertEq(IReceiverIdentityView(s.warehouseAdmin).owner(), tl, "WAM -> Timelock");
         assertTrue(s.warehouseAdmin != address(0), "WAM address exposed on the handle");
 
         // both Baal Safes → team, NOT the deployer.

@@ -63,6 +63,9 @@ contract SiloRegistryTest is Test {
     address internal juniorBasket = makeAddr("juniorBasket");
     address internal curator = makeAddr("curator");
 
+    // mirror of the contract event (for vm.expectEmit)
+    event SiloActiveSet(bytes32 indexed siloId, bool active);
+
     function setUp() public {
         reg = new SiloRegistry(controller);
     }
@@ -393,5 +396,44 @@ contract SiloRegistryTest is Test {
     function test_setController_zero_reverts() public {
         vm.expectRevert(SiloRegistry.ZeroAddress.selector);
         reg.setController(address(0));
+    }
+
+    // ============================================================== I-12: UnknownSilo on every by-id function
+    /// @dev The `UnknownSilo` guard is carried by five by-id functions; only `setCurrentSilo`'s was tested. Cover the
+    ///      other four: retire/setActive (owner path) and increment/decrement (controller path — onlyController
+    ///      passes, then UnknownSilo fires on the unknown id).
+    function test_unknownSilo_reverts_on_all_byId_functions() public {
+        bytes32 unknown = keccak256("does-not-exist");
+
+        vm.expectRevert(abi.encodeWithSelector(SiloRegistry.UnknownSilo.selector, unknown));
+        reg.retireSilo(unknown);
+
+        vm.expectRevert(abi.encodeWithSelector(SiloRegistry.UnknownSilo.selector, unknown));
+        reg.setActive(unknown, true);
+
+        vm.prank(controller);
+        vm.expectRevert(abi.encodeWithSelector(SiloRegistry.UnknownSilo.selector, unknown));
+        reg.incrementLineCount(unknown);
+
+        vm.prank(controller);
+        vm.expectRevert(abi.encodeWithSelector(SiloRegistry.UnknownSilo.selector, unknown));
+        reg.decrementLineCount(unknown);
+    }
+
+    // ============================================================== I-13: setActive flips the flag (both ways) + emits
+    function test_setActive_effect_flipsBothWays_andEmits() public {
+        bytes32 id = keccak256("active-effect");
+        _addWired(id);
+        assertTrue(reg.getSilo(id).active, "starts active");
+
+        vm.expectEmit(true, false, false, true, address(reg));
+        emit SiloActiveSet(id, false);
+        reg.setActive(id, false);
+        assertFalse(reg.getSilo(id).active, "flipped to inactive");
+
+        vm.expectEmit(true, false, false, true, address(reg));
+        emit SiloActiveSet(id, true);
+        reg.setActive(id, true);
+        assertTrue(reg.getSilo(id).active, "flipped back to active");
     }
 }
