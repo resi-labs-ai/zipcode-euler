@@ -10,16 +10,33 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**NEXT = reviewer picks.** With CRE-02c DONE (note below), the CRE redemption (R)/(K) stack is COMPLETE — CRE-02
-(K settle/claim) + CRE-02b (single-pool R funding) + CRE-02c (cross-silo R solver) + CRE-04 (warehouse op
-producer). There is **no standalone CRE producer left**. The remaining concrete candidates (reviewer releases one):
-- **SEAM-1** — CRE-03's material-move http trigger (additive, own-later; deferred by design).
-- **CTR-15 follow-up (b)** — the `FarmUtilityBorrowGuard.sol:12-13` accuracy-discrepancy ticket ("borrow vault IS
-  resting USDC" — renamed in place, the factual claim deliberately NOT rewritten during the rename). A small
-  contract-comment doc-accuracy fix.
-- **FE track** — frontend tickets in `build/tickets/frontend/` (anvil-grounded; FE-09 rename already APPLIED).
-- **CTR-14** — N junior Safes vs the single-requester queue (contract fork still open; keeper-half prepared). NOTE:
-  CRE-02c is unaffected — the solver writes only REDEEM/REPAY (no escrow leg), so it does not depend on CTR-14.
+**NEXT = CTR-16 — CRE receiver permissioning: author + per-receiver workflowName (drop shared workflowId)**
+(`build/tickets/contracts/CTR-16-receiver-name-permissioning.md`). Build-ready + critic-vetted this session
+(2026-06-20); reviewer-directed. Deploy-track (contracts/script + the asserts lib + tests — NO receiver-contract
+code change; `ReceiverTemplate` already exposes `setExpectedWorkflowName`). **Scope (settled after a 4-critic loop +
+two verified critic-misread corrections):**
+- **In:** the `ReceiverTemplate` fleet (controller, registry, coordinator, navOracle, lpOracle, rateOracle) + the
+  **per-silo WAM** → swap `setExpectedWorkflowId(SHARED_ID)` for author + **per-receiver** `setExpectedWorkflowName`,
+  drop the workflowId pin. Author+name survive workflow redeploys (no fleet re-seal footgun); per-receiver NAMES are
+  what separate the SEPARATE daemons (shared author can't). Mapping table + env-name vars in the ticket.
+- **Folds in a real pre-existing hole (reviewer-approved):** `SiloDeployer` never seals the per-silo WAM
+  (`warehouse.adapter`) — silos 2+ ship it forwarder-only. K8 adds the seal.
+- **Pre-gate redesign (K7):** `ZipcodeDeployAsserts.requireIdentityWired`/`requireReceiverIdentityWired` are
+  representative-only + keyed on workflowId (its own comment admits the "same id on every subclass" assumption,
+  invalid under per-receiver names) — rework to assert author+name on EACH sealed receiver, fail-closed.
+- **`DeployLocal` (anvil/FE foundation) must change (K9):** it pins `workflowId=1` to pass the gate today; after the
+  rework it'd revert → give it name labels, drop the id pin.
+- **OUT (both verified critic misreads):** `EulerVenueAdapter` is NOT a receiver (no `onReport`); `SzipBuyBurnModule`
+  is a `CloneReportReceiver` with NO `setExpectedWorkflowName` surface, permissioned at `setUp` not the seal loop —
+  unifying it onto author+name is a CONTRACT change = a separate ticket.
+- **Gate:** `cd contracts && forge build && forge test` green (incl. updated `ZipcodeDeployIdentityGate.t.sol` +
+  `DeployZipcode.t.sol` + a NEW K5 privilege-separation test: daemon-A's name rejected by daemon-B's receiver,
+  accepted by its own). RESOLVES the [[wam-permissioning-workflowid-vs-author]] memory note.
+
+Deferred candidates (after CTR-16): **SEAM-1** (CRE-03 material-move http trigger, own-later); **CTR-15 follow-up
+(b)** (`FarmUtilityBorrowGuard.sol:12-13` accuracy doc-fix); the **FE track**; **CTR-14** (N junior Safes vs the
+single-requester queue — CRE-02c is unaffected, it writes only REDEEM/REPAY, no escrow leg). The CRE redemption
+(R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04.
 
 - **CRE-02c note (2026-06-20) — the cross-silo redemption solver (`onSolverTick` → per-silo `WarehouseAdminModule`,
   default-OFF), folded into `cre/warehouse`.** The multi-warehouse generalization of CRE-02b. **Off-chain Go only —
