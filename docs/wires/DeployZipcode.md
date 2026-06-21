@@ -70,7 +70,8 @@ single end-to-end `deploy()` pass that has not.
    (`msg.sender == owner`).
 5. **EE-pool config is out-of-band (the honest hole).** `EE_POOL` / `USDC_RESERVOIR` are env inputs, NOT
    created by the script — the EulerEarn admin ABI (`createEulerEarn`, `setIsAllocator`, `setCurator`,
-   `setFeeRecipient`, `setFee`, point the supply queue at the farm utility borrow vault) is intentionally not
+   `setFeeRecipient`, `setFee`, cap the resting `usdcReservoir` + the farm utility borrow vault then point the
+   supply queue at the resting `usdcReservoir` ONLY) is intentionally not
    compiled in (we do not vendor EulerEarn 0.8.26). It is a documented fork-runbook pre/post step. This is the
    gap between "deploy script runs" and "system actually works." Tracked as the item-10 EE obligation.
 

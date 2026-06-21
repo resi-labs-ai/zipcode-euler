@@ -35,8 +35,13 @@ The CRE redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (C
   `usdcReservoir` and the farm utility borrow vault as markets but sets the **supply queue to `[usdcReservoir]`
   ONLY** — the borrow vault is reallocate-reachable but deliberately OUT of the supply queue (so deposits never
   auto-route into a borrowable vault). My first pass wrongly wrote "both markets sit in the supply queue" in
-  `8-Bw`/`WOOF-04`; corrected. Also fixed a THIRD stale claim missed in pass 1: `DeployZipcode.s.sol:70` said
-  "pointing the EE supply queue at the farm utility borrow vault" → corrected to the resting `usdcReservoir`.
+  `8-Bw`/`WOOF-04`; corrected. An exhaustive repo-wide re-sweep (pass 1 only searched `src/`+`docs/wires/`+`build/`,
+  missing `script/` + x-ray docs + `docs/wires/README.md`/`DeployZipcode.md`) then caught FIVE more stale spots:
+  `DeployZipcode.s.sol:70` + `docs/wires/DeployZipcode.md:73` + `docs/wires/README.md:188` ("supply queue at the
+  farm utility borrow vault" → resting `usdcReservoir`); `FarmUtilityMarketDeployer.sol:19`+`:76` and
+  `FarmUtilityLoopModule.sol:18`+`:44` (committed source calling the borrow vault "the warehouse resting USDC
+  vault" / borrowing "from the warehouse resting vault"); `x-ray/FarmUtilityBorrowGuard.md:11` (the x-ray doc's
+  "is the warehouse's shared resting USDC"). All comment/doc-only.
   **Gate:** `forge build` green (comment-only ⇒ no bytecode change; the CTR-16 run's `forge test` 1041/0/3 stands).
   **Doc-sync:** the owning wire doc (8-B5) + the propagated siblings are the fix itself; `claude-zipcode.md`
   unaffected (it never carried the identity claim). Not committed yet (this note's commit pending). NEXT: reviewer

@@ -15,7 +15,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         juniorTrancheEngine`). It drives the **Safe's own EVC account** (borrower-of-record = the Safe, NOT a fresh
 ///         `LineAccount`) through the four loop entrypoints — `postCollateral` / `borrow` / `repay` /
 ///         `withdrawCollateral`. Per harvest the CRE robot unstakes an LP slice (8-B6), POSTS it as collateral here,
-///         BORROWS the ~30% strike USDC from the warehouse resting vault (8-B8 exercises → 8-B9 sells), REPAYS the
+///         BORROWS the ~30% strike USDC from the farm utility borrow vault (JIT-funded from the warehouse's resting
+///         USDC pre-borrow; 8-B8 exercises → 8-B9 sells), REPAYS the
 ///         borrow, and WITHDRAWS the LP to re-stake. The LP self-collateralizes its own oHYDX strike.
 ///
 /// @dev SECURITY BOUNDARY (§10.1, the module's whole reason for shape): the operator supplies ONLY scalar amounts
@@ -41,7 +42,8 @@ contract FarmUtilityLoopModule is MastercopyInitLock {
     address public operator;
     /// @notice The Ethereum Vault Connector.
     address public evc;
-    /// @notice The farm utility USDC borrow vault (the warehouse resting USDC vault; created by the deployer).
+    /// @notice The farm utility USDC borrow vault (created by the deployer; JIT-funded from the resting
+    ///         `usdcReservoir`, ≈0 at rest — NOT itself the resting vault).
     address public borrowVault;
     /// @notice The LP escrow collateral vault (the bare 1:1 holding box; created by the deployer).
     address public escrowVault;

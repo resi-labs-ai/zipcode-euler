@@ -16,7 +16,8 @@ import {FarmUtilityBorrowGuard} from "../src/supply/szipUSD/FarmUtilityBorrowGua
 ///         - the LP escrow collateral vault (bare 1:1 holding box),
 ///         - a dedicated `EulerRouter` wired `escrow → lpToken → SzipFarmUtilityLpOracle`,
 ///         - the `FarmUtilityBorrowGuard` (pins `OP_BORROW` to the engine Safe — security F8a),
-///         - the USDC borrow vault (oracle = that router; the warehouse resting USDC vault), with the guard installed
+///         - the USDC borrow vault (oracle = that router; JIT-funded from the resting `usdcReservoir`, ≈0 at rest —
+///           NOT itself the resting vault), with the guard installed
 ///           at `OP_BORROW` and `setLTV(escrow, …)` accepting the escrow as collateral.
 ///         Returns `(escrowVault, borrowVault, router)` for the module's `setUp` + the item-10 deploy.
 contract FarmUtilityMarketDeployer {
@@ -72,8 +73,9 @@ contract FarmUtilityMarketDeployer {
 
         // step 3+4: the borrow guard (pins OP_BORROW to the engine Safe — the shared resting USDC must not be levered)
         //           then the farm utility USDC borrow vault (oracle = the router; unit-of-account = USDC -> prices 1:1).
-        //           Governor RETAINED so the Timelock can tune LTV/caps. In production the EE supply queue allocates
-        //           idle depositor USDC into this vault (so it IS the warehouse resting USDC vault).
+        //           Governor RETAINED so the Timelock can tune LTV/caps. This vault is capped as an EE market but kept
+        //           OUT of the supply queue (resting USDC routes to `usdcReservoir`); it holds ≈0 at rest and is
+        //           JIT-funded from the reservoir via `EulerVenueAdapter.fundFarmUtility` (combined topology rejected).
         borrowVault = p.factory.createProxy(address(0), false, abi.encodePacked(p.usdc, router, p.usdc));
         IEVault(borrowVault).setInterestRateModel(p.irm);
         IEVault(borrowVault).setHookConfig(

@@ -8,10 +8,13 @@ two decisive security properties are exercised via its sibling `test/FarmUtility
 `isHookTarget` + the account-identity borrow gate, the latter against the **real** EVK/EVC market). The
 admin/wiring surface — previously the gap — is **now covered too** (2026-06-20): 3 guard tests total.
 
-> Why this guard matters: the farm utility borrow vault **is the warehouse's shared resting USDC** (idle depositor
-> cash). Without this hook, any ICHI-LP holder could post the escrow collateral on their *own* EVC account and lever
-> that shared USDC. The guard pins `OP_BORROW` to the engine Safe — so the test that a third party is rejected on its
-> own account is the whole point, and it's proven on the live market.
+> Why this guard matters: the farm utility borrow vault holds **≈0 at rest** and is **JIT-funded from the
+> warehouse's shared resting USDC** (the `usdcReservoir` idle depositor cash) just before a harvest, via
+> `EulerVenueAdapter.fundFarmUtility` (re-absorbed by `defundFarmUtility`; the "combined" always-funded topology was
+> rejected). So while funded the vault holds depositor-sourced cash. Without this hook, any ICHI-LP holder could post
+> the escrow collateral on their *own* EVC account and lever that depositor cash. The guard pins `OP_BORROW` to the
+> engine Safe — so the test that a third party is rejected on its own account is the whole point, and it's proven on
+> the live market.
 
 ## 1. What it is
 

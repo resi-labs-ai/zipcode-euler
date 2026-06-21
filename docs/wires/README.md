@@ -185,7 +185,8 @@ The order `DeployZipcode` realizes (phases P0–P9; see `DeployZipcode.md`), ove
    `ZipDepositModule` → `SzipNavOracle` → `ExitGate` + `SzipUSD` (Gate manager(2) grant; `setShareToken`) →
    `CreditWarehouse` Safe + `WarehouseAdminModule` (Roles) → `ZipRedemptionQueue` (`redemptionBox` wiring).
 5. **Engine modules:** create the POL ICHI vault + resolve the gauge (whitelist-gated) → deploy `8-B5`
-   farm utility market (governor → timelock; point EE supply queue at it) → clone `8-B5..B10`, `8-B14`,
+   farm utility market (governor → timelock; cap it as an EE market but point the EE supply queue at the resting
+   `usdcReservoir` ONLY — the borrow vault stays reallocate-reachable, OUT of the supply queue) → clone `8-B5..B10`, `8-B14`,
    `DurationFreeze`, `OffRamp` (enable on the right Safe(s), wire operators, the shared-LP/one-bank/juniorTrancheEngine
    asserts).
 6. **Loss side:** `LienXAlphaEscrow` → `DefaultCoordinator` (`setEscrow` + `forceApprove`, oracle
