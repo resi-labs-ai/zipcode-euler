@@ -105,7 +105,7 @@ depositor principal is protected by the LP collateral on the strike borrow.
    - the rest → the sell path (UP/FLAT) or *also* to ve (DOWN regime — never dump into weakness).
 4. **The self-collateralizing strike loop** (§5) for the sell slice — one ordered process:
    - a. `gauge.withdraw(slice)` — unstake the LP slice (emissions on it pause until re-staked).
-   - b. post the slice as EVK escrow collateral; **borrow** the ~30% strike from the warehouse **USDC Resting Vault** (un-utilized USDC).
+   - b. post the slice as EVK escrow collateral; **borrow** the ~30% strike from the **farm utility borrow vault** (JIT-funded from the warehouse's un-utilized resting USDC).
    - c. **profitability-cutoff pre-check** (skip if HYDX < $0.015 → route those tokens to ve, `hydrex.md` §2.4; $0.018 = amber/taper-start); then
      `oHYDX.exercise(amount, maxPayment, recipient[, deadline])` (prefer the deadline overload) paying
      `max(30%·TWAP, $0.01)` per token → HYDX.
@@ -131,7 +131,7 @@ strike; the HYDX sale repays the borrow; the LP returns to the gauge. This is an
 
 | Approach | Mechanism | Verdict |
 |---|---|---|
-| **Self-collateralizing borrow loop** | unstake an LP slice → post as EVK escrow collateral → borrow the ~30% strike from the **warehouse USDC Resting Vault** (un-utilized USDC, CRE-only) → exercise → **market-sell to repay immediately** → withdraw + re-stake | **CANONICAL — this is the harvest process.** Safe because: (a) CRE-permissioning kills the external oracle-manipulation exploit; (b) the 30% strike is **self-collateralizing** — borrow 30% to unlock 100%, default requires **>71% single-order slippage** (never placed, §4 caps); (c) the borrow **revolves** (resting USDC out only for the loop window), so no idle buffer. **Borrow only un-utilized resting USDC, over-collateralized by the LP, repaid each loop — depositor principal is never the counterparty.** |
+| **Self-collateralizing borrow loop** | unstake an LP slice → post as EVK escrow collateral → borrow the ~30% strike from the **farm utility borrow vault** (JIT-funded from un-utilized resting USDC, CRE-only) → exercise → **market-sell to repay immediately** → withdraw + re-stake | **CANONICAL — this is the harvest process.** Safe because: (a) CRE-permissioning kills the external oracle-manipulation exploit; (b) the 30% strike is **self-collateralizing** — borrow 30% to unlock 100%, default requires **>71% single-order slippage** (never placed, §4 caps); (c) the borrow **revolves** (resting USDC out only for the loop window), so no idle buffer. **Borrow only un-utilized resting USDC, over-collateralized by the LP, repaid each loop — depositor principal is never the counterparty.** |
 | Standing USDC buffer | vault/treasury holds ~30%-of-flow USDC standing idle; exercise → sell → replenish | **Rejected.** Ties up idle treasury capital the revolving borrow avoids; no capital-efficiency win. |
 | Flash loan | borrow strike atomically, repay same tx | **Rejected** — forces an *atomic market sell* at worst impact. |
 
@@ -143,7 +143,7 @@ DOWN → `exerciseVe`) keeps the engine from ever being forced to dump into weak
 sold to repay + re-stake; the residual free value is market-sold within the cap and does **not** block the
 re-stake, so the unstake window is short by construction.
 
-**Invariant.** The strike borrows the warehouse's **un-utilized USDC** (the `USDC Resting Vault`),
+**Invariant.** The strike borrows the warehouse's **un-utilized USDC** (JIT-funded into the farm utility borrow vault from the resting `usdcReservoir`),
 **over-collateralized by the ICHI LP** and **repaid from the HYDX sale** each loop. Depositor principal is protected
 by the LP collateral — it is **never** the counterparty to the dump engine. Worst case is a *stall* (CRE holds
 over-collateralized HYDX waiting for
@@ -197,7 +197,7 @@ recycle *amount* each epoch is a Treasury-owned weight (the numbers are open, pi
 
 1. **Permissioned writer.** Only the CRE address operates harvest/exercise/borrow/sell/recycle.
 2. **Depositor principal is never at risk in the dump.** The strike borrow draws the warehouse's **un-utilized
-   `USDC Resting Vault`**, **over-collateralized by the ICHI LP**, CRE-only, repaid each loop — never USDC already
+   resting USDC** (JIT-funded into the farm utility borrow vault), **over-collateralized by the ICHI LP**, CRE-only, repaid each loop — never USDC already
    committed to a credit line.
 3. **Free-value-only.** The recycle spends **only** HYDX-extracted free value; the zipUSD it mints is backed 1:1
    by the just-deposited USDC (deposit precedes mint). No unbacked mint, no reserve spend, no xALPHA buy.
@@ -225,7 +225,7 @@ recycle *amount* each epoch is a Treasury-owned weight (the numbers are open, pi
   `discount()` (= 30).
 - **Sell:** `SwapRouter (0x6f4b…)` `exactInputSingle` — HYDX→USDC (the loop's market-sell). *(No zipUSD→xALPHA buy
   leg — the recycle adds single-sided zipUSD LP, 8-B6.)*
-- **Strike borrow (the loop):** an EVK isolated market — the warehouse **`USDC Resting Vault`** (un-utilized USDC) + an **ICHI-LP
+- **Strike borrow (the loop):** an EVK isolated market — the **farm utility borrow vault** (JIT-funded from the warehouse's un-utilized resting USDC) + an **ICHI-LP
   escrow collateral vault** + a dedicated `EulerRouter`, driven by the CRE-gated module
   (`postCollateral`/`borrow`/`repay`/`withdrawCollateral`). Borrower-of-record = the szipUSD Safe (its own EVC
   account). Build detail: `claude-zipcode.md` §4.5.1 (8-B5).
@@ -248,7 +248,7 @@ below floor → underwater exercise (→ §4 step 4c soft-halt pre-check).
 - [ ] szipUSD ERC-4626 + ICHI single-sided integration + gauge staking (8-B1/8-B2/8-B6).
 - [ ] CRE harvest workflow — regime classifier, split policy, the self-collateralizing loop, rebalance
       (8-B11 on-chain seam / `claude-zipcode.md §8.7` workflow).
-- [ ] The self-collateralizing strike loop — EVK isolated market (warehouse USDC Resting Vault + ICHI-LP escrow),
+- [ ] The self-collateralizing strike loop — EVK isolated market (farm utility borrow vault, JIT-funded from resting USDC, + ICHI-LP escrow),
       CRE-only (8-B5).
 - [ ] Recycle sink (8-B10 `RecycleModule`) — free-value-only gate; deposit → backed zipUSD → 8-B6 single-sided LP → NAV.
 - [ ] ~~Compounder / LP-rebalance (Mode C / 8-B13)~~ **REMOVED — absorbed into the 8-B10 single-sided recycle.**

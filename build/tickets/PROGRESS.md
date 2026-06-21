@@ -10,13 +10,31 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**NEXT = reviewer picks** among the deferred candidates below — CTR-16 is DONE (record immediately under). One item
-moves at a time; the reviewer selects the next forward edge.
+**NEXT = reviewer picks** among the deferred candidates below — CTR-16 is DONE + COMMITTED (`4378f93`); CTR-15
+follow-up (b) is DONE (notes immediately under). One item moves at a time; the reviewer selects the next forward edge.
 
-Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); **CTR-15 follow-up
-(b)** (`FarmUtilityBorrowGuard.sol:12-13` accuracy doc-fix); the **FE track**; **CTR-14** (N junior Safes vs the
-single-requester queue — CRE-02c is unaffected, it writes only REDEEM/REPAY, no escrow leg). The CRE redemption
-(R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04.
+Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); the **FE track**; **CTR-14** (N
+junior Safes vs the single-requester queue — CRE-02c is unaffected, it writes only REDEEM/REPAY, no escrow leg).
+The CRE redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (CTR-15 follow-up (b) DONE — note below.)
+
+- **CTR-15 follow-up (b) DONE (2026-06-20) — `FarmUtilityBorrowGuard` "borrow vault IS resting USDC" accuracy fix
+  (docs/comments only, ZERO behavior change).** The deferred CTR-15 follow-up: the rename left an inverted factual
+  claim. **Truth (code wins):** the resting USDC lives in the no-borrow `usdcReservoir`; the farm utility borrow
+  vault holds **≈0 at rest** and is JIT-funded from the reservoir via `EulerVenueAdapter.fundFarmUtility` /
+  re-absorbed via `defundFarmUtility` (the adapter comment `:615-617` calls the "combined" always-funded topology
+  **rejected** — CTR-07). So "the borrow vault IS the warehouse's resting USDC / USDC Resting Vault" is the
+  old/rejected design. Verified directly against `EulerVenueAdapter.sol` (no critic fan-out — own-docs accuracy,
+  per [[do-not-delegate-judgment-on-own-docs]]). **Reviewer scoped this as a full SWEEP** of the inverted
+  vault-IDENTITY claim (the *economic* substance — "borrows un-utilized depositor USDC, over-collateralized,
+  repaid each loop" — was already correct and left intact). Fixed: `FarmUtilityBorrowGuard.sol` (the ticketed
+  `:12-13` + the `juniorTrancheEngine` field `@notice`); `docs/wires/8-B5-FarmUtilityLoop.md` (Role para + the
+  `borrowVault` cross-component bullet); `docs/wires/8-Bw-CreditWarehouse.md` (the row-333 supply-queue bullet);
+  `docs/wires/WOOF-04.md` (the stale `farm-utility-borrow-vault-as-resting-vault` obligation → superseded-by-CTR-07);
+  `build/pending-docs/auto-compounder.md` (6 spots — the borrow source named the "USDC Resting Vault"). **Gate:**
+  `forge build` green (comment-only ⇒ no bytecode change; the CTR-16 run's `forge test` 1041/0/3 stands).
+  **Doc-sync:** the owning wire doc (8-B5) + the propagated siblings are the fix itself; `claude-zipcode.md`
+  unaffected (it never carried the identity claim). Not committed yet (this note's commit pending). NEXT: reviewer
+  picks (SEAM-1 / FE track / CTR-14).
 
 - **CTR-16 DONE (2026-06-20) — CRE receiver permissioning: author + per-receiver workflowName, shared workflowId
   pin dropped** (`build/tickets/contracts/CTR-16-receiver-name-permissioning.md`). Deploy-track only (NO
@@ -40,10 +58,11 @@ single-requester queue — CRE-02c is unaffected, it writes only REDEEM/REPAY, n
   privilege-separation test:** two receivers, same author, different names — daemon-A's report accepted by receiver-A,
   rejected `InvalidWorkflowName` by receiver-B. **Doc-sync:** `docs/wires/DeployZipcode.md`, `claude-zipcode.md`
   §9 recipe + §13 inbound note, `contracts/.env.example`, `RUNBOOK-mainnet-deploy.md`. **RESOLVES the
-  [[wam-permissioning-workflowid-vs-author]] memory note.** Not committed (left for reviewer). ⚠️ **FLAG (unchanged,
-  not mine):** the working tree still carries the pre-existing uncommitted parallel audit-prep (deleted
-  `build/superintendent*.md`/`build/supply.md`, modified `contracts/test/AlgebraIchiFairLpOracle.t.sol` et al.,
-  untracked `audit/` + `contracts/src/supply/x-ray/`) — left untouched + unstaged.
+  [[wam-permissioning-workflowid-vs-author]] memory note.** **COMMITTED `4378f93`** (gate re-run before commit:
+  `forge build` + `forge test` = 1041 passed / 0 failed / 3 skipped — the +2 vs the 1039 above are the new
+  `SiloRegistry` I-12/I-13 tests). ⚠️ **FLAG (unchanged, not mine):** the working tree still carries 4 untracked
+  x-ray `.md`s from the prior x-ray sweep (`LienCollateralToken`/`LienTokenFactory`/`SeniorNavAggregator`/
+  `SiloRegistry`, all citing commit `46fd0c1`) — left untracked, NOT part of CTR-16.
 
 - **CRE-02c note (2026-06-20) — the cross-silo redemption solver (`onSolverTick` → per-silo `WarehouseAdminModule`,
   default-OFF), folded into `cre/warehouse`.** The multi-warehouse generalization of CRE-02b. **Off-chain Go only —

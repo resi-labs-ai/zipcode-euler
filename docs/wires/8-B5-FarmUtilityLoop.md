@@ -12,9 +12,12 @@ it costs the ~30% strike in USDC (8-B8) — so each harvest needs USDC. The sour
 gauge slice (8-B6), POST it as collateral, BORROW the strike, exercise the oHYDX (8-B8) / sell the HYDX (8-B9),
 REPAY, and WITHDRAW the LP to re-stake. The LP self-collateralizes its own strike. The defining shape: the engine
 Safe **borrows on its OWN EVC account** (borrower-of-record = the Safe, sub-account 0, NOT a fresh `LineAccount`),
-so the borrow is account-identity-driven, not operator-on-behalf. The USDC borrow vault **IS the warehouse's
-shared resting USDC** (idle depositor cash), which is exactly why the borrow must be pinned to the Safe at the
-vault level (the guard) — no third-party ICHI-LP holder may lever depositor funds.
+so the borrow is account-identity-driven, not operator-on-behalf. The USDC borrow vault holds **≈0 at rest**; it is
+**JIT-funded from the warehouse's shared resting USDC** (the `usdcReservoir` idle depositor cash) just before a
+harvest and re-absorbed after repay (`EulerVenueAdapter.fundFarmUtility`/`defundFarmUtility`; the "combined"
+always-funded topology was rejected). While funded it holds depositor-sourced cash, which is exactly why the
+borrow must be pinned to the Safe at the vault level (the guard) — no third-party ICHI-LP holder may lever
+depositor funds.
 
 ## Contracts involved (what each does)
 | Contract | What it is |
@@ -140,11 +143,14 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
    stays renounced (step 1) by design.
 
 ## Wiring — cross-component (who points at whom)
-- **`borrowVault` = the warehouse USDC resting vault.** The deployer creates the borrow vault; in production the
-  EulerEarn supply queue (the warehouse, 8-Bw) **allocates idle depositor USDC into it** so it IS the
-  `USDC Resting Vault` — the un-utilized USDC the credit lines have not drawn (PROGRESS row 333). Depositor
-  principal is protected by the ICHI-LP collateral, never by the counterparty; the borrow revolves (out only for
-  the short loop window). The module's `borrowVault` slot points at this same vault.
+- **`borrowVault` = the JIT-funded farm utility vault (NOT the resting vault).** The deployer creates the borrow
+  vault; it holds **≈0 at rest**. The warehouse's resting USDC lives in the separate `usdcReservoir` (the
+  no-borrow EE market); `EulerVenueAdapter.fundFarmUtility` moves resting USDC into the borrow vault JUST-IN-TIME
+  before a harvest borrow and `defundFarmUtility` re-absorbs it after the junior repays (PROGRESS row 333 / CTR-07
+  — the "combined" always-funded topology was rejected, so idle USDC is never standing-borrowable and
+  senior-redemption liquidity stays in the no-borrow resting market). Depositor principal is protected by the
+  ICHI-LP collateral, never by the counterparty; the borrow revolves (out only for the short loop window). The
+  module's `borrowVault` slot points at this same JIT-funded vault.
 - **`lpToken` = the SHARED ICHI vault address (the load-bearing identity invariant).** The single production POL
   ICHI vault share token MUST be the SAME address wired into ALL of: the 8-B5 escrow collateral-vault `asset()`
   (`FarmUtilityMarketDeployer.lpToken`), the module's `lpToken`, the `SzipFarmUtilityLpOracle` `LP_MARK` key, the

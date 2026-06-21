@@ -10,8 +10,11 @@ interface IGenericFactory {
 
 /// @title FarmUtilityBorrowGuard
 /// @notice EVK hook target (§4.3) installed on the farm utility USDC borrow vault at `OP_BORROW` (security F8a). The
-///         farm utility borrow vault IS the warehouse's shared resting USDC (idle depositor cash); without this guard any
-///         ICHI-LP holder could post the escrow collateral on their OWN EVC account and lever that shared USDC. The
+///         borrow vault holds ≈0 at rest; it is JIT-funded from the warehouse's shared resting USDC (the `usdcReservoir`
+///         idle depositor cash) just before a junior strike-financing harvest and re-absorbed after the junior repays
+///         (`EulerVenueAdapter.fundFarmUtility`/`defundFarmUtility` — the "combined" always-funded topology was
+///         rejected). So while funded the vault holds depositor-sourced USDC; without this guard any ICHI-LP holder
+///         could post the escrow collateral on their OWN EVC account and lever that depositor cash. The
 ///         guard pins `OP_BORROW` to the engine Safe: a borrow is allowed ONLY when the EVK-appended on-behalf account
 ///         `== juniorTrancheEngine` (else revert `NotEngineSafe`). The engine Safe borrows on its own account (no operator,
 ///         §4.5.1) so the gate is account-identity, NOT operator-authorization — distinct from `CREGatingHook`
@@ -23,7 +26,7 @@ interface IGenericFactory {
 contract FarmUtilityBorrowGuard is IHookTarget {
     /// @notice The EVK vault factory; used to validate the caller is a factory proxy (vault).
     IGenericFactory public eVaultFactory;
-    /// @notice The engine Safe — the ONLY account permitted to borrow the farm utility's resting USDC.
+    /// @notice The engine Safe — the ONLY account permitted to borrow the farm utility's JIT-funded USDC.
     address public juniorTrancheEngine;
     /// @notice The Timelock admin (build phase, §17). NOT OZ `Ownable` — the inherited `Context._msgSender()` would
     ///         collide with this hook's EVK trailing-data `_msgSender()` decoder; `onlyOwner` checks `msg.sender`
