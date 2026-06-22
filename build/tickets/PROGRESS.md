@@ -28,7 +28,7 @@ Numbering otherwise follows the spec's own CRE map (`claude-zipcode.md` §8.11) 
 |---|---|---|
 | KEEPER-00 | **DONE 2026-06-16** — CRE keeper-service scaffold (`cre/keeper/`; Go + go-ethereum; key mgmt; nonce-safe read→compute→submit spine + chain-read helpers + the `Job`/`Runner` seam + the IdentityJob template; config). Foundation for every (K) item. NOT wasip1. | (K) |
 | KEEPER-01a | **DONE 2026-06-17** — buy-burn fill-detect→`burnFor` (windowController). The first live (K) write `Job` on the spine (`cre/keeper/internal/job/burn_job.go`). | (K) |
-| KEEPER-01b | Engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` legs; regime/split/cap policy), as `Job`s on the `cre/keeper/` spine. = the bulk of the rest of CRE-05. **POLICY-BLOCKED** — undecided execution floors / regime+state / vote / sizing; agenda = `build/tickets/cre/KEEPER-01b-OPEN-POLICY.md`. Strike-loop core slice unblocks once A1–A4 + C4 ratified. | (K) |
+| KEEPER-01b | Engine harvest-loop orchestrator (8-B5…8-B10 `onlyOperator` legs; regime/split/cap policy), as `Job`s on the `cre/keeper/` spine. = the bulk of the rest of CRE-05. **POLICY-BLOCKED** — undecided execution floors / regime+state / vote / sizing; agenda = `build/tickets/cre/KEEPER-01b-OPEN-POLICY.md`. Strike-loop core slice unblocks once A1–A4 + C4 ratified. **Lands with the real szALPHA/zipUSD pool — same component.** | (K) |
 
 > **The szipUSD CoW-exit workstream is COMPLETE (2026-06-16): CTR-01 (report socket) + CRE-05a (bid-loop) +
 > CRE-06 (folded-as-config) + FE-08 (exit-book page) landed; the `build/CoW.md` + `build/CoW-exit.md` drivers are
@@ -68,7 +68,7 @@ INFLOW-06 (`build/tickets/frontend/INFLOW-06-deposit-module.md`) is the **FE-02 
 on item 10 / reads a placeholder" notes are now discharged (use the anvil board); its `abis/`/composable files live in
 the **layer**, not in euler-lite.
 
-### Subgraph — deferred (FE track runs without it)
+### Subgraph — follows the FE track (part of the same workstream)
 Still gated on item-10 freezing the §9 event ABIs; the MVP runs on **direct on-chain view
 reads** (FE-06), not a subgraph. Author a subgraph spec later if/when aggregated history is needed; do not block the FE
 track on it.
@@ -79,8 +79,8 @@ track on it.
 
 **Blocked — can't build yet, waiting on outside things:**
 - **The xALPHA price feed.** The bot that reports the xALPHA price can't be built until two things exist: a proven way to read the staking rate from Bittensor, and the real xALPHA token going live. Only a stub exists today.
-- **The real szALPHA/zipUSD pool.** Hydrex hasn't launched it yet, so the junior share price can't value the real LP. It runs on a WETH/USDC placeholder until the real pool exists.
-- **The subgraph.** The history indexer can't be built until the contract event formats are locked down at deploy.
+- **The real szALPHA/zipUSD pool, and the harvest bot that rides with it.** Hydrex hasn't launched the pool yet, so the junior share price can't value the real LP (it runs on a WETH/USDC placeholder until then). The harvest bot (KEEPER-01b) is part of this same component — it goes live alongside the real pool.
+- **The subgraph** is part of the frontend workstream — built after the app, and only if aggregated history is wanted (the app runs fine on direct contract reads without it). It also needs the event formats locked at deploy.
 
 **Deploy day — manual steps:**
 - After deploying, five wiring steps have to be done by hand (the deploy script doesn't do them). They're written out as a checklist in `contracts/script/RUNBOOK-mainnet-deploy.md` §7.
