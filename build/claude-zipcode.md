@@ -714,8 +714,8 @@ redeploy, retargets it); every other identity is adapter-injected AND scope-pinn
 bytes above (1/2/3/4), the `abi.encode(uint8 opType, bytes payload)` envelope, and the open 8-Bw choices are now
 resolved against the built adapter (EulerEarn `redeem(shares, receiver, owner)` — owner 3rd; redeemed USDC →
 Safe-then-REPAY, not direct-to-sink; APPROVE exact-amount with `spender` pinned). CRE-04 builds against THIS table +
-the built `WarehouseAdminModule` decode; the warehouse adapter uses a **distinct Forwarder identity / workflowId**
-from the controller/registry/oracle receivers.
+the built `WarehouseAdminModule` decode; the warehouse adapter uses a **distinct workflow identity** (its own
+`WORKFLOW_NAME_WAREHOUSE` + the shared author, CTR-16) from the controller/registry/oracle receivers.
 **BUILT — CRE-04 (`cre/warehouse`, 2026-06-20):** the (R) producer for this op family is built — an `http.Trigger`
 op event → identical consensus on a string-only carrier → op-discriminant dispatch (`supply`/`approve`/`redeem`/
 `repay` → opType 1/2/3/4) → per-op validation (all four magnitudes `> 0`; REPAY `dest` carried + validated
@@ -726,8 +726,8 @@ took. All four ops are built (incl. REDEEM) so **CRE-02 reuses this package** fo
 
 **BUILT — CRE-02b funding leg (`cre/warehouse`, default-OFF, 2026-06-20):** the production NAV-sizing hook above is
 realized as a SECOND, default-OFF `cron` handler (`onFundingTick`) folded INTO `cre/warehouse` alongside the
-unchanged http path — forced by the `ReceiverTemplate` single-`expectedWorkflowId` pin (only the pinned workflow
-can `WriteReport` to the warehouse, so the sizing must live in the same binary; the open fork resolved to "fold-in",
+unchanged http path — forced by the `ReceiverTemplate` identity gate (post-CTR-16: author + per-receiver
+`workflowName`, so only the warehouse daemon can `WriteReport` to the warehouse, and the sizing must live in the same binary; the open fork resolved to "fold-in",
 not a separate producer). Each tick (reactive/stateless, §17 live reads): `shortfall = max(0, totalPending/scaleUp −
 (usdc.balanceOf(queue) − reservedAssets))`; **REPAY** drains `min(safeUsdc, shortfall)` to the queue (= the
 deploy-pinned `redemptionBox`), **un-gated** (it moves cash already held, not farm utility backing); **REDEEM** tops
@@ -741,8 +741,8 @@ CRE-02c solver (below — BUILT).
 
 **BUILT — CRE-02c cross-silo redemption solver (`cre/warehouse`, default-OFF, 2026-06-20):** the multi-warehouse
 generalization of CRE-02b, a THIRD default-OFF `cron` handler (`onSolverTick`) in the SAME binary (same
-single-`expectedWorkflowId` logic — one binary writes to every silo's `WarehouseAdminModule` iff each WAM's
-`expectedWorkflowId` is set to this workflow + the forwarder is shared, which the deploy already does). Each tick:
+identity logic — one binary writes to every silo's `WarehouseAdminModule` because each WAM is sealed with the SAME
+author + `WORKFLOW_NAME_WAREHOUSE` (CTR-16; the `workflowId` pin is dropped) + the shared forwarder, which the deploy already does). Each tick:
 read the ONE shared-queue shortfall (as CRE-02b); enumerate live silos off `SiloRegistry` (`allSiloIds()`/`getSilo`,
 skip `!active`); per silo compute `availP = covered(its freeze) ? clamp(maxWithdraw(safe) − harvestReserve −
 safetyBuffer, 0, maxRedeemPerTick) : 0`; **REPAY** greedily drains each Safe's already-held USDC toward the queue
@@ -766,8 +766,9 @@ own-later upgrades.
 > read the contract does not have. (2) The **xALPHA-APR / RATE leg is NOT this producer** — the APR is derived
 > on-chain (`SzAlphaRateOracle.intrinsicAprBps()`, §8.8) and the raw RATE push is the separate `cre/szalpha-rate`
 > (8x-02, blocked on R-1). CRE-03 here = NAV_LEG + LP_MARK only. The "material leg move" http-trigger leg of the
-> cadence is a deferred additive seam (SEAM-1, PROGRESS) — liveness-safe to defer (the band clamp converges large
-> moves over epochs; the LP feed is liveness-only fail-closed).
+> cadence is intentionally NOT built (not a seam): the on-chain ±5% deviation band caps every push regardless of
+> trigger, so large moves converge over consecutive epochs anyway, and the on-chain NAV TWAP (`max/min(spot,twap)`)
+> lags the protective side regardless of push cadence — a faster push buys no protection the TWAP doesn't provide.
 The szipUSD share price and the engine's LP-collateral price are **hybrid push-cache oracles** (§7): the
 contracts read every on-chain quantity/leg themselves, and CRE pushes **only** the off-chain leg marks it
 cannot read on Base. Two receivers, both `ReceiverTemplate` push-caches:
@@ -877,8 +878,9 @@ waterfall leg (e), §11). It is bounded — TVL-capped, front-loaded, trailing-r
 > So the **strike-loop core** (claim → borrow → exercise → sell → credit/recycle → restake; **no** regime gate,
 > vote, or rotation) is buildable now. **STILL policy-blocked / own later slices:** the regime classifier + EMA
 > params, the keeper STATE store (an infra decision), the vote/allocation weights (§17-deferred), the explicit
-> per-epoch volume cap, and the main↔sidecar rotation (→ `KEEPER-01c`, `DurationFreezeModule` premise under
-> review). `KEEPER-00` (the spine) + `KEEPER-01a` (buy-burn `burnFor`) + the **strike-loop core slice
+> per-epoch volume cap. (The main↔sidecar rotation is NOT a workstream: the freeze is live NAV-oracle accounting
+> with the LP counted in place via `pathLockedLpEquity`; `commit`/`release` is a dormant, manual exception-only
+> lever with no automated driver — the old `KEEPER-01c` automation was dropped.) `KEEPER-00` (the spine) + `KEEPER-01a` (buy-burn `burnFor`) + the **strike-loop core slice
 > (KEEPER-01b, BUILT 2026-06-19** — `cre/keeper/internal/job/strike_loop_job.go`: the ordered
 > claim→borrow→exercise→sell→repay→creditFreeValue→recycle→addLiquidity→stake Plan, stateless, conservative
 > floors; `minShares` from the exact canonical ICHI deposit formula, the HYDX price from the pool `globalState()`)
@@ -961,7 +963,7 @@ Each workflow above is a CRE-NN ticket basis. This table is the CRE build map (t
 | `CRE-02` | Redemption-settle: **(K) operator half BUILT 2026-06-20** (`cre/keeper` `RedemptionJob` — `settleEpoch`/`claim`/optional `requestRedeem`, reactive+idempotent, escrow default-OFF; gate green). The **(R) warehouse REDEEM→REPAY funding** is `cre/warehouse` (CRE-04, DONE); the single-pool funding glue **CRE-02b** is BUILT (`onFundingTick`, default-OFF), and the cross-silo chooser **CRE-02c** is BUILT (`onSolverTick`, default-OFF, pro-rata by gated free-liquidity). | keeper (K) + report (R, CRE-04/02b/02c) | 8-Bw reconcile — DONE |
 | `CRE-03` | szipUSD share-price feeds — `NAV_LEG`(7)→`SzipNavOracle` + `LP_MARK`(7)→`SzipFarmUtilityLpOracle` (§8.6) — and the xALPHA-APR feed (§8.8) | report (push-cache) | DEC-02 cleared 2026-06-09 (self-serve CCT confirmed on 964); xALPHA lane build-only |
 | `CRE-04` (new) | Senior-warehouse **SUPPLY/APPROVE/REDEEM/REPAY** ops via the Roles adapter (§8.5) **— BUILT 2026-06-20** (`cre/warehouse`; http op-discriminant producer → `WarehouseAdminModule` opType 1/2/3/4 via `cre/zipreport`; all four ops incl. REDEEM so CRE-02 reuses the package; gate green). | report (Roles) | **8-Bw `WarehouseAdminModule` reconcile** (§8.5) — DONE |
-| `CRE-05` | Engine strategy-admin **operator** orchestrator (§8.7). **SPLIT:** exit half = **CRE-05a (DONE)**; the harvest loop (8-B5…8-B10) + main↔juniorTrancheSidecar rotation = **KEEPER-01b/01c** on the (K) keeper track (POLICY-BLOCKED/deferred). Live status in PROGRESS. | operator / (K) | none (operator-trusted; engine modules built) |
+| `CRE-05` | Engine strategy-admin **operator** orchestrator (§8.7). **SPLIT:** exit half = **CRE-05a (DONE)**; the harvest loop (8-B5…8-B10) = **KEEPER-01b** on the (K) keeper track (POLICY-BLOCKED). The main↔sidecar rotation is a dormant manual lever, not a workstream (the freeze is live accounting, LP counted in place). Live status in PROGRESS. | operator / (K) | none (operator-trusted; engine modules built) |
 
 **Discharged this window:** the WOOF-05 report-ABI envelope per-type table (§8.0) and the WOOF-02 gas-bounded
 revaluation sharding (§8.1). **Open before the live CRE-01 build:** DEC-01 (§8.9) — RESOLVED. **CRE-04
