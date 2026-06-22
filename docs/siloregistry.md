@@ -4,7 +4,7 @@
 The catalog that lets the protocol run many credit pools under one shared senior dollar. Base (chain 8453). Solidity 0.8.24.
 
 * A "silo" is one complete credit stack: a venue adapter that opens lines, a Safe that holds the senior backing, an EulerEarn pool, and a junior tranche that absorbs the first loss.
-* One EulerEarn pool can hold at most 28 credit lines. To run more lines than that, the protocol runs more silos. The registry is the list that ties them all back to one mutualized senior zipUSD.
+* One EulerEarn pool can hold at most 28 credit lines. (Why 28: an EulerEarn pool's withdraw queue holds at most 30 markets, and every silo permanently spends two of them — one on the idle USDC reservoir and one on the junior tranche's farm-utility credit line — leaving 28 for actual credit lines.) To run more lines than that, the protocol runs more silos. The registry is the list that ties them all back to one mutualized senior zipUSD.
 * Loss stays local to a silo's own junior; the senior is shared, so only the leftover after a junior is exhausted ever reaches zipUSD.
 * Admission is the underwriting gate. A curator earns senior backing only by registering a silo whose parts all point at each other and not at a neighbor's.
 
