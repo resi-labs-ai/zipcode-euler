@@ -123,9 +123,13 @@ at `adversarial-review/` (run via `adversarial-review/CONDUCTOR.md`); per-contra
 `build/tickets/audit/`. **Bridge group reviewed (5/5 contracts), all ADEQUATE, no CRITICAL/HIGH/MEDIUM.**
 
 Ledger:
+Bridge audit COMPLETE (5/5 reviewed; 3 LOW fixes shipped to `main`, 1 WONTFIX, 2 sound). No CRITICAL/HIGH/MEDIUM.
 - **BRIDGE-ADV-01** — non-pausable `redeem` under precompile compromise → WONTFIX (accepted runtime trust).
-- **BRIDGE-ADV-02** — genesis seed atomicity + mandatory slippage floor (subsumes ADV-03) → **BUILT** on branch
-  `audit/bridge-adv-02-seed-slippage` (deploy964 seeds in-broadcast + `SlippageFloorRequired` floors; bridge
-  suite 58/58 green; X-Ray/wire/runbook synced). Awaiting review/merge.
-- **BRIDGE-ADV-04** — `intrinsicAprBps()` overflow + vacuous invariant (LOW) → ticket filed, not yet built.
-- **BRIDGE-ADV-05** — burn/mint pool ownership not handed to timelock in `deployBase` (LOW) → ticket filed, not yet built.
+- **BRIDGE-ADV-02** — genesis seed atomicity + mandatory slippage floor (subsumes ADV-03) → **SHIPPED to `main`**
+  (`deploy964` seeds in-broadcast + `SlippageFloorRequired` floors). X-Ray/wire/runbook synced.
+- **BRIDGE-ADV-04** — `intrinsicAprBps()` overflow + vacuous invariant → **SHIPPED to `main`** (saturation guards;
+  fuzz/invariant now full-uint256-domain). X-Ray/wire synced.
+- **BRIDGE-ADV-05** — burn/mint pool ownership → timelock in `deployBase` → **SHIPPED to `main`** (2-step; verified
+  behaviorally in the fork test). X-Ray/wire/runbook synced.
+- Consolidated bridge suite **81/81 green** (`forge build` clean) with all three integrated.
+- `szalphalockreleasepool` + `szalphamirror` reviewed **sound** (no tickets).
