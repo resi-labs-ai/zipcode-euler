@@ -77,28 +77,28 @@ track on it.
 
 ## Open obligations / seams
 
-**Blocked — can't build yet (external):**
-- **xALPHA price feed** (`cre/szalpha-rate`) — needs the Bittensor staking-rate read proven and the real xALPHA token live. Stub only today.
-- **Real szALPHA/zipUSD pool** — not live on Hydrex yet, so the junior NAV can't price the real LP (runs on a WETH/USDC stand-in until then).
-- **Subgraph** — waits until the event signatures are frozen at deploy.
+**Blocked — can't build yet, waiting on outside things:**
+- **The xALPHA price feed.** The bot that reports the xALPHA price can't be built until two things exist: a proven way to read the staking rate from Bittensor, and the real xALPHA token going live. Only a stub exists today.
+- **The real szALPHA/zipUSD pool.** Hydrex hasn't launched it yet, so the junior share price can't value the real LP. It runs on a WETH/USDC placeholder until the real pool exists.
+- **The subgraph.** The history indexer can't be built until the contract event formats are locked down at deploy.
 
-**Deploy day:**
-- **Wiring checklist** — the 5 hookups the broadcast doesn't finish are listed in `contracts/script/RUNBOOK-mainnet-deploy.md` §7.
+**Deploy day — manual steps:**
+- After deploying, five wiring steps have to be done by hand (the deploy script doesn't do them). They're written out as a checklist in `contracts/script/RUNBOOK-mainnet-deploy.md` §7.
 
-**Rules the CRE producer must follow (not contract changes):**
-- Don't write two price-seeds for the same loan in one block — the oracle rejects the second.
-- Size the borrow cap to cover the draw fee: debt = `amount + fee`, so set `cap ≥ amount + fee`.
-- Every report's payload must decode to the exact layout its receiving contract expects.
+**Rules the off-chain CRE bot must follow (these are how the bot operates, not contract changes):**
+- Don't send two price updates for the same loan in the same block — the contract rejects the second one.
+- When opening a loan, set the borrow limit high enough to also cover the origination fee, since the fee gets added to the loan's debt (limit must be ≥ loan + fee).
+- Pack every message in the exact format the receiving contract reads, or the contract rejects it.
 
-**Frontend notes (for when the FE track runs):**
-- Use `navEntry`/`navExit`, not `navPerShare` (it doesn't exist on the deployed oracle).
-- The junior exit is a CoW sell order, not a contract call — there's no senior-queue button.
-- Draws are CRE-only (the UI reads, never writes); repay is a plain EVK `repay` anyone can call.
+**Frontend notes — for when the app gets wired to the contracts:**
+- The share-price function is `navEntry`/`navExit`; there is no `navPerShare` (calling it reverts).
+- To exit the junior position, the user places a sell order on the CoW exchange — there is no "redeem" button or contract call.
+- Users can't open loans from the app (only the CRE bot does); anyone can repay using a standard Euler repay.
 
-**M2 / before production:**
-- Default/loss handling (slash, recovery, write-off) goes live in M2, not M1.
-- Stand up the real treasury Safe + its off-chain liquidation process (slashed xALPHA → USDC).
-- Lock all the re-pointable wiring to immutable — one repo-wide pass at pre-prod.
+**Milestone 2 / before production:**
+- Default and loss handling (seizing the bond, recovering, writing off bad debt) is built but only switched on in Milestone 2, not at launch.
+- Create the real treasury wallet and the off-chain process that turns seized collateral into USDC to cover losses (Milestone 2).
+- Before going live, make all the currently-changeable wiring permanent — one final lock-down pass across the repo.
 
 ---
 
