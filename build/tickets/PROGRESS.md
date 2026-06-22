@@ -89,37 +89,11 @@ track on it.
   the NAV/LP feeds. **Not cold-buildable now** (R-1 is a real external unknown). Logged here so the de-scope from
   CRE-03 doesn't lose it; it is NOT a near-term build item.
 
-- **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
-  The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
-  while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
-  wire + assert these two are the same address (and that the keeper signer is BOTH `OffRampModule.operator` AND
-  `ZipRedemptionQueue.controller`). Mark DISCHARGED at item-10 deploy wiring.
-
-- **DEP SEAM (raised 2026-06-16, CRE-05a) — the CRE workflows bind to the IN-TREE `reference/cre-sdk-go`
-  snapshot, not a published release.** `cre/buyburn-bid/go.mod` uses `replace` → `reference/cre-sdk-go` because
-  the published releases (`cre-sdk-go@v0.10.0` / capability `@…beta.0`) LACK APIs the build relies on:
-  `evm.WriteCreReportRequest` (the public write type — published has only the inner `WriteReportRequest`),
-  `testutils.SetTimeProvider`, and some `evm` chain-selector consts. Until the published SDK catches up (or the
-  snapshot is vendored/pinned for the real CRE deploy), every `cre/*` workflow should `replace` to the in-tree
-  snapshot. Also: go-ethereum v1.17.2's `abi.Pack` wants a NATIVE `uint32` (not `*big.Int`) for a `uint32` arg —
-  produced bytes identical; noted in `cre/buyburn-bid/workflow.go`. Not a code fix owed; a build/deploy note.
-
-- **DEPLOY OBLIGATION (raised 2026-06-16, CTR-01) — `DeployZipcode` must wire the buy-burn report socket
-  post-clone.** After cloning `SzipBuyBurnModule`, the deploy must call `setForwarder(keystoneForwarder)` +
-  `setExpectedWorkflowId(WORKFLOW_ID)` (and optionally `setExpectedAuthor`) on it, else the report socket stays
-  inert (fail-closed — `onReport` reverts `InvalidForwarder`). The operator path works without this; only the CRE
-  report door needs it. Mirror the `setExpectedWorkflowId(...) != 0` assert pattern §9 already mandates for the
-  other `ReceiverTemplate` subclasses before the Timelock hand-off. Not a contract change; a deploy-runbook step.
-
-- **RUNBOOK (raised 2026-06-15, SEC-03) — durable admin MUST `acceptAdminRole` post-deploy to finalize the CCT
-  registry-admin handoff (both chains).** `DeploySzAlphaBridge` hands the `TokenAdminRegistry` administrator to the
-  durable authority via a 2-step `transferAdminRole` (964 → `ccipAdmin`, Base → `timelock`) but cannot accept on
-  its behalf mid-broadcast. So after `deploy964`/`deployBase`, the durable authority MUST call
-  `ITokenAdminRegistry(tokenAdminRegistry).acceptAdminRole(token)` to become the registry `administrator`. Until it
-  does, the ephemeral deploy Script remains a live registry admin — the one residual interruption window; accept
-  promptly and verify `getTokenConfig(token).administrator == <durable>`. Documented in both deploy functions'
-  NatDoc + `build/wires/8x-01-szALPHA-bridge.md` (Item-10 deploy facts step 4b). Not a contract change owed; an
-  operational deploy-runbook step.
+- **Deploy-time wiring (item-10) → see `contracts/script/RUNBOOK-mainnet-deploy.md` §7.** The five cross-component
+  hookups the broadcast doesn't finish — controller↔SiloRegistry, queue↔offramp + keeper dual-role, buy-burn CRE
+  socket, bridge `acceptAdminRole` (both chains), `ExitGate.setBaal` `managerLock` parity — are an ordered
+  post-deploy checklist there. None is a contract change. (The CRE `go.mod`→in-tree `cre-sdk-go` `replace` is a
+  build note, captured in each `cre/*/go.mod` + `workflow.go`.)
 
 - **TODO (raised 2026-06-15, SEC-01) — CRE-01 must not co-locate two same-lien `seedPrice` writes in one block.**
   The oracle monotonic guard (SEC-01) lives in `ZipcodeOracleRegistry._writePrice` and rejects a write whose `ts` is
@@ -194,27 +168,9 @@ track on it.
       not a positional tuple — the ticket wording was corrected.
     - **New FE seam:** `useZipTx.sendRawZipTx({to,abi,functionName,args})` writes to a **runtime/non-registry address**
       (per-line vaults) reusing the shared 1.3× buffer — the spine for any dynamically-discovered-contract write.
-- **DEPLOY OBLIGATION (raised 2026-06-18, CTR-03) — wire the controller↔SiloRegistry pair before the first
-  origination.** The `ZipcodeController` now resolves venue + slot-accounting through `SiloRegistry`. The deploy
-  MUST: (a) `controller.setRegistry(siloRegistry)`; (b) `siloRegistry.setController(controller)` (its
-  `incrementLineCount`/`decrementLineCount` are `onlyController`); (c) register silo #0 (`addSilo`) whose `adapter`
-  equals the controller's ctor `venue` seed; (d) assert `siloRegistry.controller() == address(controller)`
-  post-deploy. Until (a)+(b), every origination reverts `RegistryUnset`/`NotController` (and every close at the
-  decrement). Symmetric to the existing `oracleRegistry.setController` step (WOOF-05 item-10 S6). Folds into the
-  CTR-06 `SiloDeployer` runbook. Not a contract change owed; a deploy-wiring step. **DISCHARGED-as-runbook 2026-06-19
-  by CTR-06c** — the D2 hub-grant runbook (`docs/wires/CTR-06c-SiloDeployer.md` + the `SiloDeployer` NatSpec) documents
-  + prank-tests the per-silo `addSilo`/`setCurrentSilo` + the `zipUSD.setCapacity` grant; the one-time hub half
-  (`controller.setRegistry`/`siloRegistry.setController` + silo #0 registration) is CTR-03/`DeployZipcode`, already
-  done. Remains an operational deploy step (no contract change), now fully specified.
 - **CRE report ABI seam.** Every CRE report payload must `abi.decode` to the §4.4 layout the filed
   `ZipcodeController` / `ZipcodeOracleRegistry` expect (reportTypes 1/2/4/5/6 → controller, 3 → registry).
 - **Subgraph blocked** until item-10 freezes the §9 event signatures.
-- **RUNBOOK — `ExitGate.setBaal` managerLock parity (a trusted-admin footgun).** `ExitGate.setBaal` (`:114`,
-  `onlyOwner`/Timelock) can re-point to a different Baal; if that Baal has `managerLock == true`, the Gate's
-  `manager(2)` grant can no longer be re-set → deposits/`burnFor` brick (fail-closed). Only reachable via a Timelock
-  re-point to a hostile/locked Baal (build-phase wiring is deliberately settable, §17; the Timelock owner is trusted,
-  §13) — same class as the `WarehouseAdminModule` `setSafe`/`setAvatar` parity footgun. No code fix owed; **before any
-  `setBaal`, assert the target Baal's `managerLock() == false`.**
 - **LOSS — the default/slash flow is M2, not M1-live (from `src/loss/` headers, recorded 2026-06-17).**
   `LienXAlphaEscrow`'s custody half (`lockXAlpha`/`releaseXAlpha`) is M1-live; the slash half
   (`slashXAlphaToCapital`/`slashXAlphaToCohort`) + the `DefaultCoordinator` driver are built + mock-tested but go
