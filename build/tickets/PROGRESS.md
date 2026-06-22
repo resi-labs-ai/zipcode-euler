@@ -13,9 +13,11 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 **NEXT = reviewer picks** among the deferred candidates below — CTR-16 is DONE + COMMITTED (`4378f93`); CTR-15
 follow-up (b) is DONE (notes immediately under). One item moves at a time; the reviewer selects the next forward edge.
 
-Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); the **FE track**; **CTR-14** (N
-junior Safes vs the single-requester queue — CRE-02c is unaffected, it writes only REDEEM/REPAY, no escrow leg).
-The CRE redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (CTR-15 follow-up (b) DONE — note below.)
+Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); the **FE track**; **CTR-14 —
+DECIDED → (b) per-silo redemption (2026-06-21), SCOPED + sub-decisions RESOLVED (off-registry ⇒ ZERO contract
+change), ready for cold-build** (see its
+ticket + the Open-obligations entry). The CRE redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04
+(NB: CTR-14(b) obviates CRE-02c's cross-silo solver — see sub-decision 2). (CTR-15 follow-up (b) DONE — note below.)
 
 - **CTR-15 follow-up (b) DONE (2026-06-20) — `FarmUtilityBorrowGuard` "borrow vault IS resting USDC" accuracy fix
   (docs/comments only, ZERO behavior change).** The deferred CTR-15 follow-up: the rename left an inverted factual
@@ -1430,16 +1432,26 @@ track on it.
   default-OFF `cron` handler in `cre/warehouse`. **Open fork RESOLVED at scoping → pro-rata by GATED free-liquidity**
   (`availP`): a starved/undercovered pool gets weight 0 ⇒ skipped automatically. Utilization-balancing +
   curator-priority are own-later upgrades. Ships default-OFF; ops picks the pool by hand in M1.
-- **CTR-14 — multi-tranche redemption topology (TICKETED 2026-06-20, `build/tickets/contracts/CTR-14-multi-tranche-redemption-topology.md`).**
-  The off-ramp is built single-requester/single-Safe (`OffRampModule` clone pinned to one `juniorTrancheSafe`;
-  `ZipRedemptionQueue` reverts `MultipleRequesters` for a 2nd concurrent requester; single `redeemController`), but
-  the federation admits N silos with (plausibly) N junior Safes. So multiple products can't concurrently use the
-  one shared queue — they serialize. Throughput/liveness limit, NOT fund-safety. Open fork: (a) serialize through
-  one queue [M1 rec], (b) one queue per tranche, (c) multi-requester queue rebuild. Decision owed before a 2nd
-  product's redemption cadence contends. **Option (a) keeper-half PREPARED 2026-06-20 (CRE-02-R1, `499f811`):**
-  `RedemptionJob`'s escrow leg now waits its turn via `queue.pendingRequester()` (no-op today, graceful when a 2nd
-  Safe arrives). Remaining for (a) = the contract-side fork decision + the per-Safe-clone deploy runbook + a revert
-  assert; no contract change.
+- **CTR-14 — multi-tranche redemption topology — DECIDED 2026-06-21 → (b) per-silo redemption, REFRAMED + SCOPED**
+  (`build/tickets/contracts/CTR-14-multi-tranche-redemption-topology.md`). The off-ramp/queue is a hub singleton
+  (`OffRampModule` clone pinned to one `juniorTrancheSafe`; `ZipRedemptionQueue` single-requester +
+  `MultipleRequesters` revert; one `redeemController`); silos 2+ get NO redemption plumbing of their own and would
+  share silo-0's single-requester queue → serialize. **The reviewer's federation model (2026-06-21 chat) resolved
+  the fork → (b):** the senior is mutualized at the TOKEN layer (one `zipUSD`, one shared AMM/xALPHA/ICHI/oHYDX
+  substrate, one Timelock-`setCapacity`-curated minter set) while backing+risk+exit are isolated PER SILO. The
+  redemption queue is the one still-shared layer and the only thing reintroducing cross-silo coupling, so per-silo
+  redemption COMPLETES the isolation — it does NOT un-mutualize the dollar (the dollar was always shared; only the
+  par-redemption plumbing goes silo-local, matching the already-per-silo warehouse funding). **(a) rejected**
+  (couples silos), **(c) rejected** (flat-par multi-requester only matters if non-treasury actors redeem at par —
+  forbidden). **Build surface = deploy-topology, likely ZERO contract change:** `SiloDeployer` deploys a per-silo
+  `ZipRedemptionQueue` (early, before step-6 warehouse) + per-silo `OffRampModule` clone; drops the shared
+  `redemptionBox` SiloParams; per-silo non-commingling asserts. `ZipRedemptionQueue`/`OffRampModule` unchanged
+  (both already per-instance). **3 SUB-DECISIONS RESOLVED 2026-06-21:** (1) SiloRegistry binding → **OFF-REGISTRY**
+  (reviewer-decided; queue derivable via `warehouse.redemptionBox()`, matches the WAM posture) ⇒ **ZERO contract
+  change**; (2) CRE-02c fate → keep dormant + document (default; reviewer may flip); (3) deploy home → queue in
+  `SiloDeployer`, off-ramp in `JuniorTrancheDeployer` (default; reviewer may flip). **Keeper-half already (b)-compatible:**
+  CRE-02-R1's `pendingRequester` wait becomes a permanent no-op per silo (one requester each), harmless DiD, stays.
+  NOT yet cold-built — sub-decisions owed.
 - **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
   The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
   while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
