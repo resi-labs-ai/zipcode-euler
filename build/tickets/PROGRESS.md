@@ -77,122 +77,28 @@ track on it.
 
 ## Open obligations / seams
 
-- **SEAM-2 — the xALPHA RATE producer (`cre/szalpha-rate`, 8x-02) is BLOCKED + UNTRACKED-until-now.** CRE-03 was
-  narrowed to NAV_LEG + LP_MARK (the APR is on-chain-derived, §8.8; the raw RATE push, reportType 8 →
-  `SzAlphaRateOracle`, is a SEPARATE producer). That producer exists only as a **pre-CRE-00 stub** at
-  `cre/szalpha-rate/main.go` (stale local encoders + `WriteReportRequest` form; an unimplemented `readExchangeRate`).
-  It is **blocked on R-1**: proving a CRE wasip1 workflow can read the Subtensor-964 `0x805` StakingV2 precompile
-  via `exchangeRate()` (the "8x exception" says a typed call may never reach it). It is ALSO downstream of 8x-01's
-  lane being live (until then it points at the 18-dp xALPHA stand-in). **Owed work when unblocked:** rewrite it to
-  the CRE-00 idiom — import `cre/zipreport.Rate` (the encoder already exists, rt8 `(uint256 rate, uint48 ts)`),
-  the `cre/buyburn-bid` read idiom, the `WriteCreReportRequest` write — i.e. the same modernization CRE-03 did for
-  the NAV/LP feeds. **Not cold-buildable now** (R-1 is a real external unknown). Logged here so the de-scope from
-  CRE-03 doesn't lose it; it is NOT a near-term build item.
+**Blocked — can't build yet (external):**
+- **xALPHA price feed** (`cre/szalpha-rate`) — needs the Bittensor staking-rate read proven and the real xALPHA token live. Stub only today.
+- **Real szALPHA/zipUSD pool** — not live on Hydrex yet, so the junior NAV can't price the real LP (runs on a WETH/USDC stand-in until then).
+- **Subgraph** — waits until the event signatures are frozen at deploy.
 
-- **Deploy-time wiring (item-10) → see `contracts/script/RUNBOOK-mainnet-deploy.md` §7.** The five cross-component
-  hookups the broadcast doesn't finish — controller↔SiloRegistry, queue↔offramp + keeper dual-role, buy-burn CRE
-  socket, bridge `acceptAdminRole` (both chains), `ExitGate.setBaal` `managerLock` parity — are an ordered
-  post-deploy checklist there. None is a contract change. (The CRE `go.mod`→in-tree `cre-sdk-go` `replace` is a
-  build note, captured in each `cre/*/go.mod` + `workflow.go`.)
+**Deploy day:**
+- **Wiring checklist** — the 5 hookups the broadcast doesn't finish are listed in `contracts/script/RUNBOOK-mainnet-deploy.md` §7.
 
-- **TODO (raised 2026-06-15, SEC-01) — CRE-01 must not co-locate two same-lien `seedPrice` writes in one block.**
-  The oracle monotonic guard (SEC-01) lives in `ZipcodeOracleRegistry._writePrice` and rejects a write whose `ts` is
-  not strictly newer than the cached mark. The controller re-anchors via `seedPrice` at origination (`:199`) AND draw
-  (`:223`), and `seedPrice` stamps `block.timestamp` (no incoming CRE ts), so an origination+draw (or draw+draw) of the
-  **same lien in one block** now reverts `StaleReport()` — intended fail-closed (the H1 seed-clobber). Benign in prod
-  (origination/draw are separate Keystone reports in separate blocks), but **CRE-01 must ensure same-lien seeds are not
-  co-located in one block** (defer the second one block, or — future hardening — give the seed path a real ts instead
-  of `block.timestamp`). Not a contract change owed; an operational constraint on the CRE producer.
+**Rules the CRE producer must follow (not contract changes):**
+- Don't write two price-seeds for the same loan in one block — the oracle rejects the second.
+- Size the borrow cap to cover the draw fee: debt = `amount + fee`, so set `cap ≥ amount + fee`.
+- Every report's payload must decode to the exact layout its receiving contract expects.
 
-- **TODO (raised 2026-06-19, CTR-09) — CRE-01 must size `cap` and `drawAmount` for `amount + fee`, not `amount`.**
-  CTR-09's draw fee is **financed** (`EulerVenueAdapter.draw` borrows `amount` to `erebor` AND `fee = amount *
-  feeBps / 10_000` to `feeRecipient` on the same `borrowAccount`), so the line's debt becomes `amount + fee` (a
-  $50,000 draw at the default 50 bps → **$50,250** of debt; the originator still receives the full $50,000 at
-  `erebor`). Both per-draw gates must clear `amount + fee`: (a) the **per-line borrow cap** — the RT_ORIGINATION
-  `cap` field (§8.1) flows to `setLineLimits` → `setCaps(0, cap)`; a `cap == amount` exactly reverts the fee leg
-  on the borrow cap; (b) the **LTV × mark** collateral headroom (end-of-batch `E_AccountLiquidity`). So the
-  origination/draw producer must set `cap ≥ amount + fee` and size the draw so `amount + fee` fits the LTV. The
-  contract deliberately does NOT auto-inflate the cap — the producer owns sizing. Only bites when the fee is ON
-  (`feeRecipient != 0`, default OFF). Not a contract change owed; a CRE-01 producer constraint. Truth:
-  `docs/wires/WOOF-04.md` (`draw` entry).
+**Frontend notes (for when the FE track runs):**
+- Use `navEntry`/`navExit`, not `navPerShare` (it doesn't exist on the deployed oracle).
+- The junior exit is a CoW sell order, not a contract call — there's no senior-queue button.
+- Draws are CRE-only (the UI reads, never writes); repay is a plain EVK `repay` anyone can call.
 
-- **BLOCKED (external, not build work) — the real szALPHA/zipUSD Hydrex LP pool is NOT yet active, so
-  `SzipNavOracle` can't be wired to it.** The junior NAV's LP leg can only price our pool once Hydrex stands up the
-  szALPHA/zipUSD vAMM pool + the Ichi strategy (upstream of us; needs szALPHA bridged + live — see `docs/bridge.md`
-  / `hydrex-demo-fork`). Until that pool exists, `SzipNavOracle.ichiVault` stays on the **WETH/USDC stand-in**
-  (`0x07e72E46…`) and the LP code path is exercised only by the demo vAMM fork (`SzipNavOracleDemoVAMM`). The wiring
-  surfaces already exist (`setLpPosition`/`setFarmUtilityLeg`, Timelock-settable), so when the pool is live it is a
-  deploy/fork-wiring step (create+stake gauge → escrow vault → `setLpPosition` → CRE-03 `LP_MARK` feed), NOT a
-  contract change. One verification owed at that point: confirm the LP-leg read (`_legPriceOfToken` spot
-  `getTotalAmounts()`) is not flash-skewable for the real pool — if the TWAP bracket doesn't defend, that becomes a
-  hardening ticket. NB fork trap: while `ichiVault` points at WETH/USDC, that LP in a Safe reverts
-  `UnknownLpToken(WETH)` and bricks NAV reads.
-
-- **FE-01 finding — `SzipNavOracle` has no `navPerShare()`** (logged 2026-06-10). The deployed oracle
-  (`build/anvil/abi/SzipNavOracle.json`) exposes **`navEntry()`** (issuance price), **`navExit()`** (redemption
-  price), **`spotNavPerShare()`**, **`twapNavPerShare()`** — all `view returns (uint256)`, 18-dp. There is NO
-  `navPerShare()` (reverts). The spec §7 prose / INFLOW-06 use `navPerShare` as shorthand; the **contract wins**
-  (harness §1). This is a **rename, not a missing surface — no contract change owed**: FE-03 (position/NAV) +
-  any szipUSD-valuing screen must read `navEntry`/`navExit` (or the spot/twap views), not `navPerShare`. Live
-  `navEntry()` ≈ `1.07e20`.
-- **FE-04 finding — the szipUSD junior exit is NOT a contract write; the senior queue is treasury-only** (logged
-  2026-06-11). The original FE-04 row demanded `ExitGate.requestExit`/`cancelExit` + a `ZipRedemptionQueue` cooldown
-  panel — **all wrong** (the contract wins, harness §1; spec §6.4 confirms):
-    - `ExitGate` has **no** `requestExit`/`cancelExit`/`processWindow` — they were **retired by design** (the forfeiting
-      on-chain queue, `ExitGate.sol:26-28`). The junior exit is an **off-chain CoW sell order**; the only on-chain user
-      write is `szipUsd.approve(vaultRelayer)`. `ExitGate.burnFor` is `onlyWindowController` (CRE keeper), not the UI.
-    - `ZipRedemptionQueue` is the **SENIOR zipUSD→USDC treasury off-ramp** (`requestRedeem` is `onlyRedeemController` =
-      the rq Safe driven by `OffRampModule`; `requester == owner == juniorTrancheSafe`). A retail lender **cannot** enter it or
-      claim from it. `ZipRedemptionQueue.sol:14-17` + `OffRampModule.sol:33-40`: *"NOT the junior Exit Gate… Never
-      conflate."* The FE has **no senior-queue surface** and **no szipUSD cooldown** (the resting CoW order is the queue).
-    - **No back-pressure obligation owed** — every surface the real (CoW) design needs EXISTS (`SzipBuyBurnModule` CoW
-      wiring + `quoteMaxPrice`/`dBps`, `SzipUSD.approve`, `navExit`). The "missing" surfaces were never owed; they were
-      retired. This was a **ticket error**, fixed in the FE-04 ticket; **no `claude-zipcode.md` change** (§6.4 already
-      correct).
-- **FE-05 finding — draw is CRE-only; repay is the native EVK `repay`, permissionless; the borrower ≠ the wallet**
-  (logged 2026-06-11). The original FE-05 row implied a borrower-side draw/repay path — the contract wins (harness §1):
-    - **No borrower draw write exists.** `EulerVenueAdapter.{openLine,setLineLimits,fund,draw,closeLine,liquidate}` are
-      ALL `onlyController` (`EulerVenueAdapter.sol:83` modifier; `draw` `:298` also pins receiver = the immutable
-      Erebor, `:302`); `liquidate` additionally `revert NotImplemented` (§4.4e). `ZipcodeController`'s only write entry
-      is `onReport` (Keystone-forwarder + workflow-identity gated) — no public originate/draw. So `ZcDrawModal` is
-      **read-only**; the draw is CRE-originated (§17).
-    - **Repay is NOT a Zipcode method — it is the native EVK `IEVault(lineRef).repay(amount, borrowAccount)`**, ungated
-      (`openLine` hooks only `OP_BORROW | OP_LIQUIDATE`, **never** `OP_REPAY`, `EulerVenueAdapter.sol:220`). Approve is
-      a **direct** `usdc.approve(lineRef, amount)` to the line vault (NOT Permit2 — `FarmUtilityLoopModule.repay:251`).
-      Any wallet may repay (credits `borrowAccount`, no controller-enablement/operator bit) — the §4.4e permissionless
-      property. `full`→`type(uint256).max` (EVK clamps; a finite over-repay reverts `E_RepayTooMuch`).
-    - **No back-pressure obligation owed** — every read (`getLine`/`observeDebt`/`getLien` + the `LienOriginated`/
-      `LienStatusUpdated`/`LienReleased` events) and the EVK `repay`/`debtOf`/`asset` all exist. The implied borrower
-      "draw" write was never owed; it is CRE-driven by design. **No `claude-zipcode.md` change** (§4/§9/§15 already
-      correct). Ticket-precision note: `getLine` returns a **named-tuple struct** (viem → object, read by field name),
-      not a positional tuple — the ticket wording was corrected.
-    - **New FE seam:** `useZipTx.sendRawZipTx({to,abi,functionName,args})` writes to a **runtime/non-registry address**
-      (per-line vaults) reusing the shared 1.3× buffer — the spine for any dynamically-discovered-contract write.
-- **CRE report ABI seam.** Every CRE report payload must `abi.decode` to the §4.4 layout the filed
-  `ZipcodeController` / `ZipcodeOracleRegistry` expect (reportTypes 1/2/4/5/6 → controller, 3 → registry).
-- **Subgraph blocked** until item-10 freezes the §9 event signatures.
-- **LOSS — the default/slash flow is M2, not M1-live (from `src/loss/` headers, recorded 2026-06-17).**
-  `LienXAlphaEscrow`'s custody half (`lockXAlpha`/`releaseXAlpha`) is M1-live; the slash half
-  (`slashXAlphaToCapital`/`slashXAlphaToCohort`) + the `DefaultCoordinator` driver are built + mock-tested but go
-  live in M2. The driver is **CRE-01's `rt8` default/recovery action family — now BUILT as CRE-01c
-  (`cre/coordinator/`, 2026-06-20; note above).** The off-chain producer is complete; what remains for M2 is
-  OPERATIONAL — firing the economic actions (DEFAULT/RECOVERY/RESOLVE/WRITEOFF) on a real default + the off-chain
-  capital-sink liquidation account (xALPHA→USDC on Bittensor). No contract code owed; no CRE code owed — it's M2
-  sequencing + that operational account.
-- **LOSS — designate the real treasury Safe for the capital-hole recovery (recorded 2026-06-18).** The
-  destination is renamed `capitalSink` → `adminSafe` by **CTR-12** (contract rename) — naming it the protocol
-  treasury Safe. `slashXAlphaToCapital` routes the slashed bond there; today it's only a deploy-config placeholder.
-  The remaining OPERATIONAL half (M2): create + wire the real treasury Safe and stand up its off-chain process
-  (receive slashed xALPHA → bridge to Bittensor → liquidate alpha → TAO → USDC → return USDC to cover the realized
-  hole, §11). Ops deliverable, not contract code (the rename is CTR-12; the Safe + bridge process is M2 ops).
-- **PRE-PROD — re-freeze ALL build-phase wiring to immutable (§17, repo-wide; recorded 2026-06-17).** This is a
-  deliberately-deferred, **protocol-wide** end-of-build step, not a loss-side task: every contract carries
-  Timelock-settable wiring (each cross-component pointer is re-pointable — `harness.md` locked decision #6), and
-  the immutability lock-down is deferred to pre-prod. The loss side is just one instance — `LienXAlphaEscrow`'s
-  four slots (`xAlpha`/`coordinator`/`capitalSink`/`juniorTrancheSidecar`) + `DefaultCoordinator.setEscrow` (onlyOwner, NOT
-  set-once) — alongside `WarehouseAdminModule`, `EulerVenueAdapter`, `ZipcodeController`, `CREGatingHook`, the
-  oracles, `DurationFreezeModule`, etc. Until the lock-down, the trusted Timelock owner can re-point any of them
-  (grief/redirect, never drain — §13). When ticketed, it is ONE repo-wide "freeze wiring to immutable" pass.
+**M2 / before production:**
+- Default/loss handling (slash, recovery, write-off) goes live in M2, not M1.
+- Stand up the real treasury Safe + its off-chain liquidation process (slashed xALPHA → USDC).
+- Lock all the re-pointable wiring to immutable — one repo-wide pass at pre-prod.
 
 ---
 
