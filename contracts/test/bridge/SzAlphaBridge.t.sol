@@ -50,17 +50,17 @@ contract ReentrantRedeemer {
     }
 
     function doDeposit() external payable {
-        token.deposit{value: msg.value}(0, type(uint256).max);
+        token.deposit{value: msg.value}(1, type(uint256).max);
     }
 
     function doRedeem(uint256 shares) external {
-        token.redeem(shares, 0, type(uint256).max);
+        token.redeem(shares, 1, type(uint256).max);
     }
 
     receive() external payable {
         if (armed) {
             armed = false;
-            token.redeem(1, 0, type(uint256).max); // re-entry attempt; must revert under the guard
+            token.redeem(1, 1, type(uint256).max); // re-entry attempt; must revert under the guard
         }
     }
 }
@@ -173,7 +173,7 @@ contract SzAlphaBridgeTest is Test {
     function test_deposit_stakesAndMintsShares() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
-        uint256 shares = token.deposit{value: 5 ether}(0, MAX_DL);
+        uint256 shares = token.deposit{value: 5 ether}(1, MAX_DL);
 
         assertEq(shares, 5 ether, "genesis 1:1 at par price");
         assertEq(token.balanceOf(alice), 5 ether);
@@ -184,9 +184,9 @@ contract SzAlphaBridgeTest is Test {
     function test_redeem_unstakesBurnsAndReturnsTao() public {
         vm.deal(alice, 10 ether);
         vm.startPrank(alice);
-        token.deposit{value: 5 ether}(0, MAX_DL);
+        token.deposit{value: 5 ether}(1, MAX_DL);
         uint256 balBefore = alice.balance;
-        uint256 out = token.redeem(2 ether, 0, MAX_DL);
+        uint256 out = token.redeem(2 ether, 1, MAX_DL);
         vm.stopPrank();
 
         assertEq(out, 2 ether, "1:1 redeem at genesis rate, par price");
@@ -198,7 +198,7 @@ contract SzAlphaBridgeTest is Test {
     function test_rateRisesWithRewards() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
-        token.deposit{value: 4 ether}(0, MAX_DL);
+        token.deposit{value: 4 ether}(1, MAX_DL);
         assertEq(token.exchangeRate(), 1e18, "1:1 before rewards");
 
         // Validator rewards lift backing stake (no new shares) -> rate rises. 9-dp alpha units.
@@ -208,7 +208,7 @@ contract SzAlphaBridgeTest is Test {
         // A later depositor pays the higher rate (fewer shares per alpha).
         vm.deal(bob, 10 ether);
         vm.prank(bob);
-        uint256 bobShares = token.deposit{value: 4 ether}(0, MAX_DL);
+        uint256 bobShares = token.deposit{value: 4 ether}(1, MAX_DL);
         assertApproxEqAbs(bobShares, 2 ether, 1e9, "bob gets ~half the shares at 2x rate");
     }
 
@@ -222,7 +222,7 @@ contract SzAlphaBridgeTest is Test {
         vm.expectEmit(true, false, false, true);
         emit SzAlpha.Deposited(alice, 5 ether, 5 * 1e9, 5 ether);
         vm.prank(alice);
-        uint256 shares = token.deposit{value: 5 ether + 7}(0, MAX_DL);
+        uint256 shares = token.deposit{value: 5 ether + 7}(1, MAX_DL);
 
         assertEq(shares, 5 ether, "shares priced on the rao-aligned amount only");
         assertEq(alice.balance, balBefore - 5 ether, "the 7-wei sub-rao remainder was refunded");
@@ -232,7 +232,7 @@ contract SzAlphaBridgeTest is Test {
         vm.deal(alice, 1 ether);
         vm.prank(alice);
         vm.expectRevert(SzAlpha.ZeroAmount.selector);
-        token.deposit{value: 1e9 - 1}(0, MAX_DL); // < 1 rao of TAO
+        token.deposit{value: 1e9 - 1}(1, MAX_DL); // < 1 rao of TAO
     }
 
     // ================================================================
@@ -244,7 +244,7 @@ contract SzAlphaBridgeTest is Test {
         _setPrice(2e9);
         vm.deal(alice, 10 ether);
         vm.prank(alice);
-        uint256 shares = token.deposit{value: 4 ether}(0, MAX_DL);
+        uint256 shares = token.deposit{value: 4 ether}(1, MAX_DL);
 
         // 4 TAO buys 2 alpha; genesis rate 1:1 alpha-per-share -> 2e18 shares, NOT 4e18.
         assertEq(shares, 2 ether, "shares minted against the MEASURED alpha delta");
@@ -263,9 +263,9 @@ contract SzAlphaBridgeTest is Test {
         _setPrice(2e9);
         vm.deal(alice, 10 ether);
         vm.startPrank(alice);
-        token.deposit{value: 4 ether}(0, MAX_DL); // 2e18 shares backed by 2 alpha
+        token.deposit{value: 4 ether}(1, MAX_DL); // 2e18 shares backed by 2 alpha
         uint256 balBefore = alice.balance;
-        uint256 out = token.redeem(1 ether, 0, MAX_DL); // 1 share -> 1 alpha -> 2 TAO
+        uint256 out = token.redeem(1 ether, 1, MAX_DL); // 1 share -> 1 alpha -> 2 TAO
         vm.stopPrank();
 
         assertEq(out, 2 ether, "payout is the measured TAO from the alpha->TAO swap");
@@ -276,11 +276,47 @@ contract SzAlphaBridgeTest is Test {
         _setPrice(2e9);
         vm.deal(alice, 10 ether);
         vm.startPrank(alice);
-        token.deposit{value: 4 ether}(0, MAX_DL);
+        token.deposit{value: 4 ether}(1, MAX_DL);
         vm.expectRevert(abi.encodeWithSelector(SzAlpha.SlippageExceeded.selector, 2 ether, 2 ether + 1));
         token.redeem(1 ether, 2 ether + 1, MAX_DL);
         vm.stopPrank();
         assertEq(token.balanceOf(alice), 2 ether, "whole redeem reverted; shares restored");
+    }
+
+    // ================================================================
+    // │   BRIDGE-ADV-02/03: mandatory slippage floor (genesis-exempt)  │
+    // ================================================================
+
+    function test_floor_genesisDepositMayPassZero() public {
+        // Genesis exemption: at supply 0 (the deploy seed) a 0 floor is allowed.
+        assertEq(token.totalSupply(), 0, "fresh wrapper at genesis");
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        uint256 shares = token.deposit{value: 5 ether}(0, MAX_DL);
+        assertEq(shares, 5 ether, "genesis 1:1 deposit with a 0 floor succeeds");
+    }
+
+    function test_floor_depositZeroFloorRevertsAtSupplyNonZero() public {
+        // Seed supply so the genesis exemption no longer applies.
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        assertGt(token.totalSupply(), 0, "supply is now non-zero");
+
+        // A later deposit MUST set a real floor — a 0 floor is rejected.
+        vm.prank(alice);
+        vm.expectRevert(SzAlpha.SlippageFloorRequired.selector);
+        token.deposit{value: 1 ether}(0, MAX_DL);
+    }
+
+    function test_floor_redeemZeroFloorReverts() public {
+        vm.deal(alice, 10 ether);
+        vm.startPrank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        // redeem always requires a real floor (no genesis exemption).
+        vm.expectRevert(SzAlpha.SlippageFloorRequired.selector);
+        token.redeem(2 ether, 0, MAX_DL);
+        vm.stopPrank();
     }
 
     function test_deadlineExpiredReverts() public {
@@ -288,11 +324,11 @@ contract SzAlphaBridgeTest is Test {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
         vm.expectRevert(SzAlpha.DeadlineExpired.selector);
-        token.deposit{value: 1 ether}(0, 999);
+        token.deposit{value: 1 ether}(1, 999);
 
         vm.prank(alice);
         vm.expectRevert(SzAlpha.DeadlineExpired.selector);
-        token.redeem(1, 0, 999);
+        token.redeem(1, 1, 999);
     }
 
     // ================================================================
@@ -305,19 +341,19 @@ contract SzAlphaBridgeTest is Test {
         // Par.
         uint256 quoted = token.previewDeposit(5 ether);
         vm.prank(alice);
-        uint256 minted = token.deposit{value: 5 ether}(0, MAX_DL);
+        uint256 minted = token.deposit{value: 5 ether}(1, MAX_DL);
         assertEq(quoted, minted, "previewDeposit == executed shares (static price)");
 
         uint256 quotedOut = token.previewRedeem(2 ether);
         vm.prank(alice);
-        uint256 paid = token.redeem(2 ether, 0, MAX_DL);
+        uint256 paid = token.redeem(2 ether, 1, MAX_DL);
         assertEq(quotedOut, paid, "previewRedeem == executed TAO out (static price)");
 
         // Off-par.
         _setPrice(3e9);
         uint256 quoted2 = token.previewDeposit(9 ether); // 9 TAO -> 3 alpha at price 3
         vm.prank(alice);
-        uint256 minted2 = token.deposit{value: 9 ether}(0, MAX_DL);
+        uint256 minted2 = token.deposit{value: 9 ether}(1, MAX_DL);
         assertEq(quoted2, minted2, "preview tracks the AMM price, not par");
     }
 
@@ -335,7 +371,7 @@ contract SzAlphaBridgeTest is Test {
         assertEq(token.exchangeRate(), 1e18);
         vm.deal(alice, 10 ether);
         vm.prank(alice);
-        uint256 shares = token.deposit{value: 1 ether}(0, MAX_DL);
+        uint256 shares = token.deposit{value: 1 ether}(1, MAX_DL);
         assertEq(shares, 1 ether);
     }
 
@@ -348,7 +384,7 @@ contract SzAlphaBridgeTest is Test {
         // A dust deposit rounds to zero shares -> reverts ZeroSharesOut (no silent loss).
         vm.prank(alice);
         vm.expectRevert(SzAlpha.ZeroSharesOut.selector);
-        token.deposit{value: 1e9}(0, MAX_DL); // 1 rao of TAO vs a 100-alpha pre-stake
+        token.deposit{value: 1e9}(1, MAX_DL); // 1 rao of TAO vs a 100-alpha pre-stake
 
         // A depositor protecting with minSharesOut is shielded from donation-skewed pricing.
         uint256 quote = token.previewDeposit(200 ether);
@@ -367,7 +403,7 @@ contract SzAlphaBridgeTest is Test {
         // the refunded remainder must be excluded from totalIn.
         vm.deal(alice, 10_000 ether);
         vm.prank(alice);
-        token.deposit{value: 100 ether}(0, MAX_DL);
+        token.deposit{value: 100 ether}(1, MAX_DL);
         _staking().addReward(HOTKEY, _coldkey(), NETUID, 33 * 1e9); // ~1.33x
 
         uint256 totalIn;
@@ -375,10 +411,10 @@ contract SzAlphaBridgeTest is Test {
         for (uint256 i = 1; i <= 100; i++) {
             uint256 amt = (i % 7 + 1) * 1e17 + i; // jittered, non-round, sub-rao tail
             vm.prank(alice);
-            uint256 sh = token.deposit{value: amt}(0, MAX_DL);
+            uint256 sh = token.deposit{value: amt}(1, MAX_DL);
             totalIn += amt - (amt % RAO); // the sub-rao tail is refunded, not deposited
             vm.prank(alice);
-            uint256 out = token.redeem(sh, 0, MAX_DL);
+            uint256 out = token.redeem(sh, 1, MAX_DL);
             totalOut += out;
         }
         assertLe(totalOut, totalIn, "dust always accrues to the protocol, never the user");
@@ -387,12 +423,12 @@ contract SzAlphaBridgeTest is Test {
     function test_redeemDust_staysStaked_rateNonDecreasing() public {
         vm.deal(alice, 1000 ether);
         vm.prank(alice);
-        token.deposit{value: 100 ether}(0, MAX_DL);
+        token.deposit{value: 100 ether}(1, MAX_DL);
         _staking().addReward(HOTKEY, _coldkey(), NETUID, 33 * 1e9); // non-integer rate ~1.33
 
         uint256 rateBefore = token.exchangeRate();
         vm.prank(alice);
-        token.redeem(1e9, 0, MAX_DL); // tiny redeem: alpha leg floors to whole rao
+        token.redeem(1e9, 1, MAX_DL); // tiny redeem: alpha leg floors to whole rao
         assertGe(token.exchangeRate(), rateBefore, "floored dust stays staked for remaining holders");
     }
 
@@ -406,17 +442,17 @@ contract SzAlphaBridgeTest is Test {
         uint256 balBefore = alice.balance;
         vm.prank(alice);
         vm.expectRevert(SzAlpha.AddStakeEffectMissing.selector);
-        token.deposit{value: 5 ether}(0, MAX_DL);
+        token.deposit{value: 5 ether}(1, MAX_DL);
         assertEq(alice.balance, balBefore, "tx reverted, TAO not lost");
     }
 
     function test_redeemVerifiesRemoveStakeEffect() public {
         vm.deal(alice, 10 ether);
         vm.startPrank(alice);
-        token.deposit{value: 5 ether}(0, MAX_DL);
+        token.deposit{value: 5 ether}(1, MAX_DL);
         _staking().setBreakRemoveStake(true);
         vm.expectRevert(SzAlpha.RemoveStakeEffectMissing.selector);
-        token.redeem(2 ether, 0, MAX_DL);
+        token.redeem(2 ether, 1, MAX_DL);
         vm.stopPrank();
         assertEq(token.balanceOf(alice), 5 ether, "shares intact, redeem atomic");
     }
@@ -445,7 +481,7 @@ contract SzAlphaBridgeTest is Test {
     function test_upgradePreservesStateForTimelock() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
-        token.deposit{value: 3 ether}(0, MAX_DL);
+        token.deposit{value: 3 ether}(1, MAX_DL);
 
         SzAlphaV2 v2 = new SzAlphaV2();
         vm.prank(timelock);
@@ -475,27 +511,27 @@ contract SzAlphaBridgeTest is Test {
     function test_zeroAmountReverts() public {
         vm.prank(alice);
         vm.expectRevert(SzAlpha.ZeroAmount.selector);
-        token.deposit{value: 0}(0, MAX_DL);
+        token.deposit{value: 0}(1, MAX_DL);
         vm.prank(alice);
         vm.expectRevert(SzAlpha.ZeroAmount.selector);
-        token.redeem(0, 0, MAX_DL);
+        token.redeem(0, 1, MAX_DL);
     }
 
     function test_pauseBlocksDepositButNotRedeem() public {
         vm.deal(alice, 10 ether);
         vm.prank(alice);
-        token.deposit{value: 5 ether}(0, MAX_DL);
+        token.deposit{value: 5 ether}(1, MAX_DL);
 
         vm.prank(timelock);
         token.pause();
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
-        token.deposit{value: 1 ether}(0, MAX_DL);
+        token.deposit{value: 1 ether}(1, MAX_DL);
 
         // S11: redeem works while paused.
         vm.prank(alice);
-        uint256 out = token.redeem(2 ether, 0, MAX_DL);
+        uint256 out = token.redeem(2 ether, 1, MAX_DL);
         assertEq(out, 2 ether, "redeem available while paused");
     }
 
@@ -547,7 +583,7 @@ contract SzAlphaBridgeTest is Test {
     function _fundPool(uint256 amount) internal {
         vm.deal(alice, amount + 1 ether);
         vm.startPrank(alice);
-        token.deposit{value: amount}(0, MAX_DL);
+        token.deposit{value: amount}(1, MAX_DL);
         token.transfer(address(pool), amount);
         vm.stopPrank();
     }
@@ -609,7 +645,7 @@ contract SzAlphaBridgeTest is Test {
     function test_lane_roundTrip_rateInvariant() public {
         vm.deal(alice, 20 ether);
         vm.prank(alice);
-        token.deposit{value: 10 ether}(0, MAX_DL);
+        token.deposit{value: 10 ether}(1, MAX_DL);
         _staking().addReward(HOTKEY, _coldkey(), NETUID, 5 * 1e9); // non-trivial rate
         uint256 rateBefore = token.exchangeRate();
 
@@ -750,9 +786,9 @@ contract SzAlphaBridgeTest is Test {
         uint256 v = bound(uint256(taoWeiSeed), RAO, 100 ether);
         vm.deal(alice, v);
         vm.prank(alice);
-        uint256 shares = token.deposit{value: v}(0, MAX_DL);
+        uint256 shares = token.deposit{value: v}(1, MAX_DL);
         vm.prank(alice);
-        uint256 out = token.redeem(shares, 0, MAX_DL);
+        uint256 out = token.redeem(shares, 1, MAX_DL);
         // At par with floor rounding both legs, a deposit→redeem round-trip can never pay out more than it
         // took in (dust stays staked, accruing to remaining holders). Protocol never loses on the round-trip.
         assertLe(out, v, "round-trip paid out more than deposited");
@@ -765,7 +801,7 @@ contract SzAlphaBridgeTest is Test {
         vm.etch(STAKING_V2, address(new MockLyingStaking()).code);
         vm.deal(alice, 1 ether);
         vm.prank(alice);
-        uint256 shares = token.deposit{value: 1 ether}(0, MAX_DL);
+        uint256 shares = token.deposit{value: 1 ether}(1, MAX_DL);
         // An honest first deposit of 1 TAO mints 1e18 shares at par; the liar reports 2x the alpha delta, so
         // the wrapper mints 2e18 — phantom backing, 1:1 with the over-report. Blast radius: dilutes honest
         // holders now, and crashes the rate the moment a truthful getStake reports the real (lower) stake.
@@ -892,6 +928,8 @@ contract SzAlphaBaseForkTest is Test {
 ///         runbook `acceptAdminRole` finalize. FAILS BEFORE the SEC-03 fix: the script never calls
 ///         `transferAdminRole`, so `pendingAdministrator` stays `address(0)` and the script stays sole admin.
 contract SzAlphaAdminHandoffTest is Test {
+    address internal constant STAKING_V2 = 0x0000000000000000000000000000000000000805;
+    address internal constant ALPHA_PRECOMPILE = 0x0000000000000000000000000000000000000808;
     address internal constant ADDRESS_MAPPING = 0x000000000000000000000000000000000000080C;
     uint256 internal constant NETUID = 99;
     bytes32 internal constant HOTKEY = bytes32(uint256(0xABCD));
@@ -904,6 +942,16 @@ contract SzAlphaAdminHandoffTest is Test {
         deployer = new DeploySzAlphaBridge();
         // SzAlpha.initialize reads AddressMapping (0x80C) once to cache the wrapper coldkey.
         vm.etch(ADDRESS_MAPPING, address(new MockAddressMapping()).code);
+        // BRIDGE-ADV-02: deploy964 now runs the in-broadcast genesis seed (a real deposit), so the
+        // staking/Alpha precompiles must be live and priced (etch copies code, NOT storage — set par).
+        vm.etch(STAKING_V2, address(new MockSubtensorStaking()).code);
+        vm.etch(ALPHA_PRECOMPILE, address(new MockAlphaPrecompile()).code);
+        MockSubtensorStaking(payable(STAKING_V2)).setPrice(1e9);
+        MockAlphaPrecompile(ALPHA_PRECOMPILE).setPrice(1e9);
+        vm.deal(STAKING_V2, 1_000_000 ether); // so removeStake could pay TAO (parity with the unit suite)
+        // The deployer (the deposit caller) must hold the seed TAO to forward into deposit{value}.
+        // GENESIS_SEED is an internal deploy-script constant (1e18 ~ 1 TAO); deal a little extra.
+        vm.deal(address(deployer), 2 ether);
         // Etch unit-faithful CCT mocks at BOTH chains' hard-coded addresses the deploy script reads.
         _wireMockCct(deployer.bittensorConfig());
         _wireMockCct(deployer.baseConfig());
@@ -1012,11 +1060,11 @@ contract RevertingReceiver {
     }
 
     function doDeposit() external payable {
-        token.deposit{value: msg.value}(0, type(uint256).max);
+        token.deposit{value: msg.value}(1, type(uint256).max);
     }
 
     function doRedeem(uint256 shares) external {
-        token.redeem(shares, 0, type(uint256).max);
+        token.redeem(shares, 1, type(uint256).max);
     }
 
     receive() external payable {
@@ -1077,7 +1125,7 @@ contract SzAlphaInvariantHandler is Test {
         amt = bound(amt, 1e9, 50 ether);
         vm.deal(a, a.balance + amt);
         vm.prank(a);
-        try token.deposit{value: amt}(0, type(uint256).max) returns (uint256 s) {
+        try token.deposit{value: amt}(1, type(uint256).max) returns (uint256 s) {
             ghostMinted += s;
         } catch {}
     }
@@ -1088,7 +1136,7 @@ contract SzAlphaInvariantHandler is Test {
         if (bal == 0) return;
         uint256 s = bound(amt, 1, bal);
         vm.prank(a);
-        try token.redeem(s, 0, type(uint256).max) returns (uint256) {
+        try token.redeem(s, 1, type(uint256).max) returns (uint256) {
             ghostBurned += s;
         } catch {}
     }

@@ -35,6 +35,10 @@ import {IAlpha} from "../src/interfaces/bridge/ISubtensorPrecompiles.sol";
 contract DeploySzAlphaBridge is Script {
     address internal constant ALPHA_PRECOMPILE = 0x0000000000000000000000000000000000000808;
 
+    /// @dev BRIDGE-ADV-02: the in-broadcast genesis seed (~1 TAO). Staked at supply 0 and the shares
+    ///      burned (sent to 0xdead) so the first-depositor griefing window never opens permissionlessly.
+    uint256 internal constant GENESIS_SEED = 1e18; // ~1 TAO
+
     // --- CCT address book (verified on-chain 2026-06-09; Base typeAndVersion re-read live) ---
     struct CctConfig {
         uint64 chainSelector;
@@ -104,6 +108,12 @@ contract DeploySzAlphaBridge is Script {
         );
         token = SzAlpha(payable(address(new ERC1967Proxy(address(impl), initData))));
 
+        // BRIDGE-ADV-02: seed the genesis stake IN-BROADCAST so there is no permissionless zero-supply
+        // window. At supply 0 the deposit slippage floor is exempt (this is the only legitimate
+        // `minSharesOut == 0` caller). The seed shares are a burnt cost, not a position — send to 0xdead.
+        uint256 seedShares = token.deposit{value: GENESIS_SEED}(0, type(uint256).max);
+        token.transfer(address(0xdead), seedShares);
+
         // Lock/release custody: bridged-out szALPHA is held by the lockbox (NOT burned), so the pool
         // can be rotated (RMN/CCIP upgrades) by re-pointing the authorized caller — no fund migration.
         lockBox = new ERC20LockBox(address(token));
@@ -151,15 +161,8 @@ contract DeploySzAlphaBridge is Script {
                 == ccipAdmin,
             "registry admin handoff failed"
         );
-    }
-
-    /// @notice The 964 genesis SEED DEPOSIT (run immediately after `deploy964`, before announcing).
-    /// @dev Closes the first-depositor griefing window (see SzAlpha's donation note): with non-zero
-    ///      supply, a pre-deposit donation can no longer skew a victim's genesis mint. Send ~1 TAO.
-    ///      The seed shares are minted to the caller — transfer them to 0xdead per the runbook (they
-    ///      are a burnt cost, not a position).
-    function seedDeposit(SzAlpha token) public payable returns (uint256 shares) {
-        return token.deposit{value: msg.value}(0, type(uint256).max);
+        // BRIDGE-ADV-02: a broadcast that didn't seed must fail loudly — genesis must never go live empty.
+        require(token.totalSupply() > 0, "genesis not seeded");
     }
 
     /// @notice Deploy the Base (8453) mirror + its BURN/MINT CCT pool.

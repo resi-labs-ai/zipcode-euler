@@ -20,8 +20,8 @@ separate lower-privilege CCIP registrar. Bridged-out supply is *locked, not burn
 
 | Function | Access | Value | Notes |
 |---|---|---|---|
-| `deposit(minSharesOut, deadline)` | permissionless | TAO in | `nonReentrant`, `whenNotPaused`; mints measured delta |
-| `redeem(shares, minTaoOut, deadline)` | permissionless | TAO out | `nonReentrant`, **NOT** pausable (S3/S11) |
+| `deposit(minSharesOut, deadline)` | permissionless | TAO in | `nonReentrant`, `whenNotPaused`; mints measured delta; **`minSharesOut` MUST be non-zero except at genesis (supply 0)** — else `SlippageFloorRequired` (BRIDGE-ADV-02/03) |
+| `redeem(shares, minTaoOut, deadline)` | permissionless | TAO out | `nonReentrant`, **NOT** pausable (S3/S11); **`minTaoOut` MUST be non-zero** — else `SlippageFloorRequired` (BRIDGE-ADV-03) |
 | `receive()` | permissionless | TAO in | accepts precompile payout; empty body |
 | `setCCIPAdmin(newAdmin)` | `onlyCcipAdmin` | — | rotate registrar |
 | `pause()` / `unpause()` | `onlyOwner` (Timelock) | — | pauses deposit only |
@@ -50,10 +50,10 @@ separate lower-privilege CCIP registrar. Bridged-out supply is *locked, not burn
 | G-5 amountRao ≠ 0 | `test_deposit_subRaoAmountReverts`, `test_zeroAmountReverts` |
 | G-6 AddStakeEffectMissing | `test_depositVerifiesAddStakeEffect` |
 | G-7 ZeroSharesOut | `test_donationHonesty_griefingIsValueDestroying` |
-| G-8 deposit slippage | `test_deposit_slippageExceededReverts` |
+| G-8 deposit slippage (floor mandatory, genesis-exempt) | `test_deposit_slippageExceededReverts`, `test_floor_depositZeroFloorRevertsAtSupplyNonZero`, `test_floor_genesisDepositMayPassZero` |
 | G-9 NativeTransferFailed | `test_g9_nativeTransferFailed_onRedeemPayout`, `test_g9_nativeTransferFailed_onDepositRefund` |
 | G-12 RemoveStakeEffectMissing | `test_redeemVerifiesRemoveStakeEffect` |
-| G-14 redeem slippage | `test_redeem_slippageExceededReverts` |
+| G-14 redeem slippage (floor mandatory) | `test_redeem_slippageExceededReverts`, `test_floor_redeemZeroFloorReverts` |
 | G-16 PrecompileCallFailed | `test_g16_precompileCallFailed_onEmptyStakingCode` |
 | G-17 AmountOverflowsUint64 | `test_g17_amountOverflowsUint64_onPreview` |
 

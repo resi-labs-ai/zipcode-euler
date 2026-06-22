@@ -113,3 +113,19 @@ track on it.
 
 The built, fork-tested on-chain contract stack (32 product contracts + 6 scripts + 30 interfaces) is
 truth-sourced and indexed in **`build/wires/COVERAGE.md`** — not re-narrated here.
+
+---
+
+## Audit track (adversarial-review)
+
+A separate workstream from the CRE/frontend `NEXT` above. The multi-model adversarial-review harness lives
+at `adversarial-review/` (run via `adversarial-review/CONDUCTOR.md`); per-contract findings + tickets land in
+`build/tickets/audit/`. **Bridge group reviewed (5/5 contracts), all ADEQUATE, no CRITICAL/HIGH/MEDIUM.**
+
+Ledger:
+- **BRIDGE-ADV-01** — non-pausable `redeem` under precompile compromise → WONTFIX (accepted runtime trust).
+- **BRIDGE-ADV-02** — genesis seed atomicity + mandatory slippage floor (subsumes ADV-03) → **BUILT** on branch
+  `audit/bridge-adv-02-seed-slippage` (deploy964 seeds in-broadcast + `SlippageFloorRequired` floors; bridge
+  suite 58/58 green; X-Ray/wire/runbook synced). Awaiting review/merge.
+- **BRIDGE-ADV-04** — `intrinsicAprBps()` overflow + vacuous invariant (LOW) → ticket filed, not yet built.
+- **BRIDGE-ADV-05** — burn/mint pool ownership not handed to timelock in `deployBase` (LOW) → ticket filed, not yet built.

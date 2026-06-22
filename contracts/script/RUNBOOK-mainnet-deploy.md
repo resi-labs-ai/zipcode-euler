@@ -142,7 +142,9 @@ If any probe reverts or returns zero, STOP — the netuid is wrong, the subnet p
 runtime changed; `deploy964`'s `_assertAlphaPrecompile` would also fail. Unit table + provenance:
 `docs/wires/8x-01-szALPHA-bridge.md`, `reference/rubicon/README.md`.
 
+Pre-`deploy964`: fund the deployer with ≥ ~1 TAO. **`deploy964` now seeds the genesis stake in-broadcast**
+(BRIDGE-ADV-02 — seed shares auto-burned to `0xdead`); there is NO manual post-deploy seed step.
+
 Post-`deploy964` (in order; see 8x-01 item-10):
-- [ ] `seedDeposit{value: ~1 TAO}(token)` — genesis seed; transfer the seed shares to `0xdead`.
 - [ ] Timelock calls `lockBox.acceptOwnership()` (2-step handoff).
 - [ ] `setRemoteLane` per direction (ops rate limits), then pool `transferOwnership(timelock)` + accept.

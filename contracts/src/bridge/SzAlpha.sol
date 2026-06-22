@@ -42,7 +42,9 @@ import {IStakingV2, IAlpha, IAddressMapping} from "../interfaces/bridge/ISubtens
 ///        - the classic first-depositor inflation attack is strictly value-destroying: to skew a victim
 ///          depositing V the attacker must donate >= V, all of which accrues to others, and a deposit
 ///          rounding to zero shares reverts (`ZeroSharesOut`) rather than silently losing funds;
-///        - the deploy script makes a small SEED DEPOSIT at genesis, closing even the griefing window.
+///        - `deploy964` makes a small SEED DEPOSIT in-broadcast at genesis (BRIDGE-ADV-02), closing the
+///          griefing window STRUCTURALLY (not a manual step); and a non-zero `minSharesOut` is mandatory
+///          for every non-genesis deposit (the seed, at supply 0, is the one exempt caller).
 ///      The OZ virtual-offset (1/1) is retained for div-by-zero safety + a clean genesis 1:1 rate.
 ///
 /// @dev CCIP/CCT TOPOLOGY (lock/release — the proven Rubicon shape). Bridged-out szALPHA is LOCKED in
@@ -103,6 +105,7 @@ contract SzAlpha is
     error ZeroSharesOut();
     error DeadlineExpired();
     error SlippageExceeded(uint256 actual, uint256 minOut);
+    error SlippageFloorRequired();
     error NetuidTooLarge(uint256 netuid);
     error AmountOverflowsUint64(uint256 amountRao);
     error AddStakeEffectMissing();
@@ -165,8 +168,9 @@ contract SzAlpha is
     ///      sub-rao remainder (`msg.value % 1e9`) is refunded. The TAO -> alpha AMM conversion is
     ///      variable-price, so shares are minted against the MEASURED `getStake` delta at the
     ///      pre-deposit rate (S4: the delta must be > 0, else a silent precompile failure would be
-    ///      fund loss). Slippage: caller bounds the mint with `minSharesOut` (0 = unbounded; the
-    ///      `ZeroSharesOut` backstop still applies). Pausable.
+    ///      fund loss). Slippage: caller MUST bound the mint with a non-zero `minSharesOut` — a 0 floor is
+    ///      rejected (`SlippageFloorRequired`) EXCEPT at genesis (`totalSupply() == 0`), the only call that
+    ///      cannot derive a floor (no rate yet) and is the deploy seed. `ZeroSharesOut` also applies. Pausable.
     /// @param minSharesOut Minimum shares acceptable (derive from `previewDeposit` minus tolerance).
     /// @param deadline Unix time after which the call reverts (`type(uint256).max` = none).
     function deposit(uint256 minSharesOut, uint256 deadline)
@@ -177,6 +181,9 @@ contract SzAlpha is
         returns (uint256 shares)
     {
         if (block.timestamp > deadline) revert DeadlineExpired();
+        // BRIDGE-ADV-02/03: a real caller MUST set a slippage floor. Only the genesis deposit
+        // (supply 0 — the deploy seed, which has no rate to derive a floor from) may pass 0.
+        if (minSharesOut == 0 && totalSupply() != 0) revert SlippageFloorRequired();
         uint256 amountRao = msg.value / RAO;
         if (amountRao == 0) revert ZeroAmount();
         uint256 refund = msg.value % RAO;
@@ -223,6 +230,8 @@ contract SzAlpha is
     {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (shares == 0) revert ZeroAmount();
+        // BRIDGE-ADV-03: redeem always requires a real floor (supply is never 0 here — no genesis exemption).
+        if (minTaoOut == 0) revert SlippageFloorRequired();
 
         uint256 stakeRaoBefore = _readStake();
         uint256 alphaOut18 = _previewRedeem(shares, totalSupply(), stakeRaoBefore * RAO);

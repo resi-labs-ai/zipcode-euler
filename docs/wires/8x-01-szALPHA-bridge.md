@@ -57,7 +57,7 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
 | `src/bridge/SzAlphaLockReleasePool.sol` (`is LockReleaseTokenPool`) | 964 | Ctor asserts `localTokenDecimals == 18` (`LocalDecimalsNot18`) + `rmnProxy == canonicalRmn` (`RmnNotCanonical`); pins hooks `address(0)`; custody = the wired `ERC20LockBox`. `typeAndVersion() = "SzAlphaLockReleasePool 1.0.0"`. |
 | `ERC20LockBox` (vendored canonical) | 964 | Per-token custody with an owner-managed authorized-caller list. A pool rotation (RMN/CCIP upgrade) re-points the authorized caller — **no fund migration**. Owner → timelock (2-step). |
 | `src/bridge/SzAlphaTokenPool.sol` (`is BurnMintTokenPool`) | Base only | Same S8/S9 ctor asserts; hooks pinned. `typeAndVersion() = "SzAlphaTokenPool 1.0.0"`. |
-| `script/DeploySzAlphaBridge.s.sol` (`is Script`) | both | `deploy964` / `deployBase` / `seedDeposit` / `setRemoteLane` + the assert battery (incl. the 964 Alpha-precompile probe). Holds the verified 964 + Base CCT address books. |
+| `script/DeploySzAlphaBridge.s.sol` (`is Script`) | both | `deploy964` (seeds genesis in-broadcast, BRIDGE-ADV-02) / `deployBase` / `setRemoteLane` + the assert battery (incl. the 964 Alpha-precompile probe + `totalSupply() > 0` post-seed). Holds the verified 964 + Base CCT address books. |
 | `src/interfaces/bridge/ISubtensorPrecompiles.sol` | — | Minimal local `IStakingV2` (`addStake`/`removeStake`/`getStake`) + `IAlpha` (`getAlphaPrice`/`getMovingAlphaPrice`/`simSwapTaoForAlpha`/`simSwapAlphaForTao`) + `IAddressMapping` — **selectors only**, never used as a call target. Units pinned per function. |
 | `src/interfaces/bridge/ICctRegistry.sol` | — | Minimal `IRegistryModuleOwnerCustom.registerAdminViaGetCCIPAdmin` + `ITokenAdminRegistry.{acceptAdminRole,setPool,getPool,transferAdminRole,getTokenConfig}` (the last two added SEC-03/H4 for the 2-step registry-admin handoff). |
 | `src/interfaces/bridge/IXAlphaRate.sol` | — | The `exchangeRate()` face the NAV oracle (8-B4) + CRE-03 (8x-02) read. |
@@ -137,8 +137,10 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
   `getCCIPAdmin()` view) + `lockBox.transferOwnership(timelock)` (**2-step** — the timelock must
   `acceptOwnership()`, a runbook step) → asserts (incl. **`getTokenConfig(token).pendingAdministrator==ccipAdmin`**,
   NOT the old false-confidence `getCCIPAdmin()==ccipAdmin` view check).
-- **`seedDeposit(token)` payable:** the genesis seed (run immediately after `deploy964`; ~1 TAO). Closes the
-  first-depositor griefing window; the seed shares are a burnt cost — transfer them to `0xdead` per runbook.
+- **Genesis seed (folded into `deploy964`, BRIDGE-ADV-02):** `deploy964` seeds ~1 TAO in-broadcast right
+  after the proxy is live and auto-burns the seed shares to `0xdead` — closing the first-depositor griefing
+  window *structurally* (no manual step). At supply 0 the seed is the one legitimate `minSharesOut == 0`
+  caller; the standalone `seedDeposit` function is removed. Fund the deployer ≥ ~1 TAO before `deploy964`.
 - **`deployBase(timelock)`:** `_assertCctAddresses(baseConfig())` → `new SzAlphaMirror` → pool →
   `grantMintAndBurnRoles(pool)` → register → accept → `setPool` → **`transferAdminRole(token, timelock)` (SEC-03/H4:
   hand the REGISTRY admin to the durable timelock — 2-step `acceptAdminRole` runbook)** → asserts (incl.
@@ -176,7 +178,8 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
    `deploy964`.
 2. **Run `deploy964` on a 964 RPC.** Exercises the 964 CCT 5-address asserts + the Alpha-precompile probe —
    un-fork-testable here (no public Subtensor fork node).
-3. **Run `seedDeposit` (~1 TAO) immediately after**, before announcing; transfer the seed shares to `0xdead`.
+3. **Seed is automatic (BRIDGE-ADV-02):** `deploy964` seeds ~1 TAO in-broadcast and burns the shares to
+   `0xdead` — fund the deployer ≥ ~1 TAO beforehand; no separate seed step.
 4. **Timelock accepts lockbox ownership** (`lockBox.acceptOwnership()` — 2-step handoff from the script).
 4b. **Durable admin finalizes the REGISTRY-admin handoff (SEC-03/H4 — MANDATORY).** The deploy script
    `transferAdminRole`s the `TokenAdminRegistry` administrator to the durable authority (964 → `ccipAdmin`,
