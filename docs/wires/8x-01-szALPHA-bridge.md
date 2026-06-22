@@ -188,7 +188,8 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
    deploy Script remains a live registry admin — the one residual interruption window; accept promptly. Verify
    `getTokenConfig(token).administrator == <durable>` after.
 5. **Wire the lane.** Once BOTH pools exist, call `setRemoteLane` per direction with ops-decided rate
-   limits, under the timelock. Then transfer pool ownership to the timelock (2-step `Ownable2Step`).
+   limits, under the timelock. (Pool ownership is now transferred to the timelock IN `deployBase` —
+   BRIDGE-ADV-05; the timelock only needs to `acceptOwnership()`, 2-step `Ownable2Step`.)
 6. ~~Calibrate denomination~~ **RESOLVED:** the unit table above is verified against the live runtime
    (Rubicon's audited wrapper + the Rust precompile source + live cast probes, 2026-06-12), and
    `_assertAlphaPrecompile` re-proves it at deploy time. The pre-deploy cast battery lives in

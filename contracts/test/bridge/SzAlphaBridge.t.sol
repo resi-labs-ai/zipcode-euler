@@ -896,6 +896,14 @@ contract SzAlphaBaseForkTest is Test {
         assertEq(mirror.getCCIPAdmin(), timelock, "ccipAdmin -> timelock");
         assertTrue(mirror.hasRole(mirror.DEFAULT_ADMIN_ROLE(), timelock), "admin -> timelock");
         assertFalse(mirror.hasRole(mirror.DEFAULT_ADMIN_ROLE(), address(deployer)), "deployer revoked");
+
+        // BRIDGE-ADV-05: the burn/mint POOL's ownership (mint-source + rate-limiter authority) is handed to
+        // the timelock (2-step). Chainlink Ownable2Step keeps pendingOwner private, so prove the proposal
+        // behaviorally: only the proposed owner can accept — the timelock accepting => it was the target.
+        assertEq(pool.owner(), address(deployer), "pool owner still deployer pre-accept (2-step)");
+        vm.prank(timelock);
+        pool.acceptOwnership();
+        assertEq(pool.owner(), timelock, "pool ownership -> timelock after 2-step accept");
     }
 
     function _cfg()

@@ -187,7 +187,11 @@ contract DeploySzAlphaBridge is Script {
         // post-deploy to finalize. Until then this script remains a live admin (the one residual window).
         ITokenAdminRegistry(cfg.tokenAdminRegistry).transferAdminRole(address(token), timelock);
 
-        // Mirror has no owner(); the pool ownership hand-off to the timelock is asserted by the caller.
+        // BRIDGE-ADV-05: hand the burn/mint POOL's ownership to the timelock (2-step Ownable2Step). The pool
+        // owner controls the mint-source config (applyChainUpdates / addRemotePool) + the inbound rate limiter,
+        // so it must NOT remain on the deployer EOA. Mirror has no owner() (AccessControl, handed off below).
+        // The timelock finalizes via pool.acceptOwnership() post-deploy (runbook) — proposes timelock here.
+        pool.transferOwnership(timelock);
         _assertPoolRmnAndDecimals(address(token), address(pool), cfg);
         // SEC-03/H4: assert the REGISTRY pending-administrator is the durable timelock (administrator is
         // still THIS script pre-accept, per the 2-step — assert `pendingAdministrator`).
@@ -196,6 +200,8 @@ contract DeploySzAlphaBridge is Script {
                 == timelock,
             "registry admin handoff failed"
         );
+        // (Chainlink Ownable2Step keeps the pending owner private — no on-chain getter to assert here;
+        // the 2-step handoff is verified behaviorally in the fork test via acceptOwnership. BRIDGE-ADV-05.)
         // Hand the mirror's mint-control + ccipAdmin view to the timelock; revoke the deployer. The mirror's
         // constructor granted DEFAULT_ADMIN_ROLE + ccipAdmin to THIS contract (the `new SzAlphaMirror`
         // caller), so the revoke target is `address(this)`, not the external caller.

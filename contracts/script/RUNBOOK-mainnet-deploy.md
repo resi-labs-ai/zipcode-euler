@@ -147,4 +147,5 @@ Pre-`deploy964`: fund the deployer with ≥ ~1 TAO. **`deploy964` now seeds the 
 
 Post-`deploy964` (in order; see 8x-01 item-10):
 - [ ] Timelock calls `lockBox.acceptOwnership()` (2-step handoff).
-- [ ] `setRemoteLane` per direction (ops rate limits), then pool `transferOwnership(timelock)` + accept.
+- [ ] Timelock calls `pool.acceptOwnership()` — `deployBase` already PROPOSED the pool-ownership handoff
+      in-broadcast (BRIDGE-ADV-05); only the 2-step accept is manual. Then `setRemoteLane` per direction (ops rate limits).

@@ -49,6 +49,11 @@ registration is touched by the Base-fork deploy test (`test_fork_deployBase_regi
 - **Mint authority is the live risk, inherited + deploy-time** — burn/mint means this pool is granted MINTER/
   BURNER on `SzAlphaMirror`; a mis-granted role mints unbacked Base tokens. That lives in the inherited base +
   the deploy-time `grantMintAndBurnRoles` (see the mirror x-ray), not in this contract.
+- **Pool ownership (mint-source + rate-limiter authority) → timelock (BRIDGE-ADV-05).** The pool's
+  `Ownable2Step` owner controls `applyChainUpdates`/`addRemotePool` (which remote pools are valid mint
+  sources) + the inbound rate limiter. `deployBase` now transfers it to the timelock in-broadcast (2-step;
+  the timelock finalizes via `acceptOwnership()`), so it does NOT remain on the deployer EOA. Verified
+  behaviorally in `test_fork_deployBase_registersAgainstRealCct` (timelock accepts → `owner() == timelock`).
 - **RMN rotation = redeploy, not mutate** — `rmnProxy` immutable, so S9 holds for the contract's life.
 
 ## 5. Test analysis
