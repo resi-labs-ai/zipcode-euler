@@ -20,7 +20,7 @@ import {BaseAddresses} from "./BaseAddresses.sol";
 ///         No new Safe, no new system: the demo modules sit alongside the prod ones on the SAME Safe. Retire by
 ///         `disableModule` + pulling the showcase LP out. Run as the **team** (a Safe owner):
 ///           `forge script script/DeployShowcaseVAMM.s.sol:DeployShowcaseVAMM --rpc-url <rpc> --broadcast --slow --private-key <team>`
-///         See `build/wires/SHOWCASE-VAMM.md`.
+///         See `docs/wires/SHOWCASE-VAMM.md`.
 contract DeployShowcaseVAMM is Script {
     // --- principals (anvil deterministic; == the main deploy) ---
     address internal constant TEAM = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266; // broadcaster + Safe owner + demo owner

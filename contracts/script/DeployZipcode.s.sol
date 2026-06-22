@@ -403,7 +403,7 @@ contract DeployZipcode is SummonSubstrate {
         //    buy-burn + LP-strategy modules wire to at construction, so it must exist before them.
         //    The floor is debt-pinned + STRUCTURAL (no governed knob, §17): `requiredCommittedValue =
         //    min(illiquidSeniorValue, grossBasketValue)` — freeze 100% of the lent-out senior dollars, live-marked,
-        //    un-drainable by shrinking gross — build/wires/DurationFreezeModule.md.
+        //    un-drainable by shrinking gross — docs/wires/DurationFreezeModule.md.
         //    All deps exist by P6 (navOracle/warehouse/Safes/eePool); Timelock re-settable post-deploy.
         d.durationFreeze = _cloneModule(
             address(new DurationFreezeModule()),

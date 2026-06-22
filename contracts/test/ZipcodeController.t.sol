@@ -365,6 +365,7 @@ contract ZipcodeControllerTest is ForkConfig {
     event LienReleased(bytes32 indexed lienId);
     event LienDrawn(bytes32 indexed lienId, uint256 equityMark, uint256 drawAmount);
     event LienStatusUpdated(bytes32 indexed lienId, uint8 status);
+    event WiringSet(bytes32 indexed slot, address value);
 
     function setUp() public {
         _selectBaseFork();
@@ -895,6 +896,90 @@ contract ZipcodeControllerTest is ForkConfig {
 
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
         controller.setExpectedAuthor(makeAddr("anything"));
+    }
+
+    // ============================================================
+    // (I-11) build-phase wiring setters + ctor zero-guards
+    // ============================================================
+    // The 5 Timelock-settable slots (venue/lienFactory/oracleRegistry/erebor/registry). All pure store-and-emit
+    // (no external call), so re-pointing to a fresh address is safe. Owner == this test contract.
+
+    function test_I11_WiringSetters_RejectNonOwner() public {
+        address bad = makeAddr("notOwner");
+        vm.startPrank(bad);
+        bytes memory expErr = abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bad);
+        vm.expectRevert(expErr);
+        controller.setVenue(bad);
+        vm.expectRevert(expErr);
+        controller.setLienFactory(bad);
+        vm.expectRevert(expErr);
+        controller.setOracleRegistry(bad);
+        vm.expectRevert(expErr);
+        controller.setErebor(bad);
+        vm.expectRevert(expErr);
+        controller.setRegistry(bad);
+        vm.stopPrank();
+    }
+
+    function test_I11_WiringSetters_RejectZeroAddress() public {
+        vm.expectRevert(ZipcodeController.ZeroAddress.selector);
+        controller.setVenue(address(0));
+        vm.expectRevert(ZipcodeController.ZeroAddress.selector);
+        controller.setLienFactory(address(0));
+        vm.expectRevert(ZipcodeController.ZeroAddress.selector);
+        controller.setOracleRegistry(address(0));
+        vm.expectRevert(ZipcodeController.ZeroAddress.selector);
+        controller.setErebor(address(0));
+        vm.expectRevert(ZipcodeController.ZeroAddress.selector);
+        controller.setRegistry(address(0));
+    }
+
+    function test_I11_WiringSetters_RepointAndEmit() public {
+        address x = makeAddr("rewire");
+
+        vm.expectEmit(true, false, false, true, address(controller));
+        emit WiringSet("venue", x);
+        controller.setVenue(x);
+        assertEq(controller.venue(), x, "venue re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(controller));
+        emit WiringSet("lienFactory", x);
+        controller.setLienFactory(x);
+        assertEq(controller.lienFactory(), x, "lienFactory re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(controller));
+        emit WiringSet("oracleRegistry", x);
+        controller.setOracleRegistry(x);
+        assertEq(controller.oracleRegistry(), x, "oracleRegistry re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(controller));
+        emit WiringSet("erebor", x);
+        controller.setErebor(x);
+        assertEq(controller.erebor(), x, "erebor re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(controller));
+        emit WiringSet("registry", x);
+        controller.setRegistry(x);
+        assertEq(controller.registry(), x, "registry re-pointed");
+    }
+
+    /// @notice The 4 ctor `require` zero-guards (venue/lienFactory/oracleRegistry/erebor). A valid Forwarder is passed
+    ///         (the parent `ReceiverTemplate` zero-forwarder guard fires first otherwise); each non-forwarder arg is
+    ///         zeroed in turn.
+    function test_I11_Ctor_ZeroGuards() public {
+        address v = makeAddr("v");
+        address lf = makeAddr("lf");
+        address or = makeAddr("or");
+        address er = makeAddr("er");
+
+        vm.expectRevert(bytes("ZipcodeController: zero venue"));
+        new ZipcodeController(FORWARDER, address(0), lf, or, er);
+        vm.expectRevert(bytes("ZipcodeController: zero lienFactory"));
+        new ZipcodeController(FORWARDER, v, address(0), or, er);
+        vm.expectRevert(bytes("ZipcodeController: zero oracleRegistry"));
+        new ZipcodeController(FORWARDER, v, lf, address(0), er);
+        vm.expectRevert(bytes("ZipcodeController: zero erebor"));
+        new ZipcodeController(FORWARDER, v, lf, or, address(0));
     }
 
     // ============================================================

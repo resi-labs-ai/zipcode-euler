@@ -35,6 +35,8 @@ contract ZipcodeOracleRegistryTest is Test {
     event ControllerSet(address indexed controller);
     event RegistryPriceSeed(address indexed lien, uint256 price);
     event RegistryPriceUpdated(address indexed lien, uint256 price, uint48 timestamp);
+    event WiringSet(bytes32 indexed slot, address value);
+    event ValidityWindowSet(uint256 window);
 
     function setUp() public {
         usdc = address(new DecimalsMock(6));
@@ -582,5 +584,56 @@ contract ZipcodeOracleRegistryTest is Test {
         (uint208 price, uint48 ts) = reg.cache(address(LIEN));
         assertEq(price, 310_000e6);
         assertEq(ts, uint48(t + 1));
+    }
+
+    // --- I-11: setQuote + setValidityWindow (onlyOwner + zero + effect) ---
+
+    /// @notice `setQuote` is `onlyOwner`, zero-guarded, re-derives the global `scale`, and re-points the supported
+    ///         quote: the new pair prices (scale valid) and the old quote reverts `NotSupported`. (The scale is
+    ///         numerically decimals-invariant by construction — feedDecimals==quoteDecimals collapses it to /1e18 —
+    ///         so the re-derive is proven by "the new quote prices correctly without bricking", not a value delta.)
+    function test_I11_setQuote_guards_and_effect() public {
+        // onlyOwner
+        vm.prank(address(0xBAD));
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0xBAD)));
+        reg.setQuote(usdc);
+        // zero-guard
+        vm.expectRevert(ZipcodeOracleRegistry.ZeroAddress.selector);
+        reg.setQuote(address(0));
+
+        // effect: re-point to a fresh quote + emit WiringSet("quote", ..)
+        address newQuote = address(new DecimalsMock(6));
+        vm.expectEmit(true, false, false, true, address(reg));
+        emit WiringSet("quote", newQuote);
+        reg.setQuote(newQuote);
+        assertEq(reg.quote(), newQuote, "quote re-pointed");
+
+        // the new pair prices via the re-derived scale; the OLD quote is no longer supported.
+        _wireController();
+        _seed(address(LIEN), 300_000e6);
+        assertEq(reg.getQuote(1e18, address(LIEN), newQuote), 300_000e6, "prices via the new quote (scale valid)");
+        vm.expectRevert(abi.encodeWithSelector(Errors.PriceOracle_NotSupported.selector, address(LIEN), usdc));
+        reg.getQuote(1e18, address(LIEN), usdc);
+    }
+
+    /// @notice `setValidityWindow` is `onlyOwner` and tightening it makes a previously-fresh mark read as stale.
+    function test_I11_setValidityWindow_guards_and_effect() public {
+        // onlyOwner
+        vm.prank(address(0xBAD));
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0xBAD)));
+        reg.setValidityWindow(10);
+
+        _wireController();
+        uint256 t0 = block.timestamp;
+        _seed(address(LIEN), 300_000e6); // mark written at t0
+
+        vm.expectEmit(false, false, false, true, address(reg));
+        emit ValidityWindowSet(10);
+        reg.setValidityWindow(10);
+        assertEq(reg.validityWindow(), 10, "window tightened");
+
+        vm.warp(t0 + 11); // 11s > 10s window
+        vm.expectRevert(abi.encodeWithSelector(Errors.PriceOracle_TooStale.selector, uint256(11), uint256(10)));
+        reg.getQuote(1e18, address(LIEN), usdc);
     }
 }
