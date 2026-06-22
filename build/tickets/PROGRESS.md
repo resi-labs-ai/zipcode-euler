@@ -13,11 +13,11 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 **NEXT = reviewer picks** among the deferred candidates below — CTR-16 is DONE + COMMITTED (`4378f93`); CTR-15
 follow-up (b) is DONE (notes immediately under). One item moves at a time; the reviewer selects the next forward edge.
 
-Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); the **FE track**; **CTR-14 —
-DECIDED → (b) per-silo redemption (2026-06-21), SCOPED + sub-decisions RESOLVED (off-registry ⇒ ZERO contract
-change), ready for cold-build** (see its
-ticket + the Open-obligations entry). The CRE redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04
-(NB: CTR-14(b) obviates CRE-02c's cross-silo solver — see sub-decision 2). (CTR-15 follow-up (b) DONE — note below.)
+Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); the **FE track**. **CTR-14 —
+CLOSED 2026-06-21, NOT NEEDED** (see Open-obligations entry): the buy-burn that fills junior exits is funded
+per-silo from each silo's own reservoir, so silos are ALREADY independent; the shared `ZipRedemptionQueue` is
+optional treasury plumbing (idle zipUSD → par USDC), not on the exit path. Ticket deleted. The CRE redemption
+(R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (CTR-15 follow-up (b) DONE — note below.)
 
 - **CTR-15 follow-up (b) DONE (2026-06-20) — `FarmUtilityBorrowGuard` "borrow vault IS resting USDC" accuracy fix
   (docs/comments only, ZERO behavior change).** The deferred CTR-15 follow-up: the rename left an inverted factual
@@ -54,7 +54,7 @@ ticket + the Open-obligations entry). The CRE redemption (R)/(K) stack is COMPLE
   **Gate:** `forge build` green (comment-only ⇒ no bytecode change; the CTR-16 run's `forge test` 1041/0/3 stands).
   **Doc-sync:** the owning wire doc (8-B5) + the propagated siblings are the fix itself; `claude-zipcode.md`
   unaffected (it never carried the identity claim). Not committed yet (this note's commit pending). NEXT: reviewer
-  picks (SEAM-1 / FE track / CTR-14).
+  picks (SEAM-1 / FE track).
 
 - **CTR-16 DONE (2026-06-20) — CRE receiver permissioning: author + per-receiver workflowName, shared workflowId
   pin dropped** (`build/tickets/contracts/CTR-16-receiver-name-permissioning.md`). Deploy-track only (NO
@@ -1432,26 +1432,19 @@ track on it.
   default-OFF `cron` handler in `cre/warehouse`. **Open fork RESOLVED at scoping → pro-rata by GATED free-liquidity**
   (`availP`): a starved/undercovered pool gets weight 0 ⇒ skipped automatically. Utilization-balancing +
   curator-priority are own-later upgrades. Ships default-OFF; ops picks the pool by hand in M1.
-- **CTR-14 — multi-tranche redemption topology — DECIDED 2026-06-21 → (b) per-silo redemption, REFRAMED + SCOPED**
-  (`build/tickets/contracts/CTR-14-multi-tranche-redemption-topology.md`). The off-ramp/queue is a hub singleton
-  (`OffRampModule` clone pinned to one `juniorTrancheSafe`; `ZipRedemptionQueue` single-requester +
-  `MultipleRequesters` revert; one `redeemController`); silos 2+ get NO redemption plumbing of their own and would
-  share silo-0's single-requester queue → serialize. **The reviewer's federation model (2026-06-21 chat) resolved
-  the fork → (b):** the senior is mutualized at the TOKEN layer (one `zipUSD`, one shared AMM/xALPHA/ICHI/oHYDX
-  substrate, one Timelock-`setCapacity`-curated minter set) while backing+risk+exit are isolated PER SILO. The
-  redemption queue is the one still-shared layer and the only thing reintroducing cross-silo coupling, so per-silo
-  redemption COMPLETES the isolation — it does NOT un-mutualize the dollar (the dollar was always shared; only the
-  par-redemption plumbing goes silo-local, matching the already-per-silo warehouse funding). **(a) rejected**
-  (couples silos), **(c) rejected** (flat-par multi-requester only matters if non-treasury actors redeem at par —
-  forbidden). **Build surface = deploy-topology, likely ZERO contract change:** `SiloDeployer` deploys a per-silo
-  `ZipRedemptionQueue` (early, before step-6 warehouse) + per-silo `OffRampModule` clone; drops the shared
-  `redemptionBox` SiloParams; per-silo non-commingling asserts. `ZipRedemptionQueue`/`OffRampModule` unchanged
-  (both already per-instance). **3 SUB-DECISIONS RESOLVED 2026-06-21:** (1) SiloRegistry binding → **OFF-REGISTRY**
-  (reviewer-decided; queue derivable via `warehouse.redemptionBox()`, matches the WAM posture) ⇒ **ZERO contract
-  change**; (2) CRE-02c fate → keep dormant + document (default; reviewer may flip); (3) deploy home → queue in
-  `SiloDeployer`, off-ramp in `JuniorTrancheDeployer` (default; reviewer may flip). **Keeper-half already (b)-compatible:**
-  CRE-02-R1's `pendingRequester` wait becomes a permanent no-op per silo (one requester each), harmless DiD, stays.
-  NOT yet cold-built — sub-decisions owed.
+- **CTR-14 — multi-tranche redemption topology — CLOSED 2026-06-21, NOT NEEDED (ticket deleted).** Scoped as "(b)
+  per-silo redemption queue," then a funding-path trace (`cre/buyburn-bid/workflow.go:130-142`,
+  `SzipBuyBurnModule.sol:370-385`, `ZipRedemptionQueue.sol`) showed it isn't required: **the buy-burn that fills a
+  junior holder's CoW exit is funded directly from that silo's OWN reservoir** (`maxWithdraw(warehouse)`), sized
+  per-silo each CRE tick — so silos are ALREADY independent on the exit path. The shared `ZipRedemptionQueue` is
+  **optional treasury plumbing** that converts a silo's idle *zipUSD* (the senior dollar, e.g. from the recycle
+  loop) into par USDC; the buy-burn module never calls it, and idle zipUSD can instead just be added single-sided
+  to the zipUSD/xALPHA ICHI LP (`LpStrategyModule`, 8-B6) for yield. So a second silo simply doesn't use the queue.
+  **Per-silo queues (the old "(b)") become worth building ONLY IF a 2nd silo ever wants to convert its idle zipUSD
+  via the queue** — at which point the shared queue is both unusable by it (single `redeemController` = silo-0's
+  Safe; `MultipleRequesters` guard) and a latent commingling path (its REDEEM'd USDC would land in silo-0's queue).
+  Until that demand is real: **leave the shared queue as-is; nothing to build.** (Keeper-half CRE-02-R1's
+  `pendingRequester` wait stays as harmless DiD.) Durable record = this note + the commit; ticket pruned.
 - **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
   The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
   while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
