@@ -49,6 +49,13 @@ const defaultWriteGasLimit = uint64(600_000)
 // conservative producer-side default for an unconfigured slot.
 const defaultMaxDeviationBps = uint64(500) // 5%
 
+// defaultSchedule pins the engine-epoch heartbeat cadence (used when cfg.Schedule == ""). The cadence is a
+// protocol choice, not a per-env detail, so it is pinned here rather than left to the deploy slot — an empty
+// slot would otherwise hand cron.Trigger an empty schedule. 6-field cron (sec min hour dom mon dow): every 5
+// minutes. With the ±5% per-push band, a large move converges over consecutive epochs well inside the on-chain
+// NAV TWAP window, so this cadence needs no material-move companion trigger.
+const defaultSchedule = "0 */5 * * * *" // every 5 minutes
+
 var (
 	bps10000 = big.NewInt(10_000)
 	scale1e18 = func() *big.Int { return new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil) }()
@@ -66,7 +73,7 @@ type Config struct {
 	XAlpha          string `json:"xAlpha"`          // the xALPHA token address (side-aware token0/token1 mapping)
 	ZipUSD          string `json:"zipUsd"`          // the zipUSD token address (side-aware token0/token1 mapping)
 	MaxDeviationBps uint64 `json:"maxDeviationBps"` // the NAV per-push band; 0 falls back to 500 (5%)
-	Schedule        string `json:"schedule"`        // engine-epoch cron, e.g. "0 */5 * * * *"
+	Schedule        string `json:"schedule"`        // engine-epoch cron; "" falls back to defaultSchedule ("0 */5 * * * *", every 5 min)
 	WriteGasLimit   uint64 `json:"writeGasLimit"`   // WriteReport gas limit; 0 falls back to 600_000
 
 	// MockMarks is the §8.9 mock-feed seam: when non-empty it is the deterministic LegMarks every node
@@ -86,10 +93,15 @@ type LegMarks struct {
 
 func initFn(c *Config, _ *slog.Logger, _ cre.SecretsProvider) (cre.Workflow[*Config], error) {
 	// One trigger: the engine-epoch cron heartbeat (§8.6 cadence). The "AND a material leg move" http.Trigger
-	// second handler is an additive own-later (SEAM-1) — the band clamp already converges large moves over
-	// epochs and the LP feed is liveness-only, so deferring it is liveness-safe.
+	// second handler is intentionally NOT built (not deferred): the ±5% band clamp caps every push regardless of
+	// trigger, so large moves converge over consecutive epochs anyway, and the on-chain NAV TWAP lags the
+	// protective side regardless of push cadence — a faster push buys no protection the TWAP doesn't provide.
+	schedule := c.Schedule
+	if schedule == "" {
+		schedule = defaultSchedule // pin the cadence; never hand cron.Trigger an empty schedule
+	}
 	return cre.Workflow[*Config]{
-		cre.Handler(cron.Trigger(&cron.Config{Schedule: c.Schedule}), onEpoch),
+		cre.Handler(cron.Trigger(&cron.Config{Schedule: schedule}), onEpoch),
 	}, nil
 }
 

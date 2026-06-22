@@ -562,3 +562,33 @@ func TestLegMarksJSONRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip: got %+v want %+v", got, m)
 	}
 }
+
+// guard: initFn pins the heartbeat cadence. An empty Schedule slot must NOT brick the workflow — the
+// defaultSchedule fallback applies so cron.Trigger never receives an empty schedule, while an explicit
+// Schedule is honored. Both build one handler with no error.
+func TestInitFnPinsSchedule(t *testing.T) {
+	if defaultSchedule == "" {
+		t.Fatal("defaultSchedule must be non-empty (it is the pin)")
+	}
+
+	// empty slot → fallback applied, workflow builds.
+	cEmpty := testConfig()
+	cEmpty.Schedule = ""
+	wf, err := initFn(cEmpty, nil, nil)
+	if err != nil {
+		t.Fatalf("empty schedule: initFn err = %v", err)
+	}
+	if len(wf) != 1 {
+		t.Fatalf("empty schedule: got %d handlers want 1", len(wf))
+	}
+
+	// explicit slot → honored, workflow builds.
+	cSet := testConfig() // Schedule = "0 */5 * * * *"
+	wf2, err := initFn(cSet, nil, nil)
+	if err != nil {
+		t.Fatalf("explicit schedule: initFn err = %v", err)
+	}
+	if len(wf2) != 1 {
+		t.Fatalf("explicit schedule: got %d handlers want 1", len(wf2))
+	}
+}
