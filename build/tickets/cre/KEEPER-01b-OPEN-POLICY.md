@@ -45,8 +45,10 @@ rotation) is fully specified and buildable as one ordered multi-leg Job. Lifted 
   below it). This is a **level check on the A1 live price** — no EMA / state store needed, so it ships in the core
   slice.
 
-**STILL OPEN (own slices, NOT this unblock):** none — the entire own-later set is CLOSED (see note below). Only D1
-(rotation) survives, and it is separately deferred to KEEPER-01c (the freeze rebuild).
+**STILL OPEN (own slices, NOT this unblock):** none — the entire own-later set is CLOSED (see note below). D1
+(rotation) is also moot: the freeze is live NAV-oracle accounting with the staked LP counted IN PLACE
+(`pathLockedLpEquity`); `commit`/`release` is a dormant manual exception-only lever, not a workstream (the old
+KEEPER-01c automation was dropped).
 
 > **CLOSED — the entire KEEPER-01b own-later set (reviewer-driven 2026-06-19): B1, B2, C1, C2, C3, C5.** These were
 > the regime / ve-allocation / epoch-cadence knobs: B1 (regime classifier + EMA), B2 (keeper STATE store), C1 (vote
@@ -54,8 +56,8 @@ rotation) is fully specified and buildable as one ordered multi-leg Job. Lifted 
 > relocated TWAP cadence steer). All cut: they are the ve-allocation / regime / epoch-cadence **process, which is
 > not built out in the MVP.** None is a build item. The strike-loop core already ships the only price-reactive
 > behavior in scope — the level-based B3 taper/halt (shrink at the amber tier, halt below the profitability
-> cutoff). The B/C rows below are retained only as the historical record of the questions. Rotation (D1) stays
-> separately deferred to KEEPER-01c.
+> cutoff). The B/C rows below are retained only as the historical record of the questions. Rotation (D1) is moot — the
+> freeze is live accounting (LP counted in place); `commit`/`release` is a dormant manual lever, not a workstream.
 
 ---
 
@@ -86,7 +88,7 @@ rotation) is fully specified and buildable as one ordered multi-leg Job. Lifted 
 ## D. Deferred (do NOT decide here)
 | # | Item | Why deferred |
 |---|---|---|
-| D1 | **main↔sidecar rotation** (`commit`/`release` sizing) | Entangled with `DurationFreezeModule`, which is **INCOMPLETE / premise-under-review** (can't move the staked LP that is the bulk of TVL — PROGRESS Open obligations + `wires/DurationFreezeModule.md`). Re-decide at the freeze rebuild = **KEEPER-01c**, not 01b. |
+| D1 | **main↔sidecar rotation** (`commit`/`release` sizing) | MOOT. The freeze is live NAV-oracle accounting — the staked LP (bulk of TVL) is counted IN PLACE via `pathLockedLpEquity`, not moved; `commit`/`release` is a dormant manual exception-only lever, not an automated workstream. No rotation policy to decide. |
 
 ---
 
