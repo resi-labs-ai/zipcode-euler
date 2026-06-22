@@ -81,11 +81,10 @@ track on it.
 - **The xALPHA price feed.** The bot that reports the xALPHA price can't be built until two things exist: a proven way to read the staking rate from Bittensor, and the real xALPHA token going live. Only a stub exists today.
 - **The real szALPHA/zipUSD pool, and the harvest bot that rides with it.** Hydrex hasn't launched the pool yet, so the junior share price can't value the real LP (it runs on a WETH/USDC placeholder until then). The harvest bot (KEEPER-01b) is part of this same component — it goes live alongside the real pool.
 - **The subgraph** is part of the frontend workstream — built after the app, and only if aggregated history is wanted (the app runs fine on direct contract reads without it). It also needs the event formats locked at deploy.
+- **The loss-recovery workflow.** When a borrower defaults, the seized bond (xALPHA) lands in `adminSafe`. Turning it into USDC is a CRE workflow that bridges the xALPHA to Bittensor, unstakes it, and swaps to TAO/USDC — so it can't be built until the bridge (8x-01) is live. Until then the xALPHA just accumulates safely in `adminSafe`. (The on-chain seize/slash contracts are already built; only this off-chain drain remains.)
 
-**Milestone 2 / before production:**
-- Default and loss handling (seizing the bond, recovering, writing off bad debt) is built but only switched on in Milestone 2, not at launch.
-- Create the real treasury wallet and the off-chain process that turns seized collateral into USDC to cover losses (Milestone 2).
-- Before going live, make all the currently-changeable wiring permanent — one final lock-down pass across the repo.
+**Before production:**
+- Make all the currently-changeable contract wiring permanent — one final lock-down pass across the repo (it's deliberately left re-pointable during the build).
 
 ---
 
