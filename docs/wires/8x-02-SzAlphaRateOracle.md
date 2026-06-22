@@ -52,7 +52,9 @@ row at `claude-zipcode.md:1505`).
   that moves NAV must not be served stale; the oracle **exposes** freshness, it does not silently serve old.
 - **`intrinsicAprBps()` (DERIVED view, `:130-143`).** `(rate_now / rate_prev − 1) × year / Δ` over the trailing
   checkpoint (`prevAnchor`, else `curAnchor`). **Floored at 0** (slash/decline/flat ⇒ `0`, never negative — return
-  type is `uint32`), **clamped to `aprCap`**, `0` until a trailing checkpoint exists. Never reverts; **advisory only**
+  type is `uint32`), **clamped to `aprCap`**, `0` until a trailing checkpoint exists. **Never reverts** — total for
+  ANY pushed rate via the BRIDGE-ADV-04 saturation guards (overflow-large growth ⇒ `aprCap`, overflow-large
+  denominator ⇒ `0`); **advisory only**
   — NAV does NOT consume it (NAV reads `exchangeRate()` directly). The annualization is **one expression**
   (`(rNow − rPrev) * BPS * SECONDS_PER_YEAR / (rPrev * dt)`): a two-step `growthBps`-then-annualize truncates real
   sub-bps per-tempo Bittensor growth to `0` (the bug the live netuid-64 data caught; the single expression recovers
