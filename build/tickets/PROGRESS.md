@@ -13,11 +13,8 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 **NEXT = reviewer picks** among the deferred candidates below — CTR-16 is DONE + COMMITTED (`4378f93`); CTR-15
 follow-up (b) is DONE (notes immediately under). One item moves at a time; the reviewer selects the next forward edge.
 
-Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); the **FE track**. **CTR-14 —
-CLOSED 2026-06-21, NOT NEEDED** (see Open-obligations entry): the buy-burn that fills junior exits is funded
-per-silo from each silo's own reservoir, so silos are ALREADY independent; the shared `ZipRedemptionQueue` is
-optional treasury plumbing (idle zipUSD → par USDC), not on the exit path. Ticket deleted. The CRE redemption
-(R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (CTR-15 follow-up (b) DONE — note below.)
+Deferred candidates: **SEAM-1** (CRE-03 material-move http trigger, own-later); the **FE track**. The CRE
+redemption (R)/(K) stack is COMPLETE — CRE-02 (K) + 02b + 02c + 04. (CTR-15 follow-up (b) DONE — note below.)
 
 - **CTR-15 follow-up (b) DONE (2026-06-20) — `FarmUtilityBorrowGuard` "borrow vault IS resting USDC" accuracy fix
   (docs/comments only, ZERO behavior change).** The deferred CTR-15 follow-up: the rename left an inverted factual
@@ -1432,19 +1429,6 @@ track on it.
   default-OFF `cron` handler in `cre/warehouse`. **Open fork RESOLVED at scoping → pro-rata by GATED free-liquidity**
   (`availP`): a starved/undercovered pool gets weight 0 ⇒ skipped automatically. Utilization-balancing +
   curator-priority are own-later upgrades. Ships default-OFF; ops picks the pool by hand in M1.
-- **CTR-14 — multi-tranche redemption topology — CLOSED 2026-06-21, NOT NEEDED (ticket deleted).** Scoped as "(b)
-  per-silo redemption queue," then a funding-path trace (`cre/buyburn-bid/workflow.go:130-142`,
-  `SzipBuyBurnModule.sol:370-385`, `ZipRedemptionQueue.sol`) showed it isn't required: **the buy-burn that fills a
-  junior holder's CoW exit is funded directly from that silo's OWN reservoir** (`maxWithdraw(warehouse)`), sized
-  per-silo each CRE tick — so silos are ALREADY independent on the exit path. The shared `ZipRedemptionQueue` is
-  **optional treasury plumbing** that converts a silo's idle *zipUSD* (the senior dollar, e.g. from the recycle
-  loop) into par USDC; the buy-burn module never calls it, and idle zipUSD can instead just be added single-sided
-  to the zipUSD/xALPHA ICHI LP (`LpStrategyModule`, 8-B6) for yield. So a second silo simply doesn't use the queue.
-  **Per-silo queues (the old "(b)") become worth building ONLY IF a 2nd silo ever wants to convert its idle zipUSD
-  via the queue** — at which point the shared queue is both unusable by it (single `redeemController` = silo-0's
-  Safe; `MultipleRequesters` guard) and a latent commingling path (its REDEEM'd USDC would land in silo-0's queue).
-  Until that demand is real: **leave the shared queue as-is; nothing to build.** (Keeper-half CRE-02-R1's
-  `pendingRequester` wait stays as harmless DiD.) Durable record = this note + the commit; ticket pruned.
 - **DEPLOY OBLIGATION (raised 2026-06-20, CRE-02) — `KEEPER_ADDR_ZipRedemptionQueue == OffRampModule.queue()`.**
   The keeper's startup `IdentityCheck` validates the queue `controller()` on the **configured** queue address,
   while `RedemptionJob` resolves the LIVE queue off `offramp.queue()` each tick (§17 re-pointable). Deploy must
