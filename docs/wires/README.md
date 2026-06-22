@@ -138,8 +138,9 @@ These recur across many components and are where the item-10 deploy script lives
 2. **The `ReceiverTemplate` identity-seal family.** Every CRE-driven contract `is ReceiverTemplate`:
    `ZipcodeController`, `ZipcodeOracleRegistry`, `WarehouseAdminModule`, `DefaultCoordinator`,
    `SzipNavOracle`, `SzAlphaRateOracle`. Each needs, in order, at deploy: Forwarder wired (ctor) →
-   `setExpectedAuthor`/`setExpectedWorkflowId` (S10b) → the `ZipcodeDeployAsserts.requireIdentityWired`-style
-   pre-gate (`getExpectedWorkflowId() != 0`) → `transferOwnership(timelock)` (S11). The identity check is
+   `setExpectedAuthor`/`setExpectedWorkflowName` (S10b, CTR-16 — the `workflowId` pin is dropped) → the
+   `ZipcodeDeployAsserts.requireIdentityWired(address[], registry)` per-receiver pre-gate (author≠0 AND name≠0) →
+   `transferOwnership(timelock)` (S11). The identity check is
    **conditional on the expected values being non-zero** — sealing before they are set permanently bypasses it.
    This must be a **tested negative** per contract, not an unexercised assert line (`WOOF-10a.md`).
 

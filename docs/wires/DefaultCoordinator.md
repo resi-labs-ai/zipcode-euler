@@ -127,7 +127,7 @@ needs the escrow. The item-10 sequence (ticket KR-15 + the created obligation):
 7. **Assert before hand-off** (a hard tested `require`, not prose): two-way `escrow.coordinator() == coordinator` AND
    `coordinator.escrow() == escrow` (so the max approval landed on the verified escrow); `oracle.defaultCoordinator()
    == coordinator`; `coordinator.navOracle() == oracle`; `coordinator.getForwarderAddress() ==` the intended Forwarder;
-   **`coordinator.getExpectedWorkflowId() != 0`** (else sealed "Forwarder-gated but workflow-blind" — any DON workflow
+   **`coordinator.getExpectedAuthor() != 0` AND `getExpectedWorkflowName() != 0`** (CTR-16: the seal is author + per-receiver `workflowName`, the `workflowId` pin dropped; else sealed "Forwarder-gated but workflow-blind" — any DON workflow
    could drive reportType-8 actions); `xAlpha.allowance(coordinator, escrow) == type(uint256).max`.
 8. `transferOwnership(timelock)` — **NOT `renounceOwnership`** (§17 build phase: the owner is the Timelock, the same
    admin that owns the engine Zodiac modules' CRE flows; ownership is transferred, not renounced).

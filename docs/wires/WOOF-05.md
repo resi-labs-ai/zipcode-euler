@@ -187,7 +187,7 @@ before `burn`**. It never holds the lien outside an origination/close call windo
   erebor` (the same address, wired separately — defense-in-depth, WOOF-04 F2).
 - **Forwarder / identity (the CRE side).** `ReceiverTemplate(forwarder)` pins the Chainlink Keystone Forwarder
   (`CRE_KEYSTONE_FORWARDER`, WOOF-00) at construction. The CRE workflow identity is wired post-deploy via
-  `setExpectedAuthor(author)` + `setExpectedWorkflowId(workflowId)` (S10b), which activates the conditional
+  `setExpectedAuthor(author)` + `setExpectedWorkflowName(name)` (S10b, CTR-16 — the `workflowId` pin is dropped), which activates the conditional
   identity gate. The CRE Go workflow (§8) ABI-encodes reports as `abi.encode(uint8 reportType, bytes payload)`
   exactly matching the `_processReport` dispatch table.
 
@@ -195,7 +195,7 @@ Spec/PROGRESS grounding: `claude-zipcode.md` §4.4 (5-arg ctor `(forwarder, venu
 erebor)`, no EVC handle; immutable-Forwarder-via-non-virtual-setters reconciled to "transfer to Timelock, not
 renounce" 2026-06-09); `tickets/PROGRESS.md` item-6/WOOF-05 row (BUILT-VERIFIED, 26/26 live-fork) + item-10
 obligations (5-arg ctor, `ZIP_ORACLE_REG.setController` at S6, identity-set-then-`transferOwnership(timelock)`
-with the `getExpectedWorkflowId() != 0` pre-gate).
+with the per-receiver author≠0 AND name≠0 pre-gate, CTR-16).
 
 ## Item-10 deploy facts
 The controller's deploy/wiring is **item-10 (§9)**:
@@ -206,16 +206,18 @@ The controller's deploy/wiring is **item-10 (§9)**:
   freshly-deployed controller (registry deployed earlier at S3).
 - **No `controller.wireVenueOperator(EVC)` step** — REMOVED by the per-line borrower model; each line's operator
   grant is issued inside `openLine` by the adapter's `LineAccount`. The controller has no EVC deploy step at all.
-- **S10b — set identity:** `controller.setExpectedAuthor(AUTHOR)` + `controller.setExpectedWorkflowId(WID)`
-  (activates the conditional identity gate; both `onlyOwner`).
-- **S11 — finalize ownership with a hard pre-gate:** assert `controller.getExpectedWorkflowId() != 0` **and**
+- **S10b — set identity (CTR-16):** `controller.setExpectedAuthor(AUTHOR)` +
+  `controller.setExpectedWorkflowName(WORKFLOW_NAME_CONTROLLER)` (the `workflowId` pin is dropped; activates the
+  conditional identity gate; both `onlyOwner`).
+- **S11 — finalize ownership with a hard pre-gate:** assert `controller.getExpectedAuthor() != 0` **and**
+  `getExpectedWorkflowName() != 0` **and**
   `ZIP_ORACLE_REG.controller() != 0` immediately before sealing, aborting the deploy otherwise (security F-3 /
   F-1). **Code-supported posture (reconciliation):** the kept `ReceiverTemplate` exposes both
   `renounceOwnership()` (inherited OZ `Ownable`) and `transferOwnership(addr)`. The older ticket/spec wording
   said "S11 renounceOwnership"; the **current spec (§4.4, revised 2026-06-09) and §17 build-phase doctrine say
   `transferOwnership(timelock)`, NOT renounce** — so CRE workflows can be rebuilt/upgraded behind the ≈2-day
   Timelock veto. The contract supports either (it adds no override); item-10 should use
-  `transferOwnership(timelock)` guarded by the same `getExpectedWorkflowId() != 0` pre-gate. (The pre-gate is the
+  `transferOwnership(timelock)` guarded by the same author≠0 AND name≠0 pre-gate. (The pre-gate is the
   ONLY on-chain defense against the dormant-identity-gate — the contract itself cannot enforce identity-before-
   seal.)
 

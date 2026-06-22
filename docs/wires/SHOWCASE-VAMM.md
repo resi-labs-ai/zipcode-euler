@@ -50,7 +50,7 @@ then `_exec(pair, IVammPair.mint(juniorTrancheEngine))`, decode `shares`, `share
   (token0 = HYDX `0x00000e7e…`, token1 = USDC), gauge `0x2dA5744C7205ae9CacBB1AB8a72A2fA3896d39F8` (alive,
   rewardToken oHYDX). The oracle's `setLpPosition(pair, gauge)` and the module's `setUp(…, pair, gauge)` use the same.
 - **Demo oracle ← the prod CRE leg feed.** Same forwarder + sealed identity (`setExpectedAuthor 0x90F7…` /
-  `setExpectedWorkflowId 0x…01`), so the existing reportType-7 HYDX leg push feeds `legCache[LEG_HYDX_USD]` (used to
+  `setExpectedWorkflowName "zip-sharefeeds"`, CTR-16 — the `workflowId` pin is dropped), so the existing reportType-7 HYDX leg push feeds `legCache[LEG_HYDX_USD]` (used to
   price the LP's HYDX reserve). It also reads the szipUSD `shareToken` + `juniorTrancheEngine` (= the prod ones).
 - **Demo oracle ← `SzAlphaRateOracle` (REQUIRED — build-discovered).** `setXAlphaRateOracle(0x7251A305…)` MUST be wired
   or `grossBasketValue` reverts on the juniorTrancheSidecar's xALPHA leg (the fallback reads the mock mirror, which has no
@@ -66,7 +66,7 @@ then `_exec(pair, IVammPair.mint(juniorTrancheEngine))`, decode `shares`, `share
 ## Deploy facts (`DeployShowcaseVAMM.s.sol`, run after the main deploy, as the team)
 - `new SzipNavOracleDemoVAMM(...)` (same ctor/params as the live prod oracle: `W=3600`, `maxAge=86400`,
   `maxDeviationBps=1000`); then `setShareToken` / `setJuniorTrancheEngine` / `setLpPosition(pair, gauge)` /
-  `setXAlphaRateOracle(SzAlphaRateOracle)` / `setExpectedAuthor` / `setExpectedWorkflowId`.
+  `setXAlphaRateOracle(SzAlphaRateOracle)` / `setExpectedAuthor` / `setExpectedWorkflowName` (CTR-16).
 - `_cloneModule(new LpStrategyModuleDemoVAMM(), setUp(team, juniorTrancheSafe, op, pair, gauge), juniorTrancheSafe)` via the Zodiac
   `ModuleProxyFactory` (distinct salt), then `enableModule` on the main Safe via the team's 1-of-n pre-validated
   `execTransaction` (copied verbatim from `DeployZipcode._cloneModule`/`_enableModuleOnSafe`/`_execAsTeam`).

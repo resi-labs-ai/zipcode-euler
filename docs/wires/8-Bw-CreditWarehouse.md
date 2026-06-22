@@ -153,11 +153,12 @@ and the owner handoff (7, asserts final owners == `godOwner` on both). It assert
 (`getOwners`/`getThreshold`; Roles `avatar`/`target`/`owner`) **before** scoping — never trusting a CREATE2 address
 blindly (a front-run with different init params resolves to a different address; the assert fails closed). What it
 **deliberately leaves to item-10 / §4.4 S11** (PROGRESS rows 363/364/333):
-- **Identity seal (row 364):** `setExpectedWorkflowId(...)` → `transferOwnership(timelock)` with
-  `getExpectedWorkflowId() != 0` asserted **before** the hand-off (§17 build-phase = transfer to the Timelock,
-  NOT renounce). **Do NOT fund the warehouse before identity is set** — while `expectedWorkflowId == 0` the
-  per-workflow gate is OFF and any Forwarder-relayed workflow could drive ops. Use a distinct Forwarder
-  identity/workflowId.
+- **Identity seal (row 364, CTR-16):** `setExpectedAuthor` + `setExpectedWorkflowName(WORKFLOW_NAME_WAREHOUSE)`
+  (the `workflowId` pin is dropped, left `bytes32(0)`) → `transferOwnership(timelock)`, with author≠0 AND name≠0
+  asserted **before** the hand-off (§17 build-phase = transfer to the Timelock, NOT renounce). **Do NOT fund the
+  warehouse before identity is set** — while the name is unset the per-workflow gate is OFF and any
+  Forwarder-relayed workflow could drive ops. Use a distinct workflow identity (the warehouse's own
+  `WORKFLOW_NAME_WAREHOUSE` + the shared author).
 - **`redemptionBox` wiring (row 364b):** point it at the item-9 `ZipRedemptionQueue`, which MUST be
   **immutable/non-sweepable** (the residual chokepoint a compromised CRE could REDEEM→REPAY into).
 - **Drain-defense (row 364c, ELEVATED optional→recommended):** a Roles `WithinAllowance` rate-limit and/or a

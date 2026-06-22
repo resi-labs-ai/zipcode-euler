@@ -23,7 +23,7 @@ on-chain plausibility band (integrity is upstream: Proof + DON consensus + the T
 | `ReceiverTemplate` (`reference/x402-cre-price-alerts/.../ReceiverTemplate.sol`, `is IReceiver, Ownable`) | Inherited base: holds the **private** `s_forwarderAddress`, gates `onReport` on the Forwarder + optional workflow identity, then calls the `_processReport` hook the registry overrides. Provides `getForwarderAddress()`/`get/setExpectedAuthor`/`get/setExpectedWorkflowId`/`get/setExpectedWorkflowName` + `Ownable`. Its `onReport`/`setForwarderAddress` are **non-virtual**. |
 | `BaseAdapter` (`euler-price-oracle/adapter/BaseAdapter.sol`) | Inherited base: concrete `getQuote`/`getQuotes` externals (return `(out, out)` = `bid==ask==mid`) delegating to the `_getQuote` hook the registry overrides; `_getDecimals` helper (silent-18 — used only for the trusted `quote`); re-exports `Errors` + `IPriceOracle`. No constructor. |
 | `ScaleUtils` (`euler-price-oracle/lib/ScaleUtils.sol`) | `calcScale(18, quoteDec, quoteDec)` → the `Scale` used at read time by `calcOutAmount(inAmount, price, scale, false)`. |
-| `ZipcodeDeployAsserts` (`contracts/src/ZipcodeDeployAsserts.sol`) | item-10 deploy library: `requireIdentityWired(controller, registry)` reads `registry.controller()` and the controller's `getExpectedWorkflowId()`, reverting `IdentityNotWired` if either is unset — the fail-closed pre-gate before the final wiring lock. |
+| `ZipcodeDeployAsserts` (`contracts/src/ZipcodeDeployAsserts.sol`) | item-10 deploy library: `requireIdentityWired(address[] receivers, address registry)` (CTR-16) reads `registry.controller()` and, for EACH receiver, its `getExpectedAuthor()` AND `getExpectedWorkflowName()`, reverting `IdentityNotWired` if any is unset — the fail-closed per-receiver pre-gate before the final wiring lock. |
 
 ## Wiring — internal
 **Constructor** (`:72`):
@@ -108,7 +108,8 @@ cross-ticket obligation** (PROGRESS row "3 · ZipcodeOracleRegistry": validate a
 
 **Open cross-ticket obligations naming this component (PROGRESS.md):**
 - item-10 (§9): `ZIP_ORACLE_REG.setController(ZIP_CONTROLLER)` at S6; the **S11 identity pre-gate** asserting
-  `getExpectedWorkflowId() != 0 && registry.controller() != 0` before the final wiring lock — **GATE PORTION
+  per-receiver `getExpectedAuthor() != 0 && getExpectedWorkflowName() != 0 && registry.controller() != 0` (CTR-16)
+  before the final wiring lock — **GATE PORTION
   TESTED** by WOOF-10a (`ZipcodeDeployAsserts.requireIdentityWired` + a tested negative); `setController`-at-S6
   wiring is **STILL OPEN**.
 - WOOF-04 (§4.7): each per-line `ROUTER_i` wired `escrowVault → LIEN_i → ZIP_ORACLE_REG` then frozen — **DISCHARGED**.
@@ -134,7 +135,7 @@ new ZipcodeOracleRegistry(forwarder, quote_, validityWindow_)
 - `setQuote(address)` — re-point unit of account (re-derives `scale`). Re-pointable.
 - `setValidityWindow(uint256)` — re-set the staleness window. Re-pointable.
 - (inherited) `setForwarderAddress`, `setExpectedAuthor`, `setExpectedWorkflowName`, `setExpectedWorkflowId` —
-  the S10b identity wiring goes through `setExpectedWorkflowId`/`setExpectedAuthor`.
+  the S10b identity wiring goes through `setExpectedWorkflowName`/`setExpectedAuthor` (CTR-16 — the `workflowId` pin is dropped, though its setter is retained).
 
 **Ownership posture (kept-code = §17 build-phase Timelock-settable):** owner is the deployer, then handed to the
 **Timelock**; ALL wiring stays Timelock-re-pointable. The ticket/report/spec/`ZipcodeDeployAsserts` still describe
@@ -143,9 +144,9 @@ pre-prod**; the deploy holds owner = Timelock instead. (See Gotchas — this is 
 kept code.)
 
 **Asserts that must hold (S11 pre-gate, before any irreversible lock):**
-- `ZipcodeDeployAsserts.requireIdentityWired(ZIP_CONTROLLER, ZIP_ORACLE_REG)` passes ⇒ `registry.controller() !=
-  address(0)` (else `seedPrice` is permanently unreachable — `NotController` forever) AND the controller's
-  `getExpectedWorkflowId() != bytes32(0)` (else the conditional identity gate degrades `onReport` to Forwarder-
+- `ZipcodeDeployAsserts.requireIdentityWired(receivers, ZIP_ORACLE_REG)` passes ⇒ `registry.controller() !=
+  address(0)` (else `seedPrice` is permanently unreachable — `NotController` forever) AND each receiver's
+  `getExpectedAuthor() != 0 && getExpectedWorkflowName() != 0` (CTR-16; else the conditional identity gate degrades `onReport` to Forwarder-
   sender-only, the dormant-identity vuln). The deploy test MUST include a **tested negative** (renounce/lock with
   either unset reverts at the gate).
 - Post-S3 sanity: `getForwarderAddress() == FORWARDER`, `quote() == USDC`, `validityWindow() > 0`,

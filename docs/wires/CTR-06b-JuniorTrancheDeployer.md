@@ -23,7 +23,7 @@ It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the 
 |---|---|
 | `JuniorTrancheDeployer` (`is SummonSubstrate`, so `is Script`) | The callable. `deploy(JuniorParams)` runs the 17-step junior build in load-bearing order, reproduces every `DeployZipcode` seam assert, seals the two `ReceiverTemplate`s' CRE identity, hands the OZ-ownable contracts to the Timelock and BOTH Baal Safes to the persistent `team`, and returns a `JuniorTranche` handle struct. |
 | `SummonSubstrate` (inherited) | Supplies `_summon(address,uint256)` + `computeMainSafe` + the `Substrate` struct. The deployer self-summons (`_summon(address(this), saltNonce)`). |
-| `IReceiverIdentitySet` (local interface) | The `setExpectedAuthor`/`setExpectedWorkflowId` seal surface on the `ReceiverTemplate`s (`SzipNavOracle`, `DefaultCoordinator`). |
+| `IReceiverIdentitySet` (local interface) | The `setExpectedAuthor`/`setExpectedWorkflowName` seal surface on the `ReceiverTemplate`s (`SzipNavOracle`, `DefaultCoordinator`) — CTR-16: author + per-receiver `workflowName`; the `workflowId` pin is dropped. |
 
 ## Wiring — internal (the deploy model)
 - **Why self-summon (load-bearing).** CTR-06c calls `new JuniorTrancheDeployer().deploy(...)`, so every internal

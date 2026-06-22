@@ -65,11 +65,11 @@ function requireReceiverIdentityWired(address receiver) internal view {
   `getExpectedWorkflowId()` re-check is left optional for item 10.)
 - **Dormancy selector-difference demo (the proof the gate is load-bearing),** asserted in
   `test_NegativeControl_DormantVsActiveIdentity_SelectorDifference`:
-  - **Dormant** (identity never set + ownership renounced → permanently unwired): a wrong-`workflowId`
+  - **Dormant** (identity never set + ownership renounced → permanently unwired): a wrong-identity
     reportType-3 `onReport` gets PAST the skipped identity check and reverts only on dispatch →
     `ZipcodeController.UnsupportedReportType(3)`. This IS the vuln.
-  - **Gate-active** (a separate non-renounced controller with `setExpectedWorkflowId(WID)`): the SAME report
-    reverts `ReceiverTemplate.InvalidWorkflowId(WRONG_WID, WID)` FIRST (identity check fires before dispatch).
+  - **Gate-active** (a separate non-renounced controller sealed with `setExpectedWorkflowName(NAME)`, CTR-16): the SAME report
+    reverts `ReceiverTemplate.InvalidWorkflowName(WRONG, NAME)` FIRST (identity check fires before dispatch).
   - The **selector difference** (`UnsupportedReportType` vs `InvalidWorkflowId`) is the proof that an unset
     identity silently degrades `onReport` to a Forwarder-sender-only path.
   - `metadata` is built `abi.encodePacked(WRONG_WID, bytes10(0), WORKFLOW_OWNER)` per `_decodeMetadata` fixed
@@ -97,8 +97,9 @@ function requireReceiverIdentityWired(address receiver) internal view {
 
 ## Item-10 deploy facts
 - **Where imported/called:** item 10's deploy script imports `ZipcodeDeployAsserts` and calls
-  `requireIdentityWired(controller, registry)` at **S11**, AFTER **S10b** sets identity
-  (`setExpectedAuthor(WORKFLOW_OWNER)` + `setExpectedWorkflowId(WORKFLOW_ID)` on every receiver) and AFTER **S6**
+  `requireIdentityWired(address[] receivers, address registry)` at **S11** (CTR-16: takes the receiver array, asserts
+  EACH sealed receiver individually), AFTER **S10b** sets identity (`setExpectedAuthor(WORKFLOW_OWNER)` +
+  `setExpectedWorkflowName(<per-receiver daemon name>)` on every receiver — the `workflowId` pin is dropped) and AFTER **S6**
   seeds the registry (`registry.setController(ZIP_CONTROLLER)`), and IMMEDIATELY BEFORE the final ownership
   hand-off. Because the library is `internal`, it compiles into the deploy script — no separate deployment.
 - **Tested-negative requirement (the discharge):** the deploy test MUST include a run that attempts the hand-off
