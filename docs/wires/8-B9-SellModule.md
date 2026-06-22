@@ -1,5 +1,10 @@
 # 8-B9 SellModule — Algebra swap seam (sellHydx HYDX→USDC + buyXAlpha zipUSD→xALPHA + sellXAlpha xALPHA→zipUSD) (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** — recipient/pair hard-pinned to the vault; the HYDX size cap
+> is the distinctive control (the minimum-out bounds price, the cap bounds size). Proven unit + live Algebra
+> router (34 unit + 4 fork). Report: `contracts/src/supply/szipUSD/x-ray/SellModule.md` (scope:
+> `portfolio-map.md`). ELI20: `docs/supply/szipUSD/SellModule.md`. This doc is the code-truth wiring map.
+
 > Source of truth = `contracts/src/supply/szipUSD/SellModule.sol` (the kept code is FINAL/AUTHORITATIVE — code
 > wins). Ticket `tickets/sodo/8-B9-sell-module.md` + report `reports/8-B9-report.md` are intent only.
 > Sibling engine modules: `ExerciseModule` (8-B8, the primary model), `FarmUtilityLoopModule` (8-B5),

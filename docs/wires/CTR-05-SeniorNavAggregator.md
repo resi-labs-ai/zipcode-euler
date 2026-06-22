@@ -1,5 +1,11 @@
 # SeniorNavAggregator — donation-immune Σ senior par-backing across silos (wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — pure-view senior-solvency telemetry (20 tests). Donation
+> immunity (reads the warehouse-owned position, never a raw pool balance) is directly proven, the per-silo math
+> is verbatim from the freeze module, and the zero-supply-returns-max breaker-safety case is tested. Telemetry,
+> not pricing. Report: `contracts/src/x-ray/SeniorNavAggregator.md`. ELI20: `docs/SeniorNavAggregator.md`. This
+> doc is the code-truth wiring map.
+
 > Source of truth = the kept code at `contracts/src/SeniorNavAggregator.sol` + its test
 > `contracts/test/SeniorNavAggregator.t.sol`. Ticket `build/tickets/contracts/CTR-05-senior-nav-aggregator.md` is
 > intent — the code is final. Fourth contract of the credit-warehouse scaling + federation workstream (CTR-02..10);

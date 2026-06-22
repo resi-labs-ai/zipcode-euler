@@ -1,5 +1,11 @@
 # WOOF-01 — LienCollateralToken + LienTokenFactory (wiring map)
 
+> **X-Ray (security verdict):** both rated **HARDENED** — uniquely in the subsystem they carry no build-phase
+> mutable wiring (immutable controller / stateless factory). `LienCollateralToken`: fixed 1e18 mint-once,
+> controller-only burn, supply-only-shrinks. `LienTokenFactory`: caller-bound CREATE2 (squat-proof, single-use
+> forever). Reports under `contracts/src/x-ray/` (`LienCollateralToken.md`, `LienTokenFactory.md`). ELI20:
+> `docs/LienCollateralToken.md`, `docs/LienTokenFactory.md`. This doc is the code-truth wiring map.
+
 > Source of truth = `contracts/src/{LienCollateralToken,LienTokenFactory}.sol`. Ticket
 > `tickets/woof/WOOF-01-lien-collateral-token.md` + report `reports/WOOF-01-report.md` are intent.
 

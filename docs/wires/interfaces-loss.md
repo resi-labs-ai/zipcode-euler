@@ -1,5 +1,8 @@
 # interfaces-loss — `contracts/src/interfaces/loss/` (wiring map)
 
+> **X-Ray (trust surface):** internal seams (intra-protocol coupling, lower attack value), not external trust.
+> Trust map: `contracts/src/interfaces/x-ray/dependency-surface.md`; overview: `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = the kept code. These are the two **internal-seam** faces the loss-side consumer
 > (`DefaultCoordinator.sol`) holds of in-repo contracts it deliberately does NOT import. Signatures below
 > are read straight off the `.sol` files.

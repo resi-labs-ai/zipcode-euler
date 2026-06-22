@@ -16,13 +16,13 @@ The clone factory. Every engine module (and the warehouse's Roles instance) is a
 [contracts/script/CreditWarehouseDeployer.sol]
 [contracts/script/DeployZipcode.s.sol]
 [contracts/script/DeployShowcaseVAMM.s.sol]
-[wires/DeployZipcode.md]
+[../wires/DeployZipcode.md]
 
 - IRoles.sol → Zodiac Roles Modifier v2 (mastercopy `0x9646fDAD06d3e24444381f44362a3B0eB343D337`; each instance is a clone, no fixed address)
 The permission layer for the Credit Warehouse. At deploy the script scopes exactly which calls the warehouse may make — deposit/redeem to the senior pool, approve/repay USDC, and nothing else. At runtime WarehouseAdminModule forwards the four warehouse operations through it. The Roles scope is the security boundary.
 [contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol]
 [contracts/script/CreditWarehouseDeployer.sol]
-[wires/8-Bw-CreditWarehouse.md]
+[../wires/8-Bw-CreditWarehouse.md]
 
 Summaries:
 [../wires/interfaces-zodiac.md]

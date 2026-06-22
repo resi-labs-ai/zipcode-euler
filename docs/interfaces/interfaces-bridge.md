@@ -21,7 +21,7 @@ Bittensor 964
 ```
 
 [contracts/script/DeploySzAlphaBridge.s.sol]
-[wires/8x-01-szALPHA-bridge.md]
+[../wires/8x-01-szALPHA-bridge.md]
 
 - ISubtensorPrecompiles.sol → Bittensor 964 system precompiles
 Bittensor's built-in staking contracts on 964. SzAlpha stakes and prices through three of them:
@@ -35,7 +35,7 @@ AddressMapping   0x000000000000000000000000000000000000080C   look up the wrappe
 SzAlpha calls them low-level by selector, never as a normal typed call — a typed call to a Bittensor precompile never reaches the runtime.
 [contracts/src/bridge/SzAlpha.sol]
 [contracts/script/DeploySzAlphaBridge.s.sol]
-[wires/8x-01-szALPHA-bridge.md]
+[../wires/8x-01-szALPHA-bridge.md]
 
 - IXAlphaRate.sol → the xALPHA exchange-rate interface (internal)
 A single `exchangeRate()` getter: how much alpha one xALPHA is worth (18-dp). The rate comes straight from the staking accounts — staked alpha divided by supply. On 964, SzAlpha computes it natively; on Base, SzAlphaRateOracle serves the rate CRE pushed over. The NAV oracle reads it to value the xALPHA leg of the basket.
@@ -43,7 +43,7 @@ A single `exchangeRate()` getter: how much alpha one xALPHA is worth (18-dp). Th
 [contracts/src/bridge/SzAlphaRateOracle.sol]
 [contracts/src/supply/SzipNavOracle.sol]
 [contracts/src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol]
-[wires/8x-02-SzAlphaRateOracle.md]
+[../wires/8x-02-SzAlphaRateOracle.md]
 
 Summaries:
 [../wires/interfaces-bridge.md]

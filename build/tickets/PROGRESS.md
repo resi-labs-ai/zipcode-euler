@@ -10,7 +10,18 @@ open seams. One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 ## NEXT
 
-**NEXT = reviewer picks.** One item moves at a time: finish it, set the next `NEXT`, STOP.
+**SIZE-01 SHIPPED 2026-06-22 (`build/tickets/contracts/trim-eulervenueadapter.md`).** `EulerVenueAdapter` trimmed
+under EIP-170 via Option A: the three identical "withdraw `amount` from A, supply to B" reallocate builders
+(`fund`/`fundFarmUtility`/`defundFarmUtility`) folded into one internal `_eeMove(from, to, amount)` helper —
+behavior- and ABI-identical, read order preserved. **24614 (−38) → 24054 (+522 margin).** `forge test` green
+(1047 passed / 0 failed / 3 skipped); `DeployLocal --broadcast` completes clean (run log
+`broadcast/DeployLocal.s.sol/8453/runLocal-latest.json`). The already-applied SiloRegistry routing fix landed on
+this broadcast. `build/anvil/contract-map.md` regenerated — the three placeholders filled (`SiloRegistry`
+`0x86C2…FeDf2`, `LineIrm` `0xF6CA…BCd18`, `FarmUtilityBorrowGuard` `0x3b7c…1fAa3`); every other address kept its
+2026-06-10 value (bytecode edits don't move CREATE addresses, and the only inserted contract sorts last in the
+nonce order). `abi/index.json` gained the three entries (52 → 55). Doc-synced `docs/wires/WOOF-04.md`.
+
+**NEXT → reviewer picks.** One item moves at a time: finish it, set the next `NEXT`, STOP.
 
 Forward candidates:
 - **FE track** — the anvil-grounded frontend (Vue/viem in the `zipcode-finance-euler` layer). Lands last, once the rest is ready.

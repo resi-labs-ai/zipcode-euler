@@ -1,5 +1,11 @@
 # WOOF-10a — ZipcodeDeployAsserts (S11 deploy identity pre-gate, wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — the deploy-time assertion library defending the
+> dormant-identity hazard (12 tests). The hazard is concretely demonstrated (a receiver sealed before its
+> identity is wired accepts a wrong identity); the gate checks each receiver's author + workflow name and the
+> registry controller, fail-closed. No runtime surface. Report: `contracts/src/x-ray/ZipcodeDeployAsserts.md`.
+> ELI20: `docs/ZipcodeDeployAsserts.md`. This doc is the code-truth wiring map.
+
 > Source of truth = `contracts/src/ZipcodeDeployAsserts.sol` (read in full). Ticket
 > `tickets/woof/WOOF-10a-deploy-identity-gate.md` + report `reports/WOOF-10a-report.md` + spec §9 / §4.1-F7
 > are intent. This doc reads the kept code as the final form. Test: `contracts/test/ZipcodeDeployIdentityGate.t.sol`.

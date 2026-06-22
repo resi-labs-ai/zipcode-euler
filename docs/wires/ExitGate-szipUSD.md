@@ -1,5 +1,12 @@
 # ExitGate + szipUSD — the deposit/exit seam (wiring map)
 
+> **X-Ray (security verdict):** `ExitGate` rated **ADEQUATE** (a hair from HARDENED) — sole szipUSD
+> minter/burner; the two-token conservation (`szipUSD.totalSupply() == loot.balanceOf(gate)`) is under a fuzzed
+> stateful invariant vs the real Baal + oracle; no `ragequit` reachable. `SzipUSD` rated **ADEQUATE** (vanilla
+> non-rebasing ERC-20, gate-only mint/burn). Reports under `contracts/src/supply/szipUSD/x-ray/`
+> (`ExitGate.md`, `SzipUSD.md`; scope: `portfolio-map.md`). ELI20: `docs/supply/szipUSD/ExitGate.md`,
+> `…/SzipUSD.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code under `contracts/src/supply/szipUSD/{ExitGate,SzipUSD}.sol`. Ticket
 > (`tickets/sodo/8-B-exit-gate-szipusd.md`) + reports (`reports/Exit-Gate-report.md`,
 > `reports/credit-union-report.md`) are intent — **code wins.** This doc reads the code as the final form. The

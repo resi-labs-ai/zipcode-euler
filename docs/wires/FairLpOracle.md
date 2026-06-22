@@ -1,5 +1,20 @@
 # FairLpOracle — trustless on-chain ICHI-on-Algebra LP valuation (wiring map)
 
+> **X-Ray (three scopes feed this doc):**
+> - `AlgebraIchiFairLpOracle.sol` (the pricing wrapper, this doc's headline contract) — **ADEQUATE** (a hair
+>   from HARDENED); pro-rata-of-TVL rounded down against the borrower, fork-proven through `getQuote` on the live
+>   HYDX/USDC vault. Report: `contracts/src/supply/x-ray/AlgebraIchiFairLpOracle.md`; ELI20:
+>   `docs/supply/AlgebraIchiFairLpOracle.md`.
+> - `IchiAlgebraFairReserves.sol` (the TWAP-tick reserve reconstruction) — **ADEQUATE** (a hair from HARDENED);
+>   keystone proven by a live-fork manipulation test (300k-USDC swap moves spot >2%, fair quote <1%). Reports:
+>   `contracts/src/supply/lib/x-ray/` (`x-ray.md` + `IchiAlgebraFairReserves.md`); ELI20:
+>   `docs/supply/lib/IchiAlgebraFairReserves.md`. Top residual is off-chain: the Algebra TWAP's cardinality/window
+>   (X-2). The fail-closed reverts (`NoPlugin`/`BadTimepoints`) are the one untested in-file path.
+> - `ConcentratedLiquidity.sol` (the math foundation) — vendored UniV3 math, faithfulness DIFFED & CONFIRMED, no
+>   tier/verdict by nature; review at `contracts/src/libraries/x-ray/library-review.md`, ELI20
+>   `docs/libraries/concentrated-liquidity.md`. The residual it flags lands HERE, in the oracle's suite: confirm
+>   only in-domain inputs reach the lib (ticks within ±MAX_TICK; `getQuoteAtTick` base ≤ uint128).
+
 > Source of truth = the kept code (`src/supply/AlgebraIchiFairLpOracle.sol`, `src/supply/lib/IchiAlgebraFairReserves.sol`,
 > `src/libraries/ConcentratedLiquidity.sol`); the manipulation-invariance proof is the fork test
 > `test/AlgebraIchiFairLpOracle.t.sol`. This is the wires/ wiring map; docs are intent.

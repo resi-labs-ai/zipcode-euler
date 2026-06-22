@@ -1,5 +1,9 @@
 # interfaces-baal — `contracts/src/interfaces/baal/` (wiring map)
 
+> **X-Ray (trust surface): CRITICAL** — `IBaal.executeAsBaal` is a raw arbitrary call AS the DAO avatar
+> (consumer: `ExitGate`). Trust map: `contracts/src/interfaces/x-ray/dependency-surface.md`; overview:
+> `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = the kept code under `contracts/src/interfaces/baal/`. These are minimal local
 > interfaces (only the methods we call) for the **interface+fork** Baal / Moloch-v3 protocol on Base —
 > never compiled from source (OZ 4.x can't coexist with Euler's OZ 5.0.2; WOOF-00 Strategy A).

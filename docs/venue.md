@@ -41,11 +41,34 @@ Summaries:
 [wires/WOOF-04.md]
 
 ==================================================================================
+Security X-Ray (audit fidelity)
+
+Each contract has a dedicated, test-connected X-Ray under contracts/src/venue/x-ray/ (there is no scope-level overview file — EulerVenueAdapter.md is the anchor and summarizes its two siblings). The adapter is the most complex contract in the sweep and the one rated HARDENED; the seam and the borrower account are ADEQUATE.
+
+[contracts/src/venue/x-ray/EulerVenueAdapter.md] — HARDENED (modulo external-infra trust, the two-key deploy invariant, the pre-prod re-freeze, and no external audit)
+[contracts/src/venue/x-ray/IZipcodeVenue.md] — ADEQUATE (pure interface, conformance-proven both sides)
+[contracts/src/venue/x-ray/LineAccount.md] — ADEQUATE (constructor-only; every birth-time effect proven)
+
+[wires/SYSTEM-SEAM-MAP.md] — the cross-contract seam catalog
+
+The load-bearing properties an auditor should check (full catalog + test connection live in the X-Rays — 53 Base-fork tests against the real EVK / EVC / EulerEarn / EulerRouter stack):
+
+* The security model IS wiring discipline. openLine is a per-line isolated-market factory; the hard surfaces are all fork-proven: draw is pinned to the immutable off-ramp (F2), the curator submitCap is bounded to ONLY the freshly-minted vault (F3), reallocate sizing reads the EulerEarn TRACKED balance so a share donation can't grief it (SEC-11), and the per-line price router is frozen (governance transferred to address(0), so the price source can't be re-pointed).
+* The 30-market EulerEarn queue ceiling is the known scaling wall — and close reclaims BOTH queue slots (the supply queue, SEC-06, and the binding withdraw queue, CTR-04), so origination never permanently bricks at the cap. This is the densest test cluster (churn past the cap, concurrent reuse) and the right one: a leaked slot is unrecoverable.
+* Per-line isolation by construction. Each line gets a distinct EVC prefix; a foreign borrow account is rejected by the gating hook. LineAccount's single load-bearing line is the `^ 1` sub-account — both prefix-sharing (so the owner-self operator grant works) and code-free (so the EVC non-owner-code-free guard passes); get the XOR wrong and either deploy reverts or the borrow path is unauthorized. It is inert after birth (the graveyard model).
+* IZipcodeVenue is venue-neutral by construction — only bytes32/address/uint*/an opaque lineRef cross it, NO Euler types — so the controller stays venue-agnostic and a second venue is just another adapter (CTR-10c, deferred). Conformance is proven on both sides (the adapter implements it, the controller consumes it through the interface type).
+
+Residuals (inherent to the design, not code gaps):
+* External-infra trust — the EVK GenericFactory/EVault, EVC, EulerEarn, EulerRouter, the CREGatingHook, and the ZipcodeOracleRegistry price source are trusted dependencies (audited once, used per-line).
+* The two-key deploy invariant — farmUtilityAllocator MUST differ from the FarmUtilityLoopModule operator (so draining idle USDC needs both keys), but the adapter holds no reference to the loop module, so this cannot be asserted on-chain — only proven indirectly (the loop-operator key reverts NotFarmUtilityAllocator). Confirm the deploy wires distinct keys.
+* The build-phase wiring is Timelock-re-pointable until the deferred pre-prod immutable re-freeze (a process step, not on-chain enforced), and there is no external audit.
+
+==================================================================================
 References:
 
 The venue layer is driven from above by the controller and read by the federation machinery; underneath, the Euler adapter is built on the live Euler stack.
 
 - The controller is the sole caller — it routes a new loan to the current silo's adapter and drives open, fund, draw, and close through the interface — [contracts/src/ZipcodeController.sol] (CTR-03; [wires/WOOF-05.md]).
-- The silo registry admits a silo only after asking its adapter, through the venue-neutral senior-pool getter, who its senior pool is — [contracts/src/SiloRegistry.sol] (CTR-10b; [docs/siloregistry.md]).
+- The silo registry admits a silo only after asking its adapter, through the venue-neutral senior-pool getter, who its senior pool is — [contracts/src/SiloRegistry.sol] (CTR-10b; [docs/SiloRegistry.md]).
 - The senior NAV aggregator sums each silo's senior backing through the venue-neutral senior read, so it does not care which venue backs a silo — [contracts/src/SeniorNavAggregator.sol] (CTR-05; reads [contracts/src/interfaces/supply/ISeniorPool.sol], CTR-10a).
 - The Euler adapter uses, at line birth: the shared price registry [contracts/src/ZipcodeOracleRegistry.sol] (WOOF-02) and the borrow gating hook [contracts/src/CREGatingHook.sol] (WOOF-03). It installs the interest rate from its own interest-model slot, which the deploy fills with the roughly 7.5% model in [contracts/script/LineIrm.sol] (CTR-13). It funds lines out of, and is the curator of, the silo's EulerEarn senior pool.

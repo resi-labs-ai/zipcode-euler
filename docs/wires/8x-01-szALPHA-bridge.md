@@ -1,5 +1,12 @@
 # 8x-01 — szALPHA bridge: SzAlpha + SzAlphaMirror + lock/release lane + DeploySzAlphaBridge (wiring map)
 
+> **X-Ray (security verdict):** all five bridge contracts rated **ADEQUATE**; suite **55/55 + 22/22 green**.
+> Per-contract reports under `contracts/src/bridge/x-ray/` (index: `x-ray.md`). The X-Ray is the authoritative
+> security artifact — invariants (I-1/I-2/X-1/E-1), guards (G-1…G-18), trust model, test connection. This doc
+> is the code-truth wiring map. Cross-contract seams: `docs/wires/SYSTEM-SEAM-MAP.md` (note: the X-Ray's
+> bridge-local S-labels — e.g. S2 topology, S8/S9 deploy guards — are scoped to the bridge and are NOT the
+> system-map S-numbers).
+
 > Source of truth = the kept code under `contracts/src/bridge/` + `contracts/script/DeploySzAlphaBridge.s.sol`.
 > Ticket `tickets/bridge/8x-01-szalpha-wrapper-cct.md` + report `reports/8x-01-report.md` are intent only —
 > **the `.sol` is final/authoritative**. Every claim below was read out of the code.

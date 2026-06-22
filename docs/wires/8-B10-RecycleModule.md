@@ -1,5 +1,11 @@
 # 8-B10 — RecycleModule (single-sink recycle/payout engine + S1 divert) (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** — the only engine module with real mutable state (the
+> free-value ledger); two-layer enforcement (policy ceiling + hard-backing) and the cumulative divert bound
+> tested (40 unit + 2 fork, incl. a 5-test bound suite). Report:
+> `contracts/src/supply/szipUSD/x-ray/RecycleModule.md` (scope: `portfolio-map.md`). ELI20:
+> `docs/supply/szipUSD/RecycleModule.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/supply/szipUSD/RecycleModule.sol`. Tickets
 > `tickets/sodo/8-B10-recycle.md` + `tickets/sodo/S1-recycle-divert.md` and reports
 > `reports/8-B10-report.md` + `reports/S1-report.md` are intent — **code wins**. Spec: `claude-zipcode.md`

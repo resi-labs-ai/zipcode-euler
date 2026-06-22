@@ -15,12 +15,14 @@ per-junior tranche deployer, the per-silo analogue of `CreditWarehouseDeployer`,
 venue front into one complete silo, the final child of the re-scoped CTR-06, + its fork test), updated 2026-06-19
 (CTR-08 added the behavior note `CTR-08-structure-2-revolving.md` — structure-2 revolving lines as an operating mode
 over the as-built stack, ZERO contract change; the 5 revolving tests + the CTR-04 withdraw-queue mock regression fix
-land in the existing `test/ZipcodeController.t.sol`): **39 product
+land in the existing `test/ZipcodeController.t.sol`), updated 2026-06-22 (added the SEC-14
+`MastercopyInitLock.sol` init-lock mixin — inherited by all 9 szipUSD engine modules, previously documented
+inline across the engine wires but never inventoried): **40 product
 contracts + 11 scripts + 31 interface shims + 34 test/helper files**, plus a **demo/fork-only addendum** (section E): **2
 showcase contracts + 1 demo interface + 1 demo deploy script**, kept SEPARATE from the audited core counts. Nobody
 forgotten.
 
-## A. Product contracts (`src/`, non-interface) — 39 files
+## A. Product contracts (`src/`, non-interface) — 40 files
 | File | Doc |
 |---|---|
 | `src/SiloRegistry.sol` | `CTR-02-SiloRegistry.md` |
@@ -55,6 +57,7 @@ forgotten.
 | `src/supply/szipUSD/SzipBuyBurnModule.sol` | `8-B14-SzipBuyBurnModule.md` |
 | `src/supply/szipUSD/CloneReportReceiver.sol` | `8-B14-SzipBuyBurnModule.md` (CTR-01 — reusable clone-safe CRE report socket) |
 | `src/supply/szipUSD/SzipUSD.sol` | `ExitGate-szipUSD.md` |
+| `src/supply/szipUSD/MastercopyInitLock.sol` | SEC-14 init-lock mixin — no dedicated wire; documented inline across the engine wires (`8-B5-FarmUtilityLoop.md`…`8-B14-SzipBuyBurnModule.md` + `DurationFreezeModule.md` + `OffRampModule.md`); ELI20 `docs/supply/szipUSD/MastercopyInitLock.md` |
 | `src/loss/DefaultCoordinator.sol` | `DefaultCoordinator.md` |
 | `src/loss/LienXAlphaEscrow.sol` | `8-Bx-LienXAlphaEscrow.md` |
 | `src/bridge/SzAlpha.sol` | `8x-01-szALPHA-bridge.md` |

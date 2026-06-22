@@ -1,0 +1,3 @@
+# Raw panelist output + reconciled findings are scratch — never commit.
+reports/
+*.log

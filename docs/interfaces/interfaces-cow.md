@@ -19,7 +19,7 @@ We don't import CoW's real code — we hand-write a small interface listing only
 - IGPv2Settlement.sol → CoW Protocol `GPv2Settlement` `0x9008D19f58AAbD9eD0D60971565AA8510560ab41` (same address on every chain)
 CoW's settlement contract — where CoW trades execute. SzipBuyBurnModule uses it to rest a standing order to buy back szipUSD with USDC, signed directly on-chain (no private key).
 [contracts/src/supply/szipUSD/SzipBuyBurnModule.sol]
-[wires/8-B14-SzipBuyBurnModule.md]
+[../wires/8-B14-SzipBuyBurnModule.md]
 
 Summaries:
 [../wires/interfaces-cow.md]

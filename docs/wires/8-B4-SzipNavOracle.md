@@ -1,5 +1,11 @@
 # 8-B4 — SzipNavOracle (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** (a hair from HARDENED) — the economic keystone of the junior
+> vault and the best-tested contract in `supply/` (64 tests). The bracket asymmetry (issuance `max`, exit `min`)
+> defeats sub-window spot manipulation; the `committedValue()+freeValue()==grossBasketValue()` decomposition the
+> freeze floor relies on is pinned. Report: `contracts/src/supply/x-ray/SzipNavOracle.md`. ELI20:
+> `docs/supply/SzipNavOracle.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/supply/SzipNavOracle.sol` (read as the final form).
 > Ticket `tickets/sodo/8-B4-szip-nav-oracle.md` + report `reports/8-B4-report.md` are intent only — **code
 > wins**. Spec cites `claude-zipcode.md` §7/§12 (+ §4.4 reportType 7, §11/§4.6 provision, §17 W/genesis).

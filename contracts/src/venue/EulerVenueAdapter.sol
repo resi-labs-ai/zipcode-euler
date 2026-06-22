@@ -414,6 +414,23 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         return IEVault(market).previewRedeem(eulerEarn.config(IOZERC4626(market)).balance);
     }
 
+    /// @notice Shared absolute-target, zero-sum move: withdraw `amount` from `from` and supply it to `to` in one
+    ///         in-order reallocate (withdraw leg first, so the pass has cash before it deposits). BOTH absolute
+    ///         targets are sized off the EE's TRACKED supplied position (`_eeSupplyAssets` =
+    ///         `previewRedeem(config.balance)`, security L9/SEC-11) — donation-immune by construction (NOT
+    ///         `convertToAssets(balanceOf(EE))`, which a share donation skews into `InconsistentReallocation`).
+    ///         `fund`/`fundFarmUtility`/`defundFarmUtility` are this exact shape; reading `from` before `to`
+    ///         preserves each caller's original read order. (`closeLine`'s defund differs — absolute target 0 —
+    ///         and stays inline.)
+    function _eeMove(address from, address to, uint256 amount) internal {
+        uint256 fromBalance = _eeSupplyAssets(from);
+        uint256 toBalance = _eeSupplyAssets(to);
+        MarketAllocation[] memory allocs = new MarketAllocation[](2);
+        allocs[0] = MarketAllocation({id: IOZERC4626(from), assets: fromBalance - amount});
+        allocs[1] = MarketAllocation({id: IOZERC4626(to), assets: toBalance + amount});
+        eulerEarn.reallocate(allocs);
+    }
+
     /// @inheritdoc IZipcodeVenue
     function fund(address lineRef, uint256 amount) external onlyController {
         if (!lines[lineRef].open) revert UnknownLine(lineRef);
@@ -425,13 +442,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         // `maxWithdraw`, which is capped by idle cash and under-reads once a prior line borrowed the cash out).
         // Two-item allocation: withdraw `amount` from usdcReservoir, supply it to lineRef to reach the new
         // absolute target.
-        uint256 baseBalance = _eeSupplyAssets(usdcReservoir);
-        uint256 lineBalance = _eeSupplyAssets(lineRef);
-
-        MarketAllocation[] memory allocs = new MarketAllocation[](2);
-        allocs[0] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: baseBalance - amount});
-        allocs[1] = MarketAllocation({id: IOZERC4626(lineRef), assets: lineBalance + amount});
-        eulerEarn.reallocate(allocs);
+        _eeMove(usdcReservoir, lineRef, amount);
 
         emit LineFunded(lineRef, amount);
     }
@@ -622,13 +633,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     ///         single in-order reallocate pass has cash before it deposits). `onlyFarmUtilityAllocator` — a DISTINCT key
     ///         from the `FarmUtilityLoopModule.operator` (two-key separation): both are needed to move idle USDC out.
     function fundFarmUtility(uint256 amount) external onlyFarmUtilityAllocator {
-        uint256 base = _eeSupplyAssets(usdcReservoir);
-        uint256 res = _eeSupplyAssets(farmUtilityVault);
-
-        MarketAllocation[] memory allocs = new MarketAllocation[](2);
-        allocs[0] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: base - amount});
-        allocs[1] = MarketAllocation({id: IOZERC4626(farmUtilityVault), assets: res + amount});
-        eulerEarn.reallocate(allocs);
+        _eeMove(usdcReservoir, farmUtilityVault, amount);
     }
 
     /// @notice The inverse of `fundFarmUtility`: re-absorb `amount` USDC from the farm utility vault back to the resting
@@ -638,13 +643,7 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
     ///         out (no repay yet) REVERTS — the EVK withdraw leg has no cash (`E_InsufficientCash`); this is the
     ///         JIT/redemption-isolation discipline, NOT a silent under-defund. `onlyFarmUtilityAllocator`.
     function defundFarmUtility(uint256 amount) external onlyFarmUtilityAllocator {
-        uint256 res = _eeSupplyAssets(farmUtilityVault);
-        uint256 base = _eeSupplyAssets(usdcReservoir);
-
-        MarketAllocation[] memory allocs = new MarketAllocation[](2);
-        allocs[0] = MarketAllocation({id: IOZERC4626(farmUtilityVault), assets: res - amount});
-        allocs[1] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: base + amount});
-        eulerEarn.reallocate(allocs);
+        _eeMove(farmUtilityVault, usdcReservoir, amount);
     }
 
     /// @inheritdoc IZipcodeVenue

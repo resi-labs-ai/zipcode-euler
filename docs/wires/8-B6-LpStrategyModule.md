@@ -1,5 +1,11 @@
 # 8-B6 — LpStrategyModule (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** — owns the zipUSD/xALPHA ICHI LP lifecycle; the load-bearing
+> coverage path-lock (dissolve gated against the freeze floor) is tested across all three gate states (32 unit +
+> 5 fork on the live ICHI vault/gauge). Report:
+> `contracts/src/supply/szipUSD/x-ray/LpStrategyModule.md` (scope: `portfolio-map.md`). ELI20:
+> `docs/supply/szipUSD/LpStrategyModule.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/supply/szipUSD/LpStrategyModule.sol`. Ticket
 > `tickets/sodo/8-B6-lp-strategy.md` + report `reports/8-B6-report.md` are intent only — the code is final.
 > Test: `contracts/test/LpStrategyModule.t.sol`.

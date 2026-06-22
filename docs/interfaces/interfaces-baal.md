@@ -26,18 +26,18 @@ A Zodiac Module on a Gnosis Safe, launched inert, with the team set as owner. De
 [contracts/src/supply/szipUSD/ExitGate.sol]
 [contracts/script/SummonSubstrate.s.sol]
 [contracts/script/DeployZipcode.s.sol]
-[wires/8-B1.md]
-[wires/ExitGate-szipUSD.md]
+[../wires/8-B1.md]
+[../wires/ExitGate-szipUSD.md]
 
 - IBaalAndVaultSummoner.sol → the higher-order summoner `0x2eF2fC8a18A914818169eFa183db480d31a90c5D`
 Produces the Baal DAO + main Safe + a non-ragequittable juniorTrancheSidecar Safe in one transaction (`summonBaalAndVault`).
 [contracts/script/SummonSubstrate.s.sol]
-[wires/8-B1.md]
+[../wires/8-B1.md]
 
 - IBaalSummoner.sol → the base summoner factory `0x22e0382194AC1e9929E023bBC2fD2BA6b778E098`
 Used only to read the Gnosis Safe singleton for precomputing the main Safe's address during the summon. The actual DAO+Safe summon goes through the vault summoner above, not this one.
 [contracts/script/SummonSubstrate.s.sol]
-[wires/8-B1.md]
+[../wires/8-B1.md]
 
 - IBaalToken.sol → the Loot ERC20 clones
 The DAO's Loot token (per-DAO clone, paused at summon, owned by the Baal). Loot **is** minted/burned on every deposit/exit — but through `IBaal.mintLoot`/`burnLoot` (the manager shaman the ExitGate holds), never by calling this token directly. So nothing imports this shim for mint/burn; it's only the read/check surface for summon assertions (paused, owner == Baal, 18 decimals), reached via `IBaal.lootToken()`.

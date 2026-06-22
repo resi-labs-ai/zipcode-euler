@@ -1,5 +1,9 @@
 # interfaces-supply — `ISzipNavBasket` + `ISeniorPool` (wiring catalog)
 
+> **X-Ray (trust surface):** internal seams (intra-protocol coupling); `ISeniorPool` carries a documented
+> donation-immunity contract. Trust map: `contracts/src/interfaces/x-ray/dependency-surface.md`; overview:
+> `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = `contracts/src/interfaces/supply/{ISzipNavBasket,ISeniorPool}.sol`. This is a catalog of the shims, not their intent.
 
 ## Role

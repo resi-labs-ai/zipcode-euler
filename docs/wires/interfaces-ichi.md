@@ -1,5 +1,9 @@
 # interfaces-ichi — local ICHI shims (wiring map)
 
+> **X-Ray (trust surface): HIGH** — the prod LP path (valuation + mint); `getTotalAmounts` is the valuation
+> seam. Trust map: `contracts/src/interfaces/x-ray/dependency-surface.md`; overview:
+> `docs/interfaces/dependency-surface.md`. Note: `IICHIVaultFactory` + `IICHIDepositGuard` are STAGED (0 src consumers).
+
 > Source of truth = the kept code under `contracts/src/interfaces/ichi/`. This doc reads each shim as
 > the final form and records what external Base contract it stands in for, its declared surface, who
 > consumes it, and the gotchas. Addresses are pinned in `contracts/script/BaseAddresses.sol`.

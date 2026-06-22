@@ -16,13 +16,13 @@ A read-only view of `SzipNavOracle`. The DurationFreezeModule reads it to enforc
   - the path-locked LP equity and a per-share LP value — the freeze floor's coverage is committed value plus path-locked LP equity, and the LP-release check reads the per-share value;
   - the six movable asset addresses the oracle prices (zipUSD, USDC, xALPHA, HYDX, oHYDX, and the ICHI LP token).
 [contracts/src/supply/szipUSD/DurationFreezeModule.sol]
-[wires/DurationFreezeModule.md]
+[../wires/DurationFreezeModule.md]
 
 - ISeniorPool.sol → the venue-neutral senior-pool read (CTR-10a)
 A small read-only view of a silo's senior pool — its three donation-immune views (share balance, share-to-assets, and free liquidity right now). It is the generalization of the old EulerEarnUtil view: named for any venue, not just Euler, so a non-Euler senior surface can satisfy the same read. EulerEarn satisfies it directly. The SeniorNavAggregator and the DurationFreezeModule read each silo's senior backing through it, donation-immune (an outsider can't skew it by donating to the pool).
 [contracts/src/SeniorNavAggregator.sol]
 [contracts/src/supply/szipUSD/DurationFreezeModule.sol]
-[wires/interfaces-supply.md]
+[../wires/interfaces-supply.md]
 
 Summaries:
 [../wires/interfaces-supply.md]

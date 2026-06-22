@@ -1,5 +1,15 @@
 # 8-B5 — FarmUtilityLoop cluster (wiring map)
 
+> **X-Ray (security verdict):** `FarmUtilityLoopModule` rated **ADEQUATE** — the only module that borrows shared
+> depositor USDC; three independent bounds (aggregate cap + kill-switch, EVK health, borrow-guard account pin)
+> all proven on the real Euler market. `FarmUtilityBorrowGuard` rated **ADEQUATE** — the account-identity borrow
+> gate, proven on the live market. `SzipFarmUtilityLpOracle` (the CRE push-cache LP-collateral oracle, the
+> deploy default; `contracts/src/supply/x-ray/SzipFarmUtilityLpOracle.md`) rated **ADEQUATE** — fail-closed on a
+> stale/missing mark (the liveness contract); its trustless alternative is `AlgebraIchiFairLpOracle` (see
+> `FairLpOracle.md`). Reports under `contracts/src/supply/szipUSD/x-ray/` + `contracts/src/supply/x-ray/`
+> (scope: `portfolio-map.md`). ELI20: `docs/supply/szipUSD/FarmUtilityLoopModule.md`,
+> `…/FarmUtilityBorrowGuard.md`, `docs/supply/SzipFarmUtilityLpOracle.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code: `contracts/src/supply/szipUSD/FarmUtilityLoopModule.sol`,
 > `contracts/src/supply/SzipFarmUtilityLpOracle.sol`, `contracts/src/supply/szipUSD/FarmUtilityBorrowGuard.sol`,
 > `contracts/script/FarmUtilityMarketDeployer.sol`. Ticket `tickets/sodo/8-B5-farm utility-loop.md` + report

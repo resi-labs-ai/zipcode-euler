@@ -1,0 +1,21 @@
+# Inline context for SzAlphaLockReleasePool mission (Fugu / non-agentic).
+# Format: path OR path:start-end. '#' = comment.
+
+# --- contract under review ---
+contracts/src/bridge/SzAlphaLockReleasePool.sol
+
+# --- tests ---
+contracts/test/bridge/SzAlphaBridge.t.sol
+contracts/test/bridge/BridgeMocks.sol
+
+# --- source of truth: the audited Chainlink bases to diff against ---
+# LockReleaseTokenPool (whole — 66 lines)
+reference/chainlink-ccip/chains/evm/contracts/pools/LockReleaseTokenPool.sol
+# TokenPool shared base: immutables + constructor + lockOrBurn/releaseOrMint + RMN + decimals
+reference/chainlink-ccip/chains/evm/contracts/pools/TokenPool.sol:120-600
+# ERC20LockBox custody + interface
+reference/chainlink-ccip/chains/evm/contracts/pools/ERC20LockBox.sol
+reference/chainlink-ccip/chains/evm/contracts/interfaces/ILockBox.sol
+
+# --- deploy script (constructor args + topology placement + lane config) ---
+contracts/script/DeploySzAlphaBridge.s.sol

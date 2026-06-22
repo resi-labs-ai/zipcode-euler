@@ -1,0 +1,21 @@
+# Inline context for SzAlphaTokenPool mission (Fugu / non-agentic).
+# Format: path OR path:start-end. '#' = comment.
+
+# --- contract under review ---
+contracts/src/bridge/SzAlphaTokenPool.sol
+
+# --- tests ---
+contracts/test/bridge/SzAlphaBridge.t.sol
+contracts/test/bridge/BridgeMocks.sol
+
+# --- source of truth: the audited Chainlink bases to diff against ---
+# BurnMintTokenPool (whole — 36 lines)
+reference/chainlink-ccip/chains/evm/contracts/pools/BurnMintTokenPool.sol
+# TokenPool shared base: immutables + constructor + lockOrBurn/releaseOrMint + RMN + decimals
+reference/chainlink-ccip/chains/evm/contracts/pools/TokenPool.sol:120-600
+
+# --- the mirror it mints (mint-authority pairing) ---
+contracts/src/bridge/SzAlphaMirror.sol
+
+# --- deploy script (constructor args + grantMintAndBurnRoles + deployer revoke) ---
+contracts/script/DeploySzAlphaBridge.s.sol

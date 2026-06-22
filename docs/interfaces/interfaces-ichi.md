@@ -20,15 +20,15 @@ The automated LP vault the junior's liquidity sits in. The LP strategy deposits 
 [contracts/src/supply/SzipNavOracle.sol]
 [contracts/src/supply/AlgebraIchiFairLpOracle.sol]
 [contracts/src/supply/lib/IchiAlgebraFairReserves.sol]
-[wires/8-B6-LpStrategyModule.md]
+[../wires/8-B6-LpStrategyModule.md]
 
 - IICHIVaultFactory.sol → the ICHI vault factory `0x2b52c416F723F16e883E53f3f16435B51300280a`
 STAGED (not yet wired): creates and looks up ICHI vaults for the prod zipUSD/xALPHA pool. No src contract uses it — the production vault is created out of band and its address passed in. Kept for the create/lookup path and fork-test setup. Intentional forward scaffolding, not dead code.
-[wires/interfaces-ichi.md]
+[../wires/interfaces-ichi.md]
 
 - IICHIDepositGuard.sol → the ICHI deposit guard `0x9A0EBEc47c85fD30F1fdc90F57d2b178e84DC8d8`
 STAGED (not yet wired): a convenience deposit/withdraw forwarder for the prod ICHI pool. Not used — the engine deposits into the vault directly. Kept as a documented alternative. Intentional forward scaffolding, not dead code.
-[wires/interfaces-ichi.md]
+[../wires/interfaces-ichi.md]
 
 Summaries:
 [../wires/interfaces-ichi.md]

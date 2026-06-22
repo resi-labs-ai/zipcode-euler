@@ -1,5 +1,12 @@
 # DefaultCoordinator — loss-side orchestrator (NAV provision writer + xALPHA bond router) (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** (a hair from HARDENED) — the best-tested contract reviewed
+> (66 unit + 1 fuzz + 3 Foundry invariants). Full report: `contracts/src/loss/x-ray/DefaultCoordinator.md`;
+> scope overview: `contracts/src/loss/x-ray/x-ray.md`. The load-bearing properties — provision conservation
+> (totalProvision == Σ == oracle.provision()), the default bound, the lien status machine — are invariant-asserted.
+> Top residual is the §13 CRE trust ceiling (bounds-and-routes, grief-not-theft; on-chain=No by design). This doc
+> is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/loss/DefaultCoordinator.sol` +
 > `contracts/src/interfaces/loss/{ISzipNavOracle,ILienXAlphaEscrow}.sol`. Ticket
 > `tickets/loss/DefaultCoordinator.md` + report `reports/DefaultCoordinator-report.md` are intent only — **the

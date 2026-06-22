@@ -1,5 +1,12 @@
 # 8-B14 — SzipBuyBurnModule (wiring map)
 
+> **X-Ray (security verdict):** `SzipBuyBurnModule` rated **ADEQUATE** (a hair from HARDENED) — the protocol's
+> only exit valve, 52 tests (order-id known-answer vector + fork-verified CoW signing). Its inherited report
+> socket `CloneReportReceiver` (CTR-01) is **ADEQUATE** (fail-closed clone inversion, proven). Reports under
+> `contracts/src/supply/szipUSD/x-ray/` (`SzipBuyBurnModule.md`, `CloneReportReceiver.md`; scope:
+> `portfolio-map.md`). ELI20: `docs/supply/szipUSD/SzipBuyBurnModule.md`, `…/CloneReportReceiver.md`. This doc is
+> the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/supply/szipUSD/SzipBuyBurnModule.sol` +
 > `contracts/src/interfaces/cow/IGPv2Settlement.sol` (read as the final form). Ticket
 > `tickets/sodo/8-B14-buy-burn-module.md` + reports `reports/8-B14-report.md` /

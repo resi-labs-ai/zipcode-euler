@@ -1,5 +1,11 @@
 # WOOF-03 — CREGatingHook (wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — the per-line borrow/liquidate authorization gate (13
+> tests). The anti-spoof guard (trust the appended borrower only from a real vault proxy) is proven both ways,
+> the operator-auth matrix is covered, and re-pointing the borrow-driver is proven to re-target the gate.
+> Report: `contracts/src/x-ray/CREGatingHook.md`. ELI20: `docs/CREGatingHook.md`. This doc is the code-truth
+> wiring map.
+
 > Source of truth = `contracts/src/CREGatingHook.sol` (the kept, final form). Ticket
 > `tickets/woof/WOOF-03-cre-gating-hook.md` + report `reports/WOOF-03-report.md` + spec §4.3 are intent.
 > Where prose and code disagree, the code wins — every claim below was read off the `.sol`.

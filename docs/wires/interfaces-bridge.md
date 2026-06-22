@@ -1,5 +1,9 @@
 # interfaces-bridge — local interface shims for the szALPHA bridge (catalog)
 
+> **X-Ray:** the szALPHA bridge contracts these shims serve are all rated **ADEQUATE** — see
+> `contracts/src/bridge/x-ray/x-ray.md`. Wiring maps: `8x-01-szALPHA-bridge.md` (token + lane),
+> `8x-02-SzAlphaRateOracle.md` (rate transport).
+
 > Source of truth = the kept code under `contracts/src/interfaces/bridge/`. This doc reads each `.sol`
 > as the final form and records what it shims, its declared surface, who consumes it, and the gotchas.
 
@@ -146,4 +150,4 @@ interface IXAlphaRate {
   bridged Rubicon LST wrapper (`LiquidStakedV3`). **Verified 2026-06-12:** its `exchangeRate()` selector
   matches this face (verified source vendored at `reference/rubicon/LiquidStakedV3.flattened.sol`); note its
   rate nets pending treasury/yield fees, and Rubicon ships NO on-Base rate primitive — our `SzAlphaRateOracle`
-  push is an extension beyond the proven pattern. See `bridge/xalpha-bridge-impl.md §2` + `reference/rubicon/`.
+  push is an extension beyond the proven pattern. See `8x-01-szALPHA-bridge.md` §Provenance + `reference/rubicon/`.

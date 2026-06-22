@@ -8,7 +8,7 @@ Every contract on the live anvil board, with its ABI. Pairs with `../contract-ma
 - `external/*.json` — **external/live contracts** the protocol sits on (full verified ABIs from Basescan, plus the
   full EVK `IEVault` interface for our EVault proxies, and a canonical `ERC20.json` for tokens).
 - `index.json` — **the resolver**: maps each deployed **address → `{name, abi, kind}`**, where `abi` is the path to
-  the ABI file (relative to `build/anvil/`) and `kind` is `protocol` / `external` / `standin`. 50 addresses.
+  the ABI file (relative to `build/anvil/`) and `kind` is `protocol` / `external` / `standin`. 55 addresses.
 
 ## How a frontend uses it (viem)
 ```ts

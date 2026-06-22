@@ -1,0 +1,21 @@
+# Inline context for SzAlpha missions (fed to non-agentic panelists like Fugu).
+# Agentic models (Claude/Codex) ignore this and read the files themselves.
+# Format: path  OR  path:start-end  (1-indexed, inclusive). '#' = comment.
+
+# --- contract under review ---
+contracts/src/bridge/SzAlpha.sol
+
+# --- tests (the connected suite + mocks) ---
+contracts/test/bridge/SzAlphaBridge.t.sol
+contracts/test/bridge/BridgeMocks.sol
+
+# --- source of truth: Rubicon's audited LiquidStakedV3 (sliced to the relevant logic) ---
+# IStaking precompile interface (addStake/removeStake/getStake shapes, rao units)
+reference/rubicon/LiquidStakedV3.flattened.sol:2640-2930
+# contract head + exchangeRate + deposit/redeem with slippage
+reference/rubicon/LiquidStakedV3.flattened.sol:2943-3760
+# _removeStake internal
+reference/rubicon/LiquidStakedV3.flattened.sol:5120-5180
+
+# --- deploy script (genesis seed, timelock/ccipAdmin handoff, topology) ---
+contracts/script/DeploySzAlphaBridge.s.sol

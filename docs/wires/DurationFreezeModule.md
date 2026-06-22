@@ -1,5 +1,11 @@
 # DurationFreezeModule — Duration-Bond trigger B / structural juniorTrancheSidecar freeze (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** (a hair from HARDENED) — the best-tested contract in the
+> engine and the only one with the full pyramid: 54 unit + 1 fuzz + 1 stateful invariant (128k calls, 0 floor
+> breaches) + 2 fork. The debt-pinned coverage floor cannot be under-frozen; the locked LP is single-counted.
+> Report: `contracts/src/supply/szipUSD/x-ray/DurationFreezeModule.md` (scope: `portfolio-map.md`). ELI20:
+> `docs/supply/szipUSD/DurationFreezeModule.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code at `contracts/src/supply/szipUSD/DurationFreezeModule.sol` +
 > `contracts/src/interfaces/supply/{ISeniorPool,ISzipNavBasket}.sol`. Ticket
 > `tickets/sodo/DurationFreezeModule.md` + report `reports/DurationFreezeModule-report.md` are intent —

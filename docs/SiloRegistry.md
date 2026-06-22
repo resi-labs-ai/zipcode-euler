@@ -31,6 +31,20 @@ Summaries:
 [wires/CTR-02-SiloRegistry.md]
 
 ==================================================================================
+Security X-Ray (audit fidelity)
+
+Rated HARDENED — a pure catalog that holds no funds; its admission gate and slot accounting are fully tested (30 unit tests).
+
+[contracts/src/x-ray/SiloRegistry.md]
+
+The load-bearing points an auditor should check (full catalog + test connection in the X-Ray):
+
+* Admission is the underwriting gate, and every clause is individually proven: a six-part topology check asserts the silo's freeze, escrow, loss coordinator, and adapter all point only at its own senior pool, Safe, and oracle. A silo that points any part at a neighbor is rejected.
+* The line count and active flag are registry-managed, never caller-supplied: admission seeds the count to zero, only the controller moves it (as its last step after a line opens, so a failed origination leaves no phantom line), and the cap fails closed at 28.
+* The admission gate is venue-agnostic — it asks each adapter for its senior pool through a venue-neutral getter, so a non-Euler venue plugs in unchanged.
+* Residual (off-chain): the controller slot is owner-re-pointable until the pre-production immutable re-freeze; no external audit. It holds no funds and prices nothing.
+
+==================================================================================
 References:
 
 The registry is read by the rest of the credit-warehouse scaling workstream, and it checks each silo against the components that stack already ships.

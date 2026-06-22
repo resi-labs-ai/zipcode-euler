@@ -1,5 +1,11 @@
 # WOOF-06 — ZipDepositModule (the zap) (wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — a stateless, custody-free supply-side router whose
+> decisive properties are hygiene (net-zero custody, donation-proof cleanliness, exact-amount approvals, atomic
+> rollback), exhaustively proven (29 mock-gate incl. fuzz + 3 real-gate fork). Report:
+> `contracts/src/supply/x-ray/ZipDepositModule.md`. ELI20: `docs/supply/ZipDepositModule.md`. This doc is the
+> code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/supply/ZipDepositModule.sol`. Ticket
 > `tickets/woof/WOOF-06-deposit-module.md` + report `reports/WOOF-06-report.md` are intent. The seam flipped
 > 2026-06-07 to the two-token Gate model; this doc reads the **final code** (the `gate.depositFor` →

@@ -1,5 +1,9 @@
 # interfaces-algebra — Algebra Integral / Hydrex shims (catalog)
 
+> **X-Ray (trust surface):** HIGH trust — spot/TWAP pricing inputs to NAV. Trust map:
+> `contracts/src/interfaces/x-ray/dependency-surface.md`; overview: `docs/interfaces/dependency-surface.md`.
+> Note: `IAlgebraFactory` + `INonfungiblePositionManager` here are STAGED (0 src consumers — forward scaffolding).
+
 > Source of truth = the kept code under `contracts/src/interfaces/algebra/`. This doc reads the five
 > shims as the final form, pins each to its live Base deployment, and records the declared surface +
 > the Algebra-not-UniV3 gotchas. Address book = `contracts/script/BaseAddresses.sol`.

@@ -1,0 +1,16 @@
+# Inline context for SzAlphaRateOracle missions (Fugu / non-agentic).
+# Format: path OR path:start-end. '#' = comment.
+
+# --- contract under review ---
+contracts/src/bridge/SzAlphaRateOracle.sol
+
+# --- tests ---
+contracts/test/bridge/SzAlphaRateOracle.t.sol
+
+# --- source of truth: the CRE receiver base it inherits (Forwarder gating) ---
+# x402 CRE price-alerts receiver — the ReceiverTemplate/onReport pattern + IReceiver iface.
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+reference/x402-cre-price-alerts/contracts/interfaces/IReceiver.sol
+
+# --- deploy script (immutables: maxStaleness/window/aprCap; forwarder wiring) ---
+contracts/script/DeploySzAlphaBridge.s.sol

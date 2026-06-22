@@ -1,5 +1,9 @@
 # interfaces-euler — local Euler/zipUSD interface shims (wiring map)
 
+> **X-Ray (trust surface): HIGH** — `IEulerEarn` is the ERC-4626 USDC vault holding senior/warehouse funds;
+> `convertToAssets` is the senior NAV mark. Trust map: `contracts/src/interfaces/x-ray/dependency-surface.md`;
+> overview: `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = the kept code under `contracts/src/interfaces/euler/`. Reads the three files as
 > their final form and records what each shims, the exact declared surface, who consumes it, and the
 > seam gotchas. Folder consists of two files: `IEulerEarn.sol`, `IZipUSD.sol`. (`IEulerEarnUtil.sol` was

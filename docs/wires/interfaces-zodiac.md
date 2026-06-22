@@ -1,5 +1,9 @@
 # interfaces-zodiac — `contracts/src/interfaces/zodiac/` (wiring map)
 
+> **X-Ray (trust surface): HIGH** — `IRoles` (Roles Modifier v2) has delegatecall-capable `ExecutionOptions`
+> (consumer: `WarehouseAdminModule`); policy must never grant the delegatecall option. Trust map:
+> `contracts/src/interfaces/x-ray/dependency-surface.md`; overview: `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = the kept code under `contracts/src/interfaces/zodiac/`. These are minimal local
 > CALL-shims (only the methods we call) for the **interface+fork** Zodiac infra on Base — never compiled
 > from source (OZ 4.x can't coexist with Euler's OZ 5.0.2; WOOF-00 Strategy A). Distinct from the

@@ -15,7 +15,7 @@ The Safe itself. Modules and deploy scripts drive Safes through it: enable a mod
 [contracts/script/CreditWarehouseDeployer.sol]
 [contracts/script/DeployZipcode.s.sol]
 [contracts/script/DeployShowcaseVAMM.s.sol]
-[wires/8-B1.md]
+[../wires/8-B1.md]
 
 - ISafeProxyFactory.sol → Gnosis Safe proxy factory
 Deploys new Safes, and lets us compute a Safe's address before it exists. The warehouse deployer uses the generic factory to deploy the warehouse Safe; the summon script reads the Baal-owned factory to precompute the main Safe's address (Baal deploys that one).
@@ -28,8 +28,8 @@ Baal's own      0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC   main-Safe address p
 
 [contracts/script/CreditWarehouseDeployer.sol]
 [contracts/script/SummonSubstrate.s.sol]
-[wires/8-Bw-CreditWarehouse.md]
-[wires/8-B1.md]
+[../wires/8-Bw-CreditWarehouse.md]
+[../wires/8-B1.md]
 
 Summaries:
 [../wires/interfaces-safe.md]

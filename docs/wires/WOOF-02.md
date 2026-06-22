@@ -1,5 +1,11 @@
 # WOOF-02 — ZipcodeOracleRegistry (wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — the multi-line collateral price cache (40 tests). The
+> shared-scale + strict-18-decimal key guard (a non-18-dp lien is unreachable), all-or-nothing fail-closed
+> revaluation, strictly-newer replay defense, and the deliberate no-value-band are all proven. Report:
+> `contracts/src/x-ray/ZipcodeOracleRegistry.md`. ELI20: `docs/ZipcodeOracleRegistry.md`. This doc is the
+> code-truth wiring map.
+
 > Source of truth = `contracts/src/ZipcodeOracleRegistry.sol`. Ticket `tickets/woof/WOOF-02-oracle-registry.md`
 > + report `reports/WOOF-02-report.md` are intent. Where they disagree with the kept code, the code wins — and
 > they do diverge on two points (the controller slot is now Timelock-**re-pointable**, not set-once; and `quote`/

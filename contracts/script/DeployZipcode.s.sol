@@ -21,6 +21,7 @@ import {CREGatingHook} from "../src/CREGatingHook.sol";
 import {EulerVenueAdapter} from "../src/venue/EulerVenueAdapter.sol";
 import {ZipcodeController} from "../src/ZipcodeController.sol";
 import {ZipcodeDeployAsserts} from "../src/ZipcodeDeployAsserts.sol";
+import {SiloRegistry} from "../src/SiloRegistry.sol";
 
 // --- supply substrate ---
 import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
@@ -87,6 +88,12 @@ contract DeployZipcode is SummonSubstrate {
     error SeamEscrowCoordinator();
     error SeamNavShareTokenUnset();
     error SeamCoverageGate();
+    error SeamSiloRegistry();
+    error SeamSiloRouting();
+
+    /// @notice The canonical single-silo id this deploy registers; the origination CRE report routes to it (CTR-03,
+    ///         the `siloId` 8th field of the RT=1 payload). Without a registered silo, `_origination` fails closed.
+    bytes32 internal constant LOCAL_SILO_ID = keccak256("ZIPCODE_SILO_0");
 
     // ----------------------------------------------------------------- inputs (env / stand-ins)
     struct Inputs {
@@ -173,6 +180,8 @@ contract DeployZipcode is SummonSubstrate {
         address recycle;
         address offRamp;
         address durationFreeze;
+        // P8 federation catalog (CTR-02/03)
+        SiloRegistry siloRegistry;
         // P7 loss side
         LienXAlphaEscrow escrow;
         DefaultCoordinator coord;
@@ -535,6 +544,31 @@ contract DeployZipcode is SummonSubstrate {
         if (i.lpTwapWindow != 0) d.navOracle.setLpTwapWindow(i.lpTwapWindow);
         d.navOracle.setXAlphaRateOracle(address(d.rateOracle));
         if (d.navOracle.shareToken() == address(0)) revert SeamNavShareTokenUnset();
+
+        // CTR-02/CTR-03: deploy the silo catalog and register THIS deploy as `LOCAL_SILO_ID`, then wire it as the
+        //   controller's routing registry. WITHOUT this the controller's `_origination` fails closed (`RegistryUnset`)
+        //   and NO line can open — origination resolves the venue + bumps the line count through the registry. The
+        //   ctor seeds the slot-accounting `controller`; `addSilo` runs the 6-clause self-consistency topology assert
+        //   (freeze/escrow/coordinator/adapter all point at THIS silo's eePool/safe/oracle). The deployer is still the
+        //   owner here; P9 hands the registry to the Timelock with the rest.
+        d.siloRegistry = new SiloRegistry(address(d.controller));
+        d.controller.setRegistry(address(d.siloRegistry));
+        d.siloRegistry.addSilo(
+            LOCAL_SILO_ID,
+            SiloRegistry.SiloConfig({
+                adapter: address(d.adapter),
+                warehouseSafe: d.warehouse.warehouseSafe,
+                eePool: i.eePool,
+                juniorBasket: d.sub.juniorTrancheSafe,
+                escrow: address(d.escrow),
+                defaultCoordinator: address(d.coord),
+                navOracle: address(d.navOracle),
+                freeze: d.durationFreeze,
+                curator: address(d.adapter)
+            })
+        );
+        if (d.controller.registry() != address(d.siloRegistry)) revert SeamSiloRegistry();
+        if (d.siloRegistry.venueOf(LOCAL_SILO_ID) != address(d.adapter)) revert SeamSiloRouting();
     }
 
     // ================================================================= P9 — seal (identity -> pre-gate -> transfer)
@@ -581,6 +615,7 @@ contract DeployZipcode is SummonSubstrate {
         d.queue.transferOwnership(tl);
         d.escrow.transferOwnership(tl);
         d.coord.transferOwnership(tl);
+        d.siloRegistry.transferOwnership(tl); // CTR-02 catalog → Timelock (slot-accounting `controller` stays the controller)
         // ZipDepositModule has NO ownable surface — its sole admin (the set-once `setGate`) is the IMMUTABLE
         // `deployer` (this script). No transfer path; a known build-phase limitation (re-deploy to re-home, or the
         // Timelock simply never needs it since setGate is re-settable only by the immutable deployer). Not transferred.

@@ -1,5 +1,11 @@
 # WOOF-05 — `ZipcodeController` (wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — the portable core's orchestrator, fork-proven against the
+> real EVK/EVC/EulerEarn stack (43 tests). Atomic origination (CREATE2-rollback on any mid-batch revert),
+> fail-closed stored-`siloId` routing, the report-type allow-list (revaluation rejected), and
+> structural reentrancy-impossibility are all proven. Report: `contracts/src/x-ray/ZipcodeController.md`. ELI20:
+> `docs/ZipcodeController.md`. This doc is the code-truth wiring map.
+
 > Source of truth = `contracts/src/ZipcodeController.sol`. Ticket
 > `tickets/woof/WOOF-05-controller.md` + report `reports/WOOF-05-report.md` + spec `claude-zipcode.md` §4.4
 > are intent. This doc reads the kept code as the final form and records how the controller is wired and what

@@ -17,10 +17,13 @@ Bittensor EVM (chain 964) ↔ Base (chain 8453), Chainlink CCT lane. Solidity 0.
 Contract → Chain
 
 - SzAlpha.sol → 964
-An LST Wrapper on Bittensor, which connects to an existing validator, and mints szALPHA shares; the share price (exchangeRate) rises as staking rewards accrue.
+An LST Wrapper on Bittensor, which connects to an existing validator, and mints szALPHA shares; the share price (exchangeRate) rises as staking rewards accrue. It is the only contract with a stake surface, and the only upgradeable one (UUPS). Two authorities, set from genesis: owner() is a TimelockController (gates the UUPS upgrade and pause), and ccipAdmin is a separate registrar-only role (no mint, upgrade, or fund power). deposit() is pausable; redeem() is never pausable by design — share value is anchored to redeemability.
 
 - SzAlphaLockReleasePool.sol → 964
 The CCIP bridge endpoint on Bittensor. When szALPHA bridges to Base it's locked here (not burned), so total supply stays intact and the exchange rate stays accurate.
+
+- ERC20LockBox (vendored canonical) → 964
+The custody vault behind SzAlphaLockReleasePool. Locked szALPHA is held here, not in the pool itself — the pool is only an authorized caller. An RMN/CCIP pool rotation re-points the authorized caller; funds never migrate.
 
 - SzAlphaMirror.sol → Base 8453
 The bridged version of szALPHA that circulates on Base.
@@ -41,6 +44,52 @@ Summaries:
 
 Interfaces:
 [interfaces/interfaces-bridge.md]
+
+==================================================================================
+Security X-Ray (audit fidelity)
+
+Every contract in this folder has a dedicated, test-connected X-Ray under contracts/src/bridge/x-ray/. All five are rated ADEQUATE; the bridge test suite runs 55/55 + 22/22 green (SzAlphaBridge.t.sol + SzAlphaRateOracle.t.sol). The X-Rays are the authoritative security artifact; the wires summaries below are the code-truth wiring maps.
+
+[contracts/src/bridge/x-ray/x-ray.md] — scope-level overview + verdict
+[contracts/src/bridge/x-ray/SzAlpha.md]
+[contracts/src/bridge/x-ray/SzAlphaRateOracle.md]
+[contracts/src/bridge/x-ray/SzAlphaLockReleasePool.md]
+[contracts/src/bridge/x-ray/SzAlphaTokenPool.md]
+[contracts/src/bridge/x-ray/SzAlphaMirror.md]
+
+The load-bearing properties an auditor should check (full catalog + test connection live in the X-Rays):
+
+* I-1 — exchangeRate() is always backing-over-supply with a 1/1 virtual offset: (stake18 + 1) · 1e18 / (totalSupply + 1). It moves only on real stake change or mint/burn, never on a manipulable pool price.
+* I-2 — shares are minted/burned ONLY against the measured precompile stake delta, never against msg.value or an estimate.
+* X-1 (top residual, on-chain=No) — the contract guards only the SIGN of the precompile stake/balance change; the MAGNITUDE minted or paid is whatever the Subtensor runtime reports. The precompile is trusted runtime; the blast radius is characterized by a lying-mock test (over-report → proportional over-issuance).
+* E-1 (deploy-topology, on-chain=No) — cross-chain rate truth requires the 964 side to be LOCK/RELEASE (not burn) and both lanes to share 18 decimals. Burn-on-964 would shrink local supply against unchanged stake and inflate the rate. The decimals leg is enforced on-chain (guard G-18); the lock-vs-burn placement is a deploy choice (seam S2 in the system map).
+* Rate oracle — no deviation band by design (a validator slash legitimately lowers the rate). The only defenses are DON f+1 consensus (off-chain), strict timestamp monotonicity, and the consumer's fresh() gate; every NAV consumer must gate on fresh().
+
+==================================================================================
+How the bridge connects to the rest of the protocol
+
+The bridge produces one fact the rest of the protocol prices off: the xALPHA exchange rate. It is native only on 964 and reaches Base-side consumers through the CRE push.
+
+  SzAlpha.exchangeRate() (964)
+    → CRE workflow push
+    → SzAlphaRateOracle (Base, an IXAlphaRate drop-in)
+    → SzipNavOracle xALPHA NAV leg
+    → NAV → ExitGate issuance (S8) / SzipBuyBurnModule bid (S10) / DurationFreezeModule floor (S9)
+
+The SzAlphaMirror is the xALPHA BALANCE leg: the bridged token actually held by the zipUSD/szALPHA basket LP (8-B5/8-B6) and by the first-loss escrow 8-Bx LienXAlphaEscrow.xAlpha. Rate and balance are distinct sources by construction — the mirror has no exchangeRate(), the rate oracle has no balanceOf().
+
+SzipNavOracle gates ISSUANCE on the oracle's fresh() (navEntry reverts StaleRate, seam S3); EXIT is intentionally unaffected and prices off the last good rate (the issuance/exit asymmetry).
+
+The full cross-contract seam catalog (S1 precompile-magnitude, S2 conservation-topology, S3 freshness, S4 CRE Forwarder, S8–S10 NAV consumers) lives in:
+[wires/SYSTEM-SEAM-MAP.md]
+
+Consumers (their own wiring maps):
+[wires/8-B4-SzipNavOracle.md]
+[wires/8-Bx-LienXAlphaEscrow.md]
+[wires/ExitGate-szipUSD.md]
+
+Post-deploy obligations (the 2-step CCIP registry-admin handoffs, SEC-03/H4):
+[contracts/script/RUNBOOK-mainnet-deploy.md]
 
 ==================================================================================
 References: 

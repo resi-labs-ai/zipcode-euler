@@ -1,5 +1,9 @@
 # interfaces-hydrex — Hydrex (Lynex fork, Algebra Integral) shim set (wiring map)
 
+> **X-Ray (trust surface): MEDIUM–HIGH** — the oHYDX yield + vote-emission loop; `IVammPair` is the demo
+> vAMM seam only. Trust map: `contracts/src/interfaces/x-ray/dependency-surface.md`; overview:
+> `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = the kept code under `contracts/src/interfaces/hydrex/`. This doc reads each `.sol`
 > as the final form and records what live Base-mainnet contract each shims, the exact declared surface,
 > who consumes it, and the gotchas. All five are **interface + fork** shims (never compiled from source —

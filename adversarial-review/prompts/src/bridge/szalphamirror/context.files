@@ -1,0 +1,17 @@
+# Inline context for SzAlphaMirror mission (Fugu / non-agentic).
+# Format: path OR path:start-end. '#' = comment.
+
+# --- contract under review ---
+contracts/src/bridge/SzAlphaMirror.sol
+
+# --- tests ---
+contracts/test/bridge/SzAlphaBridge.t.sol
+
+# --- source of truth: the audited Chainlink BurnMintERC20 base (whole — 167 lines) ---
+reference/chainlink-evm/contracts/src/v0.8/shared/token/ERC20/BurnMintERC20.sol
+
+# --- the pool granted mint authority over this mirror (reason about as a pair) ---
+contracts/src/bridge/SzAlphaTokenPool.sol
+
+# --- deploy script (the role handoff: grant pool, hand admin to timelock, revoke deployer) ---
+contracts/script/DeploySzAlphaBridge.s.sol

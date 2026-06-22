@@ -1,5 +1,9 @@
 # interfaces-cow — `IGPv2Settlement` shim (wiring map)
 
+> **X-Ray (trust surface): HIGH** — buy-and-burn approves the `vaultRelayer` + presigns orders (consumer:
+> `SzipBuyBurnModule`); the risk is the approval + order params, not the settlement contract. Trust map:
+> `contracts/src/interfaces/x-ray/dependency-surface.md`; overview: `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = the kept code at `contracts/src/interfaces/cow/IGPv2Settlement.sol`. This doc reads the
 > code as the final form and records what it shims, its declared surface, and who consumes it.
 

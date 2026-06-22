@@ -1,5 +1,11 @@
 # 8-B8 — ExerciseModule (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** — pays the option strike to mint liquid HYDX; recipient
+> hard-pinned to the vault, strike slippage-bounded by the option's own price with a max-payment backstop. Proven
+> unit + live oHYDX fork (26 unit + 4 fork). Report:
+> `contracts/src/supply/szipUSD/x-ray/ExerciseModule.md` (scope: `portfolio-map.md`). ELI20:
+> `docs/supply/szipUSD/ExerciseModule.md`. This doc is the code-truth wiring map.
+
 > Source of truth = `contracts/src/supply/szipUSD/ExerciseModule.sol`. Ticket
 > `tickets/sodo/8-B8-exercise-ohydx.md` + report `reports/8-B8-report.md` are intent only — the kept
 > `.sol` is final. Every claim below is read off the code; the doc records how the module is wired.

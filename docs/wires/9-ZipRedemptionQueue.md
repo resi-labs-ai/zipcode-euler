@@ -1,5 +1,11 @@
 # 9 — ZipRedemptionQueue (wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — the non-sweepable senior par-burn sink; solvency (paid ≤
+> delivered, via par round-down) under 4 stateful invariants, single-requester collapse fenced, no
+> fund-extraction surface (proven positively and negatively), and the burn fork-proven against the real zipUSD
+> token. Report: `contracts/src/supply/x-ray/ZipRedemptionQueue.md`. ELI20: `docs/supply/ZipRedemptionQueue.md`.
+> This doc is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/supply/ZipRedemptionQueue.sol` (read in full). The ticket
 > `tickets/sodo/9-zip-redemption-queue.md` + reports `reports/9-report.md` / `reports/credit-union-report.md`
 > (C4) are intent only — **the code is final**. Where the report/older NatSpec say the controller is

@@ -1,5 +1,12 @@
 # 8-Bw — CreditWarehouse Safe + `WarehouseAdminModule` (wiring map)
 
+> **X-Ray (security verdict):** `WarehouseAdminModule` rated **HARDENED** — 28 fork-integration tests against the
+> REAL deployed Zodiac Roles modifier (0 fuzz/invariant — a deterministic encoder). Reports under
+> `contracts/src/supply/CreditWarehouse/x-ray/` (`x-ray.md` scope overview + `WarehouseAdminModule.md`). The
+> decisive control is the off-chain Roles scope, NOT this bytecode (X-1); the avatar-parity hazard is now enforced
+> on-chain (`AvatarMismatch`). ELI20 summary: `docs/supply/CreditWarehouse/WarehouseAdminModule.md`. This doc is
+> the code-truth wiring map.
+
 > Source of truth = the kept code: `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol` +
 > `contracts/script/CreditWarehouseDeployer.sol`. Ticket `tickets/sodo/8-Bw-credit-warehouse.md` + report
 > `reports/8-Bw-report.md` + spec `claude-zipcode.md` §4.5/§8.5 are intent — the code is the final form.

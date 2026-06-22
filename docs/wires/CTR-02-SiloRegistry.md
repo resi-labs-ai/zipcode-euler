@@ -1,5 +1,10 @@
 # SiloRegistry — the multi-pool / federation silo catalog + admission gate (wiring map)
 
+> **X-Ray (security verdict):** rated **HARDENED** — the federation catalog + admission gate (30 tests). The
+> 6-clause self-consistency topology web (each clause individually negated), the registry-managed
+> line-count/active accounting, and the venue-agnostic admission are all proven; holds no funds. Report:
+> `contracts/src/x-ray/SiloRegistry.md`. ELI20: `docs/SiloRegistry.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code at `contracts/src/SiloRegistry.sol` + its test
 > `contracts/test/SiloRegistry.t.sol`. Ticket `build/tickets/contracts/CTR-02-silo-registry.md` is intent —
 > the code is final. First contract of the credit-warehouse scaling + federation workstream (CTR-02..10).

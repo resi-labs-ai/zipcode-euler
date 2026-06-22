@@ -258,5 +258,20 @@
     "name": "LpStrategyModuleDemoVAMM",
     "abi": "abi/LpStrategyModuleDemoVAMM.json",
     "kind": "demo"
+  },
+  "0x86C2ba30C5Ce01479eF797897FAA6791402FeDf2": {
+    "name": "SiloRegistry",
+    "abi": "abi/SiloRegistry.json",
+    "kind": "protocol"
+  },
+  "0xF6CAAF72A788916915ce1bF111E245e0bEABCd18": {
+    "name": "LineIrm (IRMLinearKink)",
+    "abi": "abi/external/IRMLinearKink.json",
+    "kind": "external"
+  },
+  "0x3b7ca6e87a2536DEB720eBd6eD3B348738F1fAa3": {
+    "name": "FarmUtilityBorrowGuard",
+    "abi": "abi/FarmUtilityBorrowGuard.json",
+    "kind": "protocol"
   }
 }

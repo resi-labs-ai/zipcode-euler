@@ -13,12 +13,12 @@ Note: both are internal — they point at our own contracts (the bond escrow and
 - ILienXAlphaEscrow.sol → the xALPHA bond escrow
 The bond lifecycle the loss coordinator drives: lock a bond when a credit line opens, release it on repay, or slash it (to capital, or to the cohort) on a loss. DefaultCoordinator is the only caller, and the bond can only move to the recorded originator or the fixed sinks — never to an arbitrary address.
 [contracts/src/loss/DefaultCoordinator.sol]
-[wires/DefaultCoordinator.md]
+[../wires/DefaultCoordinator.md]
 
 - ISzipNavOracle.sol → the NAV oracle's provision writer
 A one-function write seam: push the impairment provision into the NAV oracle, which marks the basket down. DefaultCoordinator pushes it after every provision change. The size limit is enforced in the coordinator, not the oracle.
 [contracts/src/loss/DefaultCoordinator.sol]
-[wires/DefaultCoordinator.md]
+[../wires/DefaultCoordinator.md]
 
 Summaries:
 [../wires/interfaces-loss.md]

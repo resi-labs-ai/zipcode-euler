@@ -1,12 +1,22 @@
 # contract-map.md — the live anvil board (REAL-contract deploy)
 
-The full Zipcode protocol, deployed + wired on a **local anvil forking Base mainnet @ block 47096000**
-(`script/DeployLocal.s.sol`, real-EE deploy 2026-06-10). This is the address book every smoke-path spec binds to.
+The Zipcode protocol, deployed + wired on a **local anvil forking Base mainnet @ block 47096000**
+(`script/DeployLocal.s.sol`). This is the address book every smoke-path spec binds to.
+
+> **Scope:** a single-silo local board. The federation catalog (`SiloRegistry`) is now deployed + wired by this
+> script (the CTR-03 routing fix, below); the senior-solvency telemetry aggregator (`SeniorNavAggregator`) is NOT
+> on this board — it stands up with the multi-silo hub via `SiloDeployer`.
+> **Last broadcast 2026-06-22** (SIZE-01): `EulerVenueAdapter` was trimmed under the EIP-170 limit (now 24054 /
+> +522 margin; the CTR-15 rename had pushed it 38 over) and the board re-broadcast clean. Bytecode-only edits do
+> NOT move CREATE addresses, so the venue spine + every earlier contract kept its 2026-06-10 address; the only new
+> entries are the three formerly-placeholder rows below (`SiloRegistry`, `LineIrm`, `FarmUtilityBorrowGuard`), now
+> filled from the run log.
 
 > **Real contracts, not mocks.** The senior pool is a REAL EulerEarn pool created off the live factory + curator-
 > configured; the base USDC market is a REAL EVK vault; the farm utility market is real EVK; Safe/Baal/Zodiac/CoW/ICHI/
-> Hydrex/Algebra/oHYDX/USDC are the live Base bytecode on the fork. Only the IRM (a real 0%-rate contract) and xALPHA
-> (an inherent cross-chain stand-in) are local. See "Simulation boundaries" at the bottom.
+> Hydrex/Algebra/oHYDX/USDC are the live Base bytecode on the fork. Local to us: our two own rate models (ZeroIRM
+> 0% for the farm-utility vault, LineIrm ~7.5% APR for credit lines — both real contracts, not stand-ins) and the
+> xALPHA stand-in (an inherent cross-chain placeholder). See "Simulation boundaries" at the bottom.
 
 ## Connection
 - RPC: `http://127.0.0.1:8545` · chainId `8453` (Base mainnet fork) · fork block `47096000`
@@ -37,6 +47,12 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 | ZipcodeOracleRegistry | `0xbF1801C78593aF0Ef7BcB4415Eaf146993Ec7A01` |
 | CREGatingHook | `0x87dC8666F0c31Fb4B205240003DD733E327E14F3` |
 | LienTokenFactory | `0x16579ac952BBf5cC0844959699A2876eA885808C` |
+| LineIrm (CTR-13 ~7.5% APR rate model; the adapter installs it on each credit line's borrow vault) | `0xF6CAAF72A788916915ce1bF111E245e0bEABCd18` |
+
+## Federation / routing (CTR-02/03)
+| Contract | Address | Notes |
+|---|---|---|
+| SiloRegistry | `0x86C2ba30C5Ce01479eF797897FAA6791402FeDf2` | the controller routes every origination through it (`venueOf(siloId)`); without it `_origination` reverts `RegistryUnset`. This board registers ONE silo: `LOCAL_SILO_ID = keccak256("ZIPCODE_SILO_0") = 0x0309d2cf8d22de7d0626162a4ba1d7bff931531432937d085bcaf163f0febebd`. The origination CRE report (reportType 1) MUST carry this siloId as its 8th payload field. |
 
 ## Supply
 | Contract | Address |
@@ -77,6 +93,7 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 | borrow vault (USDC) | `0x1aFc8c641BE6E8a0849f00f3c90a27D44710D267` |
 | escrow vault (LP collateral) | `0x8A5FA36779693584E0e52246f05C5b0bF55Df1b1` |
 | EulerRouter (escrow → LP → lpOracle) | `0x83cf98139A35830C90aa28f9e9abf198Fcf6A795` |
+| FarmUtilityBorrowGuard (OP_BORROW hook on the borrow vault; pins borrowing to the engine Safe) | `0x3b7ca6e87a2536DEB720eBd6eD3B348738F1fAa3` |
 
 ## Engine modules (zodiac proxies, all Timelock-owned; operator = `creOperator`)
 | Module | Address | Enabled on |

@@ -1,5 +1,13 @@
 # SHOWCASE-VAMM — vAMM auto-compounder demo (wiring map)
 
+> **X-Ray (security verdict):** both forks rated **ADEQUATE** — but **DEMO/SHOWCASE, outside the audited core**.
+> Suites ported from the prod parents with the ICHI seam swapped for a vAMM-pair mock; **21/21 + 24/24 green**.
+> Per-contract reports under `contracts/src/hydrex-demo-fork/x-ray/` (index: `x-ray.md`;
+> `SzipNavOracleDemoVAMM.md`, `LpStrategyModuleDemoVAMM.md`). The residuals (raw-balance donation seam, in-block
+> spot-LP defended by the TWAP bracket, off-chain-bounded provision) are inherited from the prod NAV design
+> (`8-B4`/`8-B6`), not introduced by the forks; no-custody bounds the worst case to operator grief. The X-Ray is
+> the authoritative security artifact; this doc is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol`,
 > `contracts/src/hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol`, `contracts/src/interfaces/hydrex/IVammPair.sol`, and the deploy
 > script `contracts/script/DeployShowcaseVAMM.s.sol`. This doc IS the truth (the build tickets that authored these

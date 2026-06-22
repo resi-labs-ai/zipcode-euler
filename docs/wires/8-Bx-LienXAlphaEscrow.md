@@ -1,5 +1,13 @@
 # 8-Bx — LienXAlphaEscrow (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** (a hair from HARDENED) — 44 unit + 1 fuzz + 2 Foundry
+> invariants + a 5-test reentrancy battery. Full report: `contracts/src/loss/x-ray/LienXAlphaEscrow.md`;
+> scope overview: `contracts/src/loss/x-ray/x-ray.md`. Security thesis = **destination integrity**: no
+> state-changer takes a recipient parameter, so xALPHA reaches only originator/adminSafe/juniorTrancheSafe and a
+> compromised coordinator can grief but never steal. Donation-immune (recorded amounts, never balanceOf), both
+> invariant-asserted. Residual X-2: the sinks are Timelock-settable until the pre-prod immutable re-freeze. This
+> doc is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/loss/LienXAlphaEscrow.sol` +
 > `contracts/src/interfaces/loss/ILienXAlphaEscrow.sol`. Ticket `tickets/loss/8-Bx-lien-xalpha-escrow.md`
 > + report `reports/8-Bx-report.md` are intent — **code wins**. Spec: `claude-zipcode.md` §4.6 / §11

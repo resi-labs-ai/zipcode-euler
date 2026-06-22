@@ -1,5 +1,9 @@
 # interfaces-safe — Gnosis Safe shims (wiring map)
 
+> **X-Ray (trust surface): HIGH** — `execTransactionFromModule` is how every enabled Zodiac module moves Safe
+> funds (consumer: `DurationFreezeModule` + every module). Trust map:
+> `contracts/src/interfaces/x-ray/dependency-surface.md`; overview: `docs/interfaces/dependency-surface.md`.
+
 > Source of truth = the kept code under `contracts/src/interfaces/safe/`. This doc reads the two
 > interface shims as final form and records what they shim, the exact declared surface, every
 > consumer, and the Safe-auth gotchas the engine modules / deploy scripts inherit.

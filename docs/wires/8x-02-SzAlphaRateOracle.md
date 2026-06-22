@@ -1,5 +1,11 @@
 # 8x-02 — SzAlphaRateOracle + cre/szalpha-rate (wiring map)
 
+> **X-Ray (security verdict):** `SzAlphaRateOracle` rated **ADEQUATE** (gap-filled); rate-oracle suite **22/22
+> green** (19 unit + 1 fuzz + 2 invariants). Full report: `contracts/src/bridge/x-ray/SzAlphaRateOracle.md`;
+> scope overview: `contracts/src/bridge/x-ray/x-ray.md`. The defining surface is the **no-deviation-band** design
+> (a well-formed bad push publishes verbatim) — closed off-chain by DON consensus + the consumer `fresh()` gate
+> (system-map seam S3), not in this contract. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code: `contracts/src/bridge/SzAlphaRateOracle.sol`,
 > `contracts/src/interfaces/bridge/IXAlphaRate.sol`, the consumer wiring in
 > `contracts/src/supply/SzipNavOracle.sol`, and the CRE workflow `cre/szalpha-rate/{main.go,README.md}`.

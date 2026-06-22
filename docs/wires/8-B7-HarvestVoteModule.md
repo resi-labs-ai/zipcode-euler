@@ -1,5 +1,11 @@
 # 8-B7 — HarvestVoteModule (wiring map)
 
+> **X-Ray (security verdict):** rated **ADEQUATE** — the most external-integration-heavy module, exercised
+> against the real Hydrex gauge/voter/voting-escrow/rewards-distributor (24 unit + 5 fork). Vote-lock recipient
+> hard-pinned to the vault; account-keyed; no token approvals. Report:
+> `contracts/src/supply/szipUSD/x-ray/HarvestVoteModule.md` (scope: `portfolio-map.md`). ELI20:
+> `docs/supply/szipUSD/HarvestVoteModule.md`. This doc is the code-truth wiring map.
+
 > Source of truth = the kept code `contracts/src/supply/szipUSD/HarvestVoteModule.sol`. Ticket
 > `tickets/sodo/8-B7-harvest-vote.md` + report `reports/8-B7-report.md` are intent — the `.sol` wins.
 > Spec context: `claude-zipcode.md §4.5.1`, `reports/baal-spec.md §10.8`.

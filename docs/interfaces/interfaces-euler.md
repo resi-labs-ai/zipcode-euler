@@ -12,7 +12,7 @@ Note: we don't import EulerEarn's real code — it pins a different Solidity ver
 The senior lending pool that backs zipUSD. The Credit Warehouse deposits USDC into it and redeems USDC back out, and the NAV mark reads the pool's share value. Forked on Base for tests; never compiled.
 [contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol]
 [contracts/script/CreditWarehouseDeployer.sol]
-[wires/8-Bw-CreditWarehouse.md]
+[../wires/8-Bw-CreditWarehouse.md]
 
 - IEulerEarnUtil.sol → removed (generalized to ISeniorPool)
 This was a small read-only view of the same EulerEarn pool (used to measure how much of the warehouse is lent out, donation-immune). CTR-10a generalized it venue-neutrally into `ISeniorPool` — the same three views, but named so a non-Euler venue's senior surface can satisfy the same read. It now lives in the supply interfaces, and the DurationFreezeModule + SeniorNavAggregator read that.
@@ -22,7 +22,7 @@ This was a small read-only view of the same EulerEarn pool (used to measure how 
 - IZipUSD.sol → zipUSD's burn function (our own token)
 zipUSD is our dollar token (an Euler ESynth). This interface exposes only its `burn` function. The redemption queue uses it to burn the zipUSD it has escrowed once a senior redemption settles at par.
 [contracts/src/supply/ZipRedemptionQueue.sol]
-[wires/9-ZipRedemptionQueue.md]
+[../wires/9-ZipRedemptionQueue.md]
 
 Summaries:
 [../wires/interfaces-euler.md]
