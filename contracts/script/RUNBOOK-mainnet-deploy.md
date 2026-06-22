@@ -82,7 +82,42 @@ summon/Safe-exec ordering.)
 - Save the broadcast artifact (`broadcast/DeployMainnet.s.sol/8453/run-latest.json`) — it is the address book of the
   live deployment.
 
-## 7. 964 bridge leg (DeploySzAlphaBridge) — pre-deploy precompile verification battery
+## 7. Post-deploy wiring checklist (the hookups the broadcast does NOT finish)
+
+The broadcast wires most things, but five cross-component hookups are either keeper-side, operator-invoked, or
+inherently manual. Do them in this order before the system is live; each notes what the script already did.
+
+1. **Controller ↔ SiloRegistry (before the FIRST origination — else `RegistryUnset`/`NotController`).**
+   - Script already did: `siloRegistry.setController(controller)` + `adapter.setController(controller)`.
+   - YOU do: `controller.setRegistry(siloRegistry)`; register silo #0 `siloRegistry.addSilo(siloId, SiloConfig{…})`
+     (its `adapter` MUST equal the controller's ctor venue seed); then assert
+     `siloRegistry.controller() == address(controller)`. (Federation silos: `SiloDeployer` returns the handle; the
+     Timelock calls `addSilo` — see `SiloDeployer` NatSpec.)
+
+2. **Redemption queue ↔ off-ramp + keeper signer roles.**
+   - Script already did: `queue.setRedeemController(juniorTrancheSafe)`.
+   - YOU do: assert the keeper's configured `ZipRedemptionQueue` == `OffRampModule.queue()`, and that the single
+     keeper signer is BOTH `OffRampModule.operator()` AND `ZipRedemptionQueue.controller()`.
+
+3. **Buy-burn CRE report socket (only if driving buy-burn via the CRE report path; the operator path works without).**
+   - Script does NOT wire this — the `SzipBuyBurnModule` clone ships forwarder-inert (`onReport` reverts
+     `InvalidForwarder`, fail-closed).
+   - YOU do: `SzipBuyBurnModule.setForwarder(CRE_KEYSTONE_FORWARDER)` + `setExpectedWorkflowId(WORKFLOW_ID)`
+     (optionally `setExpectedAuthor`). Mirror the §9 `setExpectedWorkflowId(...) != 0` assert before the Timelock
+     hand-off.
+
+4. **Bridge `acceptAdminRole` — both chains (CCT token-admin handoff).**
+   - Script (`DeploySzAlphaBridge`) `transferAdminRole`'d to the durable authority (964 → `ccipAdmin`, Base →
+     `timelock`) but can't accept mid-broadcast.
+   - YOU do: the durable authority calls `ITokenAdminRegistry(tokenAdminRegistry).acceptAdminRole(token)` on each
+     chain; verify `getTokenConfig(token).administrator == <durable>`. Until then the deploy Script remains a live
+     registry admin — accept promptly.
+
+5. **`ExitGate.setBaal` parity (only if you ever re-point the Baal).**
+   - Before any `setBaal`, assert the target Baal's `managerLock() == false` — else the Gate's `manager(2)` grant
+     can't be re-set and deposits/`burnFor` brick (fail-closed). Trusted-Timelock action; no code guard.
+
+## 8. 964 bridge leg (DeploySzAlphaBridge) — pre-deploy precompile verification battery
 
 The szALPHA bridge's 964 leg (`DeploySzAlphaBridge:deploy964`) is a SEPARATE broadcast on Bittensor EVM
 (chainid 964). Before it, run this read-only cast battery against a 964 RPC (e.g.
@@ -105,7 +140,7 @@ cast call --rpc-url $RPC 0x0000000000000000000000000000000000000805 "getStake(by
 
 If any probe reverts or returns zero, STOP — the netuid is wrong, the subnet pool doesn't exist, or the
 runtime changed; `deploy964`'s `_assertAlphaPrecompile` would also fail. Unit table + provenance:
-`build/wires/8x-01-szALPHA-bridge.md`, `reference/rubicon/README.md`.
+`docs/wires/8x-01-szALPHA-bridge.md`, `reference/rubicon/README.md`.
 
 Post-`deploy964` (in order; see 8x-01 item-10):
 - [ ] `seedDeposit{value: ~1 TAO}(token)` — genesis seed; transfer the seed shares to `0xdead`.
