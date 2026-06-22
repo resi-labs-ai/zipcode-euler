@@ -83,8 +83,8 @@ track on it.
 - **The subgraph** is part of the frontend workstream — built after the app, and only if aggregated history is wanted (the app runs fine on direct contract reads without it). It also needs the event formats locked at deploy.
 - **The loss-recovery workflow.** When a borrower defaults, the seized bond (xALPHA) lands in `adminSafe`. Turning it into USDC is a CRE workflow that bridges the xALPHA to Bittensor, unstakes it, and swaps to TAO/USDC — so it can't be built until the bridge (8x-01) is live. Until then the xALPHA just accumulates safely in `adminSafe`. (The on-chain seize/slash contracts are already built; only this off-chain drain remains.)
 
-**Before production:**
-- Make all the currently-changeable contract wiring permanent — one final lock-down pass across the repo (it's deliberately left re-pointable during the build).
+**Hardening — after the contracts have proven their functionality:**
+- Lock all the currently-changeable contract wiring to immutable — one repo-wide pass. It's deliberately left re-pointable during the build/demonstration phase (§17); freezing it is the next hardening level once functionality is demonstrated, not a launch gate.
 
 ---
 
