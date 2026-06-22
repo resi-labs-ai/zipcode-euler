@@ -82,19 +82,6 @@ track on it.
 - **The real szALPHA/zipUSD pool, and the harvest bot that rides with it.** Hydrex hasn't launched the pool yet, so the junior share price can't value the real LP (it runs on a WETH/USDC placeholder until then). The harvest bot (KEEPER-01b) is part of this same component — it goes live alongside the real pool.
 - **The subgraph** is part of the frontend workstream — built after the app, and only if aggregated history is wanted (the app runs fine on direct contract reads without it). It also needs the event formats locked at deploy.
 
-**Deploy day — manual steps:**
-- After deploying, five wiring steps have to be done by hand (the deploy script doesn't do them). They're written out as a checklist in `contracts/script/RUNBOOK-mainnet-deploy.md` §7.
-
-**Rules the off-chain CRE bot must follow (these are how the bot operates, not contract changes):**
-- Don't send two price updates for the same loan in the same block — the contract rejects the second one.
-- When opening a loan, set the borrow limit high enough to also cover the origination fee, since the fee gets added to the loan's debt (limit must be ≥ loan + fee).
-- Pack every message in the exact format the receiving contract reads, or the contract rejects it.
-
-**Frontend notes — for when the app gets wired to the contracts:**
-- The share-price function is `navEntry`/`navExit`; there is no `navPerShare` (calling it reverts).
-- To exit the junior position, the user places a sell order on the CoW exchange — there is no "redeem" button or contract call.
-- Users can't open loans from the app (only the CRE bot does); anyone can repay using a standard Euler repay.
-
 **Milestone 2 / before production:**
 - Default and loss handling (seizing the bond, recovering, writing off bad debt) is built but only switched on in Milestone 2, not at launch.
 - Create the real treasury wallet and the off-chain process that turns seized collateral into USDC to cover losses (Milestone 2).
