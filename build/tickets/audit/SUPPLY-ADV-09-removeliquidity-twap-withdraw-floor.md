@@ -1,8 +1,14 @@
 # SUPPLY-ADV-09 — Size `removeLiquidity`'s `minAmount0/1` floor off the TWAP fair-reserves, not spot
 
-> **STATUS: FILED.** Process + doc ticket (no `.sol` change required). Off-chain CRE sizing rule + X-Ray/wire
-> doc-sync. The optional on-chain backstop (`ZeroMinAmount` guard) is tracked separately as SUPPLY-ADV-10 — this
-> ticket is the *materially correct* control; the guard is hygiene.
+> **STATUS: DOC HALF SHIPPED (ce1376b, 2026-06-23); CODE HALF BLOCKED → KEEPER-02.** The doc corrections
+> (deposit-is-protected / withdraw-is-not; the floor is TWAP-sized) landed in the SUPPLY-ADV-10 commit (X-Ray §5 +
+> wire `8-B6`). The off-chain TWAP floor-sizing *code* has no driver to change — `removeLiquidity` has no keeper
+> Job today — so it is realized when the wind-down driver is built (`build/tickets/cre/KEEPER-02`). Not
+> independently shippable beyond the docs.
+>
+> Process + doc ticket (no `.sol` change required). Off-chain CRE sizing rule + X-Ray/wire doc-sync. The optional
+> on-chain backstop (`ZeroMinAmount` guard) shipped as SUPPLY-ADV-10 — this ticket is the *materially correct*
+> control; the guard is hygiene.
 >
 > Source: adversarial-review on `contracts/src/supply/szipUSD/LpStrategyModule.sol`
 > (`adversarial-review/reports/src/supply/lpstrategymodule/synthesis.md`, mission 3 + verified-source follow-up).
