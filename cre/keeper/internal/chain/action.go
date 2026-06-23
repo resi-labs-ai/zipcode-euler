@@ -13,6 +13,7 @@ type Action struct {
 	To       common.Address
 	Data     []byte
 	GasLimit uint64 // 0 ⇒ estimate (with the gas buffer applied)
+	Private  bool   // route the SendTransaction through the private backend if one is configured (MEV-protected); nonce/fees/estimate/receipt stay on the public backend
 }
 
 // Plan is an ordered sequence of Actions a Job returns. An empty Plan is a

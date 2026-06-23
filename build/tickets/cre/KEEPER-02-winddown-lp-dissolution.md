@@ -1,6 +1,25 @@
 # KEEPER-02 — the wind-down LP-dissolution driver (`unstake` → `removeLiquidity`), TWAP-floored, privately submitted
 
-> BUILD item (K-transport keeper Job). Drives the ONE engine leg that has **no off-chain driver today**:
+> **STATUS: BUILT (2026-06-23) — committed to `cre/keeper/` (CRE track concludes review-first; NOT pushed).**
+> `WindDownLpJob` (`internal/job/winddown_lp_job.go`): `unstake` → `removeLiquidity`, coverage-excess shares via a
+> binary search on `coverageGate.lpBurnKeepsCovered` (clamped to `stakedBalance()` + optional `maxSlice`), a
+> spot↔TWAP deviation guard (`LpSpotTwapDeviationBps`, the hysteresis-style manipulation fence — reuses the
+> `meanTick` port; no new fixed-point math), a cushioned pro-rata withdraw floor (`LpWithdrawExpected`), and
+> per-`Action` `Private` routing (`chain.SetPrivateBackend`, `KEEPER_PRIVATE_RPC_URL`). New config knobs
+> (`WINDDOWN_ENABLED/PRIVATE_RPC_URL/WINDDOWN_MAX_SLICE/WINDDOWN_MAX_DEVIATION_BPS`); `.env.example` + `README`
+> synced. Gate: `go build ./... && go vet ./... && go test -count=1 ./...` all green (table-driven
+> `winddown_lp_job_test.go`: nothing-staked, gate binary-search, gate-covers-nothing, deviation over/at ceiling,
+> both-floors-zero, happy-path exact calldata + `Private==true`, maxSlice cap, quoter/reader errors).
+>
+> **Design divergence from the original plan (recorded):** sizes the floor via the *deviation-gated spot pro-rata*
+> approach (size off `getTotalAmounts()` pro-rata, but refuse to act when spot deviates from TWAP > ceiling) —
+> the SAME security invariant as "size off `fairReserves` TWAP" but WITHOUT hand-porting the Uniswap V3
+> `LiquidityAmounts` library into Go (that port would itself be an unverified load-bearing guess). Coverage-excess
+> sizing uses the on-chain `lpBurnKeepsCovered` predicate directly (binary search) rather than re-deriving
+> `excessValue`/`lpShareValue` off-chain. Still owed: a Base-supporting private RPC endpoint (config value), and
+> the keeper's own adversarial pass.
+>
+> BUILD item (K-transport keeper Job). Drives the ONE engine leg that had **no off-chain driver**:
 > `LpStrategyModule.removeLiquidity` — the global-wind-down LP→legs hop. Sibling to the StrikeLoop harvest
 > orchestrator (KEEPER-01b); this is a separate, exception-only Job, not part of the auto-compounder.
 >

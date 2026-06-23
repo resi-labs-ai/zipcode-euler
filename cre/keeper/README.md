@@ -45,6 +45,10 @@ See [`.env.example`](.env.example). Summary:
 | `KEEPER_DEADLINE_BUFFER` | StrikeLoop exercise/sell deadline buffer | `300s` |
 | `KEEPER_TWAP_PERIOD` | ICHI TWAP window for `ZipToShares` | `3600s` |
 | `KEEPER_MAX_BORROW_PER_CYCLE` | StrikeLoop per-cycle borrow ceiling (USDC 6dp) | — (**required** for StrikeLoop) |
+| `KEEPER_WINDDOWN_ENABLED` | arm the `WindDownLpJob` (exception-only; `true`/`1` ⇒ on) | `false` |
+| `KEEPER_PRIVATE_RPC_URL` | MEV-protected RPC for the wind-down `removeLiquidity` send (Base-supporting; only `Private` actions route here) | — (none ⇒ public mempool) |
+| `KEEPER_WINDDOWN_MAX_SLICE` | optional per-invocation share cap (base-10; 0 = no cap) | `0` |
+| `KEEPER_WINDDOWN_MAX_DEVIATION_BPS` | wind-down spot↔TWAP deviation ceiling, bps; above it the job no-ops | `100` |
 | `KEEPER_ADDR_<NAME>` | address book entry (re-pointable, §17) | — |
 | `KEEPER_CONFIG_FILE` | optional JSON overlay (env wins) | — |
 
@@ -58,6 +62,23 @@ injectable `Quoter` seam (`internal/quote`) that binds to the Algebra HYDX/USDC
 pool `globalState()` and the ICHI vault deposit math. `KEEPER_ADDR_*` for the six
 modules + `KEEPER_ADDR_HydxUsdcPool` are required; the LP pool is read off the
 vault.
+
+The **WindDownLpJob** (KEEPER-02) is the exception-only LP-dissolution driver —
+the global-wind-down `unstake` → `removeLiquidity` feeder on `LpStrategyModule`,
+the one engine leg with no off-chain caller otherwise. It is **disarmed by default**
+and armed only by `KEEPER_WINDDOWN_ENABLED`. Per tick it dissolves a
+**coverage-excess-bounded** slice: the burn `shares` is sized to the largest amount
+`coverageGate.lpBurnKeepsCovered(shares)` still blesses (binary-searched on that
+monotonic predicate), clamped to the live `stakedBalance()` and the optional
+`KEEPER_WINDDOWN_MAX_SLICE` cap. The withdraw floor (`minAmount0/1`) is the
+pro-rata expected at current reserves cushioned down by `KEEPER_CUSHION_BPS`, and a
+separate **hysteresis-gated TWAP guard** (`KEEPER_WINDDOWN_MAX_DEVIATION_BPS`)
+no-ops the job when the pool's spot price deviates from its TWAP beyond the ceiling
+(the SUPPLY-ADV-09 withdraw-floor rule; an unready-TWAP/`NoPlugin` quote aborts,
+never falls back to spot). Both legs are submitted **privately** via
+`KEEPER_PRIVATE_RPC_URL` when set (MEV-protected; only the send routes there —
+reads/nonce/fees/receipt stay on `KEEPER_RPC_URL`); if armed without a private RPC
+the keeper warns that the broadcast hits the public mempool.
 
 The **private key is never** in `Config`, never logged, never in an error string —
 logs show only the derived address.

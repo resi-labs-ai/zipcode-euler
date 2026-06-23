@@ -124,6 +124,22 @@ func (f *fakeQuoter) ZipToShares(ctx context.Context, recycle, vault common.Addr
 	return f.shares, f.zipIsToken0, nil
 }
 
+// LpWithdrawExpected / LpSpotTwapDeviationBps: scripted stubs so fakeQuoter keeps
+// satisfying the (extended) quote.Quoter interface. The StrikeLoopJob never calls
+// these; the WindDownLpJob tests use their own fake.
+func (f *fakeQuoter) LpWithdrawExpected(ctx context.Context, vault common.Address, shares *big.Int) (*big.Int, *big.Int, error) {
+	if f.err != nil {
+		return nil, nil, f.err
+	}
+	return big.NewInt(0), big.NewInt(0), nil
+}
+func (f *fakeQuoter) LpSpotTwapDeviationBps(ctx context.Context, vault common.Address) (*big.Int, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return big.NewInt(0), nil
+}
+
 // ---- helpers ----
 
 // fixedClock returns a deterministic clock for the deadline.

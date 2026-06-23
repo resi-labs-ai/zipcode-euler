@@ -55,6 +55,28 @@ type Config struct {
 	// exposure). env-only `json:"-"` (a *big.Int does not round-trip the JSON
 	// overlay cleanly).
 	MaxBorrowPerCycle *big.Int `json:"-"`
+
+	// ---- WindDownLpJob knobs (KEEPER-02; exception-only, disarmed by default) ----
+	// WinddownEnabled arms the wind-down LP-dissolution Job (KEEPER_WINDDOWN_ENABLED,
+	// "true"/"1" ⇒ true). Default false — wind-down is exception/directive-driven,
+	// never a routine poll.
+	WinddownEnabled bool `json:"winddown_enabled"`
+
+	// PrivateRPCURL is an OPTIONAL MEV-protected RPC for the wind-down removeLiquidity
+	// broadcast (KEEPER_PRIVATE_RPC_URL, Base-supporting). Empty ⇒ no private routing
+	// (the Job's txs would broadcast on the PUBLIC mempool — warned at startup).
+	PrivateRPCURL string `json:"private_rpc_url"`
+
+	// WinddownMaxSlice is an OPTIONAL per-invocation share cap (KEEPER_WINDDOWN_MAX_SLICE,
+	// base-10) — defense-in-depth on top of the coverage-excess clamp. env-only
+	// `json:"-"`. Default 0 = no cap (an explicit 0 is VALID; mirrors MinBurnAmount).
+	WinddownMaxSlice *big.Int `json:"-"`
+
+	// WinddownMaxDeviationBps is the WindDownLpJob spot↔TWAP deviation ceiling
+	// (KEEPER_WINDDOWN_MAX_DEVIATION_BPS). Above it the pool is treated as
+	// manipulated/volatile and the Job no-ops. Default 100 (1%, mirrors the ICHI
+	// deposit hysteresis). Validate: (0,10000] (always checked, like CushionBps).
+	WinddownMaxDeviationBps uint64 `json:"winddown_max_deviation_bps"`
 }
 
 // defaults returns a Config seeded with the documented default values. Defaults
@@ -80,6 +102,11 @@ func defaults() Config {
 		DeadlineBuffer:     300 * time.Second,
 		TwapPeriod:         3600 * time.Second,
 		// MaxBorrowPerCycle has NO default (required env) — left nil so Validate fires.
+
+		// WindDownLpJob defaults (KEEPER-02).
+		WinddownEnabled:         false,         // disarmed by default (exception-only)
+		WinddownMaxSlice:        big.NewInt(0), // 0 = no per-invocation cap (explicit 0 is valid)
+		WinddownMaxDeviationBps: 100,           // 1% spot↔TWAP ceiling (mirrors ICHI deposit hysteresis)
 	}
 }
 
@@ -191,6 +218,7 @@ func overlayEnv(cfg *Config) error {
 		{"KEEPER_RECYCLE_FRACTION_BPS", &cfg.RecycleFractionBps},
 		{"KEEPER_HALT_PRICE_USDC", &cfg.HaltPriceUsdc},
 		{"KEEPER_AMBER_PRICE_USDC", &cfg.AmberPriceUsdc},
+		{"KEEPER_WINDDOWN_MAX_DEVIATION_BPS", &cfg.WinddownMaxDeviationBps},
 	} {
 		if v := os.Getenv(kv.env); v != "" {
 			n, err := strconv.ParseUint(v, 10, 64)
@@ -222,6 +250,25 @@ func overlayEnv(cfg *Config) error {
 			return fmt.Errorf("config: KEEPER_MAX_BORROW_PER_CYCLE %q is not a base-10 integer", v)
 		}
 		cfg.MaxBorrowPerCycle = n
+	}
+
+	// ---- WindDownLpJob knobs (KEEPER-02) ----
+	if v := os.Getenv("KEEPER_WINDDOWN_ENABLED"); v != "" {
+		cfg.WinddownEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("KEEPER_PRIVATE_RPC_URL"); v != "" {
+		cfg.PrivateRPCURL = v
+	}
+	// WinddownMaxSlice: env-only, base-10 *big.Int. Replace the default ONLY if
+	// non-empty (so the seeded 0 survives). Reject only an unparseable non-empty
+	// value (a Load error, not a Validate rule — any parsed value ≥0 is valid;
+	// 0 = no cap). Mirrors MinBurnAmount.
+	if v := os.Getenv("KEEPER_WINDDOWN_MAX_SLICE"); v != "" {
+		n, ok := new(big.Int).SetString(v, 10)
+		if !ok {
+			return fmt.Errorf("config: KEEPER_WINDDOWN_MAX_SLICE %q is not a base-10 integer", v)
+		}
+		cfg.WinddownMaxSlice = n
 	}
 
 	if cfg.Modules == nil {
@@ -294,6 +341,11 @@ func (c *Config) Validate() error {
 	}
 	if c.TwapPeriod <= 0 {
 		return fmt.Errorf("config: TwapPeriod must be > 0 (KEEPER_TWAP_PERIOD)")
+	}
+	// WindDownLpJob deviation ceiling: (0,10000] (always checked; default 100 makes
+	// bare env valid). Mirrors CushionBps.
+	if c.WinddownMaxDeviationBps == 0 || c.WinddownMaxDeviationBps > 10000 {
+		return fmt.Errorf("config: WinddownMaxDeviationBps must be in (0,10000] (KEEPER_WINDDOWN_MAX_DEVIATION_BPS)")
 	}
 	// MaxBorrowPerCycle is NOT checked here — it is a StrikeLoopJob precondition,
 	// enforced lazily by MustMaxBorrowPerCycle at job wiring (the same lazy pattern

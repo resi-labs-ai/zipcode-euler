@@ -69,6 +69,29 @@ func CallUintWithUint(ctx context.Context, r Reader, to common.Address, sig stri
 	return decodeUint(data)
 }
 
+// CallBoolWithUint reads a single-uint256-arg view returning a single bool
+// (e.g. lpBurnKeepsCovered(uint256)). Mirrors CallUintWithUint (one uint256 arg
+// via the shared uint256T) + CallBool (decode a single bool).
+func CallBoolWithUint(ctx context.Context, r Reader, to common.Address, sig string, arg *big.Int) (bool, error) {
+	packed, err := abi.Arguments{{Type: uint256T}}.Pack(arg)
+	if err != nil {
+		return false, err
+	}
+	data, err := callView(ctx, r, to, append(selector(sig), packed...))
+	if err != nil {
+		return false, err
+	}
+	boolT, err := abi.NewType("bool", "", nil)
+	if err != nil {
+		return false, err
+	}
+	out, err := abi.Arguments{{Type: boolT}}.Unpack(data)
+	if err != nil {
+		return false, err
+	}
+	return out[0].(bool), nil
+}
+
 // CallBool reads a no-arg view returning a single bool.
 func CallBool(ctx context.Context, r Reader, to common.Address, sig string) (bool, error) {
 	data, err := callView(ctx, r, to, selector(sig))

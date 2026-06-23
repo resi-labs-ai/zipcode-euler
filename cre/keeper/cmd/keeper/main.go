@@ -50,6 +50,21 @@ func run(log *slog.Logger) error {
 	chainID := new(big.Int).SetUint64(cfg.ChainID)
 	c := chain.NewChain(client, chainID, signer, cfg)
 
+	// Optional MEV-protected send path for the wind-down job (KEEPER-02). When set,
+	// only Private Actions' SendTransaction routes here (nonce/fees/estimate/receipt
+	// stay on the public client). If wind-down is armed without it, txs broadcast on
+	// the PUBLIC mempool — warn loudly.
+	if cfg.PrivateRPCURL != "" {
+		privateClient, err := ethclient.Dial(cfg.PrivateRPCURL)
+		if err != nil {
+			return err
+		}
+		c.SetPrivateBackend(privateClient)
+		log.Info("private submission enabled (wind-down sends route through KEEPER_PRIVATE_RPC_URL)")
+	} else if cfg.WinddownEnabled {
+		log.Warn("wind-down ARMED but no KEEPER_PRIVATE_RPC_URL set — removeLiquidity will broadcast on the PUBLIC mempool (the TWAP floor bounds the worst case)")
+	}
+
 	// 3. build the identity check list from config (re-pointable addresses, §17).
 	exitGate, err := cfg.MustAddr("ExitGate")
 	if err != nil {
@@ -162,8 +177,16 @@ func run(log *slog.Logger) error {
 		"OffRampModule", offramp.Hex(), "ZipRedemptionQueue", redemptionQueue.Hex())
 
 	// 5. register the jobs (IdentityJob heartbeat first, then BurnJob, the
-	//    StrikeLoopJob harvest loop, then the RedemptionJob) and run the loop.
-	runner := job.NewRunner(c, []job.Job{identity, burn, strikeLoop, redemption}, cfg.PollInterval, log)
+	//    StrikeLoopJob harvest loop, then the RedemptionJob) and run the loop. The
+	//    exception-only WindDownLpJob (KEEPER-02) is appended ONLY when armed; it
+	//    reuses the StrikeLoop quoter + LpStrategyModule address.
+	jobs := []job.Job{identity, burn, strikeLoop, redemption}
+	if cfg.WinddownEnabled {
+		windDown := job.NewWindDownLpJob(lpMod, quoter, cfg.CushionBps, cfg.WinddownMaxDeviationBps, cfg.WinddownMaxSlice)
+		jobs = append(jobs, windDown)
+		log.Info("wind-down LP-dissolution job armed (KEEPER_WINDDOWN_ENABLED)", "LpStrategyModule", lpMod.Hex())
+	}
+	runner := job.NewRunner(c, jobs, cfg.PollInterval, log)
 	runner.Run(ctx)
 	return nil
 }

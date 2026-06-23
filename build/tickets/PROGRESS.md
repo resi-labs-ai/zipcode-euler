@@ -278,9 +278,16 @@ pins hold. The one substantive delta — surfaced by pulling the **verified ICHI
   **code half has no driver to change** — `removeLiquidity` has no keeper Job today, so the rule is realized when
   the wind-down driver is built (→ KEEPER-02). FILED; not independently shippable.
 - **KEEPER-02** (`build/tickets/cre/`) — the missing wind-down LP-dissolution driver (`unstake` →
-  `removeLiquidity`, coverage-excess-bounded shares, TWAP-sized floor reusing the `quote.go` `meanTick` port,
-  private-RPC submission). **FILED — build-track backlog** (keeper Job; needs a Base-supporting protected RPC
-  source + the KEEPER-00/01 spine). Not an audit-track quick fix.
+  `removeLiquidity`). **BUILT — committed to `cre/keeper/`, NOT pushed (CRE track concludes review-first).**
+  `WindDownLpJob`: coverage-excess shares via binary search on the on-chain `lpBurnKeepsCovered` predicate
+  (clamped to `stakedBalance()` + optional `maxSlice`); a spot↔TWAP deviation guard (reusing the `quote.go`
+  `meanTick` port — the hysteresis-style manipulation fence, no new fixed-point port); a cushioned pro-rata
+  withdraw floor; per-`Action` `Private` routing through `KEEPER_PRIVATE_RPC_URL`. Gate green (`go build/vet/test
+  -count=1`); table-driven test covers the gate/deviation/floor/coverage paths + exact Private calldata.
+  Divergence (recorded in the ticket): deviation-gated spot pro-rata floor instead of a full `fairReserves` Go
+  port (same invariant, no unverified math); coverage sizing off the on-chain predicate, not re-derived
+  `excessValue`. **Still owed:** a Base-supporting private RPC endpoint (config), and the keeper's own
+  adversarial pass.
 
 Owed: the `cre/keeper/` service itself (holds the operator hot key, sizes the harvest-loop floors via `quote.go`)
 is built-but-**outside this contract audit's scope** and is owed its own adversarial pass; the wind-down path

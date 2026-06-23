@@ -38,6 +38,15 @@ type Quoter interface {
 	// Job uses the flag to build addLiquidity on the correct side. Used for
 	// addLiquidity minShares + deposit-side routing.
 	ZipToShares(ctx context.Context, recycle, vault common.Address, depositZip *big.Int) (shares *big.Int, zipIsToken0 bool, err error)
+	// LpWithdrawExpected returns the pro-rata token0/token1 an ICHI withdraw of `shares`
+	// returns at CURRENT reserves: amt_i = getTotalAmounts()_i * shares / totalSupply.
+	// (Manipulation is fenced separately by LpSpotTwapDeviationBps + the job's gate.)
+	// Returns (0,0) if totalSupply == 0.
+	LpWithdrawExpected(ctx context.Context, vault common.Address, shares *big.Int) (amt0, amt1 *big.Int, err error)
+	// LpSpotTwapDeviationBps returns |spotPrice - twapPrice| * 10000 / spotPrice for the
+	// vault's LP pool (spot tick from pool.globalState(); twap from meanTick over twapWindow;
+	// price via getQuoteAtTick(tick, precision, baseLess) where baseLess = token0 < token1).
+	LpSpotTwapDeviationBps(ctx context.Context, vault common.Address) (*big.Int, error)
 }
 
 // ProdQuoter binds the Quoter methods to live pools + ICHI vault views via a
@@ -154,6 +163,67 @@ func (q *ProdQuoter) ZipToShares(ctx context.Context, recycle, vault common.Addr
 	twap := getQuoteAtTick(meanTickBig.Int64(), precision, baseLess)
 
 	return ichiSingleSidedShares(depositZip, totalSupply, pool0, pool1, price, twap, zipIsToken0), zipIsToken0, nil
+}
+
+// LpWithdrawExpected returns the pro-rata token0/token1 an ICHI withdraw of
+// `shares` returns at CURRENT reserves: amt_i = getTotalAmounts()_i · shares /
+// totalSupply. Manipulation is fenced separately by LpSpotTwapDeviationBps + the
+// WindDownLpJob's gate. Returns (0,0) if totalSupply == 0 (degenerate empty vault).
+func (q *ProdQuoter) LpWithdrawExpected(ctx context.Context, vault common.Address, shares *big.Int) (*big.Int, *big.Int, error) {
+	pool0, pool1, err := chain.CallTwoUints(ctx, q.r, vault, "getTotalAmounts()")
+	if err != nil {
+		return nil, nil, fmt.Errorf("quote: getTotalAmounts() on vault %s: %w", vault.Hex(), err)
+	}
+	totalSupply, err := chain.CallUint(ctx, q.r, vault, "totalSupply()")
+	if err != nil {
+		return nil, nil, fmt.Errorf("quote: totalSupply() on vault %s: %w", vault.Hex(), err)
+	}
+	if totalSupply.Sign() == 0 {
+		return big.NewInt(0), big.NewInt(0), nil
+	}
+	amt0 := mulDiv(pool0, shares, totalSupply)
+	amt1 := mulDiv(pool1, shares, totalSupply)
+	return amt0, amt1, nil
+}
+
+// LpSpotTwapDeviationBps returns |spotPrice − twapPrice| · 10000 / spotPrice for
+// the vault's LP pool: spot tick from pool.globalState() (2nd field); twap from
+// meanTick over twapWindow; price/twap via getQuoteAtTick(tick, precision,
+// baseLess) where baseLess = token0 < token1 (same direction convention as
+// ZipToShares). It is the WindDownLpJob's manipulation guard (the withdraw floor
+// is sized off CURRENT reserves, so this fences a manipulated/volatile pool).
+func (q *ProdQuoter) LpSpotTwapDeviationBps(ctx context.Context, vault common.Address) (*big.Int, error) {
+	token0, err := chain.CallAddress(ctx, q.r, vault, "token0()")
+	if err != nil {
+		return nil, fmt.Errorf("quote: token0() on vault %s: %w", vault.Hex(), err)
+	}
+	token1, err := chain.CallAddress(ctx, q.r, vault, "token1()")
+	if err != nil {
+		return nil, fmt.Errorf("quote: token1() on vault %s: %w", vault.Hex(), err)
+	}
+	pool, err := chain.CallAddress(ctx, q.r, vault, "pool()")
+	if err != nil {
+		return nil, fmt.Errorf("quote: pool() on vault %s: %w", vault.Hex(), err)
+	}
+	baseLess := token0.Cmp(token1) < 0
+	_, spotTickBig, err := chain.CallGlobalState(ctx, q.r, pool)
+	if err != nil {
+		return nil, fmt.Errorf("quote: globalState() on LP pool %s: %w", pool.Hex(), err)
+	}
+	meanTickBig, err := q.meanTick(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	price := getQuoteAtTick(spotTickBig.Int64(), precision, baseLess)
+	twap := getQuoteAtTick(meanTickBig.Int64(), precision, baseLess)
+	if price.Sign() == 0 {
+		return nil, fmt.Errorf("quote: zero spot price on LP pool %s (cannot compute deviation)", pool.Hex())
+	}
+	// dev = |price − twap| · 10000 / price
+	diff := new(big.Int).Sub(price, twap)
+	diff.Abs(diff)
+	diff.Mul(diff, big.NewInt(10000))
+	return diff.Div(diff, price), nil
 }
 
 // meanTick ports IchiAlgebraFairReserves._meanTick

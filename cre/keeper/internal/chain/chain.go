@@ -38,6 +38,7 @@ type Backend interface {
 // Chain wraps a Backend with the operator signer and submit policy.
 type Chain struct {
 	backend          Backend
+	privateBackend   Backend // optional MEV-protected send path (nil = none); only SendTransaction routes here
 	chainID          *big.Int
 	signer           *keymgr.Signer
 	gasBufferBps     uint64
@@ -60,6 +61,12 @@ func NewChain(backend Backend, chainID *big.Int, signer *keymgr.Signer, cfg *con
 		confirmTimeout:   cfg.ConfirmTimeout,
 	}
 }
+
+// SetPrivateBackend installs an OPTIONAL MEV-protected send path. When set, an
+// Action with Private==true has ONLY its SendTransaction routed through b; nonce,
+// fees, gas estimate, and the receipt poll all stay on the public backend (a
+// private tx still lands on-chain, so the public backend observes the receipt).
+func (c *Chain) SetPrivateBackend(b Backend) { c.privateBackend = b }
 
 // CallContract lets Chain satisfy Reader (so jobs can read through it).
 func (c *Chain) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
@@ -85,6 +92,11 @@ func (c *Chain) ResyncNonce(ctx context.Context) error {
 // SendTransaction, so a failed estimate/send leaves the slot free for the next
 // Action (no gap nonce). EstimateGas doubles as a dry-run: a revert returns the
 // error WITHOUT sending and WITHOUT advancing the nonce.
+//
+// Private routing: ONLY the SendTransaction call is routed through the private
+// backend, and only when action.Private && a private backend is configured.
+// Nonce/fees/gas-estimate/receipt-poll all stay on the public backend — a private
+// tx still lands on-chain, so the public backend observes the receipt.
 func (c *Chain) Submit(ctx context.Context, action Action) (*types.Receipt, error) {
 	// 1. nonce: read the current LOCAL counter under the mutex. Do NOT call
 	//    PendingNonceAt per Action — ResyncNonce seeded it for the tick, and a
@@ -146,7 +158,12 @@ func (c *Chain) Submit(ctx context.Context, action Action) (*types.Receipt, erro
 	if err != nil {
 		return nil, fmt.Errorf("chain: sign tx for %q: %w", action.Label, err)
 	}
-	if err := c.backend.SendTransaction(ctx, signed); err != nil {
+	// Choose the send backend: the private one ONLY for a Private action when set.
+	sendBackend := c.backend
+	if action.Private && c.privateBackend != nil {
+		sendBackend = c.privateBackend
+	}
+	if err := sendBackend.SendTransaction(ctx, signed); err != nil {
 		// Failed send: leave the counter unchanged so the next Action reuses the slot.
 		return nil, fmt.Errorf("chain: send tx for %q: %w", action.Label, err)
 	}
