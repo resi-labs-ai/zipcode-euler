@@ -1,6 +1,6 @@
 # Invariant Map
 
-> supply/lib (Fair Reserves) | 2 guards | 5 inferred (single-contract) | 2 not enforced on-chain (cross-contract)
+> supply/lib (Fair Reserves) | 3 guards | 5 inferred (single-contract) | 2 not enforced on-chain (cross-contract)
 
 > The defining feature: the keystone invariant (**I-1, manipulation invariance**) is **On-chain=Yes and directly
 > fork-tested**. The two residual-trust invariants are **On-chain=No** — the tick math is Uniswap's (X-1), the TWAP
@@ -11,10 +11,13 @@
 ## 1. Enforced Guards (Reference)
 
 #### G-1
-`if (plugin == address(0)) revert NoPlugin()` · `IchiAlgebraFairReserves.sol:41` · the pool must expose a TWAP plugin; a pool with no manipulation-resistant price source fails **closed** rather than falling back to a manipulable spot value.
+`if (plugin == address(0)) revert NoPlugin()` · `IchiAlgebraFairReserves.sol:45` · the pool must expose a TWAP plugin; a pool with no manipulation-resistant price source fails **closed** rather than falling back to a manipulable spot value. Tested (`test_..._noPlugin`, `MockPoolNoPlugin`).
 
 #### G-2
-`if (cum.length != 2) revert BadTimepoints()` · `IchiAlgebraFairReserves.sol:80` · the plugin must return exactly the two requested tick-cumulatives; a malformed timepoint set fails closed.
+`if (!IAlgebraOraclePlugin(plugin).isInitialized()) revert PluginNotReady()` · `IchiAlgebraFairReserves.sol:53` · **read-time plugin-readiness gate (SUPPLY-ADV-02)** — a non-zero but UNINITIALIZED plugin would return a well-formed length-2 set encoding a near-spot/frozen "TWAP"; fail closed here so BOTH consumers (this lib's oracle + `SzipNavOracle`'s LP leg) are covered at read-time, mirroring `SzipNavOracle.setLpTwapWindow`. Tested (`test_ctor_revert_uninitializedPlugin`, `test_fairReserves_revert_uninitializedPlugin`, `MockUninitializedPlugin`).
+
+#### G-3
+`if (cum.length != 2) revert BadTimepoints()` · `IchiAlgebraFairReserves.sol:92` · the plugin must return exactly the two requested tick-cumulatives; a malformed timepoint set fails closed. Tested (`test_fairReserves_revert_badTimepoints`, `MockBadTimepointsPlugin` — SUPPLY-ADV-03).
 
 ---
 
@@ -44,11 +47,11 @@
 
 `FailClosed` · On-chain: **Yes**
 
-> No TWAP source ⇒ revert (`NoPlugin`); malformed timepoints ⇒ revert (`BadTimepoints`). The library never returns a spot/fallback value when the manipulation-resistant price is unavailable.
+> No TWAP source ⇒ revert (`NoPlugin`); uninitialized plugin ⇒ revert (`PluginNotReady`, SUPPLY-ADV-02); malformed timepoints ⇒ revert (`BadTimepoints`). The library never returns a spot/fallback value when the manipulation-resistant price is unavailable.
 
-**Derivation** — `:41`, `:80`.
+**Derivation** — `:45`, `:53`, `:92`.
 
-**If violated** — a missing/broken plugin could silently degrade to a manipulable value. **Untested** (the live vault always has a plugin) — the one concrete test gap.
+**If violated** — a missing/uninitialized/broken plugin could silently degrade to a manipulable value. **All three paths now tested** via mock plugins: `NoPlugin` (`test_..._noPlugin`), `PluginNotReady` (`test_ctor_revert_uninitializedPlugin` + `test_fairReserves_revert_uninitializedPlugin`), `BadTimepoints` (`test_fairReserves_revert_badTimepoints`, SUPPLY-ADV-03). Window under-coverage fails closed empirically on the live plugin (`test_fork_underCoverageWindow_failsClosed`).
 
 #### I-4
 

@@ -192,3 +192,15 @@ trust + X-3 build-phase wiring = ratified accepted-residuals.
   `docs/roles.md` (the re-point runbook). Optional `setRoles` parity re-check DECLINED (breaks build-phase
   re-pointing, can't cover external `setAvatar`, no gain over the fail-closed scope). Contract untouched; the
   28 fork-integration tests unaffected (green at baseline). HARDENED verdict retained.
+
+supply/lib — `IchiAlgebraFairReserves` (the manipulation-resistance reserve-reconstruction lib) handled as a
+dedicated pass after the user pointed at `supply/lib/x-ray`. Already reviewed within the fair-LP oracle cycle
+(ADV-01 idle-donation WONTFIX; ADV-02 plugin-readiness gate shipped; math/rounding/in-block-invariance sound),
+so NO redundant panel was run. Two real residuals found + closed.
+- **SUPPLY-ADV-03** — (a) the lib's `BadTimepoints` guard was the one declared fail-closed path with zero test
+  coverage, and (b) the four lib X-Ray files were stale (06-20, pre-ADV-02): they listed only two revert paths
+  and marked `NoPlugin`/`BadTimepoints` untested, omitting the `PluginNotReady` readiness gate ADV-02 added →
+  **SHIPPED to `main`**. Added `test_fairReserves_revert_badTimepoints` + `MockBadTimepointsPlugin` (suite
+  16→17 green); refreshed `IchiAlgebraFairReserves.md` + `invariants.md` + `entry-points.md` + scope `x-ray.md`
+  (three reverts now recorded + all tested; ADV-02 readiness gate + X-2 under-coverage resolution documented;
+  verdict lifted **ADEQUATE → HARDENED**). No contract logic change (test + docs only).

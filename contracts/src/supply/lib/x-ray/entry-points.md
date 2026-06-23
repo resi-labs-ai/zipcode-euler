@@ -14,6 +14,7 @@ through a consumer call.
 
 `AlgebraIchiFairLpOracle / SzipNavOracle → IchiAlgebraFairReserves.fairReserves(vault, window)` →
    ├─ `IICHIVault(vault).pool()` → `IAlgebraPool(pool).plugin()`  ◄── `revert NoPlugin` if 0
+   ├─ `IAlgebraOraclePlugin(plugin).isInitialized()`  ◄── `revert PluginNotReady` if false (read-time gate, SUPPLY-ADV-02)
    ├─ `_meanTick(plugin, window)` → `IAlgebraOraclePlugin.getTimepoints([window, 0])`  ◄── `revert BadTimepoints` if !len 2
    │     → `sqrtP = TickMath.getSqrtRatioAtTick(meanTick)`
    ├─ base:  `getBasePosition()` → `LiquidityAmounts.getAmountsForLiquidity(sqrtP, lower, upper, L_base)`
@@ -32,10 +33,10 @@ through a consumer call.
 | Visibility | `internal view` |
 | Caller | the consuming oracle (`AlgebraIchiFairLpOracle`, `SzipNavOracle` LP leg) |
 | Parameters | `vault` (ICHI vault), `window` (TWAP seconds, consumer-set — 3600 deployed) |
-| Reads | vault `pool`/`plugin`/positions/bounds/token0/token1/balances; plugin `getTimepoints` |
+| Reads | vault `pool`/`plugin`/positions/bounds/token0/token1/balances; plugin `isInitialized`/`getTimepoints` |
 | State modified | none (view) |
 | Value flow | none — returns computed amounts only |
-| Reverts | `NoPlugin` (pool exposes no TWAP plugin); `BadTimepoints` (bubbled from `_meanTick`) |
+| Reverts | `NoPlugin` (pool exposes no TWAP plugin); `PluginNotReady` (plugin not initialized — SUPPLY-ADV-02 read-time gate); `BadTimepoints` (bubbled from `_meanTick`) |
 
 ### `_meanTick(address plugin, uint32 window)`
 

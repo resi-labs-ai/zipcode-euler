@@ -211,6 +211,20 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
         caller.call(VAULT, tenYears);
     }
 
+    /// @notice SUPPLY-ADV-03: the `BadTimepoints` defense-in-depth shape guard in `_meanTick`. An INITIALIZED plugin
+    ///         (passes the `PluginNotReady` gate) whose `getTimepoints` returns a non-length-2 set reverts
+    ///         `BadTimepoints` rather than indexing a malformed array. A conforming Algebra plugin always returns
+    ///         length-2 (the lib builds `secondsAgos` as `new uint32[](2)`), so this exercises the otherwise-dead
+    ///         shape guard — the one fail-closed path the suite previously left untested.
+    function test_fairReserves_revert_badTimepoints() public {
+        address plugin = address(new MockBadTimepointsPlugin());
+        address mockPool = address(new MockPoolWithPlugin(plugin));
+        address vault = address(new MockVaultNoPlugin(mockPool)); // only pool() is read before _meanTick reverts
+        FairReservesCaller caller = new FairReservesCaller(); // external boundary so expectRevert sees the lib revert
+        vm.expectRevert(IchiAlgebraFairReserves.BadTimepoints.selector);
+        caller.call(vault, WINDOW);
+    }
+
     // ----------------------------------------------------------------- 7. fail-closed quotes (unsupported / zero supply)
     /// @notice Only the constructed `(lpToken, quote)` pair is priced; any other base or quote reverts
     ///         `PriceOracle_NotSupported` rather than returning a number for a market the oracle wasn't built for.
@@ -349,5 +363,19 @@ contract MockUninitializedPlugin {
 
     function getTimepoints(uint32[] calldata) external pure returns (int56[] memory, uint88[] memory) {
         revert("uninitialized");
+    }
+}
+
+/// @notice An INITIALIZED Algebra oracle-plugin stub whose `getTimepoints` returns a MALFORMED (non-length-2) set —
+///         passes the `isInitialized()` readiness gate and reaches `_meanTick`, driving the `BadTimepoints` shape
+///         guard (SUPPLY-ADV-03). A conforming plugin always returns length-2.
+contract MockBadTimepointsPlugin {
+    function isInitialized() external pure returns (bool) {
+        return true;
+    }
+
+    function getTimepoints(uint32[] calldata) external pure returns (int56[] memory cum, uint88[] memory vol) {
+        cum = new int56[](1); // wrong length (≠ 2) ⇒ BadTimepoints
+        vol = new uint88[](1);
     }
 }
