@@ -424,8 +424,9 @@ contract RecycleModuleUnitTest is Test {
 
     /// @dev The remaining three wiring setters (the stream-2 trio is covered above, `setOperator` by SEC-15):
     ///      `setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc` are each `onlyOwner`, non-zero-guarded, take
-    ///      effect, and emit `WiringSet`. (`setJuniorTrancheEngine` does NOT sync avatar/target here — unlike the
-    ///      other engine modules — so there is no sync to assert.)
+    ///      effect, and emit `WiringSet`. `setJuniorTrancheEngine` syncs `avatar`/`target` in lockstep (SUPPLY-ADV-08,
+    ///      matching the siblings) — `divert`'s `BackingShortfall` reads `juniorTrancheEngine` as the executor, so the
+    ///      three must never diverge; asserted below.
     function test_wiring_setters_repoint_only_owner() public {
         address x = makeAddr("rewire");
 
@@ -454,6 +455,8 @@ contract RecycleModuleUnitTest is Test {
         emit WiringSet("juniorTrancheEngine", x);
         m.setJuniorTrancheEngine(x);
         assertEq(m.juniorTrancheEngine(), x, "juniorTrancheEngine re-pointed");
+        assertEq(m.avatar(), x, "avatar synced to juniorTrancheEngine");
+        assertEq(m.target(), x, "target synced to juniorTrancheEngine");
 
         vm.expectEmit(true, false, false, true, address(m));
         emit WiringSet("zipDepositModule", x);

@@ -182,10 +182,16 @@ contract RecycleModule is MastercopyInitLock {
     //      zodiac-core setters by marking them `virtual`). Tested: a non-owner caller reverts.
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
-    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `juniorTrancheEngine` AND sync `avatar`/`target` in lockstep (build phase, §17). onlyOwner
+    ///         (Timelock). The three must never diverge — the module is enabled ON the engine Safe and only mutates its
+    ///         avatar, which must equal the engine Safe; in particular `divert` reads `juniorTrancheEngine` as the
+    ///         executor account for its `BackingShortfall` balance-delta guard (`:325/:332`), so a desync would make
+    ///         that guard measure a non-executing Safe. Matches the syncing siblings (Sell/Exercise/LpStrategy/FarmUtilityLoop).
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
         juniorTrancheEngine = juniorTrancheEngine_;
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
         emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 

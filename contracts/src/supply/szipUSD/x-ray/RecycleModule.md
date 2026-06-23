@@ -37,7 +37,7 @@ and operator-trusted** (layer (a) is policy, not cryptographic) — the §17 sin
 | `creditFreeValue(amount)` | operator-only | unbounded ledger increment (the §17 trusted-writer residual) |
 | `recycle(usdcAmount)` | operator-only | debit-first, then approve→`ZipDepositModule.deposit`→reset; backed-mint into basket |
 | `divert(usdcAmount)` | operator-only | bounds-before-spend (`NoHole`/`ExceedsHole`) → CEI debit + tally → approve→`eePool.deposit(amount, warehouseSafe)`→reset; `BackingShortfall`/`NoSharesMinted` post-guards |
-| `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring |
+| `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring (`setJuniorTrancheEngine` syncs `avatar`/`target`) |
 | `freeValueAccrued` / `lastSeenProvision` / `divertedSinceProvisionChange` | public state | the ledger + SEC-09 epoch tally |
 
 No permissionless mutators, no custody. `recycle`/`divert` route value only to the basket / warehouse Safe; never an operator-supplied destination.
@@ -66,7 +66,7 @@ No permissionless mutators, no custody. `recycle`/`divert` route value only to t
 | `InsufficientFreeValue` | `test_recycle_overspend_leaves_accrued_and_callcount_unchanged` |
 | Stream-2 setters (`setNavOracle`/`setEePool`/`setWarehouseSafe`) | `test_stream2_setters_repoint_only_owner` (onlyOwner + zero-guard + effect + event) |
 | operator cannot redirect Safe | `test_operator_cannot_redirect_safe` |
-| 3 wiring setters (`setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc`) | `test_wiring_setters_repoint_only_owner` — onlyOwner + zero-guard + effect + `WiringSet` event (all 3) |
+| 3 wiring setters (`setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc`) | `test_wiring_setters_repoint_only_owner` — onlyOwner + zero-guard + effect + `WiringSet` event (all 3), incl. the `setJuniorTrancheEngine` avatar/target sync (SUPPLY-ADV-08) |
 
 ## 5. Attack surfaces
 
@@ -85,8 +85,12 @@ No permissionless mutators, no custody. `recycle`/`divert` route value only to t
   it's a structural argument, not a guard, so any future code that moves an `_exec` before the decrement would break it.
 - **3 wiring setters — now covered** — `test_wiring_setters_repoint_only_owner` exercises
   `setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc` for onlyOwner + zero-guard + effect + `WiringSet` event.
-  With the stream-2 trio and `setOperator` (SEC-15), **every wiring setter is now exercised**. (`setJuniorTrancheEngine`
-  does NOT sync avatar/target here — unlike the other engine modules — so there was no sync to assert.)
+  With the stream-2 trio and `setOperator` (SEC-15), **every wiring setter is now exercised**. `setJuniorTrancheEngine`
+  syncs `avatar`/`target` in lockstep (`:188-190`, SUPPLY-ADV-08), matching the syncing siblings (Sell/Exercise/
+  LpStrategy/FarmUtilityLoop) — the engine-Safe invariant `avatar == target == juniorTrancheEngine` must hold because
+  `divert` reads `juniorTrancheEngine` as the executor account for its `BackingShortfall` balance-delta guard (`:325/:332`),
+  so a non-syncing re-point would have left that guard measuring a non-executing Safe (fail-closed DoS on `divert`,
+  owner-only, build-phase). The sync is asserted in `test_wiring_setters_repoint_only_owner`.
 - **No Foundry stateful invariant on the ledger** — the conservation + SEC-09 properties are covered by deterministic
   boundary tests rather than fuzzed interleavings. Lower-priority than ExitGate's was: the consequence is smaller
   (mis-routing realized free value, not minting), and the tricky SEC-09 cases (exact/over/reset/stale-remark) are

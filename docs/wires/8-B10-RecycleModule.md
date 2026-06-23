@@ -128,8 +128,10 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
     `provision`).
 - All 7 wiring slots are Timelock-re-pointable (`setJuniorTrancheEngine`/`setOperator`/`setZipDepositModule`/`setUsdc`/
   `setNavOracle`/`setEePool`/`setWarehouseSafe`, each `onlyOwner` + zero-guard + `WiringSet` event) — build-phase §17,
-  not set-once-renounce-frozen. `setAvatar`/`setTarget` are inherited `onlyOwner` (the hot operator key CANNOT
-  call them).
+  not set-once-renounce-frozen. `setJuniorTrancheEngine` **moves three slots** — it also re-points `avatar` and `target`
+  in lockstep (SUPPLY-ADV-08, mirroring 8-B9 SellModule): the three must never diverge, because `divert`'s
+  `BackingShortfall` guard reads `juniorTrancheEngine` as the executor account. `setAvatar`/`setTarget` are inherited
+  `onlyOwner` (the hot operator key CANNOT call them).
 - **`setOperator` re-checks `operator != owner` (`OwnerIsOperator`), SEC-15.** Beyond the zero-guard, the re-point
   preserves the init-time (`setUp`) role separation across re-points — it cannot collapse the Timelock owner and the
   CRE operator into one key.

@@ -246,3 +246,14 @@ supply/szipUSD — the junior-vault engine fleet (14 contracts). Prompts authore
   (1% FoT leg). Deflated to LOW (latent — whitelist {zipUSD,xALPHA} is non-FoT; reachable only via a Timelock
   `setTokens` re-point). Shipped in the same scoped 24/24 green run as ADV-06; wire doc + X-Ray synced. Single-model
   run (Claude-only) — conservation / no-ragequit / round-down / fail-closed core confirmed sound.
+- **SUPPLY-ADV-08** — `RecycleModule.setJuniorTrancheEngine` re-pointed only the convenience slot, NOT the inherited
+  Zodiac `avatar`/`target`, while `divert`'s `BackingShortfall` guard reads `juniorTrancheEngine` as the executor
+  account (`:325/:332`) — so a re-point without a paired `setAvatar`/`setTarget` made the guard measure a
+  non-executing Safe → `divert` reverts (fail-closed DoS; no drain, no value invention; `recycle` unaffected) →
+  **SHIPPED to `main`**. Fix: `setJuniorTrancheEngine` now sets `avatar = target = juniorTrancheEngine_`
+  (`:188-190`), matching the 4 syncing siblings (Sell/Exercise/LpStrategy/FarmUtilityLoop); the X-Ray's "unlike the
+  other engine modules / no sync to assert" framing was wrong (4-vs-3 split, and Recycle is the only non-syncing
+  module that consumes the slot as an executor-proxy vs a subject). Promoted INFO→LOW; folded the mission-4 review
+  finding. `test_wiring_setters_repoint_only_owner` now asserts the avatar/target sync; scoped suite **42/42 green**;
+  X-Ray §2/§4/§5 + wire doc synced. Single-model run (Claude-only) — SEC-09 bound, two-layer free-value, CEI core
+  confirmed sound.
