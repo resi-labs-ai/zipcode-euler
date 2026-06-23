@@ -100,8 +100,9 @@ call) — see the security thesis.
 - **`coordinator` = `DefaultCoordinator`** — the sole caller of all four state-changers, set as the
   `coordinator` slot at deploy. The coordinator **is** that wired address from S-deploy; it owns the full
   bond lifecycle (LOCK/RELEASE M1-live, slash M2), custodies the protocol's launch xALPHA reserve, and
-  `forceApprove(escrow, max)`s the escrow so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull
-  succeeds. (`DefaultCoordinator` wiring: PROGRESS row 367 — `setEscrow` + RESOLVE/WRITEOFF →
+  grants the escrow only an exact-amount just-in-time allowance per `_lock` (approve `amount` → pull → reset to
+  0; no standing allowance — LOSS-ADV-01) so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull
+  succeeds without leaving an allowance a re-pointed escrow could drain. (`DefaultCoordinator` wiring: PROGRESS row 367 — `setEscrow` + RESOLVE/WRITEOFF →
   `slashXAlphaToCapital`(if>0)→`slashXAlphaToCohort`, reading `escrow.bondAmount` to skip cohort on a
   full-capital-slash; the capital-vs-premium split is the off-chain CRE `capitalSlashAmount` arg.)
 - **`xAlpha` = the bridged `SzAlphaMirror`** (8x-01) — a **generic ERC-20 stand-in until the CCIP lane is

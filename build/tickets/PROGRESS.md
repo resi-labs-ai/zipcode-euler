@@ -161,3 +161,18 @@ Codex/Fugu cross-check still owed on the fail-open question — now settled by f
   a window longer than its history — no in-contract span assertion (cardinality is not on-chain-queryable, so a
   span check would require plugin surface the verified interface lacks). Fair-LP suite 16/16 green; SzipNavOracle
   suites green (shared lib). X-Ray/wire (`FairLpOracle.md`) synced.
+
+Loss group — `DefaultCoordinator` + `LienXAlphaEscrow` reviewed (single-model panel, Opus; Codex/Fugu not
+credentialed). Both load-bearing surfaces SOUND (conservation seam, default bound, status machine, two-call
+resolve, destination integrity, reentrancy battery all re-verified). One promotable finding; escrow produced
+no tickets. X-1 grief ceiling + X-2 build-phase wiring = ratified accepted-residuals.
+- **LOSS-ADV-01** — `setEscrow` granted a standing MAX xALPHA allowance, making an escrow re-point a *drain*
+  of the launch reserve (an ERC-20 allowance lets the spender pick the destination — the escrow's
+  non-sweepability is irrelevant); the X-Ray/NatSpec's "safe because non-sweepable" rationale was an unsound
+  non-sequitur → **SHIPPED to `main`**. Fix: removed the standing allowance; `_lock` now grants the escrow an
+  exact-amount just-in-time allowance (`forceApprove(amount)` → pull → `forceApprove(0)`, the house WOOF-06
+  pattern), so a re-pointed escrow has nothing to drain and re-pointing is grief/redirect like every other
+  slot. `setEscrow` stays uniformly re-pointable (NO lone bolt-down — set-once rejected for X-2 consistency);
+  deleted the dangling `error AlreadyWired()` (vestige of the dropped set-once). Loss suite 118/118 green
+  (+1 JIT regression test); X-Rays + `docs/wires/` (DefaultCoordinator, 8-Bx, interfaces-loss, DeployZipcode,
+  README) + deploy-script comments synced.

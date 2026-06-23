@@ -205,23 +205,37 @@ contract DefaultCoordinatorTest is CoordBase {
     }
 
     // ---------------------------------------------------------------- setEscrow
-    function test_setEscrow_sets_allowance_and_emits() public {
-        // fresh coordinator (un-wired) to assert the EscrowSet emit + allowance landing
+    function test_setEscrow_emits_and_grants_no_standing_allowance() public {
+        // fresh coordinator (un-wired) to assert the EscrowSet emit + that NO standing allowance is granted
+        // (LOSS-ADV-01: _lock approves the exact bond amount JIT; setEscrow itself leaves allowance at 0).
         DefaultCoordinator c = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
         LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), adminSafe, juniorTrancheSidecar);
         vm.expectEmit(true, true, true, true, address(c));
         emit EscrowSet(address(e));
         c.setEscrow(address(e));
         assertEq(address(c.escrow()), address(e));
-        assertEq(xalpha.allowance(address(c), address(e)), type(uint256).max, "max allowance to escrow");
+        assertEq(xalpha.allowance(address(c), address(e)), 0, "no standing allowance to escrow");
     }
 
-    function test_setEscrow_repoint_works() public {
-        // build phase (§17): setEscrow re-points (no set-once lock) + re-approves the new escrow
+    function test_setEscrow_repoint_works_no_standing_allowance() public {
+        // build phase (§17): setEscrow re-points (no set-once lock), and grants NO standing allowance to the new
+        // escrow — so a re-pointed escrow has nothing to drain (LOSS-ADV-01).
         LienXAlphaEscrow e2 = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
         coordinator.setEscrow(address(e2));
         assertEq(address(coordinator.escrow()), address(e2));
-        assertEq(xalpha.allowance(address(coordinator), address(e2)), type(uint256).max);
+        assertEq(xalpha.allowance(address(coordinator), address(e2)), 0, "no standing allowance on re-point");
+    }
+
+    function test_lock_jit_allowance_leaves_no_standing_allowance() public {
+        // LOSS-ADV-01 regression: a lock succeeds via the exact-amount JIT approval, and leaves zero standing
+        // allowance both before and after — there is no MAX allowance for a re-pointed escrow to exploit.
+        uint256 amt = 100e18;
+        _fund(amt);
+        assertEq(xalpha.allowance(address(coordinator), address(escrow)), 0, "zero allowance before lock");
+        _lock(LIEN_A, originator, amt);
+        assertEq(_status(LIEN_A) == DefaultCoordinator.LienStatus.Bonded, true, "bond landed");
+        assertEq(escrow.bondAmount(LIEN_A), amt, "escrow holds the bond");
+        assertEq(xalpha.allowance(address(coordinator), address(escrow)), 0, "zero standing allowance after lock");
     }
 
     function test_setNavOracle_repoint_and_onlyOwner() public {
@@ -235,12 +249,12 @@ contract DefaultCoordinatorTest is CoordBase {
         coordinator.setNavOracle(address(0));
     }
 
-    function test_setXAlpha_repoint_reapproves_escrow() public {
+    function test_setXAlpha_repoint_no_standing_allowance() public {
         MockERC20 x2 = new MockERC20(18);
         coordinator.setXAlpha(address(x2));
         assertEq(address(coordinator.xAlpha()), address(x2));
-        // the new token is force-approved to the already-wired escrow
-        assertEq(x2.allowance(address(coordinator), address(escrow)), type(uint256).max);
+        // no standing re-approval of the new token (LOSS-ADV-01): _lock grants the exact amount JIT instead.
+        assertEq(x2.allowance(address(coordinator), address(escrow)), 0, "no standing allowance after token re-point");
     }
 
     function test_setEscrow_zero_reverts() public {

@@ -13,7 +13,9 @@ The single loss-side orchestrator: a CRE-gated `ReceiverTemplate` that is the im
 (owns the xALPHA bond lifecycle) AND the `SzipNavOracle.defaultCoordinator` (the sole `writeProvision` caller).
 Every action flows through `_processReport` (reportType 8, action-discriminated) behind the Timelock-pinned
 Forwarder. Ownership transfers to the Timelock at deploy (governs `recoveryFloor` + build-phase wiring; **no theft,
-no NAV-inflation, no sweep, no pause**). It custodies the launch xALPHA reserve, granting the escrow a MAX allowance.
+no NAV-inflation, no sweep, no pause**). It custodies the launch xALPHA reserve; the escrow holds **no standing
+allowance** — `_lock` grants the exact bond `amount` just-in-time around its pull and resets to 0 (LOSS-ADV-01),
+so a re-pointed escrow has nothing to drain.
 
 **The §13 trust posture (load-bearing):** this contract *bounds and routes*; it does **not** validate that a default
 is real. The CRE is trusted for magnitude/timing/split/originator; the on-chain guarantees are the narrow arithmetic
@@ -25,7 +27,7 @@ bond via a hostile originator) but cannot steal to an arbitrary address or infla
 | Function | Access | Notes |
 |---|---|---|
 | `_processReport` (via `onReport`) | Forwarder-gated (CRE) | reportType-8 dispatcher → `_lock`/`_release`/`_default`/`_recovery`/`_resolve`/`_writeOff` |
-| `setEscrow(escrow_)` | `onlyOwner` (Timelock) | wires escrow + grants it MAX xALPHA allowance; re-pointable (§17) |
+| `setEscrow(escrow_)` | `onlyOwner` (Timelock) | wires escrow; NO standing allowance (JIT in `_lock`, LOSS-ADV-01); re-pointable (§17) |
 | `setNavOracle(navOracle_)` | `onlyOwner` | re-point the provision sink |
 | `setXAlpha(xAlpha_)` | `onlyOwner` | re-point bond asset (+ re-approve escrow) |
 | `setRecoveryFloor(newFloor)` | `onlyOwner` | bound `<1e18`; future defaults only |
@@ -59,7 +61,7 @@ No permissionless entry points. Internal handlers (`_lock`…`_writeOff`) are re
 | G-11 atRisk ≠ 0 | `test_default_zeroAtRisk_reverts` |
 | G-12 recovery/resolve/writeoff need Defaulted | `test_recovery_nonDefaulted_…`, `test_resolve_nonDefaulted_…`, `test_writeoff_then_action_terminal_badStatus` |
 | Forwarder + workflow-id gate | `test_onReport_nonForwarder_reverts`, `_workflowId_mismatch_reverts`, `_match_passes` |
-| MAX-allowance + re-approve on re-point | `test_setEscrow_sets_allowance_and_emits`, `test_setXAlpha_repoint_reapproves_escrow` |
+| Exact-amount JIT allowance; no standing allowance (LOSS-ADV-01) | `test_setEscrow_emits_and_grants_no_standing_allowance`, `test_setEscrow_repoint_works_no_standing_allowance`, `test_setXAlpha_repoint_no_standing_allowance`, `test_lock_jit_allowance_leaves_no_standing_allowance` |
 
 ## 5. Attack surfaces
 
@@ -72,7 +74,11 @@ No permissionless entry points. Internal handlers (`_lock`…`_writeOff`) are re
   path (out of scope). `test_setRecoveryFloor_applies_to_next_default_only` pins the non-retroactive floor.
 - **Build-phase mutable wiring** — `setEscrow`/`setNavOracle`/`setXAlpha` re-pointable by the Timelock; tested
   (`test_setEscrow_repoint_*`, `test_setNavOracle_repoint_*`). The destination-integrity absolute holds after the
-  deferred pre-prod immutable re-freeze (process step, not on-chain).
+  deferred pre-prod immutable re-freeze (process step, not on-chain). **LOSS-ADV-01 (closed):** `setEscrow`
+  formerly granted a standing MAX xALPHA allowance, which made re-pointing the escrow a *drain* of the launch
+  reserve (an ERC-20 allowance lets the spender pick the destination — the escrow's non-sweepability is
+  irrelevant). Now `_lock` grants only the exact bond `amount` JIT and resets to 0, so re-pointing the escrow is
+  grief/redirect like every other slot — no standing allowance to drain.
 - **`_writeOff` leaves residual provision in place** — intentional (the realized loss). `test_writeoff_partial_keeps_provision_no_coemit` confirms it does NOT call `writeProvision`. Worth confirming NAV consumers expect a permanent floor for written-off liens.
 
 ## 6. Test analysis
@@ -96,7 +102,7 @@ emergency pause; the Tests axis is individually HARDENED.
 
 **Structural facts:**
 1. 158 nSLOC; non-upgradeable `ReceiverTemplate`; 0 permissionless entry points (Forwarder/CRE + 4 Timelock setters).
-2. Sole `writeProvision` caller into `SzipNavOracle`; immutable `coordinator` of `LienXAlphaEscrow`; holds the launch xALPHA reserve with a MAX allowance to the escrow.
+2. Sole `writeProvision` caller into `SzipNavOracle`; immutable `coordinator` of `LienXAlphaEscrow`; holds the launch xALPHA reserve and grants the escrow only an exact-amount just-in-time allowance per lock (no standing allowance — LOSS-ADV-01).
 3. Tests: 66 unit + 1 fuzz + 3 invariant — the conservation + oracle-equality seams are invariant-asserted.
 4. §13: bounds-and-routes only; a compromised CRE is bounded to grief, never theft/NAV-inflation (status machine + arithmetic bounds + no recipient parameter).
 5. Build-phase wiring is Timelock-re-pointable; the destination-integrity absolute lands at the deferred pre-prod immutable re-freeze (process, not code).

@@ -85,7 +85,7 @@ Signals: default recognition / loss provisioning / first-loss collateral (Lendin
 |-------|-------------|-------------|
 | CRE Forwarder / workflow | Bounded (§13 residual trust) | Sole driver of all six loss actions via reportType 8. Trusted for magnitude/timing/split/originator. Can grief (down-mark NAV, slash a healthy bond, reclaim a fresh bond via hostile originator) — **cannot** steal to an arbitrary address or inflate NAV. |
 | `owner()` (Timelock) | Trusted (timelock) | `setRecoveryFloor` (bounded `<1e18`), build-phase re-point of escrow/oracle/xAlpha (coordinator) and xAlpha/coordinator/adminSafe/juniorTrancheSafe (escrow), Forwarder identity. **No sweep, no pause, cannot redirect bonds or inflate NAV** — bounds hold against the owner too, except re-pointing sinks (grief/redirect, not drain). |
-| DefaultCoordinator | Trusted (in-scope) | The escrow's sole `onlyCoordinator` caller; holds the launch xALPHA reserve + MAX allowance to the escrow. |
+| DefaultCoordinator | Trusted (in-scope) | The escrow's sole `onlyCoordinator` caller; holds the launch xALPHA reserve and grants the escrow only an exact-amount JIT allowance per lock (no standing allowance — LOSS-ADV-01). |
 | Bond originator | Untrusted (named by CRE) | Receives the bond on `Release`. The one attacker-influenceable destination (the CRE names it at lock). |
 | Treasury / Engine Safe | Trusted (fixed sinks) | The only two slash destinations; set at deploy, Timelock-re-pointable in build phase. |
 
@@ -103,7 +103,7 @@ See [entry-points.md](entry-points.md) — note there are **no permissionless en
 - **CRE entry (§13)** — `DefaultCoordinator._processReport:181` is reachable only via the Forwarder-gated `onReport`; that gate **is** the trust boundary. Everything past it trusts the CRE for value/timing/split/originator; the on-chain guarantees are the arithmetic bounds + the status machine. *Git signal: 8 source-touching commits, 3 at fix-score 17 — the most-churned scope reviewed.*
 - **Provision write authority** — the coordinator is the *sole* `writeProvision` caller (`_default:244`, `_recovery:262`, `_resolve:284`); `_writeOff` deliberately does **not** call it (residual stays as realized loss). Worth confirming the oracle enforces the sole-writer gate on its side.
 - **Escrow destination integrity** — `LienXAlphaEscrow` takes **no recipient parameter** anywhere; xALPHA flows only to `bondOriginator`/`adminSafe`/`juniorTrancheSafe`. This is the theft-immunity thesis — but the sinks are **Timelock-settable in the build phase** (`setAdminSafe:137`, `setJuniorTrancheSafe:144`), so the absolute holds only after the deferred immutable re-freeze.
-- **MAX allowance** — `setEscrow:147` grants the escrow `type(uint256).max` xALPHA; safe only because the escrow is non-sweepable and `onlyCoordinator`, whose sole pull is its own `lockXAlpha`.
+- **Exact-amount JIT allowance** &nbsp;[[LOSS-ADV-01]] — `_lock` grants the escrow only this bond's `amount` around its pull and resets to 0; there is **no standing allowance**. (Formerly `setEscrow` granted `type(uint256).max`, framed as "safe because the escrow is non-sweepable" — an unsound rationale: an ERC-20 allowance lets the *spender* move the owner's tokens to ANY destination, so a standing MAX to a re-pointable escrow was a drain primitive over the coordinator's reserve regardless of the escrow's sweepability. The JIT approval closes it; re-pointing the escrow is now grief/redirect, not drain.)
 
 ### Key Attack Surfaces
 
@@ -135,7 +135,7 @@ See [entry-points.md](entry-points.md) — note there are **no permissionless en
 ### Temporal Risk Profile
 
 **Deployment & Initialization:**
-- Circular deploy: the coordinator is constructed with the oracle+xAlpha, the escrow is wired post-deploy via `setEscrow` (which also grants the MAX allowance). Worth confirming the deploy orchestrator wires escrow↔coordinator before any action and the ownership handoff to the Timelock is atomic.
+- Circular deploy: the coordinator is constructed with the oracle+xAlpha, the escrow is wired post-deploy via `setEscrow` (which grants NO standing allowance — `_lock` approves the exact amount JIT, LOSS-ADV-01). Worth confirming the deploy orchestrator wires escrow↔coordinator before any action and the ownership handoff to the Timelock is atomic.
 - Build-phase wiring is mutable by design (§17); the security absolutes (destination integrity) are stated to hold only after the deferred pre-prod re-freeze — a process step, not on-chain enforced.
 
 ### Composability & Dependency Risks

@@ -190,8 +190,8 @@ The order `DeployZipcode` realizes (phases P0–P9; see `DeployZipcode.md`), ove
    `usdcReservoir` ONLY — the borrow vault stays reallocate-reachable, OUT of the supply queue) → clone `8-B5..B10`, `8-B14`,
    `DurationFreeze`, `OffRamp` (enable on the right Safe(s), wire operators, the shared-LP/one-bank/juniorTrancheEngine
    asserts).
-6. **Loss side:** `LienXAlphaEscrow` → `DefaultCoordinator` (`setEscrow` + `forceApprove`, oracle
-   `setDefaultCoordinator`, fund launch xALPHA).
+6. **Loss side:** `LienXAlphaEscrow` → `DefaultCoordinator` (`setEscrow` — no standing allowance, `_lock` approves
+   the exact amount JIT (LOSS-ADV-01); oracle `setDefaultCoordinator`, fund launch xALPHA).
 7. **Seal:** the four NAV-oracle wiring setters; all `ReceiverTemplate` identity-set (S10b) → the
    `requireIdentityWired` pre-gate → `transferOwnership(timelock)` everywhere (P9). A fork-execution run of
    `deploy()` (the never-yet-run acceptance) + subgraph addresses follow.

@@ -525,7 +525,8 @@ contract DeployZipcode is SummonSubstrate {
         // yield flywheel subsumes the premium; was the juniorTrancheSidecar (inert). juniorTrancheSafe is already asserted != warehouseSafe.
         d.escrow = new LienXAlphaEscrow(i.xAlphaMirror, address(d.coord), i.adminSafe, d.sub.juniorTrancheSafe);
 
-        // 28. close the cycle (coord.setEscrow forceApproves escrow internally per the ctor NatSpec).
+        // 28. close the cycle. setEscrow grants NO standing allowance (LOSS-ADV-01); _lock approves the exact bond
+        //     amount just-in-time around its pull, so a re-pointed escrow has nothing to drain.
         d.coord.setEscrow(address(d.escrow));
         d.navOracle.setDefaultCoordinator(address(d.coord));
 

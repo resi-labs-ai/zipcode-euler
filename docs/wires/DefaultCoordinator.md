@@ -19,8 +19,9 @@ The **single loss-side orchestrator**: a CRE-gated `ReceiverTemplate` (`is Recei
 two cross-component authority bindings — it **is** the `LienXAlphaEscrow.coordinator` (the sole caller of all four
 escrow state-changers, so it owns the **full** xALPHA bond lifecycle) **and** it **is** the
 `SzipNavOracle.defaultCoordinator` (the **sole** `writeProvision` caller, enforcing the impairment bound the oracle
-deliberately stores unbounded). It custodies the protocol's **launch xALPHA reserve** and `forceApprove(escrow,
-type(uint256).max)` so the escrow's `lockXAlpha` pull from this contract succeeds (`setEscrow`, `:140-145`).
+deliberately stores unbounded). It custodies the protocol's **launch xALPHA reserve**; the escrow holds **no
+standing allowance** — `_lock` grants the exact bond `amount` just-in-time around the escrow's `lockXAlpha` pull and
+resets to 0 (LOSS-ADV-01), so a re-pointed escrow has nothing to drain.
 
 Every action enters through the base's Forwarder-gated `onReport` → the abstract `_processReport` (`:177`) which it
 implements as a **reportType-8 action dispatcher** (`REPORT_TYPE = 8`, `:45`). It is **not** a Zodiac module and
@@ -37,7 +38,7 @@ and routes the bond, nothing more. There is **no** sweep, no pause, no freeze/`l
 | `ReceiverTemplate` (`x402-cre-price-alerts`, base) | `is IReceiver, Ownable`. Ctor pins the Forwarder (reverts `InvalidForwarderAddress` on zero); `onReport(metadata, report)` checks `msg.sender == forwarder` then the optional `expectedWorkflowId`, then calls `_processReport`; `setExpectedWorkflowId(bytes32)` `onlyOwner`. Supplies the CRE entry gate + the owner. |
 | `ISzipNavOracle` (`interfaces/loss/ISzipNavOracle.sol`) | One method: `writeProvision(uint256)`. Concrete impl `SzipNavOracle`; it gates `msg.sender == defaultCoordinator` (`NotDefaultCoordinator`) and stores the value **UNBOUNDED by design** — the bound is the coordinator's job (`SzipNavOracle.sol:34-36`, `:246-249`). |
 | `ILienXAlphaEscrow` (`interfaces/loss/ILienXAlphaEscrow.sol`) | The four `onlyCoordinator` state-changers (`lockXAlpha`/`releaseXAlpha`/`slashXAlphaToCapital`/`slashXAlphaToCohort`) + the two views (`bondAmount`/`bondOriginator`) the coordinator reads to route a slash. Concrete impl `LienXAlphaEscrow`. |
-| `IERC20`/`SafeERC20` (OZ) | The xALPHA bond asset handle; `forceApprove` grants the escrow the max allowance. **OZ** imports (not `forge-std`) — `forceApprove` needs the OZ `SafeERC20` binding. |
+| `IERC20`/`SafeERC20` (OZ) | The xALPHA bond asset handle; `_lock` uses `forceApprove` for the exact-amount just-in-time allowance (approve `amount` → escrow pulls → reset to 0; LOSS-ADV-01) — no standing allowance. **OZ** imports (not `forge-std`) — `forceApprove` needs the OZ `SafeERC20` binding. |
 
 ## Wiring — internal (constructor, immutables, ledger, dispatch)
 **Constructor** (`:124-132`): `constructor(address forwarder, address navOracle_, address xAlpha_, uint256
@@ -50,10 +51,12 @@ recoveryFloor_) ReceiverTemplate(forwarder)`.
 
 **State slots are Timelock-settable, NOT immutable** (`:83-97`, §17 build phase). `navOracle`, `xAlpha`,
 `recoveryFloor` are seeded in the ctor; `escrow` is wired post-deploy (the escrow↔coordinator deploy is circular).
-All four have `onlyOwner` re-pointers: `setNavOracle` (`:148`), `setXAlpha` (`:155`, re-`forceApprove`s the escrow if
-already wired), `setRecoveryFloor` (`:166`, bounded `< 1e18`, does **not** retro-mark existing provisions), `setEscrow`
-(`:140`). **`setEscrow` is re-pointable** (no `AlreadyWired` guard fires on it — the `AlreadyWired` error is declared
-but unused in the kept code) and re-grants `xAlpha.forceApprove(escrow_, type(uint256).max)` each call.
+All four have `onlyOwner` re-pointers: `setNavOracle`, `setXAlpha` (no re-approval needed — the allowance is granted
+JIT in `_lock`, not standing), `setRecoveryFloor` (bounded `< 1e18`, does **not** retro-mark existing provisions),
+`setEscrow`. **`setEscrow` is re-pointable** (uniform with the other wiring setters, all re-frozen together at the
+pre-prod immutable lock-down) and grants **no standing allowance** (LOSS-ADV-01): a re-pointed escrow has nothing to
+drain. (The `AlreadyWired` error formerly declared-but-unused here was **deleted** with LOSS-ADV-01 — set-once is
+rejected for X-2 consistency; the immutable lock-down freezes all wiring slots together at pre-prod.)
 
 **The provision bound** (the reason this contract exists — the oracle omits it):
 - **DEFAULT** writes the provision **down** by `p = atRisk * (1e18 - recoveryFloor) / 1e18` (`:235`), truncating —
@@ -99,9 +102,10 @@ capital-vs-premium split (`capitalSlashAmount`) is the CRE's off-chain arg — t
 - **It IS `escrow.coordinator`.** `LienXAlphaEscrow.coordinator` is the sole authorized caller of all four
   state-changers (`onlyCoordinator`). The coordinator must be that wired address from deploy — which forces LOCK/RELEASE
   (M1-live launch bonding) into its surface too, not just slash. Wired by `setEscrow` on this side + the escrow's
-  `coordinator` slot on the other; `setEscrow` also `forceApprove`s the escrow over xALPHA so `lockXAlpha`'s
-  `safeTransferFrom(coordinator, …)` pull succeeds. The escrow is itself non-sweepable + `onlyCoordinator`, so the max
-  allowance is safe — its only pull path is this contract's own LOCK.
+  `coordinator` slot on the other. `_lock` grants the escrow an exact-amount just-in-time allowance around its
+  `safeTransferFrom(coordinator, …)` pull and resets it to 0 (LOSS-ADV-01) — no standing allowance, so a re-pointed
+  escrow has nothing to drain (the escrow's own non-sweepability does NOT make a standing allowance safe: an ERC-20
+  allowance lets the spender pick the destination).
 - **It IS `oracle.defaultCoordinator`.** `SzipNavOracle.writeProvision` reverts `NotDefaultCoordinator` for anyone but
   the wired `defaultCoordinator`; the oracle stores the value **unbounded** (`SzipNavOracle.sol:34-36`). Wired by
   `oracle.setDefaultCoordinator(coordinator)` (`SzipNavOracle.sol:202`, `onlyOwner`/Timelock). This contract is the
@@ -127,15 +131,15 @@ needs the escrow. The item-10 sequence (ticket KR-15 + the created obligation):
 2. Deploy `DefaultCoordinator(forwarder, navOracle, xAlpha, recoveryFloor)` — `recoveryFloor` is the governed value set
    at the ctor; `escrow` unset.
 3. Deploy `LienXAlphaEscrow(xAlpha, coordinator=this, adminSafe, juniorTrancheSafe)`.
-4. `coordinator.setEscrow(escrow)` (sets `escrow` + `forceApprove(escrow, max)`).
+4. `coordinator.setEscrow(escrow)` (sets `escrow`; NO standing allowance — `_lock` approves the exact amount JIT, LOSS-ADV-01).
 5. `oracle.setDefaultCoordinator(coordinator)`.
 6. `coordinator.setExpectedWorkflowId(id)` — a **distinct** Forwarder identity/workflowId from the
    controller/registry/oracle.
 7. **Assert before hand-off** (a hard tested `require`, not prose): two-way `escrow.coordinator() == coordinator` AND
-   `coordinator.escrow() == escrow` (so the max approval landed on the verified escrow); `oracle.defaultCoordinator()
+   `coordinator.escrow() == escrow`; `oracle.defaultCoordinator()
    == coordinator`; `coordinator.navOracle() == oracle`; `coordinator.getForwarderAddress() ==` the intended Forwarder;
    **`coordinator.getExpectedAuthor() != 0` AND `getExpectedWorkflowName() != 0`** (CTR-16: the seal is author + per-receiver `workflowName`, the `workflowId` pin dropped; else sealed "Forwarder-gated but workflow-blind" — any DON workflow
-   could drive reportType-8 actions); `xAlpha.allowance(coordinator, escrow) == type(uint256).max`.
+   could drive reportType-8 actions). NOTE: do **not** assert a standing allowance — LOSS-ADV-01 grants the escrow only an exact-amount JIT allowance per `_lock` (reset to 0 after each pull), so `xAlpha.allowance(coordinator, escrow) == 0` at rest.
 8. `transferOwnership(timelock)` — **NOT `renounceOwnership`** (§17 build phase: the owner is the Timelock, the same
    admin that owns the engine Zodiac modules' CRE flows; ownership is transferred, not renounced).
 
@@ -167,9 +171,10 @@ row 326) and the **slash split-policy + driver** owed to 8-Bx `LienXAlphaEscrow`
   `oracle-replaceable-timelock-wiring`) the loss side joined the repo-wide Timelock-re-pointable wiring decision.
   `setEscrow`/`setNavOracle`/`setXAlpha`/`setRecoveryFloor` are live `onlyOwner` (Timelock) setters; `recoveryFloor`
   is a governed value, not a ctor-frozen constant; the oracle's `defaultCoordinator` is likewise Timelock-re-pointable
-  (`SzipNavOracle.setDefaultCoordinator`). The `AlreadyWired` error remains declared but is **unused** (a vestige of
-  the set-once draft). Re-freezing all of this to immutable is **deferred to the pre-production lock-down** — the
-  provision-bound + status-machine logic is unchanged; only the wiring mutability changed.
+  (`SzipNavOracle.setDefaultCoordinator`). The `AlreadyWired` error was **deleted** with LOSS-ADV-01 (set-once is
+  rejected for X-2 consistency — the wiring slots are re-frozen together, not one at a time). Re-freezing all of this
+  to immutable is **deferred to the pre-production lock-down** — the provision-bound + status-machine logic is
+  unchanged; only the wiring mutability changed.
 - **`escrow` may be unset at construction.** `_lock`/`_release`/slash handlers will revert if `setEscrow` has not run
   (a call on the zero-address escrow). The item-10 two-way `require` is what guarantees it is wired before the contract
   goes live.

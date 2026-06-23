@@ -103,7 +103,6 @@ contract DefaultCoordinator is ReceiverTemplate {
     // --------------------------------------------------------------------- errors (no string reverts)
     error ZeroAddress();
     error InvalidRecoveryFloor();
-    error AlreadyWired();
     error InvalidReportType(uint8 reportType);
     error InvalidAction(uint8 action);
     error BadStatus();
@@ -136,15 +135,17 @@ contract DefaultCoordinator is ReceiverTemplate {
     }
 
     // --------------------------------------------------------------------- escrow wiring (Timelock-re-pointable, §17)
-    /// @notice Wire the bond escrow (the escrow-side of the circular dependency) and grant it the MAX xALPHA
-    ///         allowance so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull succeeds. **Re-pointable by the
-    ///         Timelock owner** (`onlyOwner`, §17 build phase — NOT set-once, NOT renounce-frozen). The escrow is
-    ///         non-sweepable (it can only pull into its own gated custody), so the max allowance is safe; re-pointing
-    ///         the escrow or its sinks is a Timelock action (grief/redirect, not drain — §17).
+    /// @notice Wire the bond escrow (the escrow-side of the circular dependency). **Re-pointable by the Timelock
+    ///         owner** (`onlyOwner`, §17 build phase — NOT set-once, NOT renounce-frozen; uniform with the other
+    ///         wiring setters, all re-frozen together at the pre-prod immutable lock-down). Grants NO standing
+    ///         allowance: `_lock` approves exactly the bond `amount` just-in-time around its pull and resets to 0
+    ///         (LOSS-ADV-01), so a re-pointed escrow has nothing to drain — re-pointing is grief/redirect, never a
+    ///         drain of the launch reserve. (An ERC-20 allowance authorizes the SPENDER to move the owner's tokens
+    ///         to any destination, so a standing MAX allowance to a re-pointable escrow WOULD be a drain primitive
+    ///         regardless of the escrow's own non-sweepability — hence the exact-amount JIT approval below.)
     function setEscrow(address escrow_) external onlyOwner {
         if (escrow_ == address(0)) revert ZeroAddress();
         escrow = ILienXAlphaEscrow(escrow_);
-        xAlpha.forceApprove(escrow_, type(uint256).max);
         emit EscrowSet(escrow_);
     }
 
@@ -155,11 +156,12 @@ contract DefaultCoordinator is ReceiverTemplate {
         emit NavOracleSet(navOracle_);
     }
 
-    /// @notice Re-point the bond asset. `onlyOwner` (the Timelock). Re-approve the escrow after calling if wired.
+    /// @notice Re-point the bond asset. `onlyOwner` (the Timelock). No re-approval needed: `_lock` grants the escrow
+    ///         an exact-amount just-in-time allowance per bond (LOSS-ADV-01), so there is no standing allowance to
+    ///         re-establish on a token re-point.
     function setXAlpha(address xAlpha_) external onlyOwner {
         if (xAlpha_ == address(0)) revert ZeroAddress();
         xAlpha = IERC20(xAlpha_);
-        if (address(escrow) != address(0)) xAlpha.forceApprove(address(escrow), type(uint256).max);
         emit XAlphaSet(xAlpha_);
     }
 
@@ -209,7 +211,13 @@ contract DefaultCoordinator is ReceiverTemplate {
 
         lienLoss[lienId].status = LienStatus.Bonded;
 
+        // Exact-amount just-in-time allowance (LOSS-ADV-01): grant the escrow ONLY this bond's `amount` for its pull,
+        // then reset to 0, so the coordinator never carries a standing allowance a re-pointed escrow could drain.
+        // Mirrors the house per-zap pattern (docs/wires/WOOF-06). The escrow's `lockXAlpha` is `onlyCoordinator` +
+        // `nonReentrant` and pulls exactly `amount`, so the approve→pull→reset is atomic from the coordinator's view.
+        xAlpha.forceApprove(address(escrow), amount);
         escrow.lockXAlpha(lienId, originator, amount);
+        xAlpha.forceApprove(address(escrow), 0);
 
         emit BondLocked(lienId, originator, amount);
     }

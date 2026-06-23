@@ -42,8 +42,9 @@ capital/cohort routing paths.
 - **Destination-integrity by construction:** `slashXAlphaToCapital`/`slashXAlphaToCohort` and the
   `lock`/`release` take **no recipient parameter** — the bond can flow only to the escrow-recorded
   `bondOriginator` / capital / cohort sinks; the coordinator cannot redirect it to an arbitrary address.
-- `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull requires the coordinator hold + approve the xALPHA
-  allowance (noted at `setEscrow`, `:136`) — a wiring precondition, not visible on the seam.
+- `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull requires the coordinator hold the xALPHA; the coordinator
+  approves the exact bond `amount` just-in-time inside `_lock` and resets to 0 (no standing allowance — LOSS-ADV-01),
+  a wiring precondition not visible on the seam.
 
 ---
 

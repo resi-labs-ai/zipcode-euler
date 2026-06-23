@@ -14,7 +14,7 @@ Scope: `DefaultCoordinator`, `LienXAlphaEscrow`. View/pure excluded. **There are
 
 ### Setup (Deploy / Timelock)
 
-`DefaultCoordinator(constructor)` (oracle, xAlpha, recoveryFloor) → `setEscrow()` (wires escrow + MAX approve)
+`DefaultCoordinator(constructor)` (oracle, xAlpha, recoveryFloor) → `setEscrow()` (wires escrow; no standing allowance — JIT per lock)
 `LienXAlphaEscrow(constructor)` (xAlpha, coordinator, adminSafe, juniorTrancheSafe) → ownership → Timelock  ◄── circular escrow↔coordinator wiring
 
 ### Loss lifecycle (CRE → coordinator → escrow)
@@ -64,7 +64,7 @@ Scope: `DefaultCoordinator`, `LienXAlphaEscrow`. View/pure excluded. **There are
 
 | Contract | Function | Parameters | State Modified |
 |----------|----------|------------|----------------|
-| DefaultCoordinator | `setEscrow()` | escrow_ | `escrow` + MAX xAlpha approve to escrow |
+| DefaultCoordinator | `setEscrow()` | escrow_ | `escrow` (no standing allowance; `_lock` approves exact amount JIT — LOSS-ADV-01) |
 | DefaultCoordinator | `setNavOracle()` | navOracle_ | `navOracle` |
 | DefaultCoordinator | `setXAlpha()` | xAlpha_ | `xAlpha` (+ re-approve escrow if wired) |
 | DefaultCoordinator | `setRecoveryFloor()` | newFloor (`<1e18`) | `recoveryFloor` (future defaults only) |
