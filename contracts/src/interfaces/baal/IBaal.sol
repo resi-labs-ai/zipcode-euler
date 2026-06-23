@@ -2,8 +2,11 @@
 pragma solidity 0.8.24;
 
 /// @notice Minimal local interface for a Baal (Moloch v3) DAO.
-/// Source contract: Baal impl @ Base 0xD69e5B8F6FA0E5d94B93848700655A78DF24e387
-/// (proxied by the BaalSummoner factory). VERIFIED 2026-06-06 against vendored
+/// Source contract: Baal DAO master copy/template @ Base 0xE0F33E95aF46EAd1Fe181d2A74919bff903cD5d4
+/// (`BaseAddresses.BAAL_SINGLETON`; per-DAO clones delegatecall to it — where ExitGate's calls dispatch).
+/// CORRECTED 2026-06-22 (InterfaceSelectorDrift fork check): the prior `0xD69e5B8F…` is the SUMMONER impl,
+/// not the Baal — the IBaal selectors (executeAsBaal/ragequit/sharesToken/…) are absent there and live on
+/// the template above (verified against live Base bytecode). VERIFIED 2026-06-06 against vendored
 /// reference/Baal/contracts/Baal.sol: ragequit (L619-624), setShamans (L686-688),
 /// mintLoot (L814), burnLoot (L834), public state-vars lootToken/sharesToken (L29-30),
 /// shamans mapping (L47), avatar (Zodiac Module base). All signatures match as-written.
