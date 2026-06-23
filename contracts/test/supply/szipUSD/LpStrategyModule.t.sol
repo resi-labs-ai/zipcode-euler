@@ -577,7 +577,7 @@ contract LpStrategyModuleUnitTest is Test {
         vm.expectEmit(false, false, false, true, address(m));
         emit LpStrategyModule.LiquidityRemoved(shares, 100e18, 100e18);
         vm.prank(operator);
-        (uint256 a0, uint256 a1) = m.removeLiquidity(shares, 0, 0);
+        (uint256 a0, uint256 a1) = m.removeLiquidity(shares, 1, 1);
 
         assertEq(a0, 100e18, "all token0 returned");
         assertEq(a1, 100e18, "all token1 returned");
@@ -590,6 +590,22 @@ contract LpStrategyModuleUnitTest is Test {
         vm.prank(operator);
         vm.expectRevert(LpStrategyModule.ZeroAmount.selector);
         m.removeLiquidity(0, 0, 0);
+    }
+
+    function test_removeLiquidity_zero_minAmount_reverts() public {
+        // both floors zero -> ZeroMinAmount (the sole sandwich guard on the router-less ICHI withdraw)
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.ZeroMinAmount.selector);
+        m.removeLiquidity(1e18, 0, 0);
+
+        // a single non-zero floor passes the guard and reaches the dissolve path
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        uint256 shares = m.addLiquidity(100e18, 0, 1);
+        vm.prank(operator);
+        (uint256 a0,) = m.removeLiquidity(shares, 1, 0);
+        assertEq(a0, 100e18, "single non-zero floor passes the guard");
     }
 
     function test_removeLiquidity_coverage_gate() public {
@@ -606,12 +622,12 @@ contract LpStrategyModuleUnitTest is Test {
         gate.set(false);
         vm.prank(operator);
         vm.expectRevert(LpStrategyModule.Undercovered.selector);
-        m.removeLiquidity(shares, 0, 0);
+        m.removeLiquidity(shares, 1, 0);
 
         // gate says still covered (excess) -> dissolution clears
         gate.set(true);
         vm.prank(operator);
-        (uint256 a0,) = m.removeLiquidity(shares, 0, 0);
+        (uint256 a0,) = m.removeLiquidity(shares, 1, 0);
         assertEq(a0, 100e18, "dissolved once within the excess");
 
         // gate OFF (address 0) -> ungated legacy behavior
@@ -621,7 +637,7 @@ contract LpStrategyModuleUnitTest is Test {
         vm.prank(operator);
         uint256 s2 = m.addLiquidity(100e18, 0, 1);
         vm.prank(operator);
-        m.removeLiquidity(s2, 0, 0); // no gate -> ok
+        m.removeLiquidity(s2, 1, 0); // no gate -> ok
         assertEq(m.lpBalance(), 0, "ungated dissolution ok");
     }
 
@@ -653,7 +669,7 @@ contract LpStrategyModuleUnitTest is Test {
         uint256 shares = m.addLiquidity(100e18, 0, 1);
         uint256 base = safe.callCount();
         vm.prank(operator);
-        m.removeLiquidity(shares, 0, 0);
+        m.removeLiquidity(shares, 1, 0);
         assertEq(safe.callCount() - base, 1, "removeLiquidity = 1 exec");
         _assertCall(base + 0, address(vault), abi.encodeCall(IICHIVault.withdraw, (shares, address(safe))));
     }

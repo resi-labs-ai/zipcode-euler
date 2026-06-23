@@ -257,3 +257,31 @@ supply/szipUSD — the junior-vault engine fleet (14 contracts). Prompts authore
   finding. `test_wiring_setters_repoint_only_owner` now asserts the avatar/target sync; scoped suite **42/42 green**;
   X-Ray §2/§4/§5 + wire doc synced. Single-model run (Claude-only) — SEC-09 bound, two-layer free-value, CEI core
   confirmed sound.
+
+`LpStrategyModule` (8-B6) reviewed (4 missions, single-model Claude-only). Coverage path-lock confirmed SOUND
+(gate `shares` == withdraw `shares`, same-oracle TWAP valuation, re-entrancy closed by live re-reads); recipient
+pins hold. The one substantive delta — surfaced by pulling the **verified ICHI vault source** (Base
+`0xfF8B…73f7`): ICHI's `deposit` self-protects (spot-vs-TWAP hysteresis), but `withdraw` self-protects with
+**nothing** (decomposes at the current tick), so `removeLiquidity`'s `minAmount0/1` is the *sole* sandwich guard
+— yet the module forced a floor only on the add side. Three coupled tickets:
+- **SUPPLY-ADV-10** — `removeLiquidity` accepted an all-zero slippage floor (`minAmount0==minAmount1==0` → the
+  `:272` compare is vacuous), unlike `addLiquidity`'s mandatory `ZeroMinShares` (`:221`) → **SHIPPED to `main`**.
+  Added `error ZeroMinAmount()` + the guard `if (minAmount0 == 0 && minAmount1 == 0) revert ZeroMinAmount()`
+  (at-least-one-non-zero; single-sided withdraw legitimately returns ~0 on one leg) + `test_removeLiquidity_zero_
+  minAmount_reverts`; updated the 5 `(0,0)` happy/coverage-gate test sites to non-zero floors. Scoped suite
+  **38/38 green**, `forge build` clean. LOW / defense-in-depth (solvency never at risk — the coverage gate values
+  LP at TWAP; bounds the empty-floor footgun, not a mis-sized or malicious floor). X-Ray (I-3/§4/§5/counts) + wire
+  `8-B6` synced **in the same commit** (folding ADV-09's overlapping doc corrections). Single-model (Claude-only).
+- **SUPPLY-ADV-09** — the off-chain TWAP-floor-sizing rule (size `minAmount0/1` off `IchiAlgebraFairReserves.
+  fairReserves` pro-rata minus cushion, the same value the coverage gate uses, NOT spot) + the doc corrections
+  (deposit-is-protected / withdraw-is-not). **Doc half LANDED** with the ADV-10 commit (X-Ray §5 + wire `8-B6`);
+  **code half has no driver to change** — `removeLiquidity` has no keeper Job today, so the rule is realized when
+  the wind-down driver is built (→ KEEPER-02). FILED; not independently shippable.
+- **KEEPER-02** (`build/tickets/cre/`) — the missing wind-down LP-dissolution driver (`unstake` →
+  `removeLiquidity`, coverage-excess-bounded shares, TWAP-sized floor reusing the `quote.go` `meanTick` port,
+  private-RPC submission). **FILED — build-track backlog** (keeper Job; needs a Base-supporting protected RPC
+  source + the KEEPER-00/01 spine). Not an audit-track quick fix.
+
+Owed: the `cre/keeper/` service itself (holds the operator hot key, sizes the harvest-loop floors via `quote.go`)
+is built-but-**outside this contract audit's scope** and is owed its own adversarial pass; the wind-down path
+(`removeLiquidity` driver) needs one when KEEPER-02 is built.

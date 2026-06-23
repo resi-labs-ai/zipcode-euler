@@ -64,6 +64,11 @@ contract LpStrategyModule is MastercopyInitLock {
     /// @notice `minShares == 0` — the slippage floor must be a real bound (a zero floor would no-op the only
     ///         sandwich protection on a direct ICHI deposit; the CRE robot always sizes a non-zero floor).
     error ZeroMinShares();
+    /// @notice `removeLiquidity` called with BOTH slippage floors zero. The ICHI `withdraw` self-protects with
+    ///         nothing (it decomposes the LP at the current pool tick — no hysteresis/TWAP, unlike `deposit`), so
+    ///         `minAmount0/1` is the SOLE sandwich guard on the dissolution hop; at least one leg must be floored
+    ///         (a single-sided withdraw legitimately returns ~0 on one leg, so both-non-zero is not required).
+    error ZeroMinAmount();
     /// @notice The ICHI `deposit` minted fewer shares than the operator-supplied `minShares` floor (sandwiched / thin).
     error Slippage();
     /// @notice An `exec` through the Safe returned `false` (the Safe swallows inner reverts) with no revert data.
@@ -252,7 +257,9 @@ contract LpStrategyModule is MastercopyInitLock {
     ///         Safe (unstaked first via `unstake`), so NO approval is needed — the gauge/vault credit/debit the Safe
     ///         because the Safe is the `exec` msg.sender. Exactly 1 `exec`.
     /// @param shares      the LP shares to burn (non-zero; the caller sizes against `lpBalance()`).
-    /// @param minAmount0  slippage floor on the token0 leg returned — revert `Slippage` if undershot.
+    /// @param minAmount0  slippage floor on the token0 leg returned — revert `Slippage` if undershot. Not both
+    ///                    floors may be zero (`ZeroMinAmount`) — the router-less ICHI `withdraw` self-protects with
+    ///                    nothing, so this is the sole sandwich guard; the CRE sizes it off the TWAP fair reserves.
     /// @param minAmount1  slippage floor on the token1 leg returned — revert `Slippage` if undershot.
     /// @return amount0    the token0 (zipUSD) returned to the Safe.
     /// @return amount1    the token1 (xALPHA) returned to the Safe.
@@ -262,6 +269,9 @@ contract LpStrategyModule is MastercopyInitLock {
         returns (uint256 amount0, uint256 amount1)
     {
         if (shares == 0) revert ZeroAmount();
+        // The router-less ICHI `withdraw` self-protects with nothing, so `minAmount0/1` is the sole sandwich
+        // guard — reject an all-zero floor (at least one leg must be floored; single-sided returns ~0 on one).
+        if (minAmount0 == 0 && minAmount1 == 0) revert ZeroMinAmount();
         // PATH-LOCK: only LP that is EXCESS over the coverage floor may be liquefied —
         // dissolution converts path-locked LP into exitable legs, so it must respect the same floor as release/exit.
         // Gate OFF (`coverageGate == 0`) is the M1 pre-wiring state (ungated, legacy). Wired by the Timelock.

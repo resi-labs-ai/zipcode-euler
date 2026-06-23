@@ -1,11 +1,11 @@
 # X-Ray — `LpStrategyModule.sol` (single-contract, test-connected)
 
-> LpStrategyModule | 165 nSLOC | 2109fe5 (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE**
+> LpStrategyModule | 166 nSLOC | `main`, working tree | Foundry | 23/06/26 | **Verdict: ADEQUATE**
 
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/LpStrategyModule.sol`, the 8-B6 LP-strategy leg —
 the fleet module that owns the zipUSD/xALPHA ICHI LP lifecycle (build / gauge-stake / unstake / dissolve) and
 carries the **coverage path-lock seam** back to `DurationFreezeModule`. Connected to `test/LpStrategyModule.t.sol`:
-**32 unit + 5 base-fork = 37 tests, all passing** (0 fuzz, 0 invariant — deterministic multi-`exec` sequences).
+**33 unit + 5 base-fork = 38 tests, all passing** (0 fuzz, 0 invariant — deterministic multi-`exec` sequences).
 **Every mutator is exercised** (all 7 setters + the 4 operator actions).
 
 > The distinctive property here is the **path-lock**: `removeLiquidity` may only liquefy LP that is *excess* over the
@@ -47,7 +47,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 | X-1 | **coverage path-lock** — `removeLiquidity` reverts `Undercovered` unless `coverageGate.lpBurnKeepsCovered(shares)`; gate==0 ⇒ ungated (M1 legacy) | Yes (reads `DurationFreezeModule`) | **`test_removeLiquidity_coverage_gate`** — all three states: gate `false` → `Undercovered`, gate `true` → dissolves, gate OFF (0) → ungated |
 | I-1 | **deposit `to` + all balance reads hard-pinned to `juniorTrancheEngine`** | Yes | `test_exec_discipline_addLiquidity_single`/`_both_legs` (deposit `to == safe`), `test_views_read_juniorTrancheEngine`, **`test_fork_real_vault_single_sided_deposit`** (shares land in the Safe) |
 | I-2 | **no standing approval** — approve→deposit→reset; atomic rollback on inner failure | Yes | `test_exec_discipline_*`, **`test_atomicity_addLiquidity_single_deposit_fail_rolls_back`**, `_both_legs_resets_both`, `_stake_deposit_fail_rolls_back`, fork (`allowance == 0` after) |
-| I-3 | **slippage floors** — `minShares` on add (non-zero), `minAmount0/1` on remove | Yes | `test_addLiquidity_slippage_floor`, `test_zero_minShares_reverts`, `test_removeLiquidity_slippage_floor`, **`test_fork_slippage_floor_snapshot_guarded`** (probe-then-floor+1 → `Slippage`) |
+| I-3 | **slippage floors — non-zero MANDATORY on BOTH legs** — `minShares != 0` on add (`ZeroMinShares`), and not-both-zero on remove (`ZeroMinAmount`, SUPPLY-ADV-10). The remove floor is the *sole* sandwich guard: the ICHI `withdraw` self-protects with nothing (decomposes at the current tick), unlike `deposit` (vault hysteresis), so the CRE sizes it off the TWAP fair reserves (SUPPLY-ADV-09) | Yes | `test_addLiquidity_slippage_floor`, `test_zero_minShares_reverts`, `test_removeLiquidity_slippage_floor`, `test_removeLiquidity_zero_minAmount_reverts`, **`test_fork_slippage_floor_snapshot_guarded`** (probe-then-floor+1 → `Slippage`) |
 | I-4 | **exec false-return hard-reverts with bubbled inner data** | Yes | `test_exec_bubbles_custom_error`, `_no_data_falls_back_to_ExecFailed`, `test_disallowed_side_bubbles_on_mock`, **`test_fork_disallowed_side_reverts`** (real vault `allowToken1==false`) |
 | I-5 | **live-read `token0`/`token1` off the vault** — approval targets can't drift | Yes | `test_setUp_rejects_zero_token_leg`, **`test_fork_real_vault_single_sided_deposit`** (token0==WETH/token1==USDC live) |
 | I-6 | **stake/unstake credit the Safe as msg.sender** (no EVC/borrow, no tokenId state) | Yes | `test_exec_discipline_stake_and_unstake`, **`test_fork_full_cycle_real_safe_mock_lp`** |
@@ -60,7 +60,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 | `setUp` zero-addr (engine/operator/ichiVault/gauge) + live-zero token leg | `test_setUp_rejects_zero_gauge`, `_zero_ichiVault_at_guard_not_staticcall`, `_zero_juniorTrancheEngine`, `_zero_token_leg` |
 | `setUp` owner==operator / initializer-once / mastercopy lock (SEC-14) | `test_setUp_rejects_owner_equals_operator`, `test_setUp_initializer_once`, `test_SEC14_mastercopy_setUp_reverts`, `test_mastercopy_inert` |
 | `NotOperator` on all 4 mutators | `test_entrypoints_only_operator`, `test_removeLiquidity_only_operator` |
-| `ZeroAmount` / `ZeroMinShares` | `test_zero_amount_reverts`, `test_zero_minShares_reverts` |
+| `ZeroAmount` / `ZeroMinShares` / `ZeroMinAmount` | `test_zero_amount_reverts`, `test_zero_minShares_reverts`, `test_removeLiquidity_zero_minAmount_reverts` |
 | `Undercovered` coverage gate | `test_removeLiquidity_coverage_gate` |
 | `Slippage` (add + remove) | `test_addLiquidity_slippage_floor`, `test_removeLiquidity_slippage_floor`, `test_fork_slippage_floor_snapshot_guarded` |
 | operator cannot redirect Safe | `test_operator_cannot_redirect_safe` |
@@ -78,9 +78,15 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 - **Approval hygiene + atomic rollback (I-2)** — every approving path (`addLiquidity`, `stake`) resets the allowance
   to 0, and a failing inner exec rolls the whole sequence back (the approve never survives); proven on the live ICHI
   vault (`allowance == 0` after) and in the rollback tests. No standing approval to grief.
-- **Slippage is the only sandwich protection on a direct ICHI deposit (I-3)** — `minShares` must be non-zero
-  (`ZeroMinShares`) and the deposit reverts `Slippage` if undershot; `test_fork_slippage_floor_snapshot_guarded`
-  probes the achievable shares on the real vault then proves floor+1 reverts. The CRE robot sizes the floor off-chain.
+- **The slippage floor is the sole sandwich guard — and the WITHDRAW is the exposed side (I-3)** — verified
+  against the real ICHI vault source (Base `0xfF8B…73f7`): `deposit` self-protects (spot-vs-TWAP hysteresis +
+  conservative min/max share bracketing), so `addLiquidity`'s mandatory `minShares` (`ZeroMinShares`) is
+  belt-and-suspenders there. `withdraw` self-protects with **nothing** — it decomposes liquidity at the current
+  pool tick — so `removeLiquidity`'s `minAmount0/1` is the *only* protection on the dissolution hop. Two controls:
+  (1) on-chain, not-both-zero is now mandatory (`ZeroMinAmount`, SUPPLY-ADV-10, `test_removeLiquidity_zero_
+  minAmount_reverts`); (2) off-chain, the CRE sizes the floor off the TWAP fair reserves (`IchiAlgebraFairReserves`,
+  the same value the coverage gate uses), NOT spot (SUPPLY-ADV-09 / KEEPER-02). `test_fork_slippage_floor_snapshot_
+  guarded` probes the achievable shares on the real vault then proves floor+1 reverts.
 - **The 6 wiring setters — now covered** — `test_wiring_setters_onlyOwner_effect_and_zeroGuard` exercises
   `setJuniorTrancheEngine`/`setOperator`/`setIchiVault`/`setGauge`/`setToken0`/`setToken1` for onlyOwner + effect +
   zero-guard, and additionally closes the two LpStrategy-specific gaps its siblings already covered: the **SEC-15
@@ -94,11 +100,11 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 
 | Category | Count | Notes |
 |---|---|---|
-| Unit | 32 | setUp/guards, SEC-14 clone-safety, all 7 wiring setters (onlyOwner/effect/zero-guard, incl. SEC-15 + avatar/target sync), exec-discipline (approve/reset shape) for add/stake/unstake/remove, atomicity rollbacks, the 3-state coverage gate, slippage floors, vault-agnostic non-unit-price pass-through, view pinning, bubble matrix |
+| Unit | 33 | setUp/guards, SEC-14 clone-safety, all 7 wiring setters (onlyOwner/effect/zero-guard, incl. SEC-15 + avatar/target sync), exec-discipline (approve/reset shape) for add/stake/unstake/remove, atomicity rollbacks, the 3-state coverage gate, slippage floors (incl. the `ZeroMinAmount` remove-floor guard), vault-agnostic non-unit-price pass-through, view pinning, bubble matrix |
 | Base-fork | 5 | live ICHI vault + gauge: real single-sided deposit (live token0/token1 read, no standing allowance), snapshot-guarded slippage, disallowed-side fail-close, gauge/Voter sig-verify, full build→stake→unstake→remove cycle (real Safe, mock LP for our not-yet-deployed vault) |
 | Stateless fuzz / invariant | 0 | deterministic; fork is the higher-value check |
 
-All **37 pass** (`forge test --match-path test/LpStrategyModule.t.sol`). The decisive seam (coverage path-lock) and
+All **38 pass** (`forge test --match-path test/LpStrategyModule.t.sol`). The decisive seam (coverage path-lock) and
 the approval/slippage discipline are tested unit + live-fork. Coverage % uninstrumentable (project-wide
 stack-too-deep); green run confirmed.
 
@@ -115,5 +121,5 @@ build-phase mutable wiring pending the pre-prod re-freeze — neither a coverage
 1. 165 nSLOC; clone (`MastercopyInitLock` + `initializer`, no immutable); no custody, no EVC/borrow, no storage writes in mutating paths.
 2. 4 operator-only actions; deposit `to` + all balance reads pinned to `juniorTrancheEngine`; `value==0`, Call-only, no passthrough; `_exec` bubbles inner reverts.
 3. `removeLiquidity` is coverage-gated (`lpBurnKeepsCovered` → `Undercovered`) — the on-chain LP-dissolution path-lock; `token0`/`token1` live-read off the vault; approvals reset to 0 every path.
-4. Tests: 32 unit + 5 base-fork (0 fuzz/invariant); the coverage gate (3 states), slippage, atomicity, live ICHI deposit, and every wiring setter all proven.
+4. Tests: 33 unit + 5 base-fork (0 fuzz/invariant); the coverage gate (3 states), slippage (incl. the `ZeroMinAmount` remove-floor guard), atomicity, live ICHI deposit, and every wiring setter all proven.
 5. No outstanding coverage gap on the contract surface; residuals are off-chain (the pre-prod wiring re-freeze).

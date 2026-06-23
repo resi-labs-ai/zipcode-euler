@@ -73,7 +73,9 @@ coverageGate)`. Order is load-bearing:
   to 0; finally `shares < minShares → Slippage`. Deposit `to` is the literal `juniorTrancheEngine` — the minted LP lands in the
   Safe. No standing approvals (exact-amount, reset defensively).
 - **`removeLiquidity(shares, minAmount0, minAmount1) → (amount0, amount1)`** — `ZeroAmount` guard (shares); then
-  the **COVERAGE GATE**: `if coverageGate != 0 && !ICoverageGate(coverageGate).lpBurnKeepsCovered(shares) →
+  the **ZERO-FLOOR GUARD**: `if minAmount0 == 0 && minAmount1 == 0 → ZeroMinAmount` (SUPPLY-ADV-10 — the ICHI
+  `withdraw` self-protects with nothing, so this floor is the SOLE sandwich guard; at least one leg must be
+  floored). Then the **COVERAGE GATE**: `if coverageGate != 0 && !ICoverageGate(coverageGate).lpBurnKeepsCovered(shares) →
   Undercovered` (only the coverage EXCESS may be liquefied). Then exactly 1 `exec`: `IICHIVault.withdraw(shares,
   juniorTrancheEngine)`, `abi.decode` the two leg amounts, then `amount0 < minAmount0 || amount1 < minAmount1 → Slippage`.
   **No approval needed** — the LP shares are already in the Safe (unstaked first via `unstake`), and the vault
@@ -155,5 +157,9 @@ wired nor referenced.
   two real-vault fork tests deposit a FIXED amount into a live third-party ICHI vault, which can intermittently revert
   `DTL` at certain blocks. Pin a block before relying on those two tests (logged in PROGRESS as latent fragility);
   the module logic is unaffected.
-- **`minShares == 0` is rejected** (`ZeroMinShares`) — a deliberate strictness choice, not a footgun: a direct ICHI
-  deposit is sandwich-exposed and a zero floor would no-op the only protection.
+- **A zero slippage floor is rejected on BOTH legs** — `minShares == 0` on add (`ZeroMinShares`) and both
+  `minAmount0/1 == 0` on remove (`ZeroMinAmount`, SUPPLY-ADV-10). Verified against the real ICHI source: the
+  *deposit* self-protects (spot-vs-TWAP hysteresis), so its floor is belt-and-suspenders; the *withdraw* self-
+  protects with nothing (decomposes at the current tick), so its floor is the SOLE sandwich guard — which is why
+  the remove guard is at-least-one-non-zero and the CRE sizes it off the TWAP fair reserves, not spot
+  (SUPPLY-ADV-09 / KEEPER-02).
