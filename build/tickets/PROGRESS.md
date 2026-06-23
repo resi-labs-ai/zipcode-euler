@@ -229,3 +229,20 @@ supply/szipUSD — the junior-vault engine fleet (14 contracts). Prompts authore
   closed by the pre-prod re-freeze, non-draining — receiver pinned to the Safe, TTL-bounded). Mission-4 engine↔
   free-Safe binding INFO folded in as an accepted X-1 doc note (no cheap on-chain interlock). Single-model run
   (Claude-only; Codex/Fugu not credentialed) — exit-safety core (I-2/I-3/I-4/I-5/I-7/I-8/I-9) confirmed sound.
+- **SUPPLY-ADV-06** — `ExitGate`: the two conservation-defining setters (`setShareToken`, `setBaal`→re-derives
+  `loot`) could break I-1 (`szipUSD.totalSupply() == loot.balanceOf(gate)`) if re-pointed AFTER issuance — stranding
+  the paired Loot / forking the identity onto a token it no longer tracks (no drain; existing basket assets stay
+  put) → **SHIPPED to `main`**. Added `_assertPreIssuance()` (revert `AlreadyWired` once
+  `SzipUSD(shareToken).totalSupply() != 0`, reusing the declared-but-unused error) to both setters, + the explicit
+  `shareToken == 0 → NotWired` guard on `burnFor` for symmetry with `depositFor:159` (the mission-4 LOW nit, folded —
+  same wiring surface) + 4 regression tests. Deflated MEDIUM×2→LOW (Timelock-only, build-phase, no drain, closed by
+  the pre-prod re-freeze; the in-contract lock makes the two sharpest setters fail closed earlier). Scoped suite
+  19→24 green; wire doc + X-Ray §4/§5/counts synced.
+- **SUPPLY-ADV-07** — `ExitGate.depositFor` priced `shares` off `valueOf(asset, amount)` (the full requested amount)
+  but forwarded `amount` with no received-delta check, so a fee-on-transfer / rebasing leg would over-issue szipUSD
+  against backing the basket never received (dilutes stayers; conservation-preserving, not a desync) → **SHIPPED to
+  `main`**. Added a basket-balance snapshot around the transfer → `TransferShortfall` unless it rose by exactly
+  `amount`, adopting the in-house `DurationFreezeModule` (`:363/368`) pattern, + `test_depositFor_feeOnTransfer_reverts`
+  (1% FoT leg). Deflated to LOW (latent — whitelist {zipUSD,xALPHA} is non-FoT; reachable only via a Timelock
+  `setTokens` re-point). Shipped in the same scoped 24/24 green run as ADV-06; wire doc + X-Ray synced. Single-model
+  run (Claude-only) — conservation / no-ragequit / round-down / fail-closed core confirmed sound.

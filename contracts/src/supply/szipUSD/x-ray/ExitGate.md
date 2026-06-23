@@ -4,8 +4,8 @@
 
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/ExitGate.sol`, the **#3 drill** from
 `portfolio-map.md` — the custody + issuance + exit core, the **sole szipUSD minter/burner** and **sole Baal `Loot`
-custodian**. Connected to `test/ExitGate.t.sol`: **17 base-fork unit + 1 stateful invariant = 18 tests, all
-passing**.
+custodian**. Connected to `test/ExitGate.t.sol`: **23 base-fork unit + 1 stateful invariant = 24 tests, all
+passing** (was 18; +5 from the SUPPLY-ADV-06/07 hardening, +1 pre-existing `setGate` ctor test).
 
 > Drill goal (from the map): *add an invariant test for `szipUSD.totalSupply() == loot.balanceOf(gate)`; confirm no
 > `ragequit` path is reachable.* **Both done (2026-06-20):** a Foundry stateful invariant
@@ -67,7 +67,9 @@ paired burn (retire).
 | `NotWindowController` | `test_burnFor_pure_supply_retire` |
 | `xALPHA` deposit branch (`valueOf(xAlpha,…)`) | `test_depositFor_xAlpha_path` (+ fuzzed in the invariant handler) |
 | `burnFor` under-funded engine → atomic rollback | `test_burnFor_reverts_when_engine_underfunded` |
-| `NotWired` (shareToken / engine unset) | partial — wiring asserted positive; the `NotWired` revert paths not directly exercised |
+| `NotWired` (shareToken / engine unset) | `depositFor` path asserted positive; **`burnFor` now carries an explicit `shareToken != 0 → NotWired` guard** (SUPPLY-ADV-06) — `test_burnFor_reverts_when_shareToken_unwired` |
+| **`TransferShortfall`** — `depositFor` requires the basket to receive exactly `amount` (FoT/rebasing over-issue guard, SUPPLY-ADV-07) | `test_depositFor_feeOnTransfer_reverts` (1% FoT leg → revert) |
+| **`AlreadyWired`** — `setShareToken`/`setBaal` re-point locked once szipUSD is issued (SUPPLY-ADV-06) | `test_setShareToken_locked_after_issuance`, `test_setBaal_locked_after_issuance`, `test_setBaal_repoint_allowed_pre_issuance` |
 
 ## 5. Attack surfaces
 
@@ -90,17 +92,26 @@ paired burn (retire).
   balance intact; invariant survives).
 - **Build-phase mutable wiring** — 8 `onlyOwner` setters incl. `setBaal` (re-derives `loot`/`juniorTrancheSafe`).
   Re-pointing the Baal or token mid-life is a Timelock act; `test_setters_repoint_and_auth` covers the access +
-  re-point. The standing residual is the deferred pre-prod immutable re-freeze.
+  re-point. The standing residual is the deferred pre-prod immutable re-freeze. **SUPPLY-ADV-06 (2026-06-23):** the
+  two *conservation-defining* pointers — `setShareToken` and `setBaal` — are now belt-and-suspanders locked in-contract
+  via `_assertPreIssuance()` (revert `AlreadyWired` once `SzipUSD(shareToken).totalSupply() != 0`), so a mid-life
+  re-point cannot strand the paired Loot / fork the I-1 identity even before the global re-freeze lands; the other five
+  setters are I-1-neutral and stay re-pointable. `burnFor` also gained the explicit `shareToken != 0 → NotWired` guard
+  for symmetry with `depositFor`.
+- **FoT/rebasing deposit leg (SUPPLY-ADV-07, 2026-06-23)** — `depositFor` now snapshots the basket balance around the
+  `safeTransferFrom` and reverts `TransferShortfall` unless it rose by exactly `amount`. Closes the latent over-issue
+  where a fee-on-transfer leg (introducible only via `setTokens`) would mint szipUSD against backing the basket never
+  received. Adopts the in-house `DurationFreezeModule` received-delta pattern.
 
 ## 6. Test analysis
 
 | Category | Count | Notes |
 |---|---|---|
-| Base-fork unit | 17 | live Baal substrate (`_summon`) + real `SzipNavOracle` + mock basket assets: wiring, NAV issuance (par + round-down), `previewDeposit` parity + guards, manager-grant gate, TVL cap, stale/unseeded fail-close, paired burn, the `xALPHA` deposit path, the `burnFor` under-funded rollback, and the deterministic two-token `test_invariant_sequence` |
+| Base-fork unit | 23 | live Baal substrate (`_summon`) + real `SzipNavOracle` + mock basket assets: wiring, NAV issuance (par + round-down), `previewDeposit` parity + guards, manager-grant gate, TVL cap, stale/unseeded fail-close, paired burn, the `xALPHA` deposit path, the `burnFor` under-funded rollback, and the deterministic two-token `test_invariant_sequence` |
 | Stateful invariant | 1 | **`invariant_twoToken_conservation_and_zeroShares`** — multi-actor deposit/transfer/burn handler vs the real Baal + oracle; ~6,400 calls, 0 reverts, 0 violations |
 | Stateless fuzz | 0 | issuance arithmetic is exercised inside the stateful invariant (the oracle dependency makes the stateful handler the better tool) |
 
-All **18 pass** (`forge test --match-path test/ExitGate.t.sol`). Fork-grade throughout (real Baal, real oracle), and
+All **24 pass** (`forge test --match-path test/ExitGate.t.sol`). Fork-grade throughout (real Baal, real oracle), and
 the decisive conservation invariant is now fuzzed across arbitrary interleavings. Coverage % uninstrumentable
 (project-wide stack-too-deep); green run confirmed.
 

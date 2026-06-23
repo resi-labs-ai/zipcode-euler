@@ -66,6 +66,35 @@ contract MockOHydx is MockERC20 {
     }
 }
 
+/// @notice A fee-on-transfer 18-dp token: `transferFrom` skims 1%, so the destination receives less than `amount`.
+///         Used to prove `depositFor`'s received-delta guard (`TransferShortfall`) rejects an over-issue.
+contract MockFeeERC20 {
+    uint8 public constant decimals = 18;
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address to, uint256 amt) external {
+        balanceOf[to] += amt;
+        totalSupply += amt;
+    }
+
+    function approve(address s, uint256 a) external returns (bool) {
+        allowance[msg.sender][s] = a;
+        return true;
+    }
+
+    function transferFrom(address f, address to, uint256 a) external returns (bool) {
+        uint256 al = allowance[f][msg.sender];
+        if (al != type(uint256).max) allowance[f][msg.sender] = al - a;
+        uint256 fee = a / 100; // 1% skim
+        balanceOf[f] -= a;
+        balanceOf[to] += a - fee;
+        totalSupply -= fee;
+        return true;
+    }
+}
+
 /// @notice Exit Gate + szipUSD — Base-mainnet fork test against the LIVE Baal substrate (8-B1 `_summon`) + the
 /// real `SzipNavOracle`, with mock basket assets. Proves: NAV-proportional issuance, the two-token invariant
 /// (`szipUSD.totalSupply == loot.balanceOf(gate)`), the manager-grant gate (8-B1 F4.2 obligation), windowed
@@ -481,6 +510,76 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         assertEq(szip.totalSupply(), supplyBefore, "supply intact after rolled-back burnFor");
         assertEq(szip.balanceOf(engine), 3e18, "engine szipUSD untouched");
         _assertInvariants();
+    }
+
+    // ----------------------------------------------------------------- audit hardening (SUPPLY-ADV-06/07)
+    /// @notice SUPPLY-ADV-06: the conservation-defining pointers (`baal`→`loot`, `shareToken`) are re-pointable only
+    ///         BEFORE any szipUSD is issued; once `totalSupply() != 0` they fail closed (`AlreadyWired`) so a re-point
+    ///         cannot strand the paired Loot / fork the I-1 identity.
+    function test_setBaal_locked_after_issuance() public {
+        _deposit(alice, 5e18); // szipUSD now issued -> the I-1 identity is live
+        vm.expectRevert(ExitGate.AlreadyWired.selector);
+        gate.setBaal(makeAddr("baal2"));
+    }
+
+    function test_setShareToken_locked_after_issuance() public {
+        _deposit(alice, 5e18);
+        vm.expectRevert(ExitGate.AlreadyWired.selector);
+        gate.setShareToken(makeAddr("szip2"));
+    }
+
+    /// @dev The lock is only on the post-issuance re-point — a fresh, pre-issuance Gate still re-points freely.
+    function test_setBaal_repoint_allowed_pre_issuance() public {
+        ExitGate g = new ExitGate(sub.baal, address(oracle), address(zip), address(xa), TVL_CAP);
+        g.setShareToken(address(szip)); // szip has 0 supply in this test's fresh state -> allowed
+        // re-point baal pre-issuance: re-derives loot/juniorTrancheSafe off the same substrate, no revert
+        g.setBaal(sub.baal);
+        assertEq(g.loot(), sub.loot, "pre-issuance setBaal re-derives loot");
+    }
+
+    /// @notice SUPPLY-ADV-06: `burnFor` carries the same explicit `NotWired` guard as `depositFor` (:159) when the
+    ///         share token is unset — an explicit revert, not an incidental EVM call-to-codeless-address revert.
+    function test_burnFor_reverts_when_shareToken_unwired() public {
+        ExitGate g = new ExitGate(sub.baal, address(oracle), address(zip), address(xa), TVL_CAP);
+        g.setWindowController(keeper);
+        g.setJuniorTrancheEngine(engine);
+        // shareToken deliberately left unset
+        vm.prank(keeper);
+        vm.expectRevert(ExitGate.NotWired.selector);
+        g.burnFor(1e18);
+    }
+
+    /// @notice SUPPLY-ADV-07: a fee-on-transfer deposit leg credits the basket less than `amount`, but `shares` is
+    ///         priced off `valueOf(asset, amount)` (the full amount) — so without a received-delta check it would
+    ///         over-issue szipUSD against backing the basket never got. The guard reverts `TransferShortfall`.
+    function test_depositFor_feeOnTransfer_reverts() public {
+        MockFeeERC20 fot = new MockFeeERC20();
+        // Fresh oracle whose zipUSD leg IS the FoT token (the oracle's legs are immutable), over the same Safes.
+        SzipNavOracle o3 = new SzipNavOracle(
+            forwarder, address(fot), address(usdc), address(xa), address(hydx), address(ohydx),
+            sub.juniorTrancheSafe, sub.juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
+        );
+        ExitGate g3 = new ExitGate(sub.baal, address(o3), address(fot), address(xa), TVL_CAP);
+        SzipUSD sz3 = new SzipUSD(address(g3));
+        g3.setShareToken(address(sz3));
+        o3.setShareToken(address(sz3));
+        _grantManager(address(g3));
+        {
+            uint8[] memory legs = new uint8[](2);
+            uint256[] memory ps = new uint256[](2);
+            legs[0] = o3.LEG_ALPHA_USD();
+            legs[1] = o3.LEG_HYDX_USD();
+            ps[0] = 1e18;
+            ps[1] = 5e17;
+            vm.prank(forwarder);
+            o3.onReport("", abi.encode(uint8(7), abi.encode(legs, ps, uint32(block.timestamp))));
+        }
+        fot.mint(alice, 10e18);
+        vm.startPrank(alice);
+        fot.approve(address(g3), 10e18);
+        vm.expectRevert(ExitGate.TransferShortfall.selector);
+        g3.depositFor(address(fot), 10e18, alice); // basket receives 9.9e18 != 10e18 -> revert
+        vm.stopPrank();
     }
 
     // ----------------------------------------------------------------- stateful invariant (the map's ask)

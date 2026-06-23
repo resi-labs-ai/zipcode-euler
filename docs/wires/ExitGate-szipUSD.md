@@ -47,6 +47,13 @@ Safe is a one-call re-point, not a redeploy cascade. The `onlyOwner` setters:
 - `setBaal(address)` → re-points and **re-derives** `loot` + `juniorTrancheSafe`.
 - `setNavOracle(address)`, `setTokens(zipUSD_, xAlpha_)`, `setTvlCap(uint256)` (rejects 0).
 
+**Pre-issuance lock on the two conservation-defining pointers (SUPPLY-ADV-06).** `setShareToken` and `setBaal`
+(which re-derives `loot`) call `_assertPreIssuance()` — they revert `AlreadyWired` once `shareToken != 0 &&
+SzipUSD(shareToken).totalSupply() != 0`. A mid-life re-point would strand the Gate's paired Loot / fork the I-1
+identity (`totalSupply == loot.balanceOf(gate)`) onto a token it no longer tracks, so it fails closed; both stay
+freely re-pointable BEFORE the first deposit. The other five setters (oracle, tokens, windowController, engine, cap)
+do **not** touch the I-1 identity and stay re-pointable until the pre-prod immutable re-freeze.
+
 ### `depositFor(address asset, uint256 amount, address receiver) returns (uint256 shares)` — the issuance seam
 `nonReentrant`. Guards: `asset` must be `zipUSD` or `xAlpha` (else `UnsupportedAsset`); `amount != 0` (`ZeroAmount`);
 `shareToken != 0` (`NotWired`). Then:
@@ -56,7 +63,10 @@ Safe is a one-call re-point, not a redeploy cascade. The `onlyOwner` setters:
 4. **TVL-cap backstop:** `if (navOracle.grossBasketValue() + value > tvlCap) revert TvlCapExceeded()`.
 5. `shares = value * 1e18 / navE` — **round DOWN** (favors the vault); `shares != 0` (`ZeroShares`).
 6. `IERC20(asset).safeTransferFrom(msg.sender, juniorTrancheSafe, amount)` — the asset lands straight in the basket (main
-   Safe); the Gate keeps **zero custody** of it.
+   Safe); the Gate keeps **zero custody** of it. **Received-delta guard (SUPPLY-ADV-07):** snapshots the basket
+   balance around the transfer and reverts `TransferShortfall` unless it rose by exactly `amount` — a fee-on-transfer
+   / rebasing leg that credited less would over-issue szipUSD against backing the basket never received (`shares` is
+   priced off the full `amount` at step 3). Same guard the sibling `DurationFreezeModule` carries.
 7. `baal.mintLoot(_one(address(this)), _one(shares))` — Loot to the Gate (the `manager(2)` capability).
 8. `SzipUSD(shareToken).mint(receiver, shares)` — transferable szipUSD to the receiver.
 
@@ -73,8 +83,9 @@ unsupported asset, a zero amount, or a stale oracle (`navEntry()` propagates `St
 at execution). View-only ⇒ it cannot `poke()` first; it reads the accumulator as-is.
 
 ### `burnFor(uint256 amount)` — the only exit executor (paired buy-and-burn, §7 / 8-B14)
-`nonReentrant`. `if (msg.sender != windowController) revert NotWindowController()`; `juniorTrancheEngine != 0` (`NotWired`);
-`amount != 0`. Then `baal.burnLoot(_one(address(this)), _one(amount))` + `SzipUSD(shareToken).burn(juniorTrancheEngine, amount)`
+`nonReentrant`. `if (msg.sender != windowController) revert NotWindowController()`; `shareToken != 0` (`NotWired`,
+SUPPLY-ADV-06 — explicit, symmetric with `depositFor`, not an incidental call-to-codeless-address revert);
+`juniorTrancheEngine != 0` (`NotWired`); `amount != 0`. Then `baal.burnLoot(_one(address(this)), _one(amount))` + `SzipUSD(shareToken).burn(juniorTrancheEngine, amount)`
 — pure supply reduction on **both** sides, **no asset payout**, basket untouched ⇒ NAV-per-share ticks up for
 stayers. This retires szipUSD the engine Safe bought below NAV on the CoW book.
 

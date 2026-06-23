@@ -61,6 +61,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
     error UnsupportedAsset(address asset);
     error TvlCapExceeded();
     error NotWindowController();
+    error TransferShortfall();
 
     // --------------------------------------------------------------------- events
     event Deposited(address indexed receiver, address indexed asset, uint256 amount, uint256 value, uint256 shares);
@@ -93,6 +94,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
     /// @notice Wire/re-point the szipUSD share token. `onlyOwner` (Timelock), build-phase flexibility.
     function setShareToken(address szipUSD_) external onlyOwner {
         if (szipUSD_ == address(0)) revert ZeroAddress();
+        _assertPreIssuance(); // re-point the share token only before any szipUSD is issued (I-1)
         shareToken = szipUSD_;
         emit ShareTokenSet(szipUSD_);
     }
@@ -114,6 +116,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
     /// @notice Re-point the Baal substrate (re-derives `loot` + `juniorTrancheSafe`). `onlyOwner` (Timelock), build-phase.
     function setBaal(address baal_) external onlyOwner {
         if (baal_ == address(0)) revert ZeroAddress();
+        _assertPreIssuance(); // re-point the Baal substrate (re-derives loot) only before any szipUSD is issued (I-1)
         baal = IBaal(baal_);
         loot = IBaal(baal_).lootToken();
         juniorTrancheSafe = IBaal(baal_).avatar();
@@ -166,8 +169,13 @@ contract ExitGate is Ownable, ReentrancyGuard {
         shares = value * 1e18 / navE; // round DOWN (favor the vault)
         if (shares == 0) revert ZeroShares();
 
-        // Pull the asset into the basket (main Safe) — the Gate keeps zero custody of it.
+        // Pull the asset into the basket (main Safe) — the Gate keeps zero custody of it. Require the basket to
+        // receive EXACTLY `amount` (the value `shares` was priced off at :163): a fee-on-transfer / rebasing leg
+        // that credits less would over-issue szipUSD against backing the basket never received. (Same guard the
+        // sibling DurationFreezeModule carries.)
+        uint256 basketBefore = IERC20(asset).balanceOf(juniorTrancheSafe);
         IERC20(asset).safeTransferFrom(msg.sender, juniorTrancheSafe, amount);
+        if (IERC20(asset).balanceOf(juniorTrancheSafe) - basketBefore != amount) revert TransferShortfall();
 
         // Mint Loot to the Gate (manager(2)) + transferable szipUSD to the receiver — paired, equal amounts.
         baal.mintLoot(_one(address(this)), _one(shares));
@@ -199,6 +207,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
     ///         payout — `burnLoot` from the Gate + burn the engine Safe's szipUSD. NAV-per-share ticks up for stayers.
     function burnFor(uint256 amount) external nonReentrant {
         if (msg.sender != windowController) revert NotWindowController();
+        if (shareToken == address(0)) revert NotWired(); // symmetry with depositFor :159 (explicit, not an EVM revert)
         if (juniorTrancheEngine == address(0)) revert NotWired();
         if (amount == 0) revert ZeroAmount();
         baal.burnLoot(_one(address(this)), _one(amount));
@@ -207,6 +216,15 @@ contract ExitGate is Ownable, ReentrancyGuard {
     }
 
     // --------------------------------------------------------------------- internals
+    /// @dev The two conservation-defining pointers — `shareToken` and `baal` (which re-derives `loot`) — may be
+    ///      re-pointed ONLY before any szipUSD has been issued. Once `totalSupply() != 0`, re-pointing would strand
+    ///      the paired Loot / fork the I-1 identity (`totalSupply == loot.balanceOf(gate)`) onto a token it no longer
+    ///      tracks, so it fails closed (`AlreadyWired`). The other build-phase setters (oracle, tokens, window
+    ///      controller, engine, cap) do not touch the I-1 identity and stay re-pointable until the pre-prod re-freeze.
+    function _assertPreIssuance() private view {
+        if (shareToken != address(0) && SzipUSD(shareToken).totalSupply() != 0) revert AlreadyWired();
+    }
+
     function _one(address a) private pure returns (address[] memory arr) {
         arr = new address[](1);
         arr[0] = a;
