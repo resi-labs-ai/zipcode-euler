@@ -316,6 +316,10 @@ contract HarvestVoteModuleUnitTest is Test {
         vm.startPrank(owner);
         m.setJuniorTrancheEngine(x);
         assertEq(m.juniorTrancheEngine(), x, "juniorTrancheEngine re-pointed");
+        // SUPPLY-ADV-11: setJuniorTrancheEngine syncs avatar/target in lockstep so the engine-Safe invariant
+        // avatar == target == juniorTrancheEngine survives a re-point (juniorTrancheEngine is the exerciseVe recipient).
+        assertEq(m.avatar(), x, "avatar synced to juniorTrancheEngine");
+        assertEq(m.target(), x, "target synced to juniorTrancheEngine");
         m.setGauge(x);
         assertEq(m.gauge(), x, "gauge re-pointed");
         m.setVoter(x);

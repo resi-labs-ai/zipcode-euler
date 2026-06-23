@@ -39,7 +39,7 @@ own holdings/account directly.
 | `resetVote()` | operator-only | clears the epoch vote (unwind/emergency) |
 | `claimRebase(tokenIds)` | operator-only | `EmptyArray` guard; tolerates an imperfect operator-curated array |
 | `pendingReward` / `voteFloor` / `rebaseClaimable` | `view` | all read `juniorTrancheEngine`, not the caller |
-| `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring re-points |
+| `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring re-points (`setJuniorTrancheEngine` syncs `avatar`/`target`, SUPPLY-ADV-11) |
 
 No permissionless mutators. No custody, no approvals, no recipient parameter except the pinned `juniorTrancheEngine`.
 
@@ -66,7 +66,7 @@ No permissionless mutators. No custody, no approvals, no recipient parameter exc
 | `NotOperator` on all 5 mutators | `test_entrypoints_only_operator`, `test_fork_non_operator_reverts` |
 | `ZeroAmount` / `EmptyArray` / `LengthMismatch` | `test_guards` |
 | operator cannot redirect Safe (`setAvatar`/`setTarget`) | `test_operator_cannot_redirect_safe` |
-| 6 wiring setters (`setJuniorTrancheEngine`/`setGauge`/`setVoter`/`setRewardsDistributor`/`setOHYDX`/`setVe`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` (onlyOwner + effect + zero-guard, all 6) |
+| 6 wiring setters (`setJuniorTrancheEngine`/`setGauge`/`setVoter`/`setRewardsDistributor`/`setOHYDX`/`setVe`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` (onlyOwner + effect + zero-guard, all 6; + `setJuniorTrancheEngine` syncs `avatar`/`target`, SUPPLY-ADV-11) |
 
 ## 5. Attack surfaces
 

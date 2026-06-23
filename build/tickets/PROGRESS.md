@@ -292,3 +292,19 @@ pins hold. The one substantive delta — surfaced by pulling the **verified ICHI
 Owed: the `cre/keeper/` service itself (holds the operator hot key, sizes the harvest-loop floors via `quote.go`)
 is built-but-**outside this contract audit's scope** and is owed its own adversarial pass; the wind-down path
 (`removeLiquidity` driver) needs one when KEEPER-02 is built.
+
+`HarvestVoteModule` (8-B7) reviewed (4 missions, single-model Claude-only). The approval-free, account-keyed
+harvest leg confirmed SOUND: `exerciseVe` recipient pin holds, genuinely account-keyed/stateless (no tokenId, no
+custody, zero approvals), `_exec` bubbles so no swallowed Hydrex failure reports success, views read the engine not
+the caller, init-lock + SEC-15 hold. X-1 (`lockVe` over-lock) / X-2 (build-phase re-points) confirmed bounded
+accepted-risk. One LOW delta:
+- **SUPPLY-ADV-11** — `setJuniorTrancheEngine` re-pointed only the convenience slot, NOT the inherited Zodiac
+  `avatar`/`target` (`:130-134`), leaving HarvestVote the lone non-syncing engine module after ADV-08 patched
+  Recycle → **SHIPPED to `main`**. Sharper than Recycle: `juniorTrancheEngine` is the `exerciseVe` recipient, so a
+  lone re-point made `lockVe` SILENTLY move value (burn the OLD Safe's oHYDX, mint the veNFT to NEW) rather than
+  fail closed like Recycle's `BackingShortfall`. Fix: `setJuniorTrancheEngine` now sets `avatar = target =
+  juniorTrancheEngine_`, matching the 5 syncing siblings (Sell/Exercise/LpStrategy/FarmLoop/Recycle); NatSpec
+  updated. `test_wiring_setters_onlyOwner_effect_and_zeroGuard` now asserts the avatar/target sync; scoped suite
+  **29/29 green**, `forge build` clean. X-Ray §2/§4 + wire `8-B7` synced in the same commit. Promoted INFO→LOW
+  (owner-only/build-phase, honest-path-recoverable, but the one engine desync that redirects rather than reverts).
+  Single-model run (Claude-only).

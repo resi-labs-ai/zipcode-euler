@@ -126,10 +126,16 @@ contract HarvestVoteModule is MastercopyInitLock {
     // Re-point cross-component wiring during the build phase. onlyOwner == the Timelock; the CRE `operator` (hot key)
     // cannot reach these. A redirect is a deliberate timelocked governance act, not an attack path.
 
-    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock). Moves `avatar`/`target` in
+    ///         lockstep so the engine-Safe invariant `avatar == target == juniorTrancheEngine` holds after a re-point
+    ///         (SUPPLY-ADV-11): `juniorTrancheEngine` is the `exerciseVe` recipient + every balance/floor-read subject,
+    ///         so it MUST equal the exec'ing Safe (`target`) — else `lockVe` would burn the old Safe's oHYDX while
+    ///         minting the veNFT to the new engine. Matches the syncing siblings (Sell/Exercise/LpStrategy/FarmLoop/Recycle).
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
         juniorTrancheEngine = juniorTrancheEngine_;
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
         emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
