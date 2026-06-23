@@ -143,6 +143,9 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @notice Re-point `juniorTrancheSafe` (build phase, §17). onlyOwner (Timelock).
     function setJuniorTrancheSafe(address juniorTrancheSafe_) external onlyOwner {
         if (juniorTrancheSafe_ == address(0)) revert ZeroAddress();
+        // distinctness is load-bearing (mirrors setUp): equal Safes make a rotation a self-transfer that
+        // trivially passes the floor — a re-point must never collapse the two Safes to one.
+        if (juniorTrancheSafe_ == juniorTrancheSidecar) revert BadParams();
         juniorTrancheSafe = juniorTrancheSafe_;
         emit WiringSet("juniorTrancheSafe", juniorTrancheSafe_);
     }
@@ -150,6 +153,9 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @notice Re-point `juniorTrancheSidecar` (build phase, §17). onlyOwner (Timelock).
     function setJuniorTrancheSidecar(address juniorTrancheSidecar_) external onlyOwner {
         if (juniorTrancheSidecar_ == address(0)) revert ZeroAddress();
+        // distinctness is load-bearing (mirrors setUp): equal Safes make a rotation a self-transfer that
+        // trivially passes the floor — a re-point must never collapse the two Safes to one.
+        if (juniorTrancheSidecar_ == juniorTrancheSafe) revert BadParams();
         juniorTrancheSidecar = juniorTrancheSidecar_;
         emit WiringSet("juniorTrancheSidecar", juniorTrancheSidecar_);
     }

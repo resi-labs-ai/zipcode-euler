@@ -204,3 +204,18 @@ so NO redundant panel was run. Two real residuals found + closed.
   16→17 green); refreshed `IchiAlgebraFairReserves.md` + `invariants.md` + `entry-points.md` + scope `x-ray.md`
   (three reverts now recorded + all tested; ADV-02 readiness gate + X-2 under-coverage resolution documented;
   verdict lifted **ADEQUATE → HARDENED**). No contract logic change (test + docs only).
+
+supply/szipUSD — the junior-vault engine fleet (14 contracts). Prompts authored (all 14 + group README,
+`adversarial-review/prompts/src/supply/`). Review cycles running one contract per clean context; **single-model
+(Claude) runs — Codex/Fugu not yet credentialed**, noted in each synthesis.
+- **DurationFreezeModule reviewed (5/5 missions)** — the solvency floor is SOUND: `release` cannot under-freeze
+  (live post-move reads, absolute debt-pin, fail-closed senior/oracle reads), LP single-counted, donation-immune,
+  value confined to the two Safes. 0 CRITICAL/HIGH/MEDIUM after pressure-test. One LOW gap (missions 3+5 converged):
+- **SUPPLY-ADV-04** — `setJuniorTrancheSafe`/`setJuniorTrancheSidecar` lacked the `setUp:116` distinctness re-check
+  (`setOperator` SEC-15 has its analog), so a Timelock re-point could collapse the two Safes → `release` becomes a
+  self-transfer that trivially clears the floor (neutralizes I-1) → **SHIPPED to `main`**. Added the
+  `juniorTrancheSafe != juniorTrancheSidecar` re-check to both setters (reusing `BadParams`) +
+  `test_setSafes_reject_collapse_to_equal`; scoped suite 56→57 green; X-Ray §4 guard row + §5 X-3 note synced.
+  Deflated MEDIUM→LOW (Timelock-only, build-phase X-3, closed by the pre-prod re-freeze; ticketed for the cheap
+  guard-symmetry fix). Two optional test-hardening notes recorded in the synthesis (float `pathLockedLpEquity` in
+  the 128k invariant to assert on `coverageValue`; a real-`DurationFreezeModule`-as-`coverageGate` integration test).

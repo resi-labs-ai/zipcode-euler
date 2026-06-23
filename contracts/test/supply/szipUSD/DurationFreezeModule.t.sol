@@ -412,6 +412,39 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         );
     }
 
+    /// @dev SUPPLY-ADV-04: the two Safe setters must mirror `setUp`'s distinctness guard — a re-point can never
+    ///      collapse the two Safes to one address (which would make a `release` a self-transfer that trivially
+    ///      clears the floor, neutralizing I-1). Pre-fix both setters guarded only the zero address.
+    function test_setSafes_reject_collapse_to_equal() public {
+        // a valid, distinct re-point still succeeds on both setters
+        address newMain = makeAddr("advNewMain");
+        vm.prank(owner);
+        m.setJuniorTrancheSafe(newMain);
+        assertEq(m.juniorTrancheSafe(), newMain);
+
+        address newSide = makeAddr("advNewSide");
+        vm.prank(owner);
+        m.setJuniorTrancheSidecar(newSide);
+        assertEq(m.juniorTrancheSidecar(), newSide);
+
+        // collapsing the two Safes to one now reverts BadParams (pre-fix it silently succeeded)
+        vm.prank(owner);
+        vm.expectRevert(DurationFreezeModule.BadParams.selector);
+        m.setJuniorTrancheSafe(newSide); // == current juniorTrancheSidecar
+
+        vm.prank(owner);
+        vm.expectRevert(DurationFreezeModule.BadParams.selector);
+        m.setJuniorTrancheSidecar(newMain); // == current juniorTrancheSafe
+
+        // the zero-address guard still fires on both
+        vm.prank(owner);
+        vm.expectRevert(DurationFreezeModule.ZeroAddress.selector);
+        m.setJuniorTrancheSafe(address(0));
+        vm.prank(owner);
+        vm.expectRevert(DurationFreezeModule.ZeroAddress.selector);
+        m.setJuniorTrancheSidecar(address(0));
+    }
+
     function test_operator_cannot_redirect_safe() public {
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", operator));
