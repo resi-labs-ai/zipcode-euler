@@ -133,3 +133,13 @@ Bridge audit COMPLETE (5/5 reviewed; 3 LOW fixes shipped to `main`, 1 WONTFIX, 2
   behaviorally in the fork test). X-Ray/wire/runbook synced.
 - Consolidated bridge suite **81/81 green** (`forge build` clean) with all three integrated.
 - `szalphalockreleasepool` + `szalphamirror` reviewed **sound** (no tickets).
+
+Hydrex demo-fork group reviewed (2/2; differential vs the prod parents). The forks were NOT clean ports —
+they silently dropped audited guards the parents have (the X-Rays over-claimed ADEQUATE). Demo-scoped, but
+**fix-before-promotion** (docs plan a mainnet version).
+- **HYDREX-ADV-01** — `SzipNavOracleDemoVAMM` dropped 3 parent guards (`obsSpacing` poke-spam throttle,
+  `StaleReport`, `RateUnseeded`) → **SHIPPED to `main`** (all back-ported + 3 regression tests; hydrex suite
+  48/48 green; X-Ray corrected).
+- **HYDREX-ADV-02** — `LpStrategyModuleDemoVAMM` dropped `MastercopyInitLock` (X-Ray claims it present — false
+  invariant) + `MockVammPair` doesn't model real Solidly `mint` (share-math suite validates a wrong formula)
+  → ticket filed, not yet built (demo-scoped LOW + assurance MED).

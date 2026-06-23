@@ -434,4 +434,48 @@ contract SzipNavOracleDemoVAMMTest is Test {
         uint256 net = gross > prov ? gross - prov : 0;
         assertEq(oracle.spotNavPerShare(), net * 1e18 / supply, "spot = (gross-provision)*1e18/supply");
     }
+
+    // ----------------------------------------------------------------- HYDREX-ADV-01: restored parent guards
+    /// @notice obsSpacing throttle (back-ported): permissionless poke() spam must NOT evict the TWAP ring —
+    ///         obsIndex advances at most once per obsSpacing, not once per poke (else the bracket collapses to spot).
+    function test_obsSpacing_pokeSpam_cannot_collapse_window() public {
+        assertEq(oracle.obsIndex(), 0);
+        uint32 sp = oracle.obsSpacing();
+        assertGt(sp, 1, "obsSpacing must be derived (>1)");
+        // 100 rapid pokes, each +2s — total 200s, far under obsSpacing → no slot advance (head refreshes in place).
+        for (uint256 i = 0; i < 100; i++) {
+            vm.warp(block.timestamp + 2);
+            oracle.poke();
+        }
+        assertEq(oracle.obsIndex(), 0, "poke-spam evicted the ring (obsSpacing throttle missing)");
+        // once obsSpacing has elapsed since the head, a single poke DOES advance one slot.
+        vm.warp(block.timestamp + sp);
+        oracle.poke();
+        assertEq(oracle.obsIndex(), 1, "slot did not advance after obsSpacing elapsed");
+    }
+
+    /// @notice StaleReport (back-ported): a leg push not strictly-newer than the cached one (replay/out-of-order)
+    ///         must revert — the deviation band is price-only, so a backdated in-band replay would otherwise land.
+    function test_staleReport_non_newer_push_reverts() public {
+        _push(oracle.LEG_ALPHA_USD(), 1e18); // prior.ts = block.timestamp
+        // a second push with a NON-newer ts (== prior) and an in-band price must revert StaleReport.
+        uint8[] memory legs = new uint8[](1);
+        legs[0] = oracle.LEG_ALPHA_USD();
+        uint256[] memory ps = new uint256[](1);
+        ps[0] = 1.05e18; // within the 20% band → passes deviation, must hit StaleReport
+        bytes memory report = abi.encode(uint8(7), abi.encode(legs, ps, uint32(block.timestamp)));
+        vm.prank(forwarder);
+        vm.expectRevert(SzipNavOracleDemoVAMM.StaleReport.selector);
+        oracle.onReport("", report);
+    }
+
+    /// @notice RateUnseeded (back-ported): an unseeded xALPHA rate source (exchangeRate()==0) must fail closed,
+    ///         not silently value the xALPHA leg at $0.
+    function test_rateUnseeded_zero_rate_reverts() public {
+        _pushBoth(1e18, 1e18); // seed the leg marks so the xALPHA leg is priced off a real alphaUSD
+        xa.setBalance(safe, 1e18); // fund the xALPHA basket leg so grossBasketValue prices it
+        xa.setExchangeRate(0); // unseeded rate source (M1 stand-in: xAlphaRateOracle == 0 ⇒ reads xa directly)
+        vm.expectRevert(SzipNavOracleDemoVAMM.RateUnseeded.selector);
+        oracle.grossBasketValue();
+    }
 }

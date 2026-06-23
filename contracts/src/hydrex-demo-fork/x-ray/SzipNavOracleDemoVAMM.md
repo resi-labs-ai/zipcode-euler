@@ -45,12 +45,22 @@ $1 fold). The demo has **no farm utility leg**.
 | bracket: `navEntry = max`, `navExit = min`; issuance reverts on stale leg / stale rate | Yes | `test_navEntry_max_navExit_min`, `_reverts_on_stale_leg`, `_reverts_on_stale_rate_oracle` |
 | provision: DC-only writer; subtracts from gross | Yes (writer) / **No** (value) | `test_writeProvision_only_defaultCoordinator`, `_subtracts_from_gross` |
 
+> **HYDREX-ADV-01 (2026-06-22): three audited parent-guards were silently dropped in the fork and are now
+> RESTORED.** The adversarial-review (differential vs the prod parent `SzipNavOracle.sol`) found this fork had
+> dropped `obsSpacing` (the poke-spam TWAP throttle), `StaleReport` (strictly-newer leg-push guard), and
+> `RateUnseeded` (zero-rate fail-closed) — guards the audited parent has and this X-Ray's prior ADEQUATE
+> verdict did NOT account for. All three are now back-ported (with regression tests). The most material was
+> `obsSpacing`: without it, permissionless `poke()` spam collapsed the TWAP ring to spot, neutering the
+> bracket below — i.e. the "TWAP lag" defense was itself defeatable until this fix.
+
 ## 4. Attack surfaces (unchanged by the gap-fill; now exercised)
 
 - **vAMM spot LP valuation** — `grossBasketValue` reads `getReserves()` at spot (manipulable in-block); the
-  defense is the `min/max(spot, twap)` bracket. The bracket + the LP pro-rata are now tested
-  (`test_vamm_lp_leg_valuation`, `test_navEntry_max_navExit_min`); the in-block-push resistance still rests on the
-  TWAP lag (a property of the bracket, demonstrated, not exhaustively fuzzed against an adversarial reserve push).
+  defense is the `min/max(spot, twap)` bracket. The bracket + the LP pro-rata are tested
+  (`test_vamm_lp_leg_valuation`, `test_navEntry_max_navExit_min`); the in-block-push resistance rests on the
+  TWAP lag — **now genuinely poke-spam-proof since `obsSpacing` was restored (HYDREX-ADV-01,
+  `test_obsSpacing_pokeSpam_cannot_collapse_window`)**; multi-block sustained skew remains a prod-inherited
+  residual the bracket is documented not to defend.
 - **NAV reads raw Safe balances** — a direct transfer into a counted Safe moves NAV with no deposit; the Gate's
   denominator is the tie-back (Gate is out of this scope). Tested that gross sums the Safe balances as designed.
 - **Unbounded provision at the oracle** — `writeProvision` accepts any value from the DC; the bound (down ≤
@@ -62,9 +72,9 @@ $1 fold). The demo has **no farm utility leg**.
 
 | Category | Count | Notes |
 |---|---|---|
-| Dedicated unit (this contract) | 23 | `test/hydrex-demo-fork/SzipNavOracleDemoVAMM.t.sol` — ported from the prod parent, ICHI mock → `MockVammPair` |
+| Dedicated unit (this contract) | 26 | `test/hydrex-demo-fork/SzipNavOracleDemoVAMM.t.sol` — ported from the prod parent + the 3 HYDREX-ADV-01 guard-regression tests (obsSpacing poke-spam, StaleReport, RateUnseeded) |
 | Stateless fuzz | **1** | `testFuzz_spotNavFormula` (256 runs) — `(gross−provision)·1e18/supply`, floored at 0 |
-| Suite status | **24/24 green** | `forge test` |
+| Suite status | **27/27 green** | `forge test` (was 24/24; +3 HYDREX-ADV-01 regression tests) |
 
 Ported the applicable prod coverage (ctor/guards, the full CRE push path, freshness, plain-leg NAV, the spot/twap
 bracket, provision gating, `valueOf`, genesis) and wrote fresh tests for the **swapped vAMM LP valuation** — the

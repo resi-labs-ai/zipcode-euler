@@ -79,6 +79,12 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     uint256 public immutable maxAge;
     /// @notice The per-push deviation circuit-break, in bps (governed).
     uint256 public immutable maxDeviationBps;
+    /// @notice Minimum wall-clock between committed TWAP checkpoints, derived from `W` in the ctor (HYDREX-ADV-01:
+    ///         back-ported from the prod parent). The integral (`cumNav`) still advances on every `poke()` with
+    ///         `dt>0`; this only throttles how often a NEW ring slot is consumed, so the `CARDINALITY-1` frozen
+    ///         checkpoints always span `>= W` regardless of poke frequency — what makes the ring immune to
+    ///         poke-spam (the TWAP window cannot be collapsed by filling slots faster than once per `obsSpacing`).
+    uint32 public immutable obsSpacing;
 
     // --------------------------------------------------------------------- wiring (Timelock-re-pointable, §17)
     /// @notice szipUSD — the supply denominator (deployed after this oracle).
@@ -139,6 +145,8 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     error UnknownLpToken(address token);
     error ZeroAddress();
     error StaleRate(); // the wired xALPHA rate oracle is stale — issuance halts (exit still prices off last rate)
+    error StaleReport(); // a leg push not strictly-newer than the cached one (replay/out-of-order) — HYDREX-ADV-01
+    error RateUnseeded(); // the xALPHA rate source returned 0 (unseeded) — fail closed, not silent-$0 — HYDREX-ADV-01
 
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
@@ -178,6 +186,9 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         W = W_;
         maxAge = maxAge_;
         maxDeviationBps = maxDeviationBps_;
+        // obsSpacing = ceil(1.25 * W / (CARDINALITY - 1)) (HYDREX-ADV-01, from the prod parent): the CARDINALITY-1
+        // frozen checkpoints then span ~1.25*W, comfortably >= W, with headroom for block-time jitter.
+        obsSpacing = uint32((uint256(W_) * 5 + (4 * (CARDINALITY - 1) - 1)) / (4 * (CARDINALITY - 1)));
         uint32 nowTs = uint32(block.timestamp);
         observations[0] = Observation(nowTs, 0);
         lastUpdate = nowTs;
@@ -246,6 +257,9 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
                 uint256 diff = p > priorP ? p - priorP : priorP - p;
                 if (diff * 10_000 / priorP > maxDeviationBps) revert DeviationExceeded(leg, priorP, p);
             }
+            // HYDREX-ADV-01: strictly-newer (the deviation band is price-only; a backdated replay would otherwise
+            // slip through and rewind the freshness clock / freeze issuance). Back-ported from the prod parent.
+            if (prior.ts != 0 && ts <= prior.ts) revert StaleReport();
             legCache[leg] = LegCache(p, uint48(ts));
             emit LegPriceUpdated(leg, p, uint48(ts));
         }
@@ -272,9 +286,14 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         uint32 dt = nowTs - lastUpdate;
         if (dt == 0) return false;
         cumNav += spotNavPerShare() * uint256(dt);
-        obsIndex = uint16((uint256(obsIndex) + 1) % CARDINALITY);
-        observations[obsIndex] = Observation(nowTs, cumNav);
         lastUpdate = nowTs;
+        // HYDREX-ADV-01: advance to a fresh ring slot ONLY once obsSpacing has elapsed since the newest
+        // checkpoint, else refresh the head in place — bounds ring consumption to one slot per obsSpacing so the
+        // frozen checkpoints always span >= W (poke-spam can refresh the head but cannot evict the window).
+        if (nowTs - observations[obsIndex].ts >= obsSpacing) {
+            obsIndex = uint16((uint256(obsIndex) + 1) % CARDINALITY);
+        }
+        observations[obsIndex] = Observation(nowTs, cumNav);
         return true;
     }
 
@@ -420,7 +439,9 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         // (M1 stand-in). Value (not freshness) is read here — freshness is gated at issuance (`navEntry`/`fresh`),
         // so `grossBasketValue`/exit keep pricing off the last good rate (the §7 asymmetry).
         address rateSrc = xAlphaRateOracle == address(0) ? xAlpha : xAlphaRateOracle;
-        return IXAlphaRate(rateSrc).exchangeRate() * legCache[LEG_ALPHA_USD].price / 1e18;
+        uint256 rate = IXAlphaRate(rateSrc).exchangeRate();
+        if (rate == 0) revert RateUnseeded(); // HYDREX-ADV-01: fail closed, not silent-$0
+        return rate * legCache[LEG_ALPHA_USD].price / 1e18;
     }
 
     /// @dev USD per 1.0 oHYDX (18-dp): intrinsic = HYDX/USD × (100 - discount)/100, discount read on-chain.
