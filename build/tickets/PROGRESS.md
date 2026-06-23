@@ -140,6 +140,8 @@ they silently dropped audited guards the parents have (the X-Rays over-claimed A
 - **HYDREX-ADV-01** — `SzipNavOracleDemoVAMM` dropped 3 parent guards (`obsSpacing` poke-spam throttle,
   `StaleReport`, `RateUnseeded`) → **SHIPPED to `main`** (all back-ported + 3 regression tests; hydrex suite
   48/48 green; X-Ray corrected).
-- **HYDREX-ADV-02** — `LpStrategyModuleDemoVAMM` dropped `MastercopyInitLock` (X-Ray claims it present — false
-  invariant) + `MockVammPair` doesn't model real Solidly `mint` (share-math suite validates a wrong formula)
-  → ticket filed, not yet built (demo-scoped LOW + assurance MED).
+- **HYDREX-ADV-02** — `LpStrategyModuleDemoVAMM` dropped `MastercopyInitLock` (false invariant) + `MockVammPair`
+  didn't model real Solidly `mint` → **SHIPPED to `main`** (inherits `MastercopyInitLock`; mock now `min`+donate
+  faithful + donate-excess/single-sided/mastercopy-lock regression tests). Hydrex suite 51/51 green; X-Ray corrected.
+- Hydrex group COMPLETE: both forks reviewed + both tickets shipped. No drain found; the regressions were
+  dropped audited guards (NAV) + a false init-lock claim & an unfaithful test mock (LP) — all fix-before-promotion.
