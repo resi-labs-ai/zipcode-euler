@@ -141,7 +141,11 @@ liveness only).
   `setNavOracle`, `setSzipUSD`, `setUsdc`, `setSettlement`, `setVaultRelayer` (each zero-guarded), plus
   `setCoverageGate` (allows `address(0)` = gate OFF kill-switch / re-point the `DurationFreezeModule`).
   `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse
-  the Timelock owner and the CRE operator into one key. A
+  the Timelock owner and the CRE operator into one key. The three value-load-bearing setters `_cancelBid`
+  dereferences — `setSettlement`, `setVaultRelayer`, `setUsdc` — additionally revert `BidAlreadyLive` while a bid is
+  live (`currentUid.length != 0`, SUPPLY-ADV-05): re-pointing under a live bid would make `_cancelBid` flip the
+  presign / zero the allowance on the NEW wiring and strand the OLD presign + allowance LIVE (a fillable
+  believed-cancelled bid), so cancel-before-rewire is forced. A
   redeployed oracle/Safe/settlement/gate is a one-call re-point, not a redeploy cascade
   ([[oracle-replaceable-timelock-wiring]]).
 - **`setAvatar`/`setTarget`** are inherited from zodiac-core `Module` as `onlyOwner` — the CRE `operator` (hot key)

@@ -219,3 +219,13 @@ supply/szipUSD — the junior-vault engine fleet (14 contracts). Prompts authore
   Deflated MEDIUM→LOW (Timelock-only, build-phase X-3, closed by the pre-prod re-freeze; ticketed for the cheap
   guard-symmetry fix). Two optional test-hardening notes recorded in the synthesis (float `pathLockedLpEquity` in
   the 128k invariant to assert on `coverageValue`; a real-`DurationFreezeModule`-as-`coverageGate` integration test).
+- **SUPPLY-ADV-05** — `SzipBuyBurnModule`: the three value-load-bearing wiring setters `_cancelBid` dereferences
+  (`setSettlement`/`setVaultRelayer`/`setUsdc`) had no no-live-bid interlock, so a Timelock re-point of both the
+  settlement and the relayer/usdc *while a bid rests* would make `cancelBid` flip the presign / zero the allowance
+  on the NEW wiring and strand the OLD presign + allowance LIVE (a fillable believed-cancelled bid) → **SHIPPED to
+  `main`**. Added `currentUid.length != 0 → BidAlreadyLive` to those three setters (reusing the existing error) +
+  `test_SUPPLYADV05_wiring_setters_reject_rewire_under_live_bid`; scoped suite 52→53 green; wire doc 8-B14 setter
+  list + X-Ray §4 guard row / §3 X-1 row / §6 counts synced. Deflated MEDIUM→LOW (Timelock-only, build-phase X-1,
+  closed by the pre-prod re-freeze, non-draining — receiver pinned to the Safe, TTL-bounded). Mission-4 engine↔
+  free-Safe binding INFO folded in as an accepted X-1 doc note (no cheap on-chain interlock). Single-model run
+  (Claude-only; Codex/Fugu not credentialed) — exit-safety core (I-2/I-3/I-4/I-5/I-7/I-8/I-9) confirmed sound.

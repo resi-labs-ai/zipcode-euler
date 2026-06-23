@@ -267,23 +267,32 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         emit WiringSet("szipUSD", szipUSD_);
     }
 
-    /// @notice Re-point `usdc` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `usdc` (build phase, §17). onlyOwner (Timelock). Refused under a live bid: `_cancelBid` clears
+    ///         the VaultRelayer allowance on the CURRENT `usdc`, so re-pointing while a bid rests would strand the
+    ///         old-token allowance (the live bid stays fillable, believed-cancelled). Cancel first, then re-point.
     function setUsdc(address usdc_) external onlyOwner {
         if (usdc_ == address(0)) revert ZeroAddress();
+        if (currentUid.length != 0) revert BidAlreadyLive();
         usdc = usdc_;
         emit WiringSet("usdc", usdc_);
     }
 
-    /// @notice Re-point `settlement` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `settlement` (build phase, §17). onlyOwner (Timelock). Refused under a live bid: `_cancelBid`
+    ///         flips the presignature on the CURRENT `settlement`, so re-pointing while a bid rests would strand the
+    ///         old-settlement presign LIVE (the bid stays fillable, believed-cancelled). Cancel first, then re-point.
     function setSettlement(address settlement_) external onlyOwner {
         if (settlement_ == address(0)) revert ZeroAddress();
+        if (currentUid.length != 0) revert BidAlreadyLive();
         settlement = settlement_;
         emit WiringSet("settlement", settlement_);
     }
 
-    /// @notice Re-point `vaultRelayer` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `vaultRelayer` (build phase, §17). onlyOwner (Timelock). Refused under a live bid: `_cancelBid`
+    ///         zeroes the allowance on the CURRENT `vaultRelayer`, so re-pointing while a bid rests would strand the
+    ///         old-relayer allowance (the bid stays fillable, believed-cancelled). Cancel first, then re-point.
     function setVaultRelayer(address vaultRelayer_) external onlyOwner {
         if (vaultRelayer_ == address(0)) revert ZeroAddress();
+        if (currentUid.length != 0) revert BidAlreadyLive();
         vaultRelayer = vaultRelayer_;
         emit WiringSet("vaultRelayer", vaultRelayer_);
     }

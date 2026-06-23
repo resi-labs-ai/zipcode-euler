@@ -406,6 +406,41 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.stopPrank();
     }
 
+    /// @dev SUPPLY-ADV-05: the three value-load-bearing wiring setters `_cancelBid` dereferences (`settlement`/
+    ///      `vaultRelayer`/`usdc`) must refuse a re-point while a bid is live. Otherwise a re-point between post and
+    ///      cancel would make `_cancelBid` flip the presign / zero the allowance on the NEW wiring, stranding the OLD
+    ///      presign + allowance LIVE (a fillable bid the owner believes was cancelled). Cancel-before-rewire is forced.
+    function test_SUPPLYADV05_wiring_setters_reject_rewire_under_live_bid() public {
+        address x = makeAddr("rewireLive");
+        // post a live bid (deep discount, passes)
+        vm.prank(operator);
+        module.postBid(_order(5e5, 1e18, _validTo()));
+        assertTrue(module.currentUid().length != 0, "bid is live");
+
+        // each value-load-bearing setter now reverts BidAlreadyLive (the new guard), even for the owner
+        vm.startPrank(owner);
+        vm.expectRevert(SzipBuyBurnModule.BidAlreadyLive.selector);
+        module.setSettlement(x);
+        vm.expectRevert(SzipBuyBurnModule.BidAlreadyLive.selector);
+        module.setVaultRelayer(x);
+        vm.expectRevert(SzipBuyBurnModule.BidAlreadyLive.selector);
+        module.setUsdc(x);
+        vm.stopPrank();
+
+        // cancel clears the live bid; the same re-points then succeed (no stranding possible)
+        vm.prank(operator);
+        module.cancelBid();
+        assertEq(module.currentUid().length, 0, "bid cleared");
+        vm.startPrank(owner);
+        module.setSettlement(x);
+        assertEq(module.settlement(), x, "settlement re-points once no bid is live");
+        module.setVaultRelayer(x);
+        assertEq(module.vaultRelayer(), x, "vaultRelayer re-points once no bid is live");
+        module.setUsdc(x);
+        assertEq(module.usdc(), x, "usdc re-points once no bid is live");
+        vm.stopPrank();
+    }
+
     // ----------------------------------------------------------------- zero-amount / validTo
     function test_zero_amounts_revert() public {
         vm.prank(operator);

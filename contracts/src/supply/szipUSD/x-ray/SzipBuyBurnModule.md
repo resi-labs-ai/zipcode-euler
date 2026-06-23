@@ -5,7 +5,7 @@
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/SzipBuyBurnModule.sol`, the **#1 drill** — the §7
 "haircut buy-and-burn" BID side (8-B14): the protocol's **only exit valve** and the hinge of any global wind-down.
 The largest fleet module (244 nSLOC, #1 churn at 12) and the value-out path. Connected to
-`test/SzipBuyBurnModule.t.sol`: **52 functions, all passing** (~41 module + 8 CTR-01 receiver + 1 fork; the CTR-01
+`test/SzipBuyBurnModule.t.sol`: **53 functions, all passing** (~42 module + 8 CTR-01 receiver + 1 fork; the CTR-01
 block covers the inherited `CloneReportReceiver`, drilled separately). After DurationFreezeModule, the richest-tested
 contract in the subsystem; 0 fuzz/invariant but a deep deterministic + SEC-regression + KAT + fork suite. **Every
 mutator is exercised** (all 7 setters + governed params + post/cancel).
@@ -54,7 +54,7 @@ No custody. The only state is the single live bid (`currentUid`/`currentSellAmou
 | I-7 | **canonical GPv2 uid** — the on-chain order hash matches the CoW encoding exactly | Yes | **`test_orderUid_known_answer_vector`** (56-byte uid == an out-of-band `cast` KAT; owner==engine, validTo tail), `test_typehash_constant` |
 | I-8 | **atomic post / idempotent cancel** — approve + presign are one tx (a presign revert rolls back the approve); cancel no-ops when no live bid | Yes | **`test_atomicity_second_exec_revert_rolls_back`**, `test_exec_discipline_postBid_calls`/`_cancelBid_calls` |
 | I-9 | **two doors, one guard set** — the CRE `POST_BID` path enforces the identical `_postBid` validations as the operator path | Yes | `test_CTR01_report_postBid_equals_operator_postBid` (byte-identical uid/sellAmount), the CTR-01 block (see [CloneReportReceiver.md](CloneReportReceiver.md)) |
-| X-1 | §10.1 residual: operator sizes the 3 order fields — bounded, not theft | **No** | recipient pinned to the Safe + the price/cap/coverage/freshness gates cap it; a compromised Timelock could redirect avatar/target (accepted, same Timelock governs all) |
+| X-1 | §10.1 residual: operator sizes the 3 order fields — bounded, not theft | **No** | recipient pinned to the Safe + the price/cap/coverage/freshness gates cap it; a compromised Timelock could redirect avatar/target (accepted, same Timelock governs all). Build-phase wiring re-points are Timelock-only and closed by the pre-prod immutable re-freeze; the three value-load-bearing setters now refuse a re-point under a live bid (`BidAlreadyLive`, SUPPLY-ADV-05) so a rewire can't strand a presign/allowance. The `setJuniorTrancheEngine`↔oracle-free-Safe binding (the undercovered-fill window's free-side-USDC premise) is an off-chain wiring convention with no on-chain interlock — accepted X-1, governance-bounded |
 
 ## 4. Guards — coverage
 
@@ -67,6 +67,7 @@ No custody. The only state is the single live bid (`currentUid`/`currentSellAmou
 | `ZeroAmount` / `BadValidTo` / `BidAlreadyLive` / `CapExceeded` / `Undercovered` / `StaleNav` / `BidAboveDiscount` / `BuyAmountTooLarge` / `ValidToBeyondNavFreshness` | the I-1…I-6 tests above |
 | `setCoverageGate` (on/off) | `test_postBid_coverage_gate` |
 | 6 wiring setters (`setJuniorTrancheEngine`/`setNavOracle`/`setSzipUSD`/`setUsdc`/`setSettlement`/`setVaultRelayer`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` — onlyOwner + effect + zero-guard (all 6) |
+| `setSettlement`/`setVaultRelayer`/`setUsdc` no-live-bid re-check (`BidAlreadyLive`) — the 3 setters `_cancelBid` dereferences refuse a re-point under a live bid, so a rewire can't strand the old presign/allowance (SUPPLY-ADV-05) | `test_SUPPLYADV05_wiring_setters_reject_rewire_under_live_bid` |
 
 ## 5. Attack surfaces
 
@@ -102,12 +103,12 @@ No custody. The only state is the single live bid (`currentUid`/`currentSellAmou
 
 | Category | Count | Notes |
 |---|---|---|
-| Module unit | ~41 | setUp/guards/SEC-14/15, all 7 wiring setters, single-bid, price-bound boundaries, caps/killswitch, coverage gate, the SEC-13 freshness-fence cluster (4), freshness gate, exec-discipline + atomicity, the uid KAT + typehash |
+| Module unit | ~42 | setUp/guards/SEC-14/15, all 7 wiring setters (incl. the SUPPLY-ADV-05 no-live-bid re-check on settlement/relayer/usdc), single-bid, price-bound boundaries, caps/killswitch, coverage gate, the SEC-13 freshness-fence cluster (4), freshness gate, exec-discipline + atomicity, the uid KAT + typehash |
 | Receiver (CTR-01) | 8 | the inherited `CloneReportReceiver` socket (fail-closed clone, forwarder, workflow id/author, report↔operator equivalence, supportsInterface) — see its own X-Ray |
 | Base-fork | 1 | `test_fork_postBid_stores_presignature_and_allowance` (real `GPv2Settlement` — presign stored + VaultRelayer allowance set) |
 | Stateless fuzz / invariant | 0 | price-bound is a fuzz candidate, but the integer boundaries are pinned deterministically |
 
-All **52 pass** (`forge test --match-path test/SzipBuyBurnModule.t.sol`). The exit-safety validations, the uid
+All **53 pass** (`forge test --match-path test/SzipBuyBurnModule.t.sol`). The exit-safety validations, the uid
 encoding, atomicity, and the two-doors equivalence are all tested; the presign path is fork-verified against real
 CoW. Coverage % uninstrumentable (project-wide stack-too-deep); green run confirmed.
 
@@ -125,5 +126,5 @@ Timelock-redirect residuals (accepted, governance-bounded) — neither a coverag
 1. 244 nSLOC; clone (`MastercopyInitLock` + `initializer`) + `CloneReportReceiver`; the only exit valve; no custody.
 2. Single resting CoW `BUY szipUSD` bid; only 3 operator order fields, every other GPv2 field a fixed constant (`APP_DATA=0` forbids hooks); on-chain uid build hashes exactly the validated struct.
 3. Exit-safety gates: exact discount bound (off `navExit`), `buybackCap` (+ kill-switch), coverage path-lock (`covered()`), freshness + the SEC-13 leg-anchored fence (fill-age ≤ maxAge); atomic post / idempotent cancel; two doors (operator + CRE) one guard set.
-4. Tests: ~41 module + 8 CTR-01 receiver + 1 base-fork (0 fuzz/invariant); every mutator exercised; SEC-13 cluster + uid KAT are the standouts.
+4. Tests: ~42 module + 8 CTR-01 receiver + 1 base-fork (0 fuzz/invariant); every mutator exercised; SEC-13 cluster + uid KAT are the standouts.
 5. No outstanding coverage gap on the contract surface; residuals are off-chain/accepted (no price-bound fuzz; §10.1 + Timelock-redirect, governance-bounded).
