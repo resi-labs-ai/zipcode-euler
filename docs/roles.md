@@ -35,7 +35,13 @@ There are two independent records of "which Safe are we operating on":
 
 SUPPLY and REDEEM inject the adapter's `warehouseSafe` as the deposit/redeem receiver+owner, while the modifier's scope checks `receiver == avatar`. So the two MUST be the same address. If they drift apart, every SUPPLY/REDEEM is rejected by the scope — senior par-redemption jams. This fails CLOSED (nothing leaks; it just stops working), but it is a real liveness failure.
 
-This is now enforced on-chain. `setWarehouseSafe` reverts `AvatarMismatch(warehouseSafe_, avatar)` unless the modifier's `avatar()` ALREADY equals the new address. A one-sided re-point can no longer be saved. (The scope's own rejection of a mismatched receiver remains the backstop — see `test_Scope_PinsParams_DepositReceiver` — now unreachable-by-construction at the adapter.)
+This is checked on-chain AT THE `setWarehouseSafe` ENTRY POINT. `setWarehouseSafe` reverts `AvatarMismatch(warehouseSafe_, avatar)` unless the modifier's `avatar()` ALREADY equals the new address — so a one-sided re-point *through that setter* can't be saved.
+
+IMPORTANT (CWH-ADV-01): this check is entry-point-local, NOT a maintained invariant. Two other Timelock-power paths can still desync the pair WITHOUT tripping `AvatarMismatch`:
+- `adapter.setRoles(newModifier)` — re-points to a modifier whose `avatar()` may differ from the current `warehouseSafe` (no parity re-check on this setter);
+- `roles.setAvatar(other)` called directly on the modifier — changes `avatar` without touching the adapter.
+
+In BOTH cases the result is the same fail-CLOSED jam: the scope pins the receiver via `EqualToAvatar` (resolved LIVE), so SUPPLY/REDEEM inject the now-stale `warehouseSafe` and the modifier rejects it (`ParameterNotAllowed`). The pin can only ever resolve to the actual current avatar, so this is a liveness jam, never a leak. The scope's rejection (`test_Scope_PinsParams_DepositReceiver`) is the real, always-on backstop; the setter guard is a convenience belt for the common re-point path. After ANY of the three paths, always re-establish parity (`roles.avatar() == adapter.warehouseSafe()`).
 
 ==================================================================================
 ## Re-pointing the warehouse Safe (runbook — ORDER MATTERS)
@@ -49,7 +55,7 @@ Because `setWarehouseSafe` checks parity, the two updates must run in this order
 
 Doing step 2 first reverts. After both, confirm `roles.avatar() == adapter.warehouseSafe()`. The new Safe must also have the modifier `enableModule`'d and be funded/provisioned before live ops resume.
 
-The other adapter wiring (`setRoles`, `setRoleKey`, `setEePool`, `setUsdc`, `setRedemptionBox`) is avatar-independent and has no ordering constraint. All adapter setters are `onlyOwner` (Timelock); re-freezing to immutable is deferred to pre-prod (§17 build-phase flexibility).
+The other adapter wiring (`setRoleKey`, `setEePool`, `setUsdc`, `setRedemptionBox`) has no ordering constraint at the setter, BUT a single-contract re-point of these alone FAILS CLOSED: the REPAY-`to` and APPROVE-`spender` scope pins are deploy-baked `EqualTo(compValue)`, so re-pointing the adapter slot does not move the pin — the modifier rejects the new target (`ParameterNotAllowed`/`TargetAddressNotAllowed`). A real value redirect (e.g. moving the REPAY sink) requires a PAIRED off-chain re-scope on the modifier (`scopeFunction`) too — two Timelock actions on two contracts. `setRoles` additionally re-desyncs avatar parity (see CWH-ADV-01 above) — re-establish parity after it. All adapter setters are `onlyOwner` (Timelock); re-freezing to immutable is deferred to pre-prod (§17 build-phase flexibility).
 
 ==================================================================================
 ## Why the adapter holds no power

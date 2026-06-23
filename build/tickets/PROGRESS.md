@@ -176,3 +176,19 @@ no tickets. X-1 grief ceiling + X-2 build-phase wiring = ratified accepted-resid
   deleted the dangling `error AlreadyWired()` (vestige of the dropped set-once). Loss suite 118/118 green
   (+1 JIT regression test); X-Rays + `docs/wires/` (DefaultCoordinator, 8-Bx, interfaces-loss, DeployZipcode,
   README) + deploy-script comments synced.
+
+CreditWarehouse group — `WarehouseAdminModule` reviewed (single-model panel, Opus; Codex/Fugu not
+credentialed). SOUND / HARDENED holds: the hardcode-dangerous/inject-addressable encoder discipline is
+complete (no dangerous attribute reaches the forwarded call), and every wiring desync fails-closed —
+verified against the live deployer scope tree (`EqualToAvatar` dynamic receiver pin; deploy-baked `EqualTo`
+eePool/redemptionBox pins). No code vulnerability. One promotable result (documentation accuracy). X-1 scope
+trust + X-3 build-phase wiring = ratified accepted-residuals.
+- **CWH-ADV-01** — the X-Ray/`invariants.md` overstated I-4 avatar parity as a maintained on-chain invariant
+  ("a one-sided re-point can no longer be saved" / "On-chain: Yes"). It is **entry-point-local at
+  `setWarehouseSafe`** only — `setRoles` (no parity re-check) and an external `Roles.setAvatar` re-desync the
+  pair, both **fail-closed** at the live `EqualToAvatar` scope pin (no leak; the pin can only resolve to the
+  actual current avatar) → **SHIPPED to `main` (DOC-ONLY)**. Corrected `WarehouseAdminModule.md` +
+  `invariants.md` (I-4/X-2 enforcement scope; X-3 "needs a paired off-chain re-scope" qualifier) +
+  `docs/roles.md` (the re-point runbook). Optional `setRoles` parity re-check DECLINED (breaks build-phase
+  re-pointing, can't cover external `setAvatar`, no gain over the fail-closed scope). Contract untouched; the
+  28 fork-integration tests unaffected (green at baseline). HARDENED verdict retained.

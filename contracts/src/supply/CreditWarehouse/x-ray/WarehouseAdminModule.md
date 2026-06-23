@@ -2,12 +2,16 @@
 
 > WarehouseAdminModule | 110 nSLOC | 8b7c67c (`main`, working tree) | Foundry | 20/06/26 | **Verdict: HARDENED** *(modulo the pre-prod immutable re-freeze + no external audit)*
 
-> **Update 2026-06-20:** the X-2 residual (avatar-parity unverified on-chain) is **CLOSED in code**, not just by
-> runbook. `setWarehouseSafe` now reverts `AvatarMismatch` unless the Roles modifier's `avatar()` already equals the
-> new safe — a one-sided re-point can no longer be saved (the silent-brick is now caught at set-time). The paired
-> re-point is order-dependent (`Roles.setAvatar` first, then `setWarehouseSafe`); the Zodiac setup + this invariant
-> are now documented in `docs/roles.md`. `IRoles` gained `avatar()`/`setAvatar()`. 28/28 fork tests green (two parity
-> tests rewritten for the new enforced behavior; the setter test reordered). Verdict lifted to HARDENED.
+> **Update 2026-06-20 (refined 2026-06-22, CWH-ADV-01):** the X-2 residual (avatar-parity unverified on-chain) is
+> **checked in code at the `setWarehouseSafe` entry point**, not just by runbook. `setWarehouseSafe` reverts
+> `AvatarMismatch` unless the Roles modifier's `avatar()` already equals the new safe — a one-sided re-point
+> *through this setter* can no longer be saved (the silent-brick is caught at set-time). **This check is
+> entry-point-local, NOT a maintained standing invariant:** `setRoles` (no parity re-check) and an external
+> `Roles.setAvatar` can still re-desync the pair — both **fail-closed** at the scope's live `EqualToAvatar` receiver
+> pin (the stale receiver is rejected; the pin can only ever resolve to the actual current avatar, never an
+> attacker), so HARDENED holds on the *scope*, not on the setter guard. The paired re-point through this setter is
+> order-dependent (`Roles.setAvatar` first, then `setWarehouseSafe`); the Zodiac setup + this invariant are
+> documented in `docs/roles.md`. `IRoles` gained `avatar()`/`setAvatar()`. 28/28 fork tests green. Verdict: HARDENED.
 
 Dedicated single-contract X-Ray for `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol`, the sole
 contract in the senior-side warehouse-admin scope (the `bridge/x-ray/x-ray.md`-style bundled `x-ray.md` is the scope
@@ -42,7 +46,7 @@ scope-pinned `EqualTo(redemptionBox)`.
 | `_processReport` (via `onReport`) | Forwarder-gated (CRE) | decodes `(opType, payload)` → SUPPLY/APPROVE/REDEEM/REPAY → `execTransactionWithRole`; `else revert UnsupportedOpType` |
 | `setRoles(roles_)` | `onlyOwner` (Timelock) | re-point the Roles modifier; non-zero; re-pointable (§17) |
 | `setRoleKey(roleKey_)` | `onlyOwner` | re-set the assigned key; must stay non-zero (zero = `NoMembership`) |
-| `setWarehouseSafe(safe_)` | `onlyOwner` | re-point avatar/custodian; **reverts `AvatarMismatch` unless `roles.avatar() == safe_`** — pair `Roles.setAvatar` FIRST (X-2, now enforced on-chain) |
+| `setWarehouseSafe(safe_)` | `onlyOwner` | re-point avatar/custodian; **reverts `AvatarMismatch` unless `roles.avatar() == safe_`** — pair `Roles.setAvatar` FIRST (X-2, checked here; entry-point-local — `setRoles`/external `setAvatar` re-desync fail-closed, CWH-ADV-01) |
 | `setEePool(eePool_)` | `onlyOwner` | re-point the EulerEarn pool |
 | `setUsdc(usdc_)` | `onlyOwner` | re-point the asset/approve/repay token |
 | `setRedemptionBox(box_)` | `onlyOwner` | re-point the REPAY sink |
@@ -57,7 +61,7 @@ No permissionless entry points. The four ops are reachable only via the Forwarde
 | I-2 | `opType ∈ {1,2,3,4}`; any other byte reverts; each op = one (target, selector) | Yes | `test_Adapter_UnsupportedOpType_Reverts` (0/5/255→`UnsupportedOpType`), `test_Supply_Happy`/`test_Redeem_Happy`/`test_Repay_Happy` (selector+target pinned per op), `test_Escalation_Blocked` (un-scoped selector on a scoped target → `FunctionNotAllowed`) |
 | I-3 | REPAY transfers to `redemptionBox` (immutable), never the payload `dest` — validated AND injected | Yes | `test_Repay_Happy` (injects `redemptionBox`), `test_Repay_RevertsOnWrongSink` (`dest=attacker`→`WrongRedemptionBox`), `test_Scope_PinsParams_TransferTo` (member transfer to any non-box → `ParameterNotAllowed`; to box → succeeds) |
 | X-1 | the real param-pinning (receiver==avatar / spender==eePool / to==redemptionBox / Call-only) lives in the **Roles scope**, not here | **No** | **fork integration** vs the live modifier: `test_Scope_PinsParams_DepositReceiver` (redirected receiver→`ParameterNotAllowed`), `test_Scope_PinsParams_TransferTo`, `test_CallOnly_RejectsValueAndDelegatecall`, `test_Escalation_Blocked` (enableModule/addOwner/wrong-target/wrong-selector all rejected), `test_NonMember_Reverts` (`NotAuthorized`), `test_NonOwner_CannotScopeOrAssign` |
-| I-4 | `warehouseSafe` (injected owner) MUST equal the modifier's `avatar` — now **asserted on-chain** in `setWarehouseSafe` (`AvatarMismatch`), so a one-sided re-point cannot be saved | **Yes** | **`test_Parity_OneSidedRepoint_RevertsAtSetter`** (one-sided re-point → `AvatarMismatch`, slot unchanged), **`test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`** (avatar-first → accepted, parity restored); the scope-level rejection backstop stays proven by `test_Scope_PinsParams_DepositReceiver` |
+| I-4 | `warehouseSafe` (injected owner) MUST equal the modifier's `avatar` — **checked on-chain in `setWarehouseSafe`** (`AvatarMismatch`), so a one-sided re-point *through that setter* cannot be saved. Entry-point-local, NOT a standing invariant: `setRoles` + external `Roles.setAvatar` re-desync but fail-closed (CWH-ADV-01) | **Yes** (entry-point-local) | **`test_Parity_OneSidedRepoint_RevertsAtSetter`** (one-sided re-point → `AvatarMismatch`, slot unchanged), **`test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`** (avatar-first → accepted, parity restored); the scope-level fail-closed backstop (covering the `setRoles`/external-`setAvatar` desync too) stays proven by `test_Scope_PinsParams_DepositReceiver` |
 | X-3 | all six wiring slots are Timelock-re-pointable (build phase; immutable re-freeze deferred) | **No** | `test_Setters_OwnerUpdates_AndRejectsZero` (each setter takes effect + zero/zero-key guards), `test_Setters_RejectNonOwner` (all six revert `OwnableUnauthorizedAccount` for a non-owner) |
 
 ## 4. Guards — coverage
@@ -86,13 +90,19 @@ No permissionless entry points. The four ops are reachable only via the Forwarde
   `MockMember` role member raw-calls `execTransactionWithRole` with redirected params and is rejected) — so the
   decisive control IS demonstrably exercised, not assumed. Remains On-chain=No by design; the deployed scope tree
   (receiver/spender/`EqualTo` pins, Call-only, no delegatecall) is still the primary off-chain audit artifact.
-- **`warehouseSafe ↔ roles.avatar()` parity (I-4) — now enforced on-chain.** The contract's own #1 documented hazard:
-  `setWarehouseSafe` previously wrote the slot without reading `roles.avatar()`, so a one-sided re-point silently
-  bricked SUPPLY/REDEEM (fail-closed liveness). It now **reverts `AvatarMismatch` unless `roles.avatar() ==
-  warehouseSafe_`** — the mismatch can no longer be saved. This makes the paired re-point order-dependent
-  (`Roles.setAvatar` FIRST, then `setWarehouseSafe`), documented in `docs/roles.md`. The scope-level rejection of a
-  mismatched receiver remains the backstop (`test_Scope_PinsParams_DepositReceiver`), now unreachable-by-construction
-  at the adapter. The defense-in-depth check the earlier draft suggested is implemented.
+- **`warehouseSafe ↔ roles.avatar()` parity (I-4) — checked on-chain at the `setWarehouseSafe` entry point (CWH-ADV-01).**
+  The contract's own #1 documented hazard: `setWarehouseSafe` previously wrote the slot without reading
+  `roles.avatar()`, so a one-sided re-point silently bricked SUPPLY/REDEEM (fail-closed liveness). It now **reverts
+  `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`** — a mismatch can no longer be saved *through this
+  setter* (paired re-point order: `Roles.setAvatar` FIRST, then `setWarehouseSafe`; `docs/roles.md`). **But this is
+  entry-point-local, not a maintained invariant:** `setRoles(newModifier)` (no parity re-check) and an external
+  `Roles.setAvatar(other)` can re-desync the pair afterward without tripping `AvatarMismatch`. In every desync case
+  SUPPLY/REDEEM **fail-closed** — the deployed scope pins the receiver/owner via `OP_EQUAL_TO_AVATAR` (resolved live;
+  `CreditWarehouseDeployer.sol:185,193,194`), so the stale injected `warehouseSafe` is rejected and the pin can only
+  ever resolve to the actual current avatar, never an attacker. So the soundness rests on the scope's dynamic pin
+  (`test_Scope_PinsParams_DepositReceiver`), with the setter guard as the convenience belt; it is not the sole
+  control. (An optional `setRoles` parity re-check was considered and DECLINED — it cannot cover the external
+  `setAvatar` path, complicates build-phase re-pointing, and adds nothing over the fail-closed scope. CWH-ADV-01.)
 - **Build-phase mutable wiring (X-3)** — six `onlyOwner` setters re-point roles/roleKey/safe/pool/usdc/box; tested
   for access + effect + zero-guards. The value-routing absolutes (notably the REPAY sink) hold only after the
   deferred pre-prod immutable re-freeze (a process step, not on-chain).
@@ -114,11 +124,13 @@ is the high-water mark for *the right kind* of test here: it proves the **off-ch
 receivers, wrong REPAY dests, value, delegatecall, and target/selector escalation — against the live deployed
 modifier, not a mock.
 
-> **What changed (2026-06-20):** the X-2 avatar-parity residual is now **closed in code** — `setWarehouseSafe`
-> reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`, so a one-sided re-point can't be saved. The two
-> earlier `_FailsClosed` parity tests were rewritten to the new enforced behavior
-> (`test_Parity_OneSidedRepoint_RevertsAtSetter`, `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`); the setter
-> test was reordered (avatar-paired before re-pointing `roles` away). The Zodiac setup + the invariant + the
+> **What changed (2026-06-20; refined 2026-06-22 CWH-ADV-01):** the X-2 avatar-parity residual is **checked in code
+> at the `setWarehouseSafe` entry point** — it reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`, so
+> a one-sided re-point *through that setter* can't be saved. This is **entry-point-local, not a maintained
+> invariant**: `setRoles` and an external `Roles.setAvatar` can re-desync the pair, both fail-closed at the live
+> `EqualToAvatar` scope pin (no leak). The two earlier `_FailsClosed` parity tests were rewritten to the new setter
+> behavior (`test_Parity_OneSidedRepoint_RevertsAtSetter`, `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`); the
+> setter test was reordered (avatar-paired before re-pointing `roles` away). The Zodiac setup + the invariant + the
 > order-dependent re-point runbook are documented in `docs/roles.md`. `IRoles` gained `avatar()`/`setAvatar()`.
 
 ## X-Ray Verdict
@@ -126,8 +138,10 @@ modifier, not a mock.
 **HARDENED** *(modulo the pre-prod immutable re-freeze + no external audit)* — a clean, defensively hardcoded encoder
 with roles + Timelock and zero permissionless surface, whose decisive control (the Zodiac Roles scope) is **proven by
 a fork integration suite** exercising the full scope-rejection matrix against the real deployed modifier. The X-2
-avatar-parity residual the earlier draft flagged is now **enforced on-chain** (`AvatarMismatch` at the setter) and
-documented (`docs/roles.md`), alongside the previously-closed setter + fail-closed coverage. The only residuals are
+avatar-parity residual the earlier draft flagged is **checked on-chain at the `setWarehouseSafe` entry point**
+(`AvatarMismatch`) and documented (`docs/roles.md`) — entry-point-local, with the `setRoles`/external-`setAvatar`
+re-desync paths fail-closed at the scope's live `EqualToAvatar` pin (CWH-ADV-01), so HARDENED rests on the scope's
+dynamic pin, not the setter guard. The only residuals are
 process — the deferred pre-prod immutable re-freeze of the build-phase wiring — and the absence of an external audit;
 no code or coverage gap remains. No fuzz/invariant (correctly judged low-value for a deterministic router).
 
@@ -135,5 +149,5 @@ no code or coverage gap remains. No fuzz/invariant (correctly judged low-value f
 1. 110 nSLOC; non-upgradeable `ReceiverTemplate`; 0 permissionless entry points (1 Forwarder/CRE handler + 6 Timelock setters).
 2. Holds no custody; `value`/`operation`/`shouldRevert` are literals (0 / Call / true) at the single call site — never payload-decoded.
 3. Four-op allow-list; receiver/spender/redeem-owner injected from immutables; only REPAY `dest` is payload-carried, and it is self-checked **and** re-injected from the immutable.
-4. `setWarehouseSafe` enforces avatar parity on-chain (`AvatarMismatch`): the re-point is order-dependent (`Roles.setAvatar` first), closing the X-2 silent-brick hazard.
+4. `setWarehouseSafe` checks avatar parity on-chain (`AvatarMismatch`; order-dependent re-point, `Roles.setAvatar` first) — entry-point-local, NOT a maintained invariant: `setRoles`/external `Roles.setAvatar` re-desync fail-closed at the live `EqualToAvatar` scope pin (CWH-ADV-01), so the silent-brick hazard is bounded by the scope, not eliminated at the setter.
 5. Tests: **28 fork-integration units** vs the real Roles modifier (full scope-rejection matrix + avatar-parity enforcement + all six setters); 0 fuzz, 0 invariant. The security genuinely lives outside this file (the off-chain Roles scope tree, X-1) and in one remaining off-chain process step (pre-prod immutable re-freeze, X-3).
