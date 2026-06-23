@@ -24,6 +24,10 @@ import {TickMath, LiquidityAmounts} from "../../libraries/ConcentratedLiquidity.
 library IchiAlgebraFairReserves {
     /// @notice The Algebra pool has no plugin / TWAP source — fail closed (no manipulation-resistant price).
     error NoPlugin();
+    /// @notice The plugin exists but is not initialized — a fresh plugin reverts/returns garbage on a TWAP read,
+    ///         so fail closed rather than price off an uninitialized timepoint array (matches the sibling
+    ///         `SzipNavOracle.setLpTwapWindow` gate on the identical plugin — see SUPPLY-ADV-02).
+    error PluginNotReady();
     /// @notice The plugin returned an unusable timepoint set.
     error BadTimepoints();
 
@@ -39,6 +43,14 @@ library IchiAlgebraFairReserves {
         address pool = IICHIVault(vault).pool();
         address plugin = IAlgebraPool(pool).plugin();
         if (plugin == address(0)) revert NoPlugin();
+        // Read-time readiness gate (SUPPLY-ADV-02): a non-zero but UNINITIALIZED plugin would return a
+        // well-formed length-2 set encoding a near-spot/frozen "TWAP". Fail closed here so BOTH consumers
+        // (this oracle + SzipNavOracle's LP leg) are covered at read-time, not only at deploy/set-time.
+        // (`isInitialized()` is necessary-not-sufficient: under-coverage of `window` itself fails closed in
+        // `getTimepoints`, which reverts when a requested timepoint predates the oldest stored one. Cardinality
+        // is NOT on-chain-queryable, so the deployed plugin's under-coverage behavior is pinned by fork test,
+        // not by an in-contract span assertion that would require plugin surface we don't have.)
+        if (!IAlgebraOraclePlugin(plugin).isInitialized()) revert PluginNotReady();
 
         meanTick = _meanTick(plugin, window);
         uint160 sqrtP = TickMath.getSqrtRatioAtTick(meanTick);

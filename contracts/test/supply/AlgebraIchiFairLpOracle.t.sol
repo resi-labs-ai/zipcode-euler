@@ -176,6 +176,41 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
         new AlgebraIchiFairLpOracle(noPluginVault, WINDOW);
     }
 
+    /// @notice SUPPLY-ADV-02: a non-zero but UNINITIALIZED plugin fails CLOSED at deploy — matching the sibling
+    ///         gate `SzipNavOracle.setLpTwapWindow:267`. A fresh plugin would otherwise return a well-formed
+    ///         length-2 timepoint set encoding a near-spot/frozen "TWAP"; the ctor refuses to build against it.
+    function test_ctor_revert_uninitializedPlugin() public {
+        address plugin = address(new MockUninitializedPlugin());
+        address mockPool = address(new MockPoolWithPlugin(plugin));
+        address vault = address(new MockVaultNoPlugin(mockPool)); // only pool() is read before the readiness gate
+        vm.expectRevert(IchiAlgebraFairReserves.PluginNotReady.selector);
+        new AlgebraIchiFairLpOracle(vault, WINDOW);
+    }
+
+    /// @notice The same readiness gate also fires on the READ path (`fairReserves`), covering BOTH consumers
+    ///         (this oracle + `SzipNavOracle`'s LP leg) even if a plugin were to de-initialize after deploy.
+    function test_fairReserves_revert_uninitializedPlugin() public {
+        address plugin = address(new MockUninitializedPlugin());
+        address mockPool = address(new MockPoolWithPlugin(plugin));
+        address vault = address(new MockVaultNoPlugin(mockPool));
+        FairReservesCaller caller = new FairReservesCaller(); // external boundary so expectRevert sees the lib revert
+        vm.expectRevert(IchiAlgebraFairReserves.PluginNotReady.selector);
+        caller.call(vault, WINDOW);
+    }
+
+    /// @notice SUPPLY-ADV-02 residual, settled empirically: the DEPLOYED Algebra Integral plugin fails CLOSED on
+    ///         window UNDER-COVERAGE. A window longer than the plugin's accumulated history (10y ≫ Base's age)
+    ///         makes `getTimepoints` request a timepoint older than the oldest stored one, which reverts rather
+    ///         than extrapolating a fake `cum[0]`. This is the fail-open-vs-closed uncertainty the synthesis
+    ///         flagged — pinned here for the live plugin version (cardinality is not on-chain-queryable, so this
+    ///         is the binding proof, not an in-contract span assertion).
+    function test_fork_underCoverageWindow_failsClosed() public {
+        uint32 tenYears = 315_360_000; // ≫ the plugin's history on Base ⇒ guaranteed under-coverage
+        FairReservesCaller caller = new FairReservesCaller(); // external boundary so expectRevert sees the lib/plugin revert
+        vm.expectRevert(); // any revert from the plugin's getTimepoints — NOT a well-formed near-spot quote
+        caller.call(VAULT, tenYears);
+    }
+
     // ----------------------------------------------------------------- 7. fail-closed quotes (unsupported / zero supply)
     /// @notice Only the constructed `(lpToken, quote)` pair is priced; any other base or quote reverts
     ///         `PriceOracle_NotSupported` rather than returning a number for a market the oracle wasn't built for.
@@ -269,6 +304,15 @@ contract FairLpOracleHarness is AlgebraIchiFairLpOracle {
     }
 }
 
+/// @notice External wrapper so `vm.expectRevert` sees a revert from the `internal` `fairReserves` as a whole call
+///         (expectRevert attaches to the next EXTERNAL call; a direct internal-lib call inlines and would trip the
+///         cheatcode on the first innocuous read instead).
+contract FairReservesCaller {
+    function call(address vault, uint32 window) external view returns (uint256, uint256, int24) {
+        return IchiAlgebraFairReserves.fairReserves(vault, window);
+    }
+}
+
 /// @notice An Algebra pool stub reporting no plugin — drives the constructor's `NoPlugin` fail-closed guard.
 contract MockPoolNoPlugin {
     function plugin() external pure returns (address) {
@@ -276,12 +320,34 @@ contract MockPoolNoPlugin {
     }
 }
 
-/// @notice An ICHI vault stub that only answers `pool()` — enough to reach the `NoPlugin` guard, which fires before
-///         any `token0`/`token1` read.
+/// @notice An ICHI vault stub that only answers `pool()` — enough to reach the `NoPlugin`/`PluginNotReady` guards,
+///         which fire before any `token0`/`token1` read.
 contract MockVaultNoPlugin {
     address public immutable pool;
 
     constructor(address pool_) {
         pool = pool_;
+    }
+}
+
+/// @notice An Algebra pool stub reporting a fixed (non-zero) plugin address — drives the readiness gate past the
+///         `plugin == address(0)` check and onto the `isInitialized()` check (SUPPLY-ADV-02).
+contract MockPoolWithPlugin {
+    address public immutable plugin;
+
+    constructor(address plugin_) {
+        plugin = plugin_;
+    }
+}
+
+/// @notice An Algebra oracle-plugin stub that is NOT initialized — the SUPPLY-ADV-02 fail-closed case. `getTimepoints`
+///         reverts (a fresh plugin has no usable history), but the readiness gate trips on `isInitialized()` first.
+contract MockUninitializedPlugin {
+    function isInitialized() external pure returns (bool) {
+        return false;
+    }
+
+    function getTimepoints(uint32[] calldata) external pure returns (int56[] memory, uint88[] memory) {
+        revert("uninitialized");
     }
 }

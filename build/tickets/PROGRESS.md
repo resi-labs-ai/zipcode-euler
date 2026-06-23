@@ -145,3 +145,19 @@ they silently dropped audited guards the parents have (the X-Rays over-claimed A
   faithful + donate-excess/single-sided/mastercopy-lock regression tests). Hydrex suite 51/51 green; X-Ray corrected.
 - Hydrex group COMPLETE: both forks reviewed + both tickets shipped. No drain found; the regressions were
   dropped audited guards (NAV) + a false init-lock claim & an unfaithful test mock (LP) — all fix-before-promotion.
+
+Supply group — `AlgebraIchiFairLpOracle` + `IchiAlgebraFairReserves` reviewed (single-model panel, Opus ×3;
+Codex/Fugu cross-check still owed on the fail-open question — now settled by fork test, see ADV-02). Keystone
+(in-block-swap invariance) confirmed sound; two edge findings.
+- **SUPPLY-ADV-01** — fair reserves count raw idle vault balances (in-block donation seam) → **WONTFIX**. Idle
+  balances are real assets and belong in NAV; the seam is inert (no szipUSD collateral-borrow, farm-utility
+  borrow gated to the engine Safe as sole borrower, CoW-only exit at counterparty price, no redeem-at-mark, POL
+  self-held), and dropping idle would under-mark honest value continuously AND not even close the seam (deposited
+  cash converts to LP next rebalance). No code change; rationale in the ticket + `FairLpOracle.md`.
+- **SUPPLY-ADV-02** — fair-LP oracle lacked the `isInitialized()` plugin gate its sibling enforces → **SHIPPED to
+  `main`**. Added `PluginNotReady` readiness gate on the oracle ctor (matching `SzipNavOracle.setLpTwapWindow:267`)
+  AND the shared `IchiAlgebraFairReserves.fairReserves` read path (covers both consumers). The read-time
+  under-coverage residual is settled empirically: a fork test proves the DEPLOYED plugin reverts (fail-CLOSED) on
+  a window longer than its history — no in-contract span assertion (cardinality is not on-chain-queryable, so a
+  span check would require plugin surface the verified interface lacks). Fair-LP suite 16/16 green; SzipNavOracle
+  suites green (shared lib). X-Ray/wire (`FairLpOracle.md`) synced.

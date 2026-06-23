@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import {BaseAdapter, Errors} from "euler-price-oracle/adapter/BaseAdapter.sol";
 import {IICHIVault} from "../interfaces/ichi/IICHIVault.sol";
 import {IAlgebraPool} from "../interfaces/algebra/IAlgebraPool.sol";
+import {IAlgebraOraclePlugin} from "../interfaces/algebra/IAlgebraOraclePlugin.sol";
 import {IchiAlgebraFairReserves} from "./lib/IchiAlgebraFairReserves.sol";
 import {TickMath, FullMath} from "../libraries/ConcentratedLiquidity.sol";
 
@@ -49,7 +50,11 @@ contract AlgebraIchiFairLpOracle is BaseAdapter {
         if (vault_ == address(0)) revert ZeroAddress();
         if (twapWindow_ == 0) revert ZeroWindow();
         address pool = IICHIVault(vault_).pool();
-        if (IAlgebraPool(pool).plugin() == address(0)) revert IchiAlgebraFairReserves.NoPlugin();
+        address plugin = IAlgebraPool(pool).plugin();
+        if (plugin == address(0)) revert IchiAlgebraFairReserves.NoPlugin();
+        // SUPPLY-ADV-02: fail a fresh/uninitialized plugin CLOSED at deploy, matching the sibling gate
+        // `SzipNavOracle.setLpTwapWindow:267` on the identical plugin. (`fairReserves` re-checks at read-time.)
+        if (!IAlgebraOraclePlugin(plugin).isInitialized()) revert IchiAlgebraFairReserves.PluginNotReady();
         lpToken = vault_;
         token0 = IICHIVault(vault_).token0();
         quote = IICHIVault(vault_).token1();
