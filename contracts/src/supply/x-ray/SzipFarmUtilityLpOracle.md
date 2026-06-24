@@ -4,7 +4,7 @@
 
 > **Update 2026-06-20:** the coverage gaps below (the read-path liveness contract, write-value guards, forwarder
 > gate, reportType pin, and the three Timelock setters + ctor zero-guards) are **CLOSED** — 15 new tests added to
-> `SzipFarmUtilityLpOracle.t.sol` (19/19 green). Every guard, every entry point, and the full read/write path are now
+> `SzipFarmUtilityLpOracle.t.sol` (22/22 green incl. the 3 SUPPLY-ADV-13 strict-18-dp-key tests). Every guard, every entry point, and the full read/write path are now
 > exercised; the verdict is lifted from ADEQUATE-minus to **ADEQUATE**, alongside its trustless twin.
 
 Dedicated single-contract X-Ray for `contracts/src/supply/SzipFarmUtilityLpOracle.sol`, the **CRE-fed push-cache**
@@ -45,10 +45,10 @@ Wiring is **Timelock-settable, not immutable** (build phase, §17): `setQuote` (
 | `onReport(metadata, report)` | forwarder-only (`ReceiverTemplate`) | the only writer; → `_processReport` → `_writePrice`; `InvalidSender` otherwise |
 | `getQuote / getQuotes` (BaseAdapter) → `_getQuote` | public view | only `(lpToken, quote)`; fail-closed on unset/stale; `bid==ask==mid` |
 | `setQuote(quote_)` | `onlyOwner` (Timelock) | re-derives `scale`; `ZeroAddress` guard; `WiringSet` event |
-| `setLpToken(lpToken_)` | `onlyOwner` (Timelock) | `ZeroAddress` guard; `WiringSet` event |
+| `setLpToken(lpToken_)` | `onlyOwner` (Timelock) | `ZeroAddress` + strict-18-dp guard (`InvalidLpDecimals`, SUPPLY-ADV-13); `WiringSet` event |
 | `setValidityWindow(w)` | `onlyOwner` (Timelock) | no zero-guard (0 ⇒ every read past `ts` fails closed); `ValidityWindowSet` event |
 | `cache()` / `name()` / `LP_MARK` / `LP_DECIMALS` / inherited `getForwarder…` | public view | getters |
-| `constructor(forwarder, quote_, validityWindow_, lpToken_)` | deploy | `ZeroAddress` (quote/lpToken); forwarder-zero reverts `InvalidForwarderAddress` (parent); derives `scale` |
+| `constructor(forwarder, quote_, validityWindow_, lpToken_)` | deploy | `ZeroAddress` (quote/lpToken); strict-18-dp `lpToken` guard (`InvalidLpDecimals`, SUPPLY-ADV-13); forwarder-zero reverts `InvalidForwarderAddress` (parent); derives `scale` |
 
 No CRE-operator scalars; no custody. The contract holds only the cache + wiring.
 
@@ -62,25 +62,26 @@ No CRE-operator scalars; no custody. The contract holds only the cache + wiring.
 | I-4 | **write value guards** — `mark==0`→`PriceOracle_InvalidAnswer`; `mark>uint208.max`→`PriceOracle_Overflow`; `ts>now`→`FutureTimestamp` | Yes | **`test_writePrice_zeroMark_reverts` / `_overflowMark_reverts` / `_futureTs_reverts`** |
 | I-5 | **read fail-closed** — unsupported `(base,quote)`→`NotSupported`; unset cache (`ts==0`)→`NotSupported`; `now-ts>validityWindow`→`TooStale` | Yes | **`test_getQuote_unsupportedPair_reverts` / `_unsetCache_reverts` / `_stale_reverts`** (the latter also pins the `s==window` boundary as fresh) — the liveness contract that defines this oracle vs its trustless twin |
 | I-6 | **quote correctness + rounds DOWN** — `getQuote(1e18, lpToken, USDC) == mark`; `calcOutAmount(...,false)` truncates against the borrower | Yes | **`test_getQuote_value_and_roundsDown`** (value + linearity + a proven non-zero truncated remainder) |
-| I-7 | **setters onlyOwner + zero-guard + effect** — `setQuote` re-derives `scale`; `setLpToken`/`setQuote` reject zero; non-owner reverts | Yes | **`test_setQuote_guards_and_effect` / `test_setLpToken_guards_and_effect` / `test_setValidityWindow_guards_and_effect`** (each: non-owner revert + zero-guard + re-point/tighten effect, old pair reverts) |
-| I-8 | **ctor zero-guards** — zero quote/lpToken → `ZeroAddress`; zero forwarder → `InvalidForwarderAddress` | Yes | **`test_ctor_zeroQuote_reverts` / `_zeroLpToken_reverts` / `_zeroForwarder_reverts`** |
+| I-7 | **setters onlyOwner + zero-guard + 18-dp guard + effect** — `setQuote` re-derives `scale`; `setLpToken`/`setQuote` reject zero; `setLpToken` rejects a non-18-dp/code-less key (`InvalidLpDecimals`, SUPPLY-ADV-13 — `scale` bakes in base=18 and is NOT re-derived on a key re-point); non-owner reverts | Yes | **`test_setQuote_guards_and_effect` / `test_setLpToken_guards_and_effect` / `_non18Decimals_reverts` / `_codeless_reverts` / `test_setValidityWindow_guards_and_effect`** (each: non-owner revert + zero-guard + re-point/tighten effect, old pair reverts) |
+| I-8 | **ctor zero-guards + 18-dp guard** — zero quote/lpToken → `ZeroAddress`; non-18-dp `lpToken` → `InvalidLpDecimals` (SUPPLY-ADV-13); zero forwarder → `InvalidForwarderAddress` | Yes | **`test_ctor_zeroQuote_reverts` / `_zeroLpToken_reverts` / `_non18LpToken_reverts` / `_zeroForwarder_reverts`** |
 
 ## 4. Guards — coverage
 
 | Guard | Site | Test |
 |---|---|---|
-| `StaleReport` (strictly-newer) | `_writePrice:119` | `test_SEC01_lp_*` (4 tests) |
+| `StaleReport` (strictly-newer) | `_writePrice:136` | `test_SEC01_lp_*` (4 tests) |
 | `InvalidSender` (forwarder-only) | `ReceiverTemplate.onReport` | `test_onReport_nonForwarder_reverts` |
-| `InvalidReportType` | `_processReport:108` | `test_processReport_wrongType_reverts` |
-| `PriceOracle_InvalidAnswer` (mark==0) | `_writePrice:116` | `test_writePrice_zeroMark_reverts` |
-| `PriceOracle_Overflow` (mark>uint208.max) | `_writePrice:117` | `test_writePrice_overflowMark_reverts` |
-| `FutureTimestamp` (ts>now) | `_writePrice:118` | `test_writePrice_futureTs_reverts` |
-| `PriceOracle_NotSupported` (wrong pair) | `_getQuote:133` | `test_getQuote_unsupportedPair_reverts` |
-| `PriceOracle_NotSupported` (unset cache) | `_getQuote:135` | `test_getQuote_unsetCache_reverts` |
-| `PriceOracle_TooStale` (read staleness) | `_getQuote:138` | `test_getQuote_stale_reverts` (+ `s==window` boundary) |
-| `setQuote`/`setLpToken` onlyOwner + `ZeroAddress` | `:83,:92` | `test_setQuote_guards_and_effect` / `test_setLpToken_guards_and_effect` |
-| `setValidityWindow` onlyOwner + effect | `:99` | `test_setValidityWindow_guards_and_effect` |
-| ctor `ZeroAddress` / forwarder-zero | `:73` / parent | `test_ctor_zeroQuote_reverts` / `_zeroLpToken_reverts` / `_zeroForwarder_reverts` |
+| `InvalidReportType` | `_processReport:125` | `test_processReport_wrongType_reverts` |
+| `PriceOracle_InvalidAnswer` (mark==0) | `_writePrice:133` | `test_writePrice_zeroMark_reverts` |
+| `PriceOracle_Overflow` (mark>uint208.max) | `_writePrice:134` | `test_writePrice_overflowMark_reverts` |
+| `FutureTimestamp` (ts>now) | `_writePrice:135` | `test_writePrice_futureTs_reverts` |
+| `PriceOracle_NotSupported` (wrong pair) | `_getQuote:150` | `test_getQuote_unsupportedPair_reverts` |
+| `PriceOracle_NotSupported` (unset cache) | `_getQuote:152` | `test_getQuote_unsetCache_reverts` |
+| `PriceOracle_TooStale` (read staleness) | `_getQuote:155` | `test_getQuote_stale_reverts` (+ `s==window` boundary) |
+| `setQuote`/`setLpToken` onlyOwner + `ZeroAddress` | `setQuote`/`setLpToken` | `test_setQuote_guards_and_effect` / `test_setLpToken_guards_and_effect` |
+| `InvalidLpDecimals` (strict-18-dp LP key) | `_strictLpDecimals`, called in ctor + `setLpToken` | `test_setLpToken_non18Decimals_reverts` / `_codeless_reverts` / `test_ctor_non18LpToken_reverts` |
+| `setValidityWindow` onlyOwner + effect | `setValidityWindow` | `test_setValidityWindow_guards_and_effect` |
+| ctor `ZeroAddress` / forwarder-zero | ctor / parent | `test_ctor_zeroQuote_reverts` / `_zeroLpToken_reverts` / `_zeroForwarder_reverts` |
 
 **Every guard is now exercised** (closed 2026-06-20). The full read path (the liveness-fail-closed behavior that is
 the whole point of a push oracle), all write guards, the forwarder gate, and the three Timelock setters now have
@@ -106,6 +107,13 @@ dedicated tests.
   mis-scale every quote) and re-points the quote; `setLpToken` re-points the priced key; `setValidityWindow` tightens
   the staleness window. Each test asserts the non-owner revert, the zero-guard (where applicable), and the re-point
   effect (the new pair prices, the old reverts `NotSupported`) — closing the subsystem's recurring setter-gap class.
+- **The shared-`scale` 18-dp key invariant is now enforced on BOTH key-entry paths (SUPPLY-ADV-13).** `scale` is
+  derived once from the `LP_DECIMALS = 18` constant and is NOT re-derived against the key, so a non-18-dp `lpToken`
+  would silently mis-scale every quote (over-value for >18dp — the dangerous direction). The ctor and `setLpToken`
+  now strict-read `lpToken.decimals()` (`_strictLpDecimals`, reverts `InvalidLpDecimals` on a non-18 / code-less /
+  failed-call key — NOT silent-18 like `BaseAdapter._getDecimals`), mirroring the load-bearing
+  `ZipcodeOracleRegistry._strictDecimals` guard this contract had previously dropped on the re-point path the
+  registry doesn't even expose. The trustless twin is structurally immune (its `lpToken` is `immutable`).
 - **`reportType` collision residual (I-3, documented).** `LP_MARK = 7` is a §8 placeholder distinct from the
   registry's `REVALUATION = 3`; CRE-§8 ratifies it later (the 8-B5 cross-ticket obligation). Not a code bug; a
   process residual to confirm the wire-level reportType is final pre-prod.
@@ -119,10 +127,11 @@ dedicated tests.
 | Dedicated unit (SEC-01 write-staleness) | 4 | `test_SEC01_lp_firstWrite_succeeds` / `_backdated_mark_reverts` / `_equalTs_reverts` / `_strictlyNewer_succeeds` |
 | Read path (unsupported / unset / stale + boundary / quote value + rounds-down) | 5 | `test_getQuote_unsupportedPair_reverts` / `_unsetCache_reverts` / `_stale_reverts` / `_value_and_roundsDown` |
 | Write guards (forwarder / reportType / mark / overflow / future-ts) | 5 | `test_onReport_nonForwarder_reverts` / `_processReport_wrongType_reverts` / `_writePrice_zeroMark` / `_overflowMark` / `_futureTs` |
-| Setters + ctor guards | 5 | `test_setQuote/_setLpToken/_setValidityWindow_guards_and_effect` + `test_ctor_zeroQuote/_zeroLpToken/_zeroForwarder` |
+| Setters + ctor guards | 8 | `test_setQuote/_setLpToken/_setValidityWindow_guards_and_effect` + `test_setLpToken_non18Decimals/_codeless_reverts` (SUPPLY-ADV-13) + `test_ctor_zeroQuote/_zeroLpToken/_non18LpToken/_zeroForwarder` |
 | Fork / fuzz / invariant | 0 | not needed — pure cache + scalar conversion; the CRE/EVK integration is covered in the consumer suites |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); **19/19 green** (4 SEC-01 + 15 added 2026-06-20). All 8
+Coverage % uninstrumentable (project-wide `Stack too deep`); **22/22 green** (4 SEC-01 + 15 added 2026-06-20 + 3 added
+2026-06-24 for SUPPLY-ADV-13). All 8
 invariant clusters are now covered. The contract mirrors the well-tested `ZipcodeOracleRegistry` /
 `SzAlphaRateOracle` pattern and now carries a full dedicated suite for its own surface.
 
@@ -130,7 +139,7 @@ invariant clusters are now covered. The contract mirrors the well-tested `Zipcod
 
 **ADEQUATE** — a well-constructed, pattern-proven CRE-fed push-cache LP oracle (the deploy-default twin of the
 trustless `AlgebraIchiFairLpOracle`), with correct fail-closed semantics now **proven across its full surface**
-(19/19): the read-path liveness contract (unset/stale/unsupported fail-closed — the property the design exists to
+(22/22): the read-path liveness contract (unset/stale/unsupported fail-closed — the property the design exists to
 provide, incl. the `s==window` boundary), the SEC-01 strictly-newer write guard, the other write-value guards
 (`mark==0` / overflow / future-ts), the reportType pin, the forwarder gate, and the three Timelock setters + ctor
 zero-guards. The logic is the same shape as the audited registry, and its own surface is now fully exercised. Held
@@ -142,4 +151,4 @@ inherited CRE/Forwarder trust, and no external audit.
 2. Push-cache: CRE pushes a per-LP-share USD mark via `onReport`→`_processReport`→`_writePrice`; `getQuote` reads it, **rounded DOWN**, fail-closed on unset/stale.
 3. The deploy default (`DeployZipcode` P5, `lpTwapWindow == 0`); `AlgebraIchiFairLpOracle` is the opt-in trustless alternative. Trades manipulation-resistance for a **liveness dependency** — stale ⇒ borrow fails closed.
 4. Wiring is Timelock-settable, not immutable (`setQuote` re-derives `scale`, `setLpToken`, `setValidityWindow`); Ownable → §17 Timelock at deploy, frozen pre-prod.
-5. Tests: 19/19 — 4 SEC-01 write-staleness + 15 added 2026-06-20 (read path I-5/I-6, write-value guards I-3/I-4, forwarder gate I-2, setters/ctor I-7/I-8). All 8 invariant clusters covered; no outstanding in-file coverage gap.
+5. Tests: 22/22 — 4 SEC-01 write-staleness + 15 added 2026-06-20 (read path I-5/I-6, write-value guards I-3/I-4, forwarder gate I-2, setters/ctor I-7/I-8) + 3 added 2026-06-24 (SUPPLY-ADV-13 strict-18-dp `lpToken` guard on ctor + `setLpToken`). All 8 invariant clusters covered; no outstanding in-file coverage gap.

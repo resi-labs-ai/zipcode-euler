@@ -21,6 +21,14 @@ contract MockUSDC {
     }
 }
 
+/// @notice A minimal 18-dp ERC20 stand-in for the ICHI LP share. The LP oracle ctor strict-reads `lpToken.decimals()`
+///         (SUPPLY-ADV-13) and rejects anything but 18, so the key must be a live 18-dp contract, not a `makeAddr` EOA.
+contract MockLp18 {
+    function decimals() external pure returns (uint8) {
+        return 18;
+    }
+}
+
 /// @notice Thin external wrapper so `vm.expectRevert` can target the `internal` combined-fleet library call (an
 ///         internal library fn cannot be `vm.expectRevert`-pranked directly).
 contract GateHarness {
@@ -185,14 +193,15 @@ contract LpGateHarness {
 ///              name is ACCEPTED by the receiver sealed to daemon-A and REJECTED (`InvalidWorkflowName`) by the
 ///              receiver sealed to daemon-B. This is the whole point of per-receiver names (a shared author cannot
 ///              separate the separate daemons).
-///         No fork: the oracle ctor only reads `quote.decimals()` (6-dp `MockUSDC`) and stores `lpToken`.
+///         No fork: the oracle ctor reads `quote.decimals()` (6-dp `MockUSDC`) and strict-reads `lpToken.decimals()`
+///         (18-dp `MockLp18`, SUPPLY-ADV-13) before storing `lpToken`.
 contract CTR16ReceiverIdentityTest is Test {
     LpGateHarness internal harness;
     MockUSDC internal usdc;
     SzipFarmUtilityLpOracle internal lpOracle;
 
     address internal FORWARDER = makeAddr("forwarder");
-    address internal LP_TOKEN = makeAddr("ichiLpToken");
+    address internal LP_TOKEN = address(new MockLp18()); // live 18-dp key — the oracle ctor strict-reads its decimals
     address internal WORKFLOW_OWNER = makeAddr("workflowOwner");
 
     uint256 internal constant VALIDITY = 365 days;

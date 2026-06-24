@@ -29,7 +29,7 @@ The load-bearing points an auditor should check (full catalog + test connection 
 
 * The defining property is the liveness contract: a stale or missing mark must fail the borrow closed (a too-old mark and an unset cache both revert, the window boundary pinned). This is the safety it trades manipulation-resistance for, and it is proven.
 * The write path is keeper-only and rejects a malformed push (zero, oversized, future-dated), and a mark whose timestamp is not strictly newer is rejected — so a stale-but-higher mark can't over-credit collateral.
-* The read returns the mark rounded down against the borrower; the price scaling is re-derived if the quote token is re-pointed (a mismatch would silently mis-scale every quote).
+* The read returns the mark rounded down against the borrower. The price scaling bakes in an 18-dp LP key and re-derives only against the quote: re-pointing the quote token re-derives the scale (so a quote-decimals change is absorbed), while the LP key is locked to 18 decimals — the constructor and `setLpToken` both strict-read `lpToken.decimals()` and reject anything but a live 18-dp token (`InvalidLpDecimals`, SUPPLY-ADV-13), because a non-18-dp key would NOT re-derive the scale and would silently mis-scale every quote (over-valuing collateral for a >18-dp key).
 * Residual (off-chain): the keeper is trusted for the mark (bounded by fail-closed staleness); the report type is a placeholder to be ratified at the off-chain wiring step; build-phase wiring awaits the pre-production immutable re-freeze.
 
 ==================================================================================

@@ -5,7 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {SzipFarmUtilityLpOracle} from "../../src/supply/SzipFarmUtilityLpOracle.sol";
 import {Errors} from "euler-price-oracle/adapter/BaseAdapter.sol";
 
-/// @notice A minimal mock whose `decimals()` returns a configurable value (the LP oracle reads it on the USDC quote).
+/// @notice A minimal mock whose `decimals()` returns a configurable value (the LP oracle reads it on the USDC quote
+///         AND, via the strict-decimals guard, on the LP key in the ctor / `setLpToken`).
 contract DecimalsMock {
     uint8 public immutable decimals;
 
@@ -22,12 +23,13 @@ contract SzipFarmUtilityLpOracleTest is Test {
     SzipFarmUtilityLpOracle internal lpo;
 
     address internal constant FORWARDER = address(0xF0F0);
-    address internal constant LP = address(0x11D9); // the priced ICHI LP share key (any non-zero addr for the write path)
+    address internal LP; // the priced ICHI LP share key — a live 18-dp mock (the strict-decimals guard rejects a code-less/non-18 key)
     address internal usdc; // mock quote, decimals == 6
     uint256 internal constant VALIDITY = 365 days;
 
     function setUp() public {
         usdc = address(new DecimalsMock(6));
+        LP = address(new DecimalsMock(18)); // 18-dp ICHI LP share stand-in (passes the strict-decimals key guard)
         vm.warp(1_000_000); // non-zero base time so backdating is valid
         lpo = new SzipFarmUtilityLpOracle(FORWARDER, usdc, VALIDITY, LP);
     }
@@ -194,9 +196,9 @@ contract SzipFarmUtilityLpOracleTest is Test {
         lpo.getQuote(1e18, LP, usdc); // old quote no longer supported
     }
 
-    /// @notice `setLpToken` is `onlyOwner`, zero-guarded, and re-points the priced base key.
+    /// @notice `setLpToken` is `onlyOwner`, zero-guarded, strict-18-dp-guarded, and re-points the priced base key.
     function test_setLpToken_guards_and_effect() public {
-        address newLp = address(0xABCD);
+        address newLp = address(new DecimalsMock(18)); // a live 18-dp key passes the strict-decimals guard
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0xBAD)));
         vm.prank(address(0xBAD));
         lpo.setLpToken(newLp);
@@ -208,6 +210,22 @@ contract SzipFarmUtilityLpOracleTest is Test {
         assertEq(lpo.getQuote(1e18, newLp, usdc), 500e6, "prices the new LP key");
         vm.expectRevert(abi.encodeWithSelector(Errors.PriceOracle_NotSupported.selector, LP, usdc));
         lpo.getQuote(1e18, LP, usdc); // old key no longer supported
+    }
+
+    /// @notice SUPPLY-ADV-13: `setLpToken` rejects a non-18-dp key. The shared `scale` bakes in base=18 and is NOT
+    ///         re-derived on a re-point, so a non-18-dp key would silently mis-scale every quote (over-value for >18dp).
+    function test_setLpToken_non18Decimals_reverts() public {
+        address lp6 = address(new DecimalsMock(6));
+        vm.expectRevert(abi.encodeWithSelector(SzipFarmUtilityLpOracle.InvalidLpDecimals.selector, lp6));
+        lpo.setLpToken(lp6);
+    }
+
+    /// @notice SUPPLY-ADV-13: `setLpToken` rejects a code-less key — a `decimals()` staticcall to an EOA returns empty
+    ///         data, so the STRICT guard reverts (unlike `BaseAdapter._getDecimals`, which would silent-fallback to 18).
+    function test_setLpToken_codeless_reverts() public {
+        address eoa = address(0xABCD);
+        vm.expectRevert(abi.encodeWithSelector(SzipFarmUtilityLpOracle.InvalidLpDecimals.selector, eoa));
+        lpo.setLpToken(eoa);
     }
 
     /// @notice `setValidityWindow` is `onlyOwner` and tightening it can make a previously-fresh mark read as stale.
@@ -240,5 +258,13 @@ contract SzipFarmUtilityLpOracleTest is Test {
         // the parent `ReceiverTemplate` ctor runs first and rejects a zero forwarder.
         vm.expectRevert(abi.encodeWithSignature("InvalidForwarderAddress()"));
         new SzipFarmUtilityLpOracle(address(0), usdc, VALIDITY, LP);
+    }
+
+    /// @notice SUPPLY-ADV-13: the ctor rejects a non-18-dp LP key for the same reason as `setLpToken` (base-18 `scale`).
+    ///         The zero-guard runs first, so `address(0)` still reverts `ZeroAddress` (see `_zeroLpToken_reverts`).
+    function test_ctor_non18LpToken_reverts() public {
+        address lp8 = address(new DecimalsMock(8));
+        vm.expectRevert(abi.encodeWithSelector(SzipFarmUtilityLpOracle.InvalidLpDecimals.selector, lp8));
+        new SzipFarmUtilityLpOracle(FORWARDER, usdc, VALIDITY, lp8);
     }
 }

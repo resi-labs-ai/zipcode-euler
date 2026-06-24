@@ -322,3 +322,15 @@ WONTFIX (stock OZ, Timelock-trusted), burn-without-approval = false-positive (de
   **26/26 green**, `forge build` clean. X-Ray `SzipUSD.md` (§1/§2/§3 I-4/§4/§5/§6) + wire `ExitGate-szipUSD.md`
   synced in the same commit. Promoted INFO→LOW (owner-only/build-phase, no drain) under the ratified ADV-06
   precedent. Single-model run (Claude-only).
+- **SUPPLY-ADV-13** — `SzipFarmUtilityLpOracle`: `setLpToken` (and the ctor) re-pointed the priced LP key with only a
+  zero-guard while the shared `scale` bakes in `LP_DECIMALS=18` and is NOT re-derived on a key re-point → a non-18-dp
+  re-point silently mis-scales every quote (over-values collateral for a >18-dp key) → **SHIPPED to `main`**. The
+  exact 18-dp invariant `ZipcodeOracleRegistry` marks LOAD-BEARING and enforces on every write (`_strictDecimals`,
+  "UNREACHABLE by design") was dropped here, on a re-point path the registry doesn't even expose; the trustless twin
+  is immune (`immutable lpToken`). Fix: a strict `_strictLpDecimals` (raw `decimals()` staticcall, reverts on
+  non-18 / code-less / failed — NOT silent-18) guarding BOTH ctor + `setLpToken` (`InvalidLpDecimals`); ctor guard
+  is deploy-safe (deploy passes the live 18-dp `polIchiVault`). Regression: `test_setLpToken_non18Decimals_reverts`
+  / `_codeless_reverts` / `test_ctor_non18LpToken_reverts`; LP oracle suite **22/22** (was 19/19), all 4 collateral
+  suites green, `forge build` clean. X-Ray `SzipFarmUtilityLpOracle.md` (§2/I-7/I-8/§4 + line-ref refresh/§5/§6) +
+  `docs/supply/SzipFarmUtilityLpOracle.md` + wire `8-B5-FarmUtilityLoop.md` synced in the same commit. LOW
+  (Timelock-gated/frozen pre-prod; realistic mis-scale direction fail-safe). Single-model run (Claude-only).

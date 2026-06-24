@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {BaseAdapter, Errors, IPriceOracle} from "euler-price-oracle/adapter/BaseAdapter.sol";
 import {ScaleUtils, Scale} from "euler-price-oracle/lib/ScaleUtils.sol";
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
 
 /// @title SzipFarmUtilityLpOracle
 /// @notice The CRE-fed push-cache LP-collateral price oracle for the 8-B5 farm utility loop (§4.5.1). A single-key
@@ -55,6 +56,9 @@ contract SzipFarmUtilityLpOracle is ReceiverTemplate, BaseAdapter {
     error StaleReport();
     /// @notice A zero address in a Timelock re-point.
     error ZeroAddress();
+    /// @notice The LP key's `decimals()` is not `LP_DECIMALS`, missing, or the call failed (strict guard). The shared
+    ///         `scale` bakes in `LP_DECIMALS = 18`, so a non-18-dp key would silently mis-scale — make it unreachable.
+    error InvalidLpDecimals(address lpToken);
 
     /// @notice The LP mark was updated by the Forwarder.
     event LpMarkUpdated(uint256 mark, uint32 timestamp);
@@ -71,6 +75,7 @@ contract SzipFarmUtilityLpOracle is ReceiverTemplate, BaseAdapter {
         ReceiverTemplate(forwarder)
     {
         if (quote_ == address(0) || lpToken_ == address(0)) revert ZeroAddress();
+        if (_strictLpDecimals(lpToken_) != LP_DECIMALS) revert InvalidLpDecimals(lpToken_); // base-18 is baked into `scale`
         quote = quote_;
         lpToken = lpToken_;
         validityWindow = validityWindow_;
@@ -88,11 +93,23 @@ contract SzipFarmUtilityLpOracle is ReceiverTemplate, BaseAdapter {
         emit WiringSet("quote", quote_);
     }
 
-    /// @notice Re-point the priced LP share token. `onlyOwner` (Timelock).
+    /// @notice Re-point the priced LP share token. `onlyOwner` (Timelock). Rejects a non-18-dp key (`scale` is fixed
+    ///         at base=18 and is NOT re-derived here, so a non-18-dp re-point would silently mis-scale every quote).
     function setLpToken(address lpToken_) external onlyOwner {
         if (lpToken_ == address(0)) revert ZeroAddress();
+        if (_strictLpDecimals(lpToken_) != LP_DECIMALS) revert InvalidLpDecimals(lpToken_);
         lpToken = lpToken_;
         emit WiringSet("lpToken", lpToken_);
+    }
+
+    /// @notice Strict decimals read on the LP key: reverts on a failed/short `decimals()` staticcall (NOT silent-18
+    ///         like `BaseAdapter._getDecimals`, which would wave through a code-less key). The shared `scale` is derived
+    ///         once from the `LP_DECIMALS = 18` constant (never from the key), so a non-18-dp key must be made
+    ///         UNREACHABLE — mirrors the load-bearing `ZipcodeOracleRegistry._strictDecimals` guard.
+    function _strictLpDecimals(address lpToken_) internal view returns (uint8) {
+        (bool ok, bytes memory d) = lpToken_.staticcall(abi.encodeCall(IERC20.decimals, ()));
+        if (!ok || d.length != 32) revert InvalidLpDecimals(lpToken_);
+        return abi.decode(d, (uint8));
     }
 
     /// @notice Re-set the read-staleness window. `onlyOwner` (Timelock).

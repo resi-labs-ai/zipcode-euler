@@ -93,7 +93,8 @@ holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key c
 
 ### SzipFarmUtilityLpOracle — ctor / push / read
 - **Ctor** `(forwarder, quote_, validityWindow_, lpToken_)` → `ReceiverTemplate(forwarder)` (reverts on zero
-  forwarder — the only writer). Sets `quote = USDC`, `lpToken` (the single 18-dp key), `validityWindow` (the
+  forwarder — the only writer). Sets `quote = USDC`, `lpToken` (the single 18-dp key — **strict-read and required
+  to be exactly 18 decimals, `InvalidLpDecimals` otherwise**, SUPPLY-ADV-13), `validityWindow` (the
   generous engine-cadence read-staleness window), and derives `scale = ScaleUtils.calcScale(LP_DECIMALS=18,
   quoteDecimals, quoteDecimals)`.
 - **Push** `_processReport(report)` (override; only the Forwarder reaches it via `ReceiverTemplate`): decodes the
@@ -111,8 +112,10 @@ holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key c
   the borrow CLOSED** (router read reverts → EVC account-status check reverts), never opening an unsafe
   position. Returns `ScaleUtils.calcOutAmount(inAmount, price, scale, false)` — **rounds DOWN, against the
   borrower**.
-- **§17 wiring:** `setQuote` (re-derives `scale`), `setLpToken`, `setValidityWindow` — all `onlyOwner` (the OZ-5
-  `Ownable` owner = the Timelock). Re-pointing is the router governor's job, not an oracle-local owner.
+- **§17 wiring:** `setQuote` (re-derives `scale`), `setLpToken` (**strict-18-dp guarded, `InvalidLpDecimals`** — the
+  shared `scale` bakes in base=18 and is NOT re-derived on a key re-point, so a non-18-dp key would silently
+  mis-scale; SUPPLY-ADV-13), `setValidityWindow` — all `onlyOwner` (the OZ-5 `Ownable` owner = the Timelock).
+  Re-pointing is the router governor's job, not an oracle-local owner.
 
 ### FarmUtilityBorrowGuard — the borrow pin
 - **Ctor** `(eVaultFactory_, juniorTrancheEngine_)` — sets `eVaultFactory` (the EVK GenericFactory), `juniorTrancheEngine` (the
