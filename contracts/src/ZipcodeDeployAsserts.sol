@@ -18,12 +18,14 @@ interface IOracleRegistryController {
 
 /// @title ZipcodeDeployAsserts (§9 / audit S11)
 /// @notice The one load-bearing deploy-time assertion the item-10 deploy script calls IMMEDIATELY before the
-///         irreversible ownership hand-off / renounce. It is the only defense against the dormant-identity vuln
+///         ownership hand-off to the Timelock (build-phase §17 — `transferOwnership(timelock)`, NOT renounce; the
+///         hand-off is irreversible for the deployer). It is the only defense against the dormant-identity vuln
 ///         (§4.4 / audit/3-results.md F1): `ReceiverTemplate.onReport`'s identity check is CONDITIONAL (each
 ///         expected slot is enforced only when set) and `onReport` / `setForwarderAddress` are non-virtual, so a
 ///         deploy that seals BEFORE wiring identity freezes the receiver in a Forwarder-sender-only state any
 ///         co-tenant workflow can drive. Symmetrically, sealing before `registry.setController` leaves
-///         `controller == address(0)` so the registry is unseedable forever.
+///         `controller == address(0)` so the registry can no longer be seeded by the deployer (only the Timelock
+///         could after hand-off — the F7 brick).
 ///
 ///         CTR-16: the gate asserts EACH sealed receiver individually (author + workflowName both set), dropping
 ///         the old "same WORKFLOW_ID on every subclass ⇒ one representative id ⇒ all wired" inference. Under the
@@ -37,8 +39,13 @@ library ZipcodeDeployAsserts {
     error ReceiverIdentityNotWired(address receiver);
 
     /// @notice The registry's set-once controller is unseeded (`controller() == address(0)`) — the registry is
-    ///         unseedable once ownership is handed off (F7 brick).
+    ///         unseedable by the deployer once ownership is handed to the Timelock (F7 brick).
     error RegistryControllerUnset(address registry);
+
+    /// @notice The fleet handed to the gate is empty. The gate exists to prove the fleet is wired, so an empty
+    ///         `receivers` array is itself a misconfiguration: it would pass the per-receiver leg vacuously and
+    ///         leave only the registry leg. Fail closed rather than trust the caller to populate the array.
+    error EmptyReceiverSet();
 
     /// @notice Fail-closed per-receiver identity gate for a single `ReceiverTemplate`. Reverts
     ///         `ReceiverIdentityNotWired` unless BOTH `getExpectedAuthor()` is non-zero AND
@@ -61,6 +68,7 @@ library ZipcodeDeployAsserts {
     ///        representative-id inference). The registry is itself a receiver and SHOULD appear here too.
     /// @param registry The `ZipcodeOracleRegistry` (the only contract with a set-once `controller` getter).
     function requireIdentityWired(address[] memory receivers, address registry) internal view {
+        if (receivers.length == 0) revert EmptyReceiverSet();
         for (uint256 k = 0; k < receivers.length; k++) {
             requireReceiverIdentityWired(receivers[k]);
         }

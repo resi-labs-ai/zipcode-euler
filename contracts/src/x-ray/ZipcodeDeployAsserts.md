@@ -1,12 +1,13 @@
 # X-Ray — `ZipcodeDeployAsserts.sol` (library, test-connected)
 
-> ZipcodeDeployAsserts | 26 nSLOC | 46fd0c1 (`main`) | Foundry | 20/06/26 | **Verdict: HARDENED** *(modulo no external audit)*
+> ZipcodeDeployAsserts | 28 nSLOC | 46fd0c1 (`main`) | Foundry | 24/06/26 | **Verdict: HARDENED** *(modulo no external audit)*
 
 Per-contract X-Ray for `contracts/src/ZipcodeDeployAsserts.sol` (§9 / audit S11), the **one load-bearing
-deploy-time assertion** the item-10 deploy script runs IMMEDIATELY before the irreversible ownership hand-off /
-renounce. A `library` of `internal view` checks (no deployed bytecode of its own — it compiles INTO the deploy
-script). Exercised by `ZipcodeDeployIdentityGate.t.sol` — **12 tests** across two contracts (the gate + the CTR-16
-per-receiver behavioral suite).
+deploy-time assertion** the item-10 deploy script runs IMMEDIATELY before the ownership hand-off to the Timelock
+(build-phase §17 — `transferOwnership(timelock)`, NOT a renounce; irreversible for the deployer). A `library` of
+`internal view` checks (no deployed bytecode of its own — it compiles INTO the deploy script). Exercised by
+`ZipcodeDeployIdentityGate.t.sol` — **13 tests** across two contracts (the gate + the CTR-16 per-receiver
+behavioral suite).
 
 > ## Why "asserts"?
 > It is a small library of **deploy-time assertions** — functions that *verify a precondition holds and revert
@@ -14,19 +15,19 @@ per-receiver behavioral suite).
 > custom-error `revert`s — `ReceiverIdentityNotWired` / `RegistryControllerUnset` — which carry data and refund gas,
 > unlike `assert()` which consumes all gas and signals a bug). Plural because it bundles two checks: every sealed CRE
 > receiver's identity is fully wired, and the registry's set-once controller is seeded. The deploy script *asserts*
-> these invariants right before it renounces, so a misconfigured fleet can never be frozen live.
+> these invariants right before the Timelock hand-off, so a misconfigured fleet can never be frozen live.
 
 ## 1. What it is
 
-A 26-nSLOC `library` defending the **dormant-identity vuln** (audit F1/M4). The problem: `ReceiverTemplate.onReport`'s
+A 28-nSLOC `library` defending the **dormant-identity vuln** (audit F1/M4). The problem: `ReceiverTemplate.onReport`'s
 identity check is CONDITIONAL — each expected slot (author / workflowName) is enforced *only when set* — and
-`onReport`/`setForwarderAddress` are non-virtual. So a deploy that seals (renounces) BEFORE wiring identity freezes
+`onReport`/`setForwarderAddress` are non-virtual. So a deploy that seals BEFORE wiring identity freezes
 the receiver in a **Forwarder-sender-only** state any co-tenant workflow on the same Forwarder can drive.
-Symmetrically, sealing before `registry.setController` leaves `controller == address(0)` so the registry is
-unseedable forever (F7 brick). Two `internal view` functions:
+Symmetrically, sealing before `registry.setController` leaves `controller == address(0)` so the registry can no
+longer be seeded by the deployer once ownership is handed to the Timelock (F7 brick). Two `internal view` functions:
 
 - **`requireReceiverIdentityWired(receiver)`** — reverts `ReceiverIdentityNotWired` unless BOTH `getExpectedAuthor() != 0` AND `getExpectedWorkflowName() != 0` (the CTR-16 author+name posture; `onReport` enforces the name only when the author is also set, so both are load-bearing).
-- **`requireIdentityWired(receivers[], registry)`** — asserts EACH receiver individually (CTR-16 dropped the old "same `workflowId` on every subclass ⇒ one representative check" inference — under the separate-daemon model each receiver carries its OWN name), then asserts `registry.controller() != 0`. Reverts on the first failure.
+- **`requireIdentityWired(receivers[], registry)`** — reverts `EmptyReceiverSet` on an empty fleet (fail-closed defense-in-depth, so the per-receiver leg can never pass vacuously), then asserts EACH receiver individually (CTR-16 dropped the old "same `workflowId` on every subclass ⇒ one representative check" inference — under the separate-daemon model each receiver carries its OWN name), then asserts `registry.controller() != 0`. Reverts on the first failure.
 
 No state, no admin, no deployed bytecode, no runtime surface — purely a deploy-time concern.
 
@@ -35,7 +36,7 @@ No state, no admin, no deployed bytecode, no runtime surface — purely a deploy
 | Function | Kind | Notes |
 |---|---|---|
 | `requireReceiverIdentityWired(address)` | `internal view` | per-receiver author+name gate; `ReceiverIdentityNotWired` |
-| `requireIdentityWired(address[], address)` | `internal view` | fleet loop + registry-controller check; `ReceiverIdentityNotWired` / `RegistryControllerUnset` |
+| `requireIdentityWired(address[], address)` | `internal view` | empty-fleet guard + fleet loop + registry-controller check; `EmptyReceiverSet` / `ReceiverIdentityNotWired` / `RegistryControllerUnset` |
 
 Both are `internal`, so they have no external ABI — they inline into the caller (`DeployZipcode.s.sol`).
 
@@ -54,8 +55,9 @@ Both are `internal`, so they have no external ABI — they inline into the calle
 
 | Guard | Site | Test |
 |---|---|---|
-| `ReceiverIdentityNotWired` (author OR name unset) | `:50-53` | `test_PreGate_RevertsWhen{Author,Name}Unset`, `test_Negative_{ReceiverUnsealed,NameUnset}_GateReverts` |
-| `RegistryControllerUnset` (`controller()==0`) | `:67-69` | `test_Negative_RegistryControllerUnset_GateReverts` |
+| `EmptyReceiverSet` (empty `receivers` fleet) | `:71` | `test_Negative_EmptyReceivers_GateReverts` |
+| `ReceiverIdentityNotWired` (author OR name unset) | `:57-60` | `test_PreGate_RevertsWhen{Author,Name}Unset`, `test_Negative_{ReceiverUnsealed,NameUnset}_GateReverts` |
+| `RegistryControllerUnset` (`controller()==0`) | `:75-77` | `test_Negative_RegistryControllerUnset_GateReverts` |
 
 Both revert paths and both happy paths (per-receiver + combined) are exercised, plus the behavioral proof that the
 gate defends a real dormancy vuln.
@@ -86,18 +88,18 @@ gate defends a real dormancy vuln.
 | Category | Count | Notes |
 |---|---|---|
 | Per-receiver gate (author / name / sealed) | 3 | `test_PreGate_*` |
-| Combined gate (unsealed / name-unset / registry-unset / happy+freeze) | 4 | `test_Negative_*` (3) + `_Positive_GatePasses_ThenRenounce_ThenFrozen` |
+| Combined gate (empty-fleet / unsealed / name-unset / registry-unset / happy+freeze) | 5 | `test_Negative_*` (4, incl. `_EmptyReceivers_GateReverts`) + `_Positive_GatePasses_ThenRenounce_ThenFrozen` |
 | Behavioral (dormancy vuln + sealed accept/reject) | 4 | `test_Behavioral_*` (3) + `_IdentitySealed_AfterSeal` |
 | K5 privilege separation | 1 | `test_K5_PrivilegeSeparation_NameSeparatesSameAuthorDaemons` |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); 12 tests green. Both library functions, both revert
-paths, both happy paths, and the behavioral proof of the defended vuln are all exercised — no coverage gap for a
-deploy-time assertion library.
+Coverage % uninstrumentable (project-wide `Stack too deep`); 13 tests green. Both library functions, all three revert
+paths (empty-fleet / unwired-receiver / unseeded-registry), both happy paths, and the behavioral proof of the
+defended vuln are all exercised — no coverage gap for a deploy-time assertion library.
 
 ## X-Ray Verdict
 
 **HARDENED** *(modulo no external audit)* — a 26-nSLOC deploy-time assertion library defending the dormant-identity
-vuln (audit F1/S11): the single check the item-10 script runs immediately before the irreversible renounce, proving
+vuln (audit F1/S11): the single check the item-10 script runs immediately before the Timelock hand-off, proving
 every sealed CRE receiver's identity (author + workflowName, CTR-16) is wired and the registry's set-once controller
 is seeded. Both functions, both revert paths, the happy-then-freeze path, the K5 privilege separation, and a
 behavioral demonstration of the actual dormancy vuln are all tested (12 green). As an `internal` library it has no
@@ -106,8 +108,8 @@ below a clean bill is the project-wide absence of an external audit. (The "must 
 process invariant is itself covered by `DeployZipcode.t.sol`.)
 
 **Structural facts:**
-1. 26 nSLOC; `library` with two `internal view` functions; no state, no admin, no deployed bytecode (inlines into the deploy script).
+1. 28 nSLOC; `library` with two `internal view` functions; no state, no admin, no deployed bytecode (inlines into the deploy script).
 2. Defends the dormant-identity vuln: `ReceiverTemplate.onReport`'s identity check is conditional + non-virtual, so a seal-before-wiring leaves a Forwarder-sender-only receiver any co-tenant can drive.
 3. CTR-16 posture: asserts EACH receiver's author + workflowName individually (dropped the representative-`workflowId` inference) + the registry's `controller() != 0`; fail-closed on the first miss.
-4. "Asserts" = deploy-time precondition checks that `revert` (custom errors, not the `assert()` opcode) right before the irreversible ownership hand-off.
-5. Tests: 12 (per-receiver + combined gate, both reverts, happy+freeze, behavioral dormancy proof, K5 separation). No gap; capped only by no external audit.
+4. "Asserts" = deploy-time precondition checks that `revert` (custom errors, not the `assert()` opcode) right before the ownership hand-off to the Timelock (build-phase §17 — transfer, not renounce).
+5. Tests: 13 (per-receiver + combined gate, all three reverts incl. empty-fleet, happy+freeze, behavioral dormancy proof, K5 separation). No gap; capped only by no external audit.

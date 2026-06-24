@@ -155,6 +155,16 @@ Core group (in progress).
   a vuln. **Parity guard SHIPPED to `main`** at user request: ctor `quote_ == 0 → ZeroAddress` (`:80`), regression
   `test_Ctor_ZeroQuote_Reverts`, **41/41 green**; X-Ray + ELI20 doc synced same commit. Single-model (Claude-only),
   not the full decorrelated panel.
+- **CORE-ADV — `ZipcodeDeployAsserts`** — reviewed SOUND (1 mission, the fail-closed-gate adversary); confirms the
+  X-Ray HARDENED verdict. The gate fail-closes on every unwired receiver, unset name, and unseeded registry, and
+  passes only a fully-wired fleet (I-1…I-6 re-verified against source). Two INFO nits, both **handled at user
+  request** and SHIPPED to `main`: (1) the empty-`receivers` fleet passed the per-receiver leg vacuously (caught
+  only by the call site) → added fail-closed `EmptyReceiverSet` guard (`:71`) + regression
+  `test_Negative_EmptyReceivers_GateReverts`, **13/13 green**; (2) the library NatSpec + X-Ray said "renounce" but
+  the item-10 script `transferOwnership(timelock)`s (build-phase §17, never renounce) → wording corrected in the
+  `.sol` NatSpec, X-Ray, ELI20, and WOOF-10a same commit. Single-model (Claude-only), not the full decorrelated
+  panel. (Noted pre-existing CTR-16 signature drift in WOOF-10a/WOOF-02 — `requireIdentityWired(address,address)` /
+  `IdentityNotWired` — left for a separate wire-doc pass; the authoritative X-Ray is correct.)
 
 Supply group — `AlgebraIchiFairLpOracle` + `IchiAlgebraFairReserves` reviewed (single-model panel, Opus ×3;
 Codex/Fugu cross-check still owed on the fail-open question — now settled by fork test, see ADV-02). Keystone

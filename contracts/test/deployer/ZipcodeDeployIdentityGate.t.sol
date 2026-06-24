@@ -140,6 +140,20 @@ contract ZipcodeDeployIdentityGateTest is Test {
         harness.gate(_receivers(), address(registry));
     }
 
+    /// @dev Defense-in-depth: an EMPTY fleet fails closed. The per-receiver loop would otherwise pass vacuously
+    ///      (zero iterations), leaving only the registry leg — so a seeded registry + empty array would bless a
+    ///      fleet the gate never actually checked. The gate refuses an empty `receivers` rather than trust the
+    ///      caller to populate it. (Unreachable from the real call site, which sizes the array to the live fleet.)
+    function test_Negative_EmptyReceivers_GateReverts() public {
+        // Registry fully seeded, so the ONLY thing standing between an empty fleet and a pass is the new guard.
+        _seal(address(registry), NAME_REVALUATION);
+        registry.setController(address(controller));
+
+        address[] memory empty = new address[](0);
+        vm.expectRevert(abi.encodeWithSelector(ZipcodeDeployAsserts.EmptyReceiverSet.selector));
+        harness.gate(empty, address(registry));
+    }
+
     // ============================================================
     // POSITIVE — gate passes → renounce → frozen (audit S11 post-state)
     // ============================================================

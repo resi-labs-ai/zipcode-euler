@@ -1,7 +1,7 @@
 # ZIPCODE DEPLOY ASSERTS
 [zipcode-euler/contracts/src]
 
-The last safety check the deploy runs before it throws away the keys. Base (chain 8453). Solidity 0.8.24.
+The last safety check the deploy runs before it hands the keys to the Timelock. Base (chain 8453). Solidity 0.8.24.
 
 * It is a small library of deploy-time checks, run immediately before the irreversible ownership hand-off, that verify the system was wired correctly so it can never be frozen in a broken state.
 * It guards a real hazard: a report receiver's identity check only bites once its expected author and workflow name are set. Sealing the system before those are wired would leave a receiver any co-tenant workflow on the same channel could drive.
@@ -11,7 +11,7 @@ The last safety check the deploy runs before it throws away the keys. Base (chai
 What it does
 
 - ZipcodeDeployAsserts.sol → deploy-time wiring assertions
-Two checks the deploy script calls before it renounces ownership: every sealed CRE receiver must have both its expected author and workflow name wired (each is checked individually), and the oracle registry's controller must be set. It reverts on the first failure — fail-closed — so a misconfigured fleet can never be frozen live. It is an internal library with no deployed code of its own; it compiles into the deploy script.
+Two checks the deploy script calls before the ownership hand-off to the Timelock (build-phase §17 — a transfer, not a renounce): every sealed CRE receiver must have both its expected author and workflow name wired (each is checked individually), and the oracle registry's controller must be set. It also fails closed on an empty receiver list. It reverts on the first failure — fail-closed — so a misconfigured fleet can never be frozen live. It is an internal library with no deployed code of its own; it compiles into the deploy script.
 [contracts/src/ZipcodeDeployAsserts.sol]
 [wires/WOOF-10a.md]
 
@@ -21,7 +21,7 @@ Summaries:
 ==================================================================================
 Security X-Ray (audit fidelity)
 
-Rated HARDENED — a deploy-time assertion library defending the dormant-identity hazard, with the hazard itself demonstrated in tests (12 tests).
+Rated HARDENED — a deploy-time assertion library defending the dormant-identity hazard, with the hazard itself demonstrated in tests (13 tests).
 
 [contracts/src/x-ray/ZipcodeDeployAsserts.md]
 
