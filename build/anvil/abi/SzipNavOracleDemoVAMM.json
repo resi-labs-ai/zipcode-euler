@@ -33,12 +33,12 @@
         "internalType": "address"
       },
       {
-        "name": "mainSafe_",
+        "name": "juniorTrancheSafe_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "sidecar_",
+        "name": "juniorTrancheSidecar_",
         "type": "address",
         "internalType": "address"
       },
@@ -192,19 +192,6 @@
   },
   {
     "type": "function",
-    "name": "engineSafe",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "freeValue",
     "inputs": [],
     "outputs": [
@@ -335,6 +322,45 @@
   },
   {
     "type": "function",
+    "name": "juniorTrancheEngine",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheSafe",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheSidecar",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "lastUpdate",
     "inputs": [],
     "outputs": [
@@ -366,19 +392,6 @@
         "name": "ts",
         "type": "uint48",
         "internalType": "uint48"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "mainSafe",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -457,6 +470,19 @@
         "name": "",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "obsSpacing",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -558,19 +584,6 @@
   },
   {
     "type": "function",
-    "name": "setEngineSafe",
-    "inputs": [
-      {
-        "name": "engineSafe_",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setExpectedAuthor",
     "inputs": [
       {
@@ -614,6 +627,19 @@
     "inputs": [
       {
         "name": "_forwarder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setJuniorTrancheEngine",
+    "inputs": [
+      {
+        "name": "juniorTrancheEngine_",
         "type": "address",
         "internalType": "address"
       }
@@ -668,19 +694,6 @@
   {
     "type": "function",
     "name": "shareToken",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "sidecar",
     "inputs": [],
     "outputs": [
       {
@@ -856,7 +869,7 @@
     "name": "EngineSafeSet",
     "inputs": [
       {
-        "name": "engineSafe",
+        "name": "juniorTrancheEngine",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1230,6 +1243,11 @@
   },
   {
     "type": "error",
+    "name": "RateUnseeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StalePrice",
     "inputs": [
       {
@@ -1242,6 +1260,11 @@
   {
     "type": "error",
     "name": "StaleRate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StaleReport",
     "inputs": []
   },
   {

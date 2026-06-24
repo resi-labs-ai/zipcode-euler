@@ -1,0 +1,20 @@
+# Inline context for the SellModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/supply/szipUSD/SellModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the zodiac-core Module base: execAndReturnData, setAvatar/setTarget (onlyOwner), the initializer one-shot ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the swap target interface: ExactInputSingleParams (the pinned-field struct) ---
+contracts/src/interfaces/algebra/ISwapRouter.sol
+
+# --- the X-Ray (ground truth: I-1..I-6, X-1, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/SellModule.md
+
+# --- tests (34 unit + 4 base-fork = 38; exec-shape pins, size-cap matrix, slippage/deadline abort on the real router) ---
+contracts/test/supply/szipUSD/SellModule.t.sol

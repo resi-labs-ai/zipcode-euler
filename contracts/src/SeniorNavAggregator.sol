@@ -14,7 +14,7 @@ import {SiloRegistry} from "./SiloRegistry.sol";
 /// @dev Per silo the senior read is the §8.2 donation-immune pattern, NEVER `balanceOf(eePool)`:
 ///      `sa = convertToAssets(balanceOf(warehouseSafe))` (USDC 6-dp). A stray-USDC donation to the pool address
 ///      moves neither `convertToAssets` nor `maxWithdraw`, so the aggregate cannot be manipulated by an outsider.
-///      The per-silo guards (`sa == 0` → 0; `free >= sa` → 0) are VERBATIM from `DurationFreezeModule:295-302`.
+///      The per-silo guards (`sa == 0` → 0; `free >= sa` → 0) are VERBATIM from `DurationFreezeModule:302-309`.
 ///
 /// @dev `seniorBacking()`/`illiquidSeniorValue()` sum ALL silos (retired silos keep backing the zipUSD their still-open
 ///      lines minted; the donation-immune math makes a drained silo contribute 0 with no special case). The `active`
@@ -48,7 +48,7 @@ contract SeniorNavAggregator is Ownable {
     // --------------------------------------------------------------------- per-silo donation-immune reads
 
     /// @dev The §8.2 donation-immune senior value of one silo, 18-dp USD. Guards VERBATIM from
-    ///      `DurationFreezeModule:295-302`: `sa == 0` → 0 (a drained/empty silo). Never reads `balanceOf(eePool)`.
+    ///      `DurationFreezeModule:302-309`: `sa == 0` → 0 (a drained/empty silo). Never reads `balanceOf(eePool)`.
     function _seniorValue(address eePool, address warehouseSafe) internal view returns (uint256) {
         ISeniorPool e = ISeniorPool(eePool);
         uint256 sa = e.convertToAssets(e.balanceOf(warehouseSafe));
@@ -57,7 +57,7 @@ contract SeniorNavAggregator is Ownable {
     }
 
     /// @dev The lent-out (illiquid) senior dollars of one silo, 18-dp USD. Guards VERBATIM from
-    ///      `DurationFreezeModule:295-302`: `sa == 0` → 0; `free >= sa` → 0. `free` only read when `sa != 0`.
+    ///      `DurationFreezeModule:302-309`: `sa == 0` → 0; `free >= sa` → 0. `free` only read when `sa != 0`.
     function _illiquidValue(address eePool, address warehouseSafe) internal view returns (uint256) {
         ISeniorPool e = ISeniorPool(eePool);
         uint256 sa = e.convertToAssets(e.balanceOf(warehouseSafe));

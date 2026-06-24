@@ -13,17 +13,30 @@
         "internalType": "address"
       },
       {
-        "name": "capitalSink_",
+        "name": "adminSafe_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "sidecar_",
+        "name": "juniorTrancheSafe_",
         "type": "address",
         "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "adminSafe",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -65,7 +78,7 @@
   },
   {
     "type": "function",
-    "name": "capitalSink",
+    "name": "coordinator",
     "inputs": [],
     "outputs": [
       {
@@ -78,7 +91,7 @@
   },
   {
     "type": "function",
-    "name": "coordinator",
+    "name": "juniorTrancheSafe",
     "inputs": [],
     "outputs": [
       {
@@ -147,10 +160,10 @@
   },
   {
     "type": "function",
-    "name": "setCapitalSink",
+    "name": "setAdminSafe",
     "inputs": [
       {
-        "name": "capitalSink_",
+        "name": "adminSafe_",
         "type": "address",
         "internalType": "address"
       }
@@ -173,10 +186,10 @@
   },
   {
     "type": "function",
-    "name": "setSidecar",
+    "name": "setJuniorTrancheSafe",
     "inputs": [
       {
-        "name": "sidecar_",
+        "name": "juniorTrancheSafe_",
         "type": "address",
         "internalType": "address"
       }
@@ -196,19 +209,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "sidecar",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",

@@ -1,0 +1,34 @@
+# Inline context for the SzipNavOracle review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the unit under review (the junior-vault NAV-per-share oracle) ---
+contracts/src/supply/SzipNavOracle.sol
+
+# --- the LP fair-reserves path it routes through when lpTwapWindow != 0 (TRUSTED math — attack USE) ---
+contracts/src/supply/lib/IchiAlgebraFairReserves.sol
+
+# --- the CRE receiver base (forwarder-only onReport + workflow-id identity) ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- precedent: the push-cache pattern (deviation band / SEC-01 / forwarder gate live here) ---
+contracts/src/ZipcodeOracleRegistry.sol
+contracts/src/bridge/SzAlphaRateOracle.sol
+
+# --- the twin (single pushed mark; same receiver DNA, far thinner) ---
+contracts/src/supply/SzipFarmUtilityLpOracle.sol
+
+# --- consumers that read this oracle as truth (a finding that breaks their assumption is higher value) ---
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+contracts/src/supply/szipUSD/ExitGate.sol
+contracts/src/loss/DefaultCoordinator.sol
+
+# --- external leg sources (TRUSTED on-chain reads — attack mis-USE, not the source) ---
+contracts/src/interfaces/bridge/IXAlphaRate.sol
+contracts/src/interfaces/ichi/IICHIVault.sol
+contracts/src/interfaces/algebra/IAlgebraPool.sol
+contracts/src/interfaces/algebra/IAlgebraOraclePlugin.sol
+contracts/src/interfaces/hydrex/IGauge.sol
+contracts/src/interfaces/hydrex/IOptionToken.sol
+
+# --- tests (64 green; the subsystem's densest — bracket, TWAP ring, push guards, SEC-04/10/13, decomposition) ---
+contracts/test/supply/SzipNavOracle.t.sol

@@ -1,0 +1,18 @@
+# Inline context for the DefaultCoordinator review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/loss/DefaultCoordinator.sol
+
+# --- the sibling it drives (the two-call resolve/writeoff seam crosses into here) ---
+contracts/src/loss/LienXAlphaEscrow.sol
+
+# --- the interfaces the coordinator calls through ---
+contracts/src/interfaces/loss/ISzipNavOracle.sol
+contracts/src/interfaces/loss/ILienXAlphaEscrow.sol
+
+# --- the base: the Forwarder + workflow-identity gate fronting _processReport ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- tests (66 unit + 1 fuzz + 3 invariant; conservation + sole-writer seams invariant-asserted) ---
+contracts/test/loss/DefaultCoordinator.t.sol

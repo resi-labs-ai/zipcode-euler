@@ -18,7 +18,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "safe_",
+        "name": "warehouseSafe_",
         "type": "address",
         "internalType": "address"
       },
@@ -33,7 +33,7 @@
         "internalType": "address"
       },
       {
-        "name": "repaySink_",
+        "name": "redemptionBox_",
         "type": "address",
         "internalType": "address"
       }
@@ -190,14 +190,7 @@
   },
   {
     "type": "function",
-    "name": "renounceOwnership",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "repaySink",
+    "name": "redemptionBox",
     "inputs": [],
     "outputs": [
       {
@@ -207,6 +200,13 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "renounceOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -230,19 +230,6 @@
         "name": "",
         "type": "address",
         "internalType": "contract IRoles"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "safe",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -314,10 +301,10 @@
   },
   {
     "type": "function",
-    "name": "setRepaySink",
+    "name": "setRedemptionBox",
     "inputs": [
       {
-        "name": "repaySink_",
+        "name": "redemptionBox_",
         "type": "address",
         "internalType": "address"
       }
@@ -353,10 +340,10 @@
   },
   {
     "type": "function",
-    "name": "setSafe",
+    "name": "setUsdc",
     "inputs": [
       {
-        "name": "safe_",
+        "name": "usdc_",
         "type": "address",
         "internalType": "address"
       }
@@ -366,10 +353,10 @@
   },
   {
     "type": "function",
-    "name": "setUsdc",
+    "name": "setWarehouseSafe",
     "inputs": [
       {
-        "name": "usdc_",
+        "name": "warehouseSafe_",
         "type": "address",
         "internalType": "address"
       }
@@ -412,6 +399,19 @@
   {
     "type": "function",
     "name": "usdc",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "warehouseSafe",
     "inputs": [],
     "outputs": [
       {
@@ -589,6 +589,22 @@
   },
   {
     "type": "error",
+    "name": "AvatarMismatch",
+    "inputs": [
+      {
+        "name": "warehouseSafe",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "avatar",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidAuthor",
     "inputs": [
       {
@@ -698,6 +714,17 @@
     "type": "error",
     "name": "WorkflowNameRequiresAuthorValidation",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WrongRedemptionBox",
+    "inputs": [
+      {
+        "name": "dest",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

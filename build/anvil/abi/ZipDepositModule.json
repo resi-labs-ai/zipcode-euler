@@ -18,7 +18,7 @@
         "internalType": "address"
       },
       {
-        "name": "warehouse_",
+        "name": "warehouseSafe_",
         "type": "address",
         "internalType": "address"
       }
@@ -167,7 +167,7 @@
   },
   {
     "type": "function",
-    "name": "warehouse",
+    "name": "warehouseSafe",
     "inputs": [],
     "outputs": [
       {

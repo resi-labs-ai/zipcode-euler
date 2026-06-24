@@ -1,0 +1,20 @@
+# Inline context for the ExitGate review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/supply/szipUSD/ExitGate.sol
+
+# --- the Baal base: mintLoot/burnLoot/lootToken/avatar (confirm the call set excludes ragequit/mintShares) ---
+contracts/src/interfaces/baal/IBaal.sol
+
+# --- the oracle: navEntry()/valueOf()/grossBasketValue()/poke() (issuance pricing + fail-closed staleness) ---
+contracts/src/supply/SzipNavOracle.sol
+
+# --- the share token: onlyGate mint/burn (the Gate is the sole caller) ---
+contracts/src/supply/szipUSD/SzipUSD.sol
+
+# --- the X-Ray (ground truth: I-1..I-9, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/ExitGate.md
+
+# --- tests (17 base-fork unit + 1 stateful invariant = 18; real Baal + oracle; the ~6,400-call conservation invariant) ---
+contracts/test/supply/szipUSD/ExitGate.t.sol

@@ -1,0 +1,26 @@
+# Inline context for the RecycleModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (the IZipDepositModule/ISzipNavProvision/IEulerEarn interfaces are declared inline) ---
+contracts/src/supply/szipUSD/RecycleModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the zodiac-core Module base: execAndReturnData, setAvatar/setTarget (onlyOwner), the initializer one-shot ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the recycle sink: deposit(usdcIn) pulls USDC from the Safe, mints backed zipUSD (the hard-backing seam) ---
+contracts/src/supply/ZipDepositModule.sol
+
+# --- the SEC-09 bound source: provision() (the live hole; divert READS it, never writes) ---
+contracts/src/supply/SzipNavOracle.sol
+
+# --- the divert sink: EulerEarn.deposit(assets, receiver) — the senior pool crediting warehouseSafe ---
+reference/euler-earn/src/EulerEarn.sol
+
+# --- the X-Ray (ground truth: I-1..I-7, X-1, the guard table; NOTE the no-ReentrancyGuard/CEI correction) ---
+contracts/src/supply/szipUSD/x-ray/RecycleModule.md
+
+# --- tests (40 unit + 2 base-fork = 42; the 5-test SEC-09 suite, two-layer enforcement, CEI ordering) ---
+contracts/test/supply/szipUSD/RecycleModule.t.sol

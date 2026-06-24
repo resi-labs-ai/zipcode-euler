@@ -1,0 +1,21 @@
+# Inline context for the ZipcodeDeployAsserts review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (a 26-nSLOC library of two `internal view` deploy-time assertions) ---
+contracts/src/ZipcodeDeployAsserts.sol
+
+# --- the vuln it defends: ReceiverTemplate.onReport's CONDITIONAL + non-virtual identity check ---
+# (the author/name getters at :60/:66 the gate reads; the dormant-receiver hazard at :78-120) ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- the registry whose set-once `controller()` (:48) the gate checks; `setController` at :89 (F7 brick) ---
+contracts/src/ZipcodeOracleRegistry.sol
+
+# --- the X-Ray (ground truth: I-1..I-6, the guard table; coverage-complete via 12 tests; HARDENED) ---
+contracts/src/x-ray/ZipcodeDeployAsserts.md
+
+# --- the gate test suite: 12 tests across two contracts (combined fleet + per-receiver/K5 behavioral) ---
+contracts/test/deployer/ZipcodeDeployIdentityGate.t.sol
+
+# --- the deploy-script PROCESS test: the gate is called before renounce (the one residual; this is its echo) ---
+contracts/test/deployer/DeployZipcode.t.sol

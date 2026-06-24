@@ -11,8 +11,11 @@
 First per-contract X-Ray in `contracts/src/venue/` (this dir's x-ray scope). Subject: `EulerVenueAdapter.sol`, the
 substantive contract; its two siblings — `IZipcodeVenue.sol` (the venue-neutral seam, 24 nSLOC interface) and
 `LineAccount.sol` (8 nSLOC, ctor-only per-line EVC borrower-of-record) — are summarized at the end. Exercised by
-`EulerVenueAdapter.t.sol` — a **~52-test Base-fork suite** (real EVK `GenericFactory`, EVC, `EulerEarn`,
-`EulerRouter`) plus a `MisWiringAdapter` harness subclass to reach the defensive `_assertWired` branch; the
+`EulerVenueAdapter.t.sol` — a **~52-test Base-fork suite** (real EVK `GenericFactory`, EVC, `EulerRouter`; a
+faithful recording `EulerEarn` mock, since EE pins solc 0.8.26 and cannot be deployed under 0.8.24 — the mock
+mirrors every seam the adapter crosses: the 30-market cap, the queue removal guards, the full-redeem donation
+sweep, the zero-sum reallocate check) plus a `MisWiringAdapter` harness subclass to reach the defensive
+`_assertWired` branch; the
 farm-utility fund/defund cluster is covered cross-suite in `FarmUtilityLoopModule.t.sol`.
 
 > This is the **most complex contract in the sweep**: a per-line isolated-market **factory**. One `openLine` call
@@ -141,7 +144,7 @@ deploy invariant, the pre-prod immutable re-freeze).
 
 **HARDENED** *(modulo external-infra trust, the two-key deploy invariant, the pre-prod re-freeze, and no external
 audit)* — the most complex contract in the sweep, a per-line isolated-market factory, with its hard surfaces all
-fork-proven against the real EVK/EVC/EulerEarn stack: the atomic cluster mint, per-line isolation + foreign-account
+fork-proven against the real EVK/EVC/router stack (with a faithful `EulerEarn` mock): the atomic cluster mint, per-line isolation + foreign-account
 hook rejection, the F2 draw pin, the F3 submitCap bound, the SEC-11 donation-immune reallocate sizing, the router
 freeze, and — densest of all — the SEC-06/CTR-04 dual queue-slot reclaim that keeps origination from bricking at the
 30-market ceiling. The farm-utility two-key JIT path is covered cross-suite. The I-16 gap is **closed** — all 11

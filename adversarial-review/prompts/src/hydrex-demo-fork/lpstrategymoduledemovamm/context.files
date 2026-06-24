@@ -1,0 +1,16 @@
+# Inline context for LpStrategyModuleDemoVAMM missions (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves.
+# Format: path  OR  path:start-end. '#' = comment.
+
+# --- contract under review ---
+contracts/src/hydrex-demo-fork/LpStrategyModuleDemoVAMM.sol
+
+# --- THE DIFF BASELINE: the audited prod parent (byte-identical except the LP-mint seam) ---
+contracts/src/supply/szipUSD/LpStrategyModule.sol
+
+# --- the swapped seam's interface (Solidly pair = its own LP token; mint donates excess) + gauge ---
+contracts/src/interfaces/hydrex/IVammPair.sol
+contracts/src/interfaces/hydrex/IGauge.sol
+
+# --- tests (ported prod suite + MockVammPair; what's proven + what the mock assumes) ---
+contracts/test/hydrex-demo-fork/LpStrategyModuleDemoVAMM.t.sol

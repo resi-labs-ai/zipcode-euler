@@ -1,0 +1,15 @@
+# Inline context for the ZipRedemptionQueue review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the unit under review (the senior par-burn sink) ---
+contracts/src/supply/ZipRedemptionQueue.sol
+
+# --- the inverse primitive (the deposit/mint zap; same scaleUp-from-decimals property class) ---
+contracts/src/supply/ZipDepositModule.sol
+
+# --- the bases it drives (TRUSTED — attack the USE: burns exactly filled, no over-burn, no EE coupling) ---
+reference/euler-vault-kit/src/Synths/ESynth.sol
+contracts/src/interfaces/euler/IZipUSD.sol
+
+# --- tests (46: 40 unit + 4 stateful solvency invariants + 2 real-ESynth Base-fork) ---
+contracts/test/supply/ZipRedemptionQueue.t.sol

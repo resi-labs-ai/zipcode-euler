@@ -1,0 +1,17 @@
+# Inline context for the LienCollateralToken review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (a vanilla OZ ERC20 with 3 additions: 1e18-once mint, decimals()==18, controller-only burn) ---
+contracts/src/LienCollateralToken.sol
+
+# --- the audited base: OpenZeppelin ERC20, UNMODIFIED, out of scope to re-audit (the transfer/approve/allowance/totalSupply surface) ---
+# @openzeppelin/contracts/token/ERC20/ERC20.sol
+
+# --- the X-Ray (ground truth: I-1..I-8, the guard table, verdict HARDENED) ---
+contracts/src/x-ray/LienCollateralToken.md
+
+# --- tests (8 dedicated; shape/decimals/ctor-zero + burn happy/non-controller/zero/over-balance + transferable; shared with the factory sibling) ---
+contracts/test/LienToken.t.sol
+
+# --- the load-bearing consumer (I-8 cross-contract): openLine requires collateralAmount == 1e18 (:316), closeLine reclaims exactly 1e18 (:534-540) before burn ---
+contracts/src/venue/EulerVenueAdapter.sol

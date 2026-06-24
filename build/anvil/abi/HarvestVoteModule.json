@@ -34,7 +34,7 @@
   },
   {
     "type": "function",
-    "name": "engineSafe",
+    "name": "gauge",
     "inputs": [],
     "outputs": [
       {
@@ -47,7 +47,7 @@
   },
   {
     "type": "function",
-    "name": "gauge",
+    "name": "juniorTrancheEngine",
     "inputs": [],
     "outputs": [
       {
@@ -177,10 +177,10 @@
   },
   {
     "type": "function",
-    "name": "setEngineSafe",
+    "name": "setGauge",
     "inputs": [
       {
-        "name": "engineSafe_",
+        "name": "gauge_",
         "type": "address",
         "internalType": "address"
       }
@@ -190,10 +190,10 @@
   },
   {
     "type": "function",
-    "name": "setGauge",
+    "name": "setJuniorTrancheEngine",
     "inputs": [
       {
-        "name": "gauge_",
+        "name": "juniorTrancheEngine_",
         "type": "address",
         "internalType": "address"
       }

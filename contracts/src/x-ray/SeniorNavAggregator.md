@@ -5,14 +5,14 @@
 Per-contract X-Ray for `contracts/src/SeniorNavAggregator.sol` (CTR-05), the **donation-immune Σ of senior
 par-backing** across every registered silo — solvency *telemetry* (Σ backing vs zipUSD supply) and the input to any
 circuit-breaker, **not a pricing oracle** (zipUSD still mints by value and redeems at par). Pure view + Timelock
-wiring; holds no funds, transfers nothing. Exercised by `SeniorNavAggregator.t.sol` — **20 unit tests** (mock
+wiring; holds no funds, transfers nothing. Exercised by `SeniorNavAggregator.t.sol` — **19 unit tests** (mock
 `ISeniorPool` + `SiloRegistry`).
 
 > The whole contract exists to make one number un-manipulable by outsiders: senior backing summed across N pools.
 > The trick is the **§8.2 donation-immune read** — per silo, `convertToAssets(balanceOf(warehouseSafe))`, NEVER
 > `balanceOf(eePool)`. A stray-USDC donation to a pool address moves neither `convertToAssets` nor `maxWithdraw`, so
 > nobody can inflate (or deflate) the aggregate by sending tokens. The guards are lifted VERBATIM from
-> `DurationFreezeModule:295-302`, so the aggregate agrees with the freeze module's per-silo math by construction.
+> `DurationFreezeModule:302-309`, so the aggregate agrees with the freeze module's per-silo math by construction.
 
 ## 1. What it is
 
@@ -99,7 +99,7 @@ Every read path, every guard, every edge branch, and both setters are exercised 
 | Per-silo getters / RegistryUnset / CTR-10b | 3 | `test_perSilo_unknown_zero`, `_registryUnset_reverts`, `_ctr10b_nonEuler_venue_plugs_in` |
 | Wiring setters + ctor flexibility | 7 | `test_setRegistry_*` (3), `test_setZipUsd_*` (3), `_ctor_acceptsZeroForBoth` |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); 20 unit tests green. Every read, guard, edge branch, and
+Coverage % uninstrumentable (project-wide `Stack too deep`); 19 unit tests green. Every read, guard, edge branch, and
 setter is exercised; the donation-immune property — the reason the contract exists — is directly proven. No coverage
 gap.
 
@@ -115,7 +115,7 @@ audit.
 
 **Structural facts:**
 1. 85 nSLOC; `Ownable` (Timelock) pure-view aggregator over `SiloRegistry`; holds no funds, transfers nothing, writes only `registry`/`zipUsd`.
-2. Donation-immune per-silo read (`convertToAssets(balanceOf(warehouseSafe))`, never `balanceOf(eePool)`) — verbatim from `DurationFreezeModule:295-302`.
+2. Donation-immune per-silo read (`convertToAssets(balanceOf(warehouseSafe))`, never `balanceOf(eePool)`) — verbatim from `DurationFreezeModule:302-309`.
 3. Telemetry, not pricing: `collateralization(0) → type(uint256).max` so a breaker can't false-trip with no zipUSD outstanding; retired silos counted in backing, filtered only from the active view.
 4. CTR-10b venue-agnostic via `ISeniorPool` — a non-Euler senior surface plugs in.
-5. Tests: 20 unit covering every read/guard/edge/setter + the donation-immunity proof + the non-Euler plug-in. No gap; capped only by the pre-prod re-freeze + no audit.
+5. Tests: 19 unit covering every read/guard/edge/setter + the donation-immunity proof + the non-Euler plug-in. No gap; capped only by the pre-prod re-freeze + no audit.

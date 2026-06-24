@@ -161,6 +161,12 @@ contract SiloRegistry is Ownable {
     ///      ANY zero address in `cfg`, or `SiloMiswired` on a failed topology assert (Key req 2). On success writes a
     ///      `Silo` with `cfg`'s addresses + `lineCount = 0` + `active = true`, appends to `siloIds`, and — if no
     ///      current silo is set — adopts this one as `currentSilo`.
+    /// @dev Uniqueness is per-`siloId`: `DuplicateSilo` keys on `silos[siloId].adapter`, NOT on the component set, so
+    ///      the same physical pool/components MAY be admitted under two distinct `siloId`s (each carrying its own
+    ///      registry-managed `lineCount`). The `MAX_LINES_PER_SILO` cap is therefore per-`siloId`, not per-physical-pool.
+    ///      Mapping one physical pool to exactly one `siloId` is a controller-wiring responsibility (the controller
+    ///      routes each origination's `incrementLineCount` by the CRE-supplied `siloId`); per-physical-pool uniqueness
+    ///      is an intentional non-goal (a curator re-pointing a venue is a separate `addSilo`).
     function addSilo(bytes32 siloId, SiloConfig calldata cfg) external onlyOwner {
         if (siloId == bytes32(0)) revert ZeroSiloId();
         if (silos[siloId].adapter != address(0)) revert DuplicateSilo(siloId);
@@ -217,6 +223,11 @@ contract SiloRegistry is Ownable {
     }
 
     /// @notice Flip a silo's `active` flag. onlyOwner.
+    /// @dev Unlike `retireSilo`, `setActive(siloId, false)` does NOT clear `currentSilo` if `siloId` was the current
+    ///      target — it can leave `currentSilo` pointing at a now-inactive silo. This is intentional and benign:
+    ///      `currentSilo` has NO on-chain consumer (it is an advisory off-chain rollover hint), and origination routes
+    ///      off the CRE-supplied `siloId` via `venueOf` (which ignores `active`), never off `currentSilo`. Use
+    ///      `retireSilo` (or follow with an explicit `setCurrentSilo`) when the sentinel must be cleared.
     function setActive(bytes32 siloId, bool active_) external onlyOwner {
         if (silos[siloId].adapter == address(0)) revert UnknownSilo(siloId);
         silos[siloId].active = active_;

@@ -1,0 +1,19 @@
+# Inline context for the WarehouseAdminModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol
+
+# --- the interfaces it forwards through / encodes for ---
+contracts/src/interfaces/zodiac/IRoles.sol
+contracts/src/interfaces/euler/IEulerEarn.sol
+
+# --- the base: the Forwarder + workflow-identity gate fronting _processReport ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- precedent: the REAL Zodiac Roles-modifier-v2 (the scope engine = the actual security boundary, X-1) ---
+reference/zodiac-modifier-roles/packages/evm/contracts/Roles.sol
+reference/zodiac-modifier-roles/packages/evm/contracts/PermissionBuilder.sol
+
+# --- tests (28 fork-integration units vs the real deployed modifier; the scope-rejection matrix) ---
+contracts/test/supply/CreditWarehouse/WarehouseAdminModule.t.sol

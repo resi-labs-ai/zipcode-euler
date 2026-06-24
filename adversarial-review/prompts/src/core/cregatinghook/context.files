@@ -1,0 +1,17 @@
+# Inline context for the CREGatingHook review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/CREGatingHook.sol
+
+# --- the inline-replicated base: isProxy-guarded isHookTarget() + _msgSender() calldata extraction (the differential) ---
+reference/evk-periphery/src/HookTarget/BaseHookTarget.sol
+
+# --- the hook interface: the magic value (0x87439e04 = isHookTarget() selector) ---
+reference/euler-vault-kit/src/interfaces/IHookTarget.sol
+
+# --- the X-Ray (ground truth: I-1..I-6, the guard table) ---
+contracts/src/x-ray/CREGatingHook.md
+
+# --- tests (13 unit: gate matrix + isProxy spoof guard both ways + isHookTarget magic + selector KAT + admin sweep) ---
+contracts/test/CREGatingHook.t.sol

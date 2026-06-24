@@ -1,0 +1,29 @@
+# Inline context for the EulerVenueAdapter review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (354 nSLOC; the per-line isolated-market factory) ---
+contracts/src/venue/EulerVenueAdapter.sol
+
+# --- its two siblings (the seam it implements + the borrower-of-record it mints) ---
+contracts/src/venue/IZipcodeVenue.sol
+contracts/src/venue/LineAccount.sol
+
+# --- the verified precedent: openLine is modeled inline on EdgeFactory.deploy() (diff step-for-step) ---
+reference/evk-periphery/src/EdgeFactory/EdgeFactory.sol
+
+# --- the externals openLine drives (trusted base; the seams where the factory crosses them) ---
+# EVC: setAccountOperator (the LineAccount grant), batch (draw), call (close redeem)
+reference/ethereum-vault-connector/src/EthereumVaultConnector.sol
+# EulerEarn: submitCap/acceptCap/setSupplyQueue/updateWithdrawQueue/reallocate/config/timelock (onboarding + queue + sizing)
+reference/euler-earn/src/EulerEarn.sol
+reference/euler-earn/src/interfaces/IEulerEarn.sol
+# the per-line borrow gating hook (per-line isolation; foreign-account rejection)
+contracts/src/CREGatingHook.sol
+
+# --- the X-Ray (ground truth: I-1..I-17, the guard table, F2/F3/W3/SEC-06/07/08/11, CTR-04/07/09/13) ---
+contracts/src/venue/x-ray/EulerVenueAdapter.md
+
+# --- tests (~53 Base-fork: cluster mint, isolation, F2/F3, donation immunity, dual queue reclaim, IRM/curator, AmountCap, setters) ---
+contracts/test/venue/EulerVenueAdapter.t.sol
+# --- the farm-utility fund/defund + two-key gate are covered cross-suite here ---
+contracts/test/supply/szipUSD/FarmUtilityLoopModule.t.sol

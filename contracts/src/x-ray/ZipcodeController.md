@@ -21,6 +21,16 @@ on-chain borrower of record but touches **no EVC** — every venue effect goes t
 > silo can't strand a line; (3) **report-type allow-list** — anything unknown (incl. reportType 3, which goes direct
 > to the registry) reverts. All three are densely fork-tested.
 
+> **Clarifications (2026-06-24 adversarial review, Claude-only baseline — no break found, INFO-only).** Three
+> intentional structural facts the panel surfaced, recorded so the posture reads as deliberate, not accidental:
+> (a) `_close` flips `r.open=false` *after* `closeLine`/`burn`, so it is NOT strict last-write like `_origination`
+> — its reentrancy safety rests on the burn-insufficient-balance backstop + the trusted no-callback venue, not on
+> statement ordering (see I-8 in §5); (b) the RT-5/6 marker emits `LienStatusUpdated` with no `liens[lienId]`
+> existence check, so off-chain indexers must not read the event as proof a lien exists/is-open (deliberate M1
+> posture; DefaultCoordinator is M2 — see I-4 in §5); (c) `venueOf` is active-agnostic in BOTH directions — a
+> retired silo's lines still close AND an origination naming a retired silo still routes + increments (the
+> controller reads neither `active` nor `currentSilo`), by design (see I-5 in §5).
+
 ## 1. What it is
 
 A 174-nSLOC `ReceiverTemplate` (CRE receiver; owner = Timelock). Five Timelock-settable wiring slots
@@ -30,7 +40,7 @@ A 174-nSLOC `ReceiverTemplate` (CRE receiver; owner = Timelock). Five Timelock-s
 - **`_origination`** (RT=1) — the atomic 9-step batch: resolve venue from `siloId` → dup-guard → precompute+create the lien (assert match) → approve exactly `1e18` → `openLine` → `seedPrice` → `setLineLimits` → `fund` → `draw` (to `erebor`) → store record (last write) → `incrementLineCount` (final).
 - **`_draw`** (RT=2) — re-resolve the SAME venue from the stored `siloId` → re-anchor `seedPrice` → `fund` → `draw`.
 - **`_close`** (RT=4) — re-resolve venue → `observeDebt==0` guard → `closeLine` (reclaims the lien) → `burn(1e18)` → flip `open=false` → `decrementLineCount`.
-- **RT=5/6 (default/liquidation)** — M1 status-marker only (emit `LienStatusUpdated`); **RT=3 and any other** → `UnsupportedReportType`.
+- **RT=5/6 (default/liquidation)** — M1 status-marker only (emit `LienStatusUpdated`, with no lien-existence check — see §5); **RT=3 and any other** → `UnsupportedReportType`.
 
 No EVC, no custody beyond the transient lien approve. Wiring is build-phase re-pointable; `registry` starts zero and
 fails closed (`RegistryUnset`) rather than falling back to the `venue` slot.
@@ -88,13 +98,26 @@ Every guard, branch, setter, and ctor zero-guard is now exercised — no unteste
 - **Fail-closed routing is the multi-silo safety net (I-5).** Draws/closes re-resolve the venue from the line's
   *stored* `siloId`, never a mutable global pointer, so a re-pointed or retired silo cannot strand an open line in
   the wrong venue — and a line can always close even after its silo is retired (`venueOf` ignores `active`). The
-  unwired-registry path fails closed (`RegistryUnset`) rather than silently falling back to the `venue` slot.
+  unwired-registry path fails closed (`RegistryUnset`) rather than silently falling back to the `venue` slot. The
+  silo→adapter map is itself write-once (no `setAdapter` on `SiloRegistry`), so the misroute-by-re-point vector is
+  structurally closed, not merely tested. Note `venueOf` is active-agnostic in BOTH directions: the same property
+  that lets a retired silo's lines close also means an origination naming a retired silo still routes + increments
+  (the controller reads neither `active` nor `currentSilo`) — intentional, since gating `incrementLineCount` on
+  `active` would break the retire-then-close invariant; the CRE-supplied `siloId` is the trusted routing key.
 - **Report-type allow-list (I-4).** Everything that isn't origination/draw/close/default/liquidation reverts —
   notably reportType 3 (revaluation), which is delivered direct to the registry and must NOT be processed here.
-  Tested across 0/3/7/255 + a truncated payload.
-- **Reentrancy is structurally impossible (I-8).** The `liens` write is the last state mutation before the trusted,
-  no-callback registry increment; a `ReentrantVenue` harness confirms a malicious venue cannot re-enter to corrupt
-  state. (The venue is trusted infra; this is defense-in-depth.)
+  Tested across 0/3/7/255 + a truncated payload. The RT-5/6 marker branch emits `LienStatusUpdated` with NO
+  `liens[lienId]` existence check (and an unvalidated `status`) — it makes no venue/registry/record call, so an
+  emit for an unknown/closed lienId has no on-chain effect; off-chain indexers must not treat the event as proof a
+  lien exists/is-open. Deliberate M1 posture (DefaultCoordinator markdown is M2).
+- **Reentrancy is structurally impossible (I-8).** In `_origination` the `liens` write is the last state mutation
+  before the trusted, no-callback registry increment; a `ReentrantVenue` harness confirms a malicious venue cannot
+  re-enter to corrupt state. (The venue is trusted infra; this is defense-in-depth.) Note `_close` is NOT strict
+  last-write — it flips `r.open=false` *after* `closeLine`/`burn` (so a hypothetical re-entrant `_close` would pass
+  the `!r.open` gate), but the outer `burn(1e18)` then reverts `ERC20InsufficientBalance` (the inner burn already
+  zeroed the supply) → whole-tx revert. Its safety rests on the burn-balance backstop + the trusted no-callback
+  venue, not on statement ordering; a CEI-symmetric reorder (flip `open` before `closeLine`) would harden it
+  cosmetically.
 - **Build-phase wiring setters + ctor guards (I-11) — CLOSED.** The contract has the most central wiring in the
   system (the venue, the factory, the oracle, the off-ramp, the silo registry); all five setters are now swept —
   `test_I11_WiringSetters_RejectNonOwner` (a non-owner reverts `OwnableUnauthorizedAccount` on all 5),

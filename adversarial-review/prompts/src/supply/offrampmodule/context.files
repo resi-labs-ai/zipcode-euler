@@ -1,0 +1,20 @@
+# Inline context for the OffRampModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (the IZipRedemptionQueue interface it drives is declared inline) ---
+contracts/src/supply/szipUSD/OffRampModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the zodiac-core Module base: execAndReturnData, setAvatar/setTarget (onlyOwner), the initializer one-shot ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the driven queue: par/epoch/pro-rata + scaleUp() + the requestRedeem/withdraw positional args (C4) ---
+contracts/src/supply/ZipRedemptionQueue.sol
+
+# --- the X-Ray (ground truth: I-1..I-5, X-1, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/OffRampModule.md
+
+# --- tests (18 unit + 1 base-fork = 19; full real-queue cycle proving C4 + par NAV-neutrality, live-scaleUp guard) ---
+contracts/test/supply/szipUSD/OffRampModule.t.sol

@@ -1,0 +1,21 @@
+# Inline context for the LienTokenFactory review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (a 20-nSLOC stateless CREATE2 minter; salt = keccak256(lienId), init-code embeds msg.sender) ---
+contracts/src/LienTokenFactory.sol
+
+# --- the token it deploys: fixed-supply 1e18-to-the-caller, immutable controller, decimals pinned 18, NO selfdestruct ---
+contracts/src/LienCollateralToken.sol
+
+# --- the audited base (OZ Create2: deploy reverts Errors.FailedDeployment on a collision; computeAddress). OUT OF SCOPE to re-audit ---
+# (`@openzeppelin/contracts/utils/Create2.sol` resolves here per contracts/remappings.txt)
+reference/euler-vault-kit/lib/openzeppelin-contracts/contracts/utils/Create2.sol
+
+# --- the X-Ray (ground truth: I-1..I-7, the guard table; rated HARDENED) ---
+contracts/src/x-ray/LienTokenFactory.md
+
+# --- tests (7 dedicated, shared with the token: precompute/keying/squat-proof/dedup/burn-then-recreate/event/decimals) ---
+contracts/test/LienToken.t.sol
+
+# --- the real consumer: ZipcodeController._origination computeAddress(:232) then create(:233), asserts they match (PrecomputeMismatch :234) ---
+contracts/src/ZipcodeController.sol

@@ -34,18 +34,18 @@ the correct senior-solvency signal (senior stays par; junior eats first loss).
 | `ISeniorPool` (`contracts/src/interfaces/supply/ISeniorPool.sol`, reused) | The 3 donation-immune views per silo: `balanceOf`/`convertToAssets`/`maxWithdraw`. Venue-neutral seam (CTR-10a) — the generalization of the removed `IEulerEarnUtil`; EulerEarn satisfies it directly. |
 | `IERC20` (`forge-std/interfaces/IERC20.sol`) | `zipUsd.totalSupply()` for `systemCollateralization` (the `ZipcodeOracleRegistry.sol:7` idiom). |
 
-## The per-silo senior read (donation-immune, §8.2) — replicated VERBATIM from DurationFreezeModule:295-302
+## The per-silo senior read (donation-immune, §8.2) — replicated VERBATIM from DurationFreezeModule:302-309
 Per silo, keyed on `(eePool, warehouseSafe)`, NEVER `balanceOf(eePool)`:
 ```
 sa   = ISeniorPool(eePool).convertToAssets(ISeniorPool(eePool).balanceOf(warehouseSafe))   // USDC 6-dp
 seniorValue   = (sa == 0) ? 0 : sa * 1e12                          // 6→18dp; a drained silo → 0
 free = ISeniorPool(eePool).maxWithdraw(warehouseSafe)              // only read when sa != 0
-illiquidValue = (sa == 0 || free >= sa) ? 0 : (sa - free) * 1e12   // matches DurationFreezeModule:295-302
+illiquidValue = (sa == 0 || free >= sa) ? 0 : (sa - free) * 1e12   // matches DurationFreezeModule:302-309
 ```
 Donation-immune because real EulerEarn's `convertToAssets` reads `totalAssets() = Σ expectedSupplyAssets(strategy)`
 (the controller-gated borrow side) and `balanceOf(warehouseSafe)` is the warehouse's shares — a stray-USDC donation
 to the pool address moves neither term (§8.2 CRITICAL; `ISeniorPool.sol` NatSpec). `*1e12` is the 6→18dp scale
-from `DurationFreezeModule.sol:301`.
+from `DurationFreezeModule.sol:308`.
 
 ## Functions (the surface)
 - **`seniorBacking() → uint256`** (18-dp USD) — Σ `seniorValue` over **ALL** silos in `allSiloIds()` (the senior

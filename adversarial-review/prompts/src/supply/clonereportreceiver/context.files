@@ -1,0 +1,23 @@
+# Inline context for the CloneReportReceiver review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (an abstract reusable base) ---
+contracts/src/supply/szipUSD/CloneReportReceiver.sol
+
+# --- the precedent it DELIBERATELY diverges from: ReceiverTemplate (zero ⇒ open; this base inverts to fail-closed) ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- the interface it implements/advertises ---
+reference/x402-cre-price-alerts/contracts/interfaces/IReceiver.sol
+
+# --- the shared owner base (zodiac-core Ownable — the SAME one Module derives from; one owner via MRO) ---
+reference/zodiac-core/contracts/factory/Ownable.sol
+
+# --- the only current consumer (the socket in use; the CTR-01 block exercises this base) ---
+contracts/src/supply/szipUSD/SzipBuyBurnModule.sol
+
+# --- the X-Ray (ground truth: I-1..I-5, X-1, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/CloneReportReceiver.md
+
+# --- tests (no dedicated file; 8 via SzipBuyBurnModule.t.sol CTR-01: fail-closed gate, identity, equivalence, ERC165) ---
+contracts/test/supply/szipUSD/SzipBuyBurnModule.t.sol

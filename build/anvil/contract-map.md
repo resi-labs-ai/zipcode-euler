@@ -79,6 +79,7 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 |---|---|
 | Warehouse Safe (EE-share + USDC custodian; EE feeRecipient) | `0x7975E1eFB09690E42C5B574B1768cdFA11e8693c` |
 | WarehouseAdminModule (CRE adapter — SUPPLY/APPROVE/REPAY/REDEEM) | `0x28b0109B3ac79fA14F2E1914D44872BD6b32B97f` |
+| Roles modifier (Zodiac Roles-v2 proxy; `avatar==target==`Warehouse Safe, owner=`godOwner`; the WarehouseAdminModule is its sole role member — this scope config is the real param-pinning, per SEAM-MAP S11) | `0x2f1f2e5cCB88E0B543A5d3B6c8e0095c754FE984` |
 
 ## Senior pool — REAL EulerEarn (8-Bw)
 | Piece | Address | Config |

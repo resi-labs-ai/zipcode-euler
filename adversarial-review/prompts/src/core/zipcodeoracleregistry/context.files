@@ -1,0 +1,23 @@
+# Inline context for the ZipcodeOracleRegistry review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (multi-asset Proof-of-Value push-cache price adapter) ---
+contracts/src/ZipcodeOracleRegistry.sol
+
+# --- the CRE receiver base: forwarder-only onReport gate + identity (workflowId/author/name) + renounce-frozen setters ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- the EVK read-adapter base (IPriceOracle getQuote/getQuotes face + _getDecimals silent-18 convention) ---
+reference/euler-price-oracle/src/adapter/BaseAdapter.sol
+
+# --- the scale math: calcScale(baseDecimals, quoteDecimals, feedDecimals) + calcOutAmount(.., false) round-DOWN ---
+reference/euler-price-oracle/src/lib/ScaleUtils.sol
+
+# --- the cross-contract decimals pin (LIEN_DECIMALS = 18; the shared scale derives with baseDecimals=18) ---
+contracts/src/LienTokenFactory.sol
+
+# --- the X-Ray (ground truth: I-1..I-11, the guard table, the attack-surface list) ---
+contracts/src/x-ray/ZipcodeOracleRegistry.md
+
+# --- tests (40: scale/value, both write paths, full write/read guard matrix, SEC-01 x4, identity/renounce, all three setters) ---
+contracts/test/ZipcodeOracleRegistry.t.sol

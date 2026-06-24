@@ -1,5 +1,8 @@
 # Bridge group — adversarial review prompts
 
+> **Running a cycle?** Read `adversarial-review/CONDUCTOR.md` first — it's the step-by-step operating
+> procedure (spawn missions, verify-before-promote, reconcile, ticket). This file is just the map.
+
 Mirrors `contracts/src/bridge/`. One folder per contract; each folder holds `_boot.md` (shared context
 fed to every sub-agent for that contract) + numbered mission files (`1.md`, `2.md`, …). Mission count
 follows the contract's authored attack surface, per its X-Ray — not a fixed number.

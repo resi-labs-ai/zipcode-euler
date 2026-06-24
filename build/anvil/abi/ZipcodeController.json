@@ -125,6 +125,11 @@
             "name": "open",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "siloId",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -169,6 +174,11 @@
         "name": "open",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "siloId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -207,6 +217,19 @@
   {
     "type": "function",
     "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registry",
     "inputs": [],
     "outputs": [
       {
@@ -308,6 +331,19 @@
     "inputs": [
       {
         "name": "oracleRegistry_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRegistry",
+    "inputs": [
+      {
+        "name": "registry_",
         "type": "address",
         "internalType": "address"
       }
@@ -513,6 +549,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "siloId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -711,6 +753,22 @@
     "type": "error",
     "name": "PrecomputeMismatch",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RegistryUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SiloUnrouted",
+    "inputs": [
+      {
+        "name": "siloId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",

@@ -1,0 +1,27 @@
+# Inline context for the ZipcodeController review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (the portable core's orchestrator, §4.4) ---
+contracts/src/ZipcodeController.sol
+
+# --- the CRE-receiver base: onReport Forwarder gate + workflow-identity gate + the abstract _processReport ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- the venue-neutral seam: openLine/setLineLimits/fund/draw/observeDebt/closeLine (NO Euler types cross) ---
+contracts/src/venue/IZipcodeVenue.sol
+
+# --- the lien factory (CREATE2 create/computeAddress, caller-bound) + the 1/1 lien token (1e18, controller-only burn) ---
+contracts/src/LienTokenFactory.sol
+contracts/src/LienCollateralToken.sol
+
+# --- the oracle it seeds (controller-gated seedPrice; fail-closed _writePrice: price/ts/decimals guards) ---
+contracts/src/ZipcodeOracleRegistry.sol
+
+# --- the silo registry it routes through (venueOf ignores active; increment/decrement, SiloFull/NoLinesToDecrement) ---
+contracts/src/SiloRegistry.sol
+
+# --- the X-Ray (ground truth: I-1..I-11, the guard table, the attack surfaces) ---
+contracts/src/x-ray/ZipcodeController.md
+
+# --- tests (~43 Base-fork against the real EVK/EVC/EulerEarn stack via EulerVenueAdapter; RecordingVenue/ReentrantVenue/MockSiloRegistry harnesses) ---
+contracts/test/ZipcodeController.t.sol

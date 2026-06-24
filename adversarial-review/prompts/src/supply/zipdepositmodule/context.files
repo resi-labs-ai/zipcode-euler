@@ -1,0 +1,20 @@
+# Inline context for the ZipDepositModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the unit under review (the zap: supply-side mint+deposit router) ---
+contracts/src/supply/ZipDepositModule.sol
+
+# --- the inverse primitive (senior par-burn exit; same scaleUp-from-decimals property class) ---
+contracts/src/supply/ZipRedemptionQueue.sol
+
+# --- the bases it drives (TRUSTED — attack the module's USE: allowance fence, share-receiver, deltas) ---
+reference/euler-vault-kit/src/Synths/ESynth.sol
+contracts/src/interfaces/euler/IEulerEarn.sol
+contracts/src/interfaces/euler/IZipUSD.sol
+contracts/src/supply/szipUSD/ExitGate.sol
+
+# --- the NAV oracle the on-behalf szipUSD mint prices against (read-only here) ---
+contracts/src/supply/SzipNavOracle.sol
+
+# --- tests (29 mock-gate incl. 3 fuzz + scaleUp-derivation + 3 real-gate Base-fork) ---
+contracts/test/supply/ZipDepositModule.t.sol

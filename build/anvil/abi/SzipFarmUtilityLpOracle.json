@@ -584,6 +584,17 @@
   },
   {
     "type": "error",
+    "name": "InvalidLpDecimals",
+    "inputs": [
+      {
+        "name": "lpToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidReportType",
     "inputs": [
       {

@@ -37,6 +37,11 @@ reports/src/<group>/<contract>/
 ```
 
 ## Run one contract
+
+**Conducting a cycle? Read `CONDUCTOR.md` first** — the full step-by-step (spawn the Claude missions via
+Agent, verify-before-promote, reconcile, write synthesis + tickets). The command below only runs the
+*scripted* legs; the Claude legs + reconciliation are the conductor's job.
+
 ```bash
 cd ~/zipcode-euler/adversarial-review
 source panel.env            # exports API keys (e.g. SAKANA_API_KEY) into the environment

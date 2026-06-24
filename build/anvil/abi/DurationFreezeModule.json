@@ -45,6 +45,32 @@
   },
   {
     "type": "function",
+    "name": "coverageValue",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "covered",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "eulerEarn",
     "inputs": [],
     "outputs": [
@@ -97,13 +123,58 @@
   },
   {
     "type": "function",
-    "name": "mainSafe",
+    "name": "illiquidSeniorValue",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheSafe",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheSidecar",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lpBurnKeepsCovered",
+    "inputs": [
+      {
+        "name": "lpShares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -156,6 +227,19 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pathLockedLpEquity",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -245,10 +329,23 @@
   },
   {
     "type": "function",
-    "name": "setMainSafe",
+    "name": "setJuniorTrancheSafe",
     "inputs": [
       {
-        "name": "mainSafe_",
+        "name": "juniorTrancheSafe_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setJuniorTrancheSidecar",
+    "inputs": [
+      {
+        "name": "juniorTrancheSidecar_",
         "type": "address",
         "internalType": "address"
       }
@@ -297,19 +394,6 @@
   },
   {
     "type": "function",
-    "name": "setSidecar",
-    "inputs": [
-      {
-        "name": "sidecar_",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setTarget",
     "inputs": [
       {
@@ -349,10 +433,10 @@
   },
   {
     "type": "function",
-    "name": "setWarehouse",
+    "name": "setWarehouseSafe",
     "inputs": [
       {
-        "name": "warehouse_",
+        "name": "warehouseSafe_",
         "type": "address",
         "internalType": "address"
       }
@@ -385,19 +469,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "sidecar",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -453,7 +524,7 @@
   },
   {
     "type": "function",
-    "name": "warehouse",
+    "name": "warehouseSafe",
     "inputs": [],
     "outputs": [
       {

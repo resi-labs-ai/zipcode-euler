@@ -1,0 +1,28 @@
+# Inline context for the SiloRegistry review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/SiloRegistry.sol
+
+# --- the audited base it extends: OZ Ownable v5 (Timelock owner; onlyOwner gate, OwnableUnauthorizedAccount) ---
+# (`@openzeppelin/contracts/access/Ownable.sol` resolves here per contracts/remappings.txt)
+reference/euler-vault-kit/lib/openzeppelin-contracts/contracts/access/Ownable.sol
+
+# --- the 4 topology-getter sources the admission assert dereferences (the 6-clause web :177-183) ---
+# freeze: eulerEarn()/warehouseSafe()/navOracle() (DurationFreezeModule.sol:57,59,54)
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+# escrow: coordinator() (LienXAlphaEscrow.sol:61)
+contracts/src/loss/LienXAlphaEscrow.sol
+# coordinator: navOracle() (DefaultCoordinator.sol:90)
+contracts/src/loss/DefaultCoordinator.sol
+# adapter: seniorPool() (EulerVenueAdapter.sol:522) — the venue-neutral ISeniorVenue surface (CTR-10b)
+contracts/src/venue/EulerVenueAdapter.sol
+
+# --- the slot-accounting consumer: incrementLineCount as the LAST write after openLine (:260), decrementLineCount on close (:308) ---
+contracts/src/ZipcodeController.sol
+
+# --- the X-Ray (ground truth: I-1..I-13, the guard table) ---
+contracts/src/x-ray/SiloRegistry.md
+
+# --- tests (30 unit, mock topology components: all 6 topology clauses + guards + slot accounting + lifecycle + owner gates + UnknownSilo on all 5 by-id fns) ---
+contracts/test/SiloRegistry.t.sol

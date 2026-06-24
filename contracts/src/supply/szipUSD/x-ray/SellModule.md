@@ -55,6 +55,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 |---|---|
 | `setUp` zero-addr (×8) / owner==operator / zero `maxSellHydx` / initializer-once / mastercopy lock (SEC-14) | `test_setUp_rejects_zero_in_each_of_eight`, `_zero_swapRouter_is_ZeroAddress`, `_rejects_owner_equals_operator`, `_rejects_zero_maxSellHydx`, `_initializer_once`, `test_SEC14_mastercopy_setUp_reverts` |
 | `setOperator` owner-recheck (SEC-15) | `test_SEC15_setOperator_owner_recheck` |
+| SEC-15 caveat — `owner != operator` is enforced on `setUp` (`:110`) + `setOperator` (`:157`) but NOT on the inherited non-virtual `Ownable.transferOwnership` (`reference/zodiac-core/contracts/factory/Ownable.sol:19`) | (accepted residual — see note below) |
 | `NotOperator` on all 3 swap legs | `test_sellHydx_only_operator`, `test_buyXAlpha_only_operator`, `test_sellXAlpha_only_operator` |
 | `ZeroAmount` (amountIn / minOut, ×3 legs) | `test_*_guards_zero_amountIn_and_zero_minOut` |
 | `ExceedsMaxSell` + `setMaxSellHydx` (owner-only, zero-guard, resize) | `test_sellHydx_reverts_above_cap`, `test_setMaxSellHydx_owner_resizes`/`_only_owner`/`_rejects_zero` |
@@ -78,6 +79,14 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
   `setMaxSellHydx`, **every mutator on the contract is now exercised**.
 - **No fuzz/invariant — correctly omitted** — three deterministic 3-exec swaps; the live-Algebra fork tests are the
   higher-value check and they exist.
+- **SEC-15 covers `setOperator`, not `transferOwnership` (accepted residual)** — the "owner ≠ operator" invariant is
+  re-checked on `setUp` (`:110`) and `setOperator` (`:157`), but the inherited `Ownable.transferOwnership`
+  (`reference/zodiac-core/contracts/factory/Ownable.sol:19`) is **non-virtual** and carries no symmetric recheck, so a
+  Timelock `transferOwnership(currentOperator)` could collapse the two roles. The only on-chain fix is to mark the
+  vendored zodiac-core function `virtual` and override it — which the ratified posture at `SellModule.sol:203-206`
+  deliberately declines for the parallel `setAvatar`/`setTarget` setters ("reference deps stay pristine"). Same
+  accepted-residual class: `onlyOwner` (Timelock), unreachable by the CRE operator, no drain/redirect/escalation by any
+  non-owner — a governance footgun, not an exploit path. Surfaced by the 2026-06-23 adversarial review (mission 4).
 
 ## 6. Test analysis
 

@@ -1,0 +1,24 @@
+# Inline context for the HarvestVoteModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/supply/szipUSD/HarvestVoteModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the zodiac-core Module base: execAndReturnData (uses avatar/target), setAvatar/setTarget, the initializer ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the external Hydrex surface (account-keyed; the recipient pin is exerciseVe's arg 2) ---
+contracts/src/interfaces/hydrex/IGauge.sol
+contracts/src/interfaces/hydrex/IVoter.sol
+contracts/src/interfaces/hydrex/IVotingEscrow.sol
+contracts/src/interfaces/hydrex/IOptionToken.sol
+contracts/src/interfaces/hydrex/IRewardsDistributor.sol
+
+# --- the X-Ray (ground truth: I-1..I-7, X-1, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/HarvestVoteModule.md
+
+# --- tests (24 unit + 5 base-fork = 29; exec-shape pins, real Hydrex exerciseVe/vote/reset/rebase on a live fork) ---
+contracts/test/supply/szipUSD/HarvestVoteModule.t.sol

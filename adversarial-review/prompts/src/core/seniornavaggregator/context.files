@@ -1,0 +1,20 @@
+# Inline context for the SeniorNavAggregator review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/SeniorNavAggregator.sol
+
+# --- the catalog it loops: allSiloIds() / getSilo() + the Silo struct (eePool, warehouseSafe, active) ---
+contracts/src/SiloRegistry.sol
+
+# --- the venue-neutral senior surface it reads (CTR-10b): balanceOf / convertToAssets / maxWithdraw + the donation-immunity contract ---
+contracts/src/interfaces/supply/ISeniorPool.sol
+
+# --- the VERBATIM guard source: _seniorValue/_illiquidValue lifted from DurationFreezeModule:302-309 (guards :305-307) ---
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+
+# --- the X-Ray (ground truth: I-1..I-11, the guard table) ---
+contracts/src/x-ray/SeniorNavAggregator.md
+
+# --- tests (20 unit: donation-immunity proof, n=1/two-silo Σ, retired-vs-active, drained=0, illiquid formula, collateralization math + zero-supply→max, RegistryUnset/ZipUsdUnset, unknown-silo→0, CTR-10b non-Euler plug-in, setter auth + ctor zero) ---
+contracts/test/SeniorNavAggregator.t.sol

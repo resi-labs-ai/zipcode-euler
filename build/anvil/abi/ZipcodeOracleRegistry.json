@@ -785,6 +785,11 @@
   },
   {
     "type": "error",
+    "name": "StaleReport",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "WorkflowNameRequiresAuthorValidation",
     "inputs": []
   },

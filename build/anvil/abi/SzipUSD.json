@@ -361,6 +361,11 @@
   },
   {
     "type": "error",
+    "name": "AlreadyIssued",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ERC20InsufficientAllowance",
     "inputs": [
       {

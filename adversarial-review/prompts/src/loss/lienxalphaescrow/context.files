@@ -1,0 +1,14 @@
+# Inline context for the LienXAlphaEscrow review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/loss/LienXAlphaEscrow.sol
+
+# --- the sibling that drives it (the SOLE coordinator; the two-call slash sequence originates here) ---
+contracts/src/loss/DefaultCoordinator.sol
+
+# --- precedent: the InsuranceFund `bring` pattern this is a clean-room replication of (diff vs :33) ---
+reference/moneymarket-contracts/src/InsuranceFund.sol
+
+# --- tests (44 unit + 1 fuzz + 2 invariant + 5 reentrancy; conservation + 3-destination routing asserted) ---
+contracts/test/loss/LienXAlphaEscrow.t.sol

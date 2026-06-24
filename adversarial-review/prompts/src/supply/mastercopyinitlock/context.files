@@ -1,0 +1,14 @@
+# Inline context for the MastercopyInitLock review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (an 8-nSLOC abstract init-lock mixin) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the base it extends: zodiac-core Module + the `initializer`/_initialized one-shot it leans on ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the X-Ray (ground truth: I-1..I-3, the guard table; coverage-complete via 18 consumer tests) ---
+contracts/src/supply/szipUSD/x-ray/MastercopyInitLock.md
+
+# --- a representative consumer suite (the SEC-14 lock + clone-init-once tests live across all 9 modules) ---
+contracts/test/supply/szipUSD/SellModule.t.sol

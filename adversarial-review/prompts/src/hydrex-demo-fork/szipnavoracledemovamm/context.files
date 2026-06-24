@@ -1,0 +1,15 @@
+# Inline context for SzipNavOracleDemoVAMM missions (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves.
+# Format: path  OR  path:start-end. '#' = comment.
+
+# --- contract under review ---
+contracts/src/hydrex-demo-fork/SzipNavOracleDemoVAMM.sol
+
+# --- THE DIFF BASELINE: the audited prod parent (byte-identical except the LP-leg valuation) ---
+contracts/src/supply/SzipNavOracle.sol
+
+# --- the swapped seam's interface (Solidly pair: getReserves/totalSupply/token0/token1, spot-manipulable) ---
+contracts/src/interfaces/hydrex/IVammPair.sol
+
+# --- tests (ported prod suite + MockVammPair; what's proven + what the mock assumes — honest, non-adversarial reserves) ---
+contracts/test/hydrex-demo-fork/SzipNavOracleDemoVAMM.t.sol

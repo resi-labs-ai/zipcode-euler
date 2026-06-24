@@ -1405,6 +1405,11 @@
   },
   {
     "type": "error",
+    "name": "PluginNotReady",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RateUnseeded",
     "inputs": []
   },

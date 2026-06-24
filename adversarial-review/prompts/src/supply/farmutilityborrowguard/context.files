@@ -1,0 +1,14 @@
+# Inline context for the FarmUtilityBorrowGuard review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (the IGenericFactory.isProxy interface is declared inline) ---
+contracts/src/supply/szipUSD/FarmUtilityBorrowGuard.sol
+
+# --- the EVK hook interface it implements (and the BaseHookTarget convention it replicates inline) ---
+reference/euler-vault-kit/src/interfaces/IHookTarget.sol
+
+# --- the X-Ray (ground truth: I-1..I-4, X-1, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/FarmUtilityBorrowGuard.md
+
+# --- the consumer suite (no dedicated file; 3 guard tests: real-EVK account-identity gate, isHookTarget, admin) ---
+contracts/test/supply/szipUSD/FarmUtilityLoopModule.t.sol

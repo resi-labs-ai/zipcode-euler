@@ -4,6 +4,14 @@ You are picking up **zipcode-euler**, a decentralized home-equity credit protoco
 contract stack is **built and fork-tested**. The work that remains is the two layers that bind *to* the
 contracts: the **CRE** off-chain reporting (Go → wasip1) and the **frontend** (Vue/viem).
 
+> **There is also a third, parallel track: AUDIT / hardening.** The adversarial-review harness
+> (`adversarial-review/CONDUCTOR.md`) reviews the *built* contracts group-by-group, files findings as
+> tickets in `build/tickets/audit/`, and ships the fixes **directly to `main`** (trunk: build → `forge`
+> gate → doc-sync → commit + push; no branch-per-ticket). Bridge group is DONE (ADV-02/04/05 shipped,
+> 81/81 green; ledger in `PROGRESS.md` → "Audit track"). **For audit work follow `CONDUCTOR.md`, not this
+> file** — this file (the loop below) is the CRE/frontend *binding* harness, which still concludes
+> review-first (STOP, don't push) per its own track. Don't confuse the two workflows.
+
 Your job: author and build **exactly ONE item this window**, through the adversarial harness below, then
 conclude on disk and **STOP** for review. Do not mass-produce.
 

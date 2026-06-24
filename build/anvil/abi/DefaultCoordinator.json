@@ -658,11 +658,6 @@
   },
   {
     "type": "error",
-    "name": "AlreadyWired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BadStatus",
     "inputs": []
   },

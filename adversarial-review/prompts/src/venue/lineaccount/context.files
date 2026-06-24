@@ -1,0 +1,17 @@
+# Inline context for the LineAccount review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (an 8-nSLOC constructor-only EVC borrower-of-record) ---
+contracts/src/venue/LineAccount.sol
+
+# --- the EVC mechanics it leans on: setAccountOperator (owner-self path) + the :787 code-free guard ---
+reference/ethereum-vault-connector/src/EthereumVaultConnector.sol
+
+# --- the minter/consumer: openLine deploys it (salt=lienId, operator_=adapter) and drives the borrow account ---
+contracts/src/venue/EulerVenueAdapter.sol
+
+# --- the X-Ray (ground truth: I-1..I-7; ADEQUATE — every birth-time effect proven) ---
+contracts/src/venue/x-ray/LineAccount.md
+
+# --- tests: fully exercised via the adapter fork suite (test_LineAccount_Mechanics pins all four ctor facts) ---
+contracts/test/venue/EulerVenueAdapter.t.sol

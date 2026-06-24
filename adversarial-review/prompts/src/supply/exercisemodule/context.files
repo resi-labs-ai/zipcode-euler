@@ -1,0 +1,20 @@
+# Inline context for the ExerciseModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/supply/szipUSD/ExerciseModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the zodiac-core Module base: execAndReturnData, setAvatar/setTarget (onlyOwner), the initializer one-shot ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the external option: exercise(amount, maxPayment, recipient, deadline), paymentToken(), the strike views ---
+contracts/src/interfaces/hydrex/IOptionToken.sol
+
+# --- the X-Ray (ground truth: I-1..I-7, X-1, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/ExerciseModule.md
+
+# --- tests (26 unit + 4 base-fork = 30; exec-shape pin, slippage abort on the real Base oHYDX, same-block quote check) ---
+contracts/test/supply/szipUSD/ExerciseModule.t.sol

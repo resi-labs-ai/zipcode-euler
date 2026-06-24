@@ -46,6 +46,19 @@
   },
   {
     "type": "function",
+    "name": "divertedSinceProvisionChange",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "eePool",
     "inputs": [],
     "outputs": [
@@ -59,7 +72,20 @@
   },
   {
     "type": "function",
-    "name": "engineSafe",
+    "name": "freeValueAccrued",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheEngine",
     "inputs": [],
     "outputs": [
       {
@@ -72,7 +98,7 @@
   },
   {
     "type": "function",
-    "name": "freeValueAccrued",
+    "name": "lastSeenProvision",
     "inputs": [],
     "outputs": [
       {
@@ -169,10 +195,10 @@
   },
   {
     "type": "function",
-    "name": "setEngineSafe",
+    "name": "setJuniorTrancheEngine",
     "inputs": [
       {
-        "name": "engineSafe_",
+        "name": "juniorTrancheEngine_",
         "type": "address",
         "internalType": "address"
       }
@@ -247,10 +273,10 @@
   },
   {
     "type": "function",
-    "name": "setWarehouse",
+    "name": "setWarehouseSafe",
     "inputs": [
       {
-        "name": "warehouse_",
+        "name": "warehouseSafe_",
         "type": "address",
         "internalType": "address"
       }
@@ -312,7 +338,7 @@
   },
   {
     "type": "function",
-    "name": "warehouse",
+    "name": "warehouseSafe",
     "inputs": [],
     "outputs": [
       {
@@ -366,7 +392,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "warehouse",
+        "name": "warehouseSafe",
         "type": "address",
         "indexed": true,
         "internalType": "address"

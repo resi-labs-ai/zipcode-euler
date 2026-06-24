@@ -1,0 +1,26 @@
+# Inline context for the SzipBuyBurnModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (the INavOracle/IERC20Approve/ICoverageGate interfaces are declared inline) ---
+contracts/src/supply/szipUSD/SzipBuyBurnModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the inherited receiver: the forwarder gate + workflow-author pin fronting the CRE POST_BID/CANCEL_BID door ---
+contracts/src/supply/szipUSD/CloneReportReceiver.sol
+
+# --- the zodiac-core Module base: exec (the approve + setPreSignature), setAvatar/setTarget, the initializer ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the CoW settlement: setPreSignature, vaultRelayer(), domainSeparator() (the presign target + live reads) ---
+contracts/src/interfaces/cow/IGPv2Settlement.sol
+
+# --- the coverage seam: covered() — the freeze module's outflow gate the postBid path reads ---
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+
+# --- the X-Ray (ground truth: I-1..I-9, X-1, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/SzipBuyBurnModule.md
+
+# --- tests (52: ~41 module + 8 CTR-01 receiver + 1 fork; the SEC-13 cluster, the uid KAT, the two-doors equivalence) ---
+contracts/test/supply/szipUSD/SzipBuyBurnModule.t.sol

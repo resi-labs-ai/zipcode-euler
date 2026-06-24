@@ -1,0 +1,26 @@
+# Inline context for the LpStrategyModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (the ICoverageGate interface it reads is declared inline) ---
+contracts/src/supply/szipUSD/LpStrategyModule.sol
+
+# --- the coverage seam: lpBurnKeepsCovered — the path-lock back to the freeze module (read for mission 1) ---
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the zodiac-core Module base: execAndReturnData, setAvatar/setTarget (onlyOwner), the initializer one-shot ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the external LP vault: deposit(d0,d1,to), withdraw(shares,to), token0()/token1(), allowToken0/1 ---
+contracts/src/interfaces/ichi/IICHIVault.sol
+
+# --- the external gauge: deposit/withdraw (stake the LP to farm oHYDX), balanceOf ---
+contracts/src/interfaces/hydrex/IGauge.sol
+
+# --- the X-Ray (ground truth: X-1/X-2, I-1..I-6, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/LpStrategyModule.md
+
+# --- tests (32 unit + 5 base-fork = 37; the 3-state coverage gate, slippage, atomicity, live ICHI deposit) ---
+contracts/test/supply/szipUSD/LpStrategyModule.t.sol

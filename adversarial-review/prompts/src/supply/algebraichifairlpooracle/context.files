@@ -1,0 +1,23 @@
+# Inline context for the AlgebraIchiFairLpOracle review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the unit under review (oracle + its manipulation-resistance lib) ---
+contracts/src/supply/AlgebraIchiFairLpOracle.sol
+contracts/src/supply/lib/IchiAlgebraFairReserves.sol
+
+# --- the vendored UniV3 tick math the oracle uses (TRUSTED/faithful — attack its USE, not the math) ---
+contracts/src/libraries/ConcentratedLiquidity.sol
+
+# --- precedent: UniV3 OracleLibrary (getQuoteAtTick / consult — what _token0InQuote / _meanTick mirror) ---
+reference/euler-price-oracle/lib/v3-periphery/contracts/libraries/OracleLibrary.sol
+
+# --- the IPriceOracle face the EVK router resolves through ---
+reference/euler-price-oracle/src/adapter/BaseAdapter.sol
+
+# --- external surfaces: the Algebra pool/plugin (TWAP source) + the ICHI vault ---
+contracts/src/interfaces/algebra/IAlgebraPool.sol
+contracts/src/interfaces/algebra/IAlgebraOraclePlugin.sol
+contracts/src/interfaces/ichi/IICHIVault.sol
+
+# --- tests (13/13; the keystone manipulation-invariance fork test + edge cases) ---
+contracts/test/supply/AlgebraIchiFairLpOracle.t.sol

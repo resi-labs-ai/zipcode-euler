@@ -43,19 +43,6 @@
   },
   {
     "type": "function",
-    "name": "engineSafe",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "gauge",
     "inputs": [],
     "outputs": [
@@ -70,6 +57,19 @@
   {
     "type": "function",
     "name": "ichiVault",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "juniorTrancheEngine",
     "inputs": [],
     "outputs": [
       {
@@ -134,19 +134,6 @@
   },
   {
     "type": "function",
-    "name": "setEngineSafe",
-    "inputs": [
-      {
-        "name": "engineSafe_",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setGauge",
     "inputs": [
       {
@@ -164,6 +151,19 @@
     "inputs": [
       {
         "name": "ichiVault_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setJuniorTrancheEngine",
+    "inputs": [
+      {
+        "name": "juniorTrancheEngine_",
         "type": "address",
         "internalType": "address"
       }

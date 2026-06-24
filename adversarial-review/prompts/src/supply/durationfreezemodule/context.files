@@ -1,0 +1,26 @@
+# Inline context for the DurationFreezeModule review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review ---
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+
+# --- the base it extends: the clone init-lock mixin (SEC-14) ---
+contracts/src/supply/szipUSD/MastercopyInitLock.sol
+
+# --- the zodiac-core Module base: setAvatar/setTarget (onlyOwner, INERT for rotation), the initializer ---
+reference/zodiac-core/contracts/core/Module.sol
+
+# --- the Safe surface: execTransactionFromModule (the explicit per-Safe rotation; NOT the avatar-bound exec) ---
+contracts/src/interfaces/safe/ISafe.sol
+
+# --- the oracle valuation reads: committedValue / grossBasketValue / pathLockedLpEquity / lpShareValue / the 5 legs ---
+contracts/src/interfaces/supply/ISzipNavBasket.sol
+
+# --- the senior pool: convertToAssets / maxWithdraw / balanceOf (the donation-immune U/debt reads) ---
+contracts/src/interfaces/supply/ISeniorPool.sol
+
+# --- the X-Ray (ground truth: I-1..I-9, X-1/X-2/X-3, the guard table) ---
+contracts/src/supply/szipUSD/x-ray/DurationFreezeModule.md
+
+# --- tests (54 unit + 1 fuzz + 1 stateful invariant (128k calls, 0 breaches) + 2 base-fork = 56) ---
+contracts/test/supply/szipUSD/DurationFreezeModule.t.sol

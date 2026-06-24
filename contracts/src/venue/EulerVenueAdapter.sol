@@ -668,8 +668,9 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
                 return uint16((mantissa << 6) | e);
             }
         }
-        // Unreachable for any uint256 amount: 1023 * 10**63 / 100 >> type(uint256).max would be required to fail,
-        // and 10**63 * 1023 / 100 ~ 1.02e64 covers all 256-bit token amounts. Revert defensively.
+        // Defensive: the largest encodable cap is 1023 * 10**63 / 100 ~ 1.02e64 raw token units — astronomically
+        // beyond any real token supply, but NOT all of uint256 (type(uint256).max ~ 1.16e77). An `amount` above
+        // ~1.02e64 falls through here (one above ~1.16e75 overflows `amount * 100` first); both revert.
         revert ZeroCap();
     }
 }

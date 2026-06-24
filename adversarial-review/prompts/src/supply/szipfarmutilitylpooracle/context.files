@@ -1,0 +1,23 @@
+# Inline context for the SzipFarmUtilityLpOracle review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the unit under review (CRE-fed push-cache LP oracle) ---
+contracts/src/supply/SzipFarmUtilityLpOracle.sol
+
+# --- the trustless twin (diff against: same EVK face, no liveness dependency) ---
+contracts/src/supply/AlgebraIchiFairLpOracle.sol
+
+# --- precedent: the push-cache pattern (SEC-01 strictly-newer + forwarder gate live here) ---
+contracts/src/ZipcodeOracleRegistry.sol
+contracts/src/bridge/SzAlphaRateOracle.sol
+
+# --- the CRE receiver base (forwarder-only onReport gate + report decode) ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+
+# --- the EVK adapter face + round-down scaling the read path relies on ---
+reference/euler-price-oracle/src/adapter/BaseAdapter.sol
+reference/euler-price-oracle/src/lib/ScaleUtils.sol
+reference/euler-price-oracle/src/interfaces/IPriceOracle.sol
+
+# --- tests (19/19; SEC-01 write-staleness + read-path fail-closed + setters + ctor) ---
+contracts/test/supply/SzipFarmUtilityLpOracle.t.sol

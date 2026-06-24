@@ -1,0 +1,18 @@
+# Inline context for the IZipcodeVenue review (Fugu / non-agentic panelists).
+# Agentic models (Claude/Codex) ignore this and read the files themselves. '#' = comment.
+
+# --- the contract under review (a 24-nSLOC pure interface; no bytecode, no runtime surface) ---
+contracts/src/venue/IZipcodeVenue.sol
+
+# --- the implementer: compile-time `is IZipcodeVenue` + behavioral conformance (P-1/P-2) ---
+contracts/src/venue/EulerVenueAdapter.sol
+
+# --- the consumer: holds `venue` as the interface type, routes every venue effect through it (P-3) ---
+contracts/src/ZipcodeController.sol
+
+# --- the X-Ray (ground truth: P-1..P-4; ADEQUATE — a pure interface has no runtime risk) ---
+contracts/src/venue/x-ray/IZipcodeVenue.md
+
+# --- tests: conformance (compile-time) + behavioral (the whole adapter suite drives every member) ---
+contracts/test/venue/EulerVenueAdapter.t.sol
+contracts/test/ZipcodeController.t.sol
