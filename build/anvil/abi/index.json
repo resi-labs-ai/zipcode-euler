@@ -249,12 +249,12 @@
     "abi": "abi/external/ZodiacRoles.json",
     "kind": "external"
   },
-  "0xF84eF3BA83BB62C88502241B878983D79708e371": {
+  "0x2a3B9C75307a409387A8d238bDE81B0B91738A61": {
     "name": "SzipNavOracleDemoVAMM",
     "abi": "abi/SzipNavOracleDemoVAMM.json",
     "kind": "demo"
   },
-  "0xB76FfBa3d1973f61b0E2e3b09536B15283e18dFC": {
+  "0x595b4be50D190eDc54c7bb4963A2289E9cFc4735": {
     "name": "LpStrategyModuleDemoVAMM",
     "abi": "abi/LpStrategyModuleDemoVAMM.json",
     "kind": "demo"

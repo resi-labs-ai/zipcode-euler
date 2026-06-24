@@ -6,11 +6,14 @@ The Zipcode protocol, deployed + wired on a **local anvil forking Base mainnet @
 > **Scope:** a single-silo local board. The federation catalog (`SiloRegistry`) is now deployed + wired by this
 > script (the CTR-03 routing fix, below); the senior-solvency telemetry aggregator (`SeniorNavAggregator`) is NOT
 > on this board — it stands up with the multi-silo hub via `SiloDeployer`.
-> **Last broadcast 2026-06-22** (SIZE-01): `EulerVenueAdapter` was trimmed under the EIP-170 limit (now 24054 /
-> +522 margin; the CTR-15 rename had pushed it 38 over) and the board re-broadcast clean. Bytecode-only edits do
-> NOT move CREATE addresses, so the venue spine + every earlier contract kept its 2026-06-10 address; the only new
-> entries are the three formerly-placeholder rows below (`SiloRegistry`, `LineIrm`, `FarmUtilityBorrowGuard`), now
-> filled from the run log.
+> **Last broadcast 2026-06-24** (fresh re-broadcast from HEAD source on a clean anvil @ 47096000): picks up all the
+> post-2026-06-22 adversarial-review guard commits (SUPPLY/CORE/BRIDGE/LOSS-ADV). Every main-protocol + runtime-created
+> address is byte-for-byte identical to the 2026-06-22 board (deterministic CREATE: no deploy was added/removed/reordered
+> before any `new X()`), and the on-chain runtime bytecode now equals the HEAD artifacts (verified). The `build/anvil/abi/`
+> ABIs were regenerated from the same HEAD source in lockstep. **Only the two SHOWCASE demo contracts moved** (see the
+> Showcase section): the LOSS-ADV-01 change altered the `team` tx-count in the main deploy, shifting the separately-run
+> `DeployShowcaseVAMM` script's starting nonce — their addresses below are the new HEAD-deterministic values.
+> (Prior 2026-06-22 SIZE-01 note: `EulerVenueAdapter` was trimmed under EIP-170 to 24054 / +522 margin.)
 
 > **Real contracts, not mocks.** The senior pool is a REAL EulerEarn pool created off the live factory + curator-
 > configured; the base USDC market is a REAL EVK vault; the farm utility market is real EVK; Safe/Baal/Zodiac/CoW/ICHI/
@@ -149,8 +152,8 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 
 | Piece | Address | Notes |
 |---|---|---|
-| `SzipNavOracleDemoVAMM` | `0xF84eF3BA83BB62C88502241B878983D79708e371` | prices the vAMM HYDX/USDC LP (HYDX via the pushed `LEG_HYDX_USD`, USDC $1 6→18dp); owner = team; CRE identity = the real sealed `0x90F7…`/`0x…01` |
-| `LpStrategyModuleDemoVAMM` | `0xB76FfBa3d1973f61b0E2e3b09536B15283e18dFC` | `addLiquidity` = `pair.mint`; stake/unstake unchanged; **enabled on the main Safe**; owner = team, operator = `creOperator` |
+| `SzipNavOracleDemoVAMM` | `0x2a3B9C75307a409387A8d238bDE81B0B91738A61` | prices the vAMM HYDX/USDC LP (HYDX via the pushed `LEG_HYDX_USD`, USDC $1 6→18dp); owner = team; CRE identity = the real sealed `0x90F7…`/`0x…01` |
+| `LpStrategyModuleDemoVAMM` | `0x595b4be50D190eDc54c7bb4963A2289E9cFc4735` | `addLiquidity` = `pair.mint`; stake/unstake unchanged; **enabled on the main Safe**; owner = team, operator = `creOperator` |
 | vAMM HYDX/USDC pair (LP token) | `0x605abD1873737CA9a9Ec1CFa52CDfc8ef62c2E1d` | live Solidly `VolatileV1 AMM - HYDX/USDC` (reserves: HYDX 18dp / USDC 6dp) |
 | vAMM gauge (vault-keyed; rewards oHYDX) | `0x2dA5744C7205ae9CacBB1AB8a72A2fA3896d39F8` | alive; standard `deposit/withdraw(uint256)`; emissions stream is live on mainnet, dormant on a frozen fork |
 
