@@ -21,7 +21,7 @@ Summaries:
 ==================================================================================
 Security X-Ray (audit fidelity)
 
-Rated HARDENED — the multi-line collateral price cache, exhaustively tested (40 tests).
+Rated HARDENED — the multi-line collateral price cache, exhaustively tested (41 tests).
 
 [contracts/src/x-ray/ZipcodeOracleRegistry.md]
 

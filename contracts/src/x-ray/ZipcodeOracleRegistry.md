@@ -9,10 +9,17 @@
 > quoteDecimals` collapses it to `/1e18` — so the re-derive is proven by "the new quote prices without bricking",
 > not a value delta.)
 
+> **Update 2026-06-24:** ctor now zero-guards `quote_` (`:80`, `quote_ == 0 → ZeroAddress`) for parity with
+> `setQuote` and the sibling `SzipFarmUtilityLpOracle.constructor`. This is hardening, not a bug-fix — a zero
+> `quote_` already deployed fail-closed (every read reverted `NotSupported` at `:172`; never fail-open) and was
+> recoverable via `setQuote` while owner-live; the guard shifts a silent inert-deploy to an explicit deploy-time
+> revert. Pinned by `test_Ctor_ZeroQuote_Reverts`; 41/41 green. (Surfaced by the core/zipcodeoracleregistry
+> adversarial-review cycle, which otherwise confirmed HARDENED — no other actionable finding.)
+
 Per-contract X-Ray for `contracts/src/ZipcodeOracleRegistry.sol`, the **multi-asset Proof-of-Value push-cache** that
 prices every lien token at its appraised-value-minus-senior-debt mark. The EVK read-adapter
 (`BaseAdapter`/`IPriceOracle`) and CRE receiver (`ReceiverTemplate`) in one contract — the multi-asset sibling of
-`SzipFarmUtilityLpOracle`. Exercised by `ZipcodeOracleRegistry.t.sol` — a **40-test** suite. This is the LAST loose
+`SzipFarmUtilityLpOracle`. Exercised by `ZipcodeOracleRegistry.t.sol` — a **41-test** suite. This is the LAST loose
 top-level contract in `src/`.
 
 > Two write paths feed one venue-neutral cache: a **controller-gated origination seed** (`seedPrice`, single lien,
@@ -42,7 +49,7 @@ Timelock-settable slots (`controller`, `quote`, `validityWindow`) + the derived 
 | `onReport` → `_processReport` | Forwarder-gated | reportType 3 batch; all-or-nothing |
 | `getQuote / getQuotes` → `_getQuote` | public view | only `(lien, quote)`; fail-closed on unset/stale; forward-only |
 | `setController` / `setQuote` / `setValidityWindow` | `onlyOwner` (Timelock) | re-points; `setQuote` re-derives `scale` |
-| `constructor(forwarder, quote_, validityWindow_)` | deploy | derives `scale` |
+| `constructor(forwarder, quote_, validityWindow_)` | deploy | `quote_ == 0 → ZeroAddress`; derives `scale` |
 
 ## 3. Invariants — with test connection
 
@@ -72,6 +79,7 @@ Timelock-settable slots (`controller`, `quote`, `validityWindow`) + the derived 
 | Forwarder / identity gate | `ReceiverTemplate` | `test_ForwarderGate`, `_IdentityGate_*`, `_Renounce_*` |
 | `setController` onlyOwner + `ZeroAddress` | `:89-90` | `test_SetControllerRepoint` |
 | `setQuote` onlyOwner + `ZeroAddress`; `setValidityWindow` onlyOwner | `:96-97,:105` | `test_I11_setQuote_guards_and_effect`, `_setValidityWindow_guards_and_effect` |
+| ctor `quote_ == 0 → ZeroAddress` (parity with `setQuote` + the sibling ctor) | `:80` | `test_Ctor_ZeroQuote_Reverts` |
 
 Every write path, read path, value/decimals/staleness guard, the identity/renounce surface, and all three setters
 are now exercised — no untested surface.
@@ -117,7 +125,7 @@ are now exercised — no untested surface.
 | SEC-01 strictly-newer | 4 | seed equal-ts, reval backdated/equal-ts, strictly-newer |
 | `setController` / `setQuote` / `setValidityWindow` | 3 | onlyOwner + zero + effect/event across all three setters |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); **40 tests green**. The two write paths, the read path,
+Coverage % uninstrumentable (project-wide `Stack too deep`); **41 tests green**. The two write paths, the read path,
 every value/decimals/staleness guard, SEC-01, the identity/renounce surface, and all three setters are exhaustively
 covered — no coverage gap.
 
@@ -137,4 +145,4 @@ audit.
 2. One shared `scale` (`baseDecimals=18`) + strict-18-dp key guard make a non-18-dp lien unreachable by design (load-bearing; never relax in isolation).
 3. All-or-nothing revaluation (a poison key reverts the batch); SEC-01 strictly-newer ts (replay/clobber defense); no on-chain value band (integrity is upstream).
 4. Forward-only `_getQuote` (only `(lien, quote)`; reverse pair fails closed); fail-closed on unset/stale.
-5. Tests: 40 (scale, both write paths, full guard matrix, SEC-01, read guards, identity/renounce, all three setters incl. `setQuote` scale re-derive). No coverage gap; capped only by the pre-prod re-freeze + no audit.
+5. Tests: 41 (scale, both write paths, full guard matrix, SEC-01, read guards, identity/renounce, all three setters incl. `setQuote` scale re-derive, ctor `quote_` zero-guard). No coverage gap; capped only by the pre-prod re-freeze + no audit.

@@ -616,6 +616,13 @@ contract ZipcodeOracleRegistryTest is Test {
         reg.getQuote(1e18, address(LIEN), usdc);
     }
 
+    /// @notice The ctor zero-guards `quote_` (parity with `setQuote` + `SzipFarmUtilityLpOracle.constructor`): a
+    ///         zero quote at deploy reverts `ZeroAddress` instead of silently deploying inert.
+    function test_Ctor_ZeroQuote_Reverts() public {
+        vm.expectRevert(ZipcodeOracleRegistry.ZeroAddress.selector);
+        new ZipcodeOracleRegistry(FORWARDER, address(0), VALIDITY);
+    }
+
     /// @notice `setValidityWindow` is `onlyOwner` and tightening it makes a previously-fresh mark read as stale.
     function test_I11_setValidityWindow_guards_and_effect() public {
         // onlyOwner

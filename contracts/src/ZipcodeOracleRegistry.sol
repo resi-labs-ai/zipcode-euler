@@ -77,6 +77,7 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @param quote_ The unit of account (USDC).
     /// @param validityWindow_ The long, line-term read-staleness window.
     constructor(address forwarder, address quote_, uint256 validityWindow_) ReceiverTemplate(forwarder) {
+        if (quote_ == address(0)) revert ZeroAddress();
         quote = quote_;
         validityWindow = validityWindow_;
         uint8 quoteDecimals = _getDecimals(quote_);

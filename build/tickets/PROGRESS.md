@@ -146,6 +146,16 @@ they silently dropped audited guards the parents have (the X-Rays over-claimed A
 - Hydrex group COMPLETE: both forks reviewed + both tickets shipped. No drain found; the regressions were
   dropped audited guards (NAV) + a false init-lock claim & an unfaithful test mock (LP) — all fix-before-promotion.
 
+Core group (in progress).
+- **CORE-ADV — `ZipcodeOracleRegistry`** — reviewed SOUND across all 3 missions (write paths, shared-scale/strict-
+  18-dp/read, identity/renounce/wiring); confirms the X-Ray HARDENED verdict. The four decisive guarantees
+  (all-or-nothing batch, shared-scale/strict-18-dp, SEC-01 strictly-newer, fail-closed read) hold on-chain,
+  re-verified against source. One sibling-delta surfaced — ctor did not zero-guard `quote_` (`SzipFarmUtilityLpOracle`
+  ctor does) — pressure-tested to fail-closed (inert deploy, recoverable via `setQuote`), an optional parity nit not
+  a vuln. **Parity guard SHIPPED to `main`** at user request: ctor `quote_ == 0 → ZeroAddress` (`:80`), regression
+  `test_Ctor_ZeroQuote_Reverts`, **41/41 green**; X-Ray + ELI20 doc synced same commit. Single-model (Claude-only),
+  not the full decorrelated panel.
+
 Supply group — `AlgebraIchiFairLpOracle` + `IchiAlgebraFairReserves` reviewed (single-model panel, Opus ×3;
 Codex/Fugu cross-check still owed on the fail-open question — now settled by fork test, see ADV-02). Keystone
 (in-block-swap invariance) confirmed sound; two edge findings.
