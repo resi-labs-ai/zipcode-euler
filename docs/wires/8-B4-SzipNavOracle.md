@@ -112,7 +112,8 @@ lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wir
 
 **The wiring setters** (`onlyOwner`, Timelock; each emits an event; all zero-guarded):
 - `setShareToken(szipUSD_)` → `shareToken` (the supply denominator).
-- `setLpPosition(ichiVault_, gauge_)` → `ichiVault` + `gauge` (the LP reserves + staked-LP source).
+- `setLpPosition(ichiVault_, gauge_)` → `ichiVault` + `gauge` (the LP reserves + staked-LP source). Re-pointable;
+  if a non-zero `lpTwapWindow` is live, re-asserts SEC-10 readiness against the new vault (SUPPLY-ADV-15).
 - `setFarmUtilityLeg(escrowVault_, borrowVault_)` → `escrowVault` + `borrowVault` (the 8-B5 farm utility leg: escrow-
   collateralized LP counted + strike debt subtracted; both set together, both zero-guarded).
 - `setJuniorTrancheEngine(juniorTrancheEngine_)` → `juniorTrancheEngine` (the 8-B14 buy-and-burn Safe, denominator-excluded).
@@ -125,6 +126,11 @@ lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wir
   otherwise make every NAV read revert via `_lpValue`→`fairReserves`→`NoPlugin`). `isInitialized()` is
   necessary-not-sufficient: the residual window > accumulated-history edge (observation cardinality is NOT
   on-chain-queryable) still fails closed at read-time in `getTimepoints` and is recoverable via `setLpTwapWindow(0)`.
+  **Enforced at BOTH wiring sites (SUPPLY-ADV-15):** the check is the shared `_assertLpTwapReady()`, run on
+  `setLpTwapWindow` (arm) AND on `setLpPosition` (re-point the vault) when a non-zero window is already live — so
+  re-pointing the LP to a plugin-less pool reverts instead of silently leaving a live window over an unready vault
+  (which would brick every LP-containing NAV read, irrecoverable after renounce since `setLpTwapWindow(0)` would
+  be frozen).
 
 (A **fifth** setter `setXAlphaRateOracle(rateOracle_)` exists — `onlyOwner`, **not** zero-guarded because
 `address(0)` is the valid "use M1 fallback" value. When set, `rateSrc = xAlphaRateOracle` and `navEntry`/`fresh`

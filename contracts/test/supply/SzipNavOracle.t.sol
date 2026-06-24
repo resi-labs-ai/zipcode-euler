@@ -1137,6 +1137,48 @@ contract SzipNavOracleTest is Test {
         assertEq(freshOracle.lpTwapWindow(), 0);
     }
 
+    /// @notice SUPPLY-ADV-15: with a non-zero LP-TWAP window already live, re-pointing `setLpPosition` to a vault
+    ///         whose pool exposes NO plugin must revert `LpTwapPluginNotReady` — NOT silently leave the live window
+    ///         over a pluginless pool (which bricks every LP-containing NAV read, irrecoverable post-renounce).
+    function test_SUPPLYADV15_setLpPosition_repoint_to_pluginless_reverts() public {
+        (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();
+        pool.setPlugin(address(plugin));
+        plugin.setInitialized(true);
+        oracle.setLpTwapWindow(3600); // window armed against a ready vault
+        assertEq(oracle.lpTwapWindow(), 3600);
+
+        // re-point to a vault whose pool has no plugin → the readiness invariant must be re-asserted on re-point.
+        MockICHIVault ivBad = new MockICHIVault();
+        MockGauge gBad = new MockGauge();
+        MockAlgebraPool poolBad = new MockAlgebraPool();
+        ivBad.set(address(zip), address(xa), 1000e18, 200e18, 100e18);
+        ivBad.setPool(address(poolBad));
+        poolBad.setPlugin(address(0));
+        vm.expectRevert(SzipNavOracle.LpTwapPluginNotReady.selector);
+        oracle.setLpPosition(address(ivBad), address(gBad));
+    }
+
+    /// @notice SUPPLY-ADV-15: re-pointing to a DIFFERENT but equally-ready vault under a live window succeeds and
+    ///         preserves the window (the re-validation passes; intent is kept, not silently zeroed).
+    function test_SUPPLYADV15_setLpPosition_repoint_to_ready_vault_keeps_window() public {
+        (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();
+        pool.setPlugin(address(plugin));
+        plugin.setInitialized(true);
+        oracle.setLpTwapWindow(3600);
+
+        MockICHIVault iv2 = new MockICHIVault();
+        MockGauge g2 = new MockGauge();
+        MockAlgebraPool pool2 = new MockAlgebraPool();
+        MockAlgebraPlugin plugin2 = new MockAlgebraPlugin();
+        iv2.set(address(zip), address(xa), 1000e18, 200e18, 100e18);
+        iv2.setPool(address(pool2));
+        pool2.setPlugin(address(plugin2));
+        plugin2.setInitialized(true);
+        oracle.setLpPosition(address(iv2), address(g2));
+        assertEq(oracle.ichiVault(), address(iv2), "re-pointed to the ready vault");
+        assertEq(oracle.lpTwapWindow(), 3600, "window preserved across a ready re-point");
+    }
+
     // ----------------------------------------------------------------- I-15: setter auth + zero-guards (full sweep)
     /// @notice Every Timelock wiring setter is `onlyOwner` and zero-guards its non-optional args. The effect/re-point
     ///         of these is covered elsewhere; this closes the auth + zero-guard gap on the five setters whose gate was

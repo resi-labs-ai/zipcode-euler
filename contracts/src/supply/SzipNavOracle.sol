@@ -243,6 +243,11 @@ contract SzipNavOracle is ReceiverTemplate {
         if (ichiVault_ == address(0) || gauge_ == address(0)) revert ZeroAddress();
         ichiVault = ichiVault_;
         gauge = gauge_;
+        // SEC-10 / SUPPLY-ADV-15: if a non-zero LP-TWAP window is already live, the re-pointed vault must itself
+        // satisfy the readiness invariant — else every LP-containing NAV read would brick (fail-closed) at
+        // read-time, irrecoverable after renounce. Re-assert against the NEW vault (the same check `setLpTwapWindow`
+        // runs at arm-time), so the invariant holds at BOTH wiring sites, not just where the window is armed.
+        if (lpTwapWindow != 0) _assertLpTwapReady();
         emit LpPositionSet(ichiVault_, gauge_);
     }
 
@@ -268,16 +273,24 @@ contract SzipNavOracle is ReceiverTemplate {
     ///      fails closed at read-time and is recoverable via `setLpTwapWindow(0)`. The setter's `isInitialized()`
     ///      check and the read-time `getTimepoints` revert are therefore DIFFERENT conditions. `onlyOwner` (Timelock).
     function setLpTwapWindow(uint32 lpTwapWindow_) external onlyOwner {
-        if (lpTwapWindow_ != 0) {
-            if (ichiVault == address(0)) revert LpTwapPluginNotReady();
-            address pool = IICHIVault(ichiVault).pool();
-            address plugin = IAlgebraPool(pool).plugin();
-            if (plugin == address(0) || !IAlgebraOraclePlugin(plugin).isInitialized()) {
-                revert LpTwapPluginNotReady();
-            }
-        }
+        if (lpTwapWindow_ != 0) _assertLpTwapReady();
         lpTwapWindow = lpTwapWindow_; // zero is a valid "use spot" value
         emit LpTwapWindowSet(lpTwapWindow_);
+    }
+
+    /// @dev SEC-10 / SUPPLY-ADV-15: assert the LP-TWAP readiness invariant — a non-zero `lpTwapWindow` requires
+    ///      `ichiVault` wired and its pool's plugin present + `isInitialized()`. Shared by `setLpTwapWindow` (arm
+    ///      the window) and `setLpPosition` (re-point the vault under a live window) so a non-zero window can never
+    ///      coexist with an unready vault — the state that bricks every LP-containing NAV read. `isInitialized()`
+    ///      is necessary-not-sufficient (a window longer than the plugin's history still fails closed at read-time,
+    ///      recoverable via `setLpTwapWindow(0)` while ownership is live); see `setLpTwapWindow` NatSpec.
+    function _assertLpTwapReady() internal view {
+        if (ichiVault == address(0)) revert LpTwapPluginNotReady();
+        address pool = IICHIVault(ichiVault).pool();
+        address plugin = IAlgebraPool(pool).plugin();
+        if (plugin == address(0) || !IAlgebraOraclePlugin(plugin).isInitialized()) {
+            revert LpTwapPluginNotReady();
+        }
     }
 
     /// @notice Wire/re-point the engine Safe (its transient pre-burn szipUSD is excluded). `onlyOwner` (Timelock).

@@ -348,3 +348,12 @@ run (Claude-only). Reports: `adversarial-review/reports/src/supply/szipnavoracle
   Optional `maxPokeGap` ctor-revert hardening DEFERRED (ctor-arg blast radius too wide for a LOW; no TWAP-math
   change shipped). Regression: `test_SUPPLYADV14_postBid_pokes_before_navExit`; buy-burn **54/54**, NAV **64/64**,
   `forge build` clean. Synced: X-Ray `SzipNavOracle.md` §5 + `SzipBuyBurnModule.md` I-2, wires `8-B4`/`8-B14`.
+- **SUPPLY-ADV-15** — `setLpPosition` re-point did NOT re-assert the SEC-10 LP-TWAP readiness invariant that
+  `setLpTwapWindow` enforces at arm-time → a non-zero `lpTwapWindow` could survive onto a re-pointed plugin-less
+  pool, bricking (fail-closed) every LP-containing NAV read; irrecoverable post-renounce (the `setLpTwapWindow(0)`
+  escape would be frozen) → **SHIPPED to `main`**. Fix: factored the check into a shared `_assertLpTwapReady()`,
+  run on BOTH `setLpTwapWindow` and `setLpPosition` (when a window is live); chose re-validate-and-revert over
+  force-zero (preserves intent, fails loudly). Regression: `test_SUPPLYADV15_setLpPosition_repoint_to_pluginless_reverts`
+  / `_repoint_to_ready_vault_keeps_window`; NAV **66/66**, full supply track **587/587**, `forge build` clean. Synced:
+  X-Ray `SzipNavOracle.md` I-8 + guards table, wire `8-B4`. LOW (Timelock-only, build-phase, fail-closed,
+  recoverable pre-renounce). `SzipNavOracle` audit COMPLETE (2 LOW shipped, no CRITICAL/HIGH/MEDIUM).
