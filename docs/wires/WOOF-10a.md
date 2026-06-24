@@ -8,7 +8,7 @@
 
 > Source of truth = `contracts/src/ZipcodeDeployAsserts.sol` (read in full). Ticket
 > `tickets/woof/WOOF-10a-deploy-identity-gate.md` + report `reports/WOOF-10a-report.md` + spec §9 / §4.1-F7
-> are intent. This doc reads the kept code as the final form. Test: `contracts/test/ZipcodeDeployIdentityGate.t.sol`.
+> are intent. This doc reads the kept code as the final form. Test: `contracts/test/deployer/ZipcodeDeployIdentityGate.t.sol`.
 
 ## Role
 The single load-bearing **deploy-time** assertion the item-10 script calls at **S11 — IMMEDIATELY before the
@@ -27,72 +27,82 @@ deployed bytecode), spans both contracts, and is a pure deploy-time read.
 ## Contracts involved (what each does)
 | Artifact | What it is |
 |---|---|
-| `library ZipcodeDeployAsserts` (`contracts/src/ZipcodeDeployAsserts.sol`) | Stateless helper. Two `internal view` fns: `requireIdentityWired(address controller, address registry)` (the combined controller+registry S11 gate) and `requireReceiverIdentityWired(address receiver)` (a single-receiver identity gate for a `ReceiverTemplate` outside the S10b same-WORKFLOW_ID loop — used for the un-looped CRE-push `lpOracle`, SEC-05/M4). Two errors: `IdentityNotWired(address controller, address registry)` + `ReceiverIdentityNotWired(address receiver)`. No state, no storage, no constructor. GPL-2.0-or-later, pragma `0.8.24`. |
-| `interface IReceiverIdentity` (inline) | `function getExpectedWorkflowId() external view returns (bytes32)` — the one read face on the representative `ReceiverTemplate` receiver. Declared inline to avoid pulling `ReceiverTemplate`/`BaseAdapter` into the library's compile unit. |
+| `library ZipcodeDeployAsserts` (`contracts/src/ZipcodeDeployAsserts.sol`) | Stateless helper. Two `internal view` fns: `requireReceiverIdentityWired(address receiver)` (the per-receiver gate — reverts unless BOTH `getExpectedAuthor() != 0` AND `getExpectedWorkflowName() != bytes10(0)`) and `requireIdentityWired(address[] receivers, address registry)` (the fleet gate — rejects an empty set, loops EACH receiver through the per-receiver gate, then asserts `registry.controller() != 0`). Three errors: `ReceiverIdentityNotWired(address receiver)`, `RegistryControllerUnset(address registry)`, `EmptyReceiverSet()`. No state, no storage, no constructor. GPL-2.0-or-later, pragma `0.8.24`. |
+| `interface IReceiverIdentity` (inline) | `getExpectedAuthor() external view returns (address)` + `getExpectedWorkflowName() external view returns (bytes10)` — the two read faces on every sealed `ReceiverTemplate` receiver. Declared inline to avoid pulling `ReceiverTemplate`/`BaseAdapter` into the library's compile unit. CTR-16 keys on author+name, NOT the dropped `getExpectedWorkflowId()` pin. |
 | `interface IOracleRegistryController` (inline) | `function controller() external view returns (address)` — the set-once controller getter on `ZipcodeOracleRegistry` (the only contract with a `controller` getter, WOOF-02). |
 
 ## Wiring — internal
-The whole library is one function plus the revert it guards:
+The library is two functions plus the errors they guard:
 
 ```solidity
-error IdentityNotWired(address controller, address registry);
-
-function requireIdentityWired(address controller, address registry) internal view {
-    if (
-        IReceiverIdentity(controller).getExpectedWorkflowId() == bytes32(0)
-            || IOracleRegistryController(registry).controller() == address(0)
-    ) revert IdentityNotWired(controller, registry);
-}
-
-// SEC-05 (M4): the un-looped CRE-push lpOracle is a ReceiverTemplate NOT covered by the S10b same-WORKFLOW_ID
-// assumption above, so it gets an explicit per-receiver gate. P9 seals it and calls this, both guarded
-// `!= address(0)` (the fair-LP branch has no SzipFarmUtilityLpOracle → nothing to seal/assert).
 error ReceiverIdentityNotWired(address receiver);
+error RegistryControllerUnset(address registry);
+error EmptyReceiverSet();
 
 function requireReceiverIdentityWired(address receiver) internal view {
-    if (IReceiverIdentity(receiver).getExpectedWorkflowId() == bytes32(0)) {
-        revert ReceiverIdentityNotWired(receiver);
+    if (
+        IReceiverIdentity(receiver).getExpectedAuthor() == address(0)
+            || IReceiverIdentity(receiver).getExpectedWorkflowName() == bytes10(0)
+    ) revert ReceiverIdentityNotWired(receiver);
+}
+
+function requireIdentityWired(address[] memory receivers, address registry) internal view {
+    if (receivers.length == 0) revert EmptyReceiverSet();
+    for (uint256 k = 0; k < receivers.length; k++) {
+        requireReceiverIdentityWired(receivers[k]);
+    }
+    if (IOracleRegistryController(registry).controller() == address(0)) {
+        revert RegistryControllerUnset(registry);
     }
 }
 ```
 
-- **What it reads (two pure view staticcalls):**
-  - `IReceiverIdentity(controller).getExpectedWorkflowId()` — the controller's CRE workflow identity. `bytes32(0)`
-    ⇒ identity unset ⇒ F-3 dormancy.
+- **What it reads (pure view staticcalls):**
+  - `getExpectedAuthor()` / `getExpectedWorkflowName()` on EACH receiver — its CRE workflow identity. Author
+    `address(0)` OR name `bytes10(0)` ⇒ identity unset ⇒ F-3 dormancy. (`ReceiverTemplate.onReport` enforces the
+    name only when the author is also set, so BOTH slots are load-bearing.)
   - `IOracleRegistryController(registry).controller()` — the registry's set-once controller. `address(0)` ⇒ F7
     unseedable brick.
-- **The combined fail-closed condition:** OR of the two `== zero` checks ⇒ reverts if **EITHER** is unwired;
-  passes **only** when BOTH are non-zero. The revert carries `(controller, registry)` for diagnosis.
+- **The fail-closed conditions:** an empty `receivers` fleet reverts `EmptyReceiverSet` (defense-in-depth — the
+  per-receiver loop would otherwise pass vacuously); each receiver reverts `ReceiverIdentityNotWired(receiver)` on
+  the FIRST unset author/name; the registry reverts `RegistryControllerUnset(registry)` if its controller is
+  unseeded. Passes ONLY when the fleet is non-empty, every receiver carries both slots, AND the controller is
+  seeded — reverting on the first failure.
 - **`if/revert`, not `require(cond, CustomError())`** — the latter is 0.8.26+; this repo pins 0.8.24.
-- **Single-controller arg is sufficient by construction.** §9/S10b sets the **same** `WORKFLOW_ID` on every
-  `ReceiverTemplate` subclass in one loop, so a non-zero `controller` id ⇒ the registry's id (and every other
-  subclass's id) was wired in the same pass; the gate only needs to read the representative receiver plus the
-  registry's distinct `controller()` slot. (Per the WOOF-10a superintendent review: the registry's own
-  `getExpectedWorkflowId()` re-check is left optional for item 10.)
-- **Dormancy selector-difference demo (the proof the gate is load-bearing),** asserted in
-  `test_NegativeControl_DormantVsActiveIdentity_SelectorDifference`:
-  - **Dormant** (identity never set + ownership renounced → permanently unwired): a wrong-identity
-    reportType-3 `onReport` gets PAST the skipped identity check and reverts only on dispatch →
-    `ZipcodeController.UnsupportedReportType(3)`. This IS the vuln.
-  - **Gate-active** (a separate non-renounced controller sealed with `setExpectedWorkflowName(NAME)`, CTR-16): the SAME report
-    reverts `ReceiverTemplate.InvalidWorkflowName(WRONG, NAME)` FIRST (identity check fires before dispatch).
-  - The **selector difference** (`UnsupportedReportType` vs `InvalidWorkflowId`) is the proof that an unset
-    identity silently degrades `onReport` to a Forwarder-sender-only path.
-  - `metadata` is built `abi.encodePacked(WRONG_WID, bytes10(0), WORKFLOW_OWNER)` per `_decodeMetadata` fixed
-    offsets 32/64/74 (packed, NOT `abi.encode`).
+- **CTR-16 — EACH receiver, not a representative.** The earlier design inferred "all wired" from one shared
+  `WORKFLOW_ID` on every subclass ⇒ a single representative read. CTR-16 **DROPPED** that: under the
+  separate-daemon model each receiver carries its OWN `workflowName`, so the gate loops and asserts every receiver
+  individually — a representative-only check would miss an unset name on one receiver. `workflowName` is what
+  separates two same-author daemons sharing the one deploy wallet (the K5 reason both author AND name are required).
+- **The dormancy proof the gate is load-bearing** (`CTR16ReceiverIdentityTest`, against the real
+  `SzipFarmUtilityLpOracle`):
+  - **Dormant** (`test_Behavioral_DormantAcceptsWrongIdentity`): identity never set ⇒ a wrong-identity `LP_MARK`
+    push from the (shared) Forwarder is ACCEPTED and writes the cache. Any co-tenant workflow clearing the
+    Forwarder can drive it. This IS the vuln.
+  - **Sealed** (`test_Behavioral_SealedRejectsWrongName`): a report whose author matches but whose name does NOT
+    reverts `ReceiverTemplate.InvalidWorkflowName(wrong, sealed)` BEFORE dispatch; the matching report
+    (`test_Behavioral_SealedAcceptsCorrectIdentity`) still pushes through.
+  - **K5** (`test_K5_PrivilegeSeparation_NameSeparatesSameAuthorDaemons`): two receivers, SAME author, DIFFERENT
+    names — a daemon-A report is accepted by receiver-A and rejected (`InvalidWorkflowName`) by receiver-B. Only
+    the per-receiver name separates them.
+  - `metadata` is built `abi.encodePacked(bytes32(0), name, WORKFLOW_OWNER)` per `_decodeMetadata` fixed offsets
+    32/64/74 (packed, NOT `abi.encode`); the `workflowId` slot is left zero (the pin is dropped — `onReport` skips
+    a zero expected id).
 
 ## Wiring — cross-component (what it gates)
-- **`ZipcodeController` (WOOF-05)** — read for `getExpectedWorkflowId()` (F-3 leg). The representative receiver.
-- **`ZipcodeOracleRegistry` (WOOF-02)** — read for `controller()` (F7 leg). The only contract with the set-once
-  `controller` getter; the gate's second argument.
-- **Every other `ReceiverTemplate` subclass** is covered transitively: §9/S10b sets the same `WORKFLOW_ID` on all
-  of them in one loop, so the controller's non-zero id stands in for the whole set. The kept-code subclasses are
-  `ZipcodeController`, `ZipcodeOracleRegistry`, `loss/DefaultCoordinator`, `supply/CreditWarehouse/WarehouseAdminModule`,
-  `supply/SzipNavOracle`, `supply/SzipFarmUtilityLpOracle`, `bridge/SzAlphaRateOracle` (all `is ReceiverTemplate`).
-  Per `PROGRESS.md`, the **warehouse/coordinator** `ReceiverTemplate` subclasses are the same-identity, same-gate
-  population the S11 assert protects — they each get `setExpectedWorkflowId`→ownership hand-off in the same
-  audit Phase-S seal (their item-10 wire is deferred to the engine-integration pass, `PROGRESS.md` row "Item 10 /
-  engine-integration pass · audit sweep (8-Bw)").
+- **`ZipcodeController` (WOOF-05)** — read for `getExpectedAuthor()` + `getExpectedWorkflowName()` (F-3 leg), as
+  one receiver in the fleet array.
+- **`ZipcodeOracleRegistry` (WOOF-02)** — read for `controller()` (F7 leg); the only contract with the set-once
+  `controller` getter, and the gate's `registry` argument. It is ALSO a receiver in the array, so it gets both an
+  identity check (as a receiver) and the distinct `controller()` check.
+- **Every `ReceiverTemplate` subclass is asserted individually (CTR-16).** The deploy passes the full live fleet
+  as `receivers[]` — controller, registry, warehouse adapter, coordinator, navOracle, rateOracle, and the CRE-push
+  `lpOracle` when present (`!= address(0)`; the ownerless fair-LP branch is neither sealed nor asserted). The
+  kept-code subclasses are `ZipcodeController`, `ZipcodeOracleRegistry`, `loss/DefaultCoordinator`,
+  `supply/CreditWarehouse/WarehouseAdminModule`, `supply/SzipNavOracle`, `supply/SzipFarmUtilityLpOracle`,
+  `bridge/SzAlphaRateOracle` (all `is ReceiverTemplate`). The old "same `WORKFLOW_ID` ⇒ a representative stands in
+  for the whole set" inference is DROPPED — each receiver carries its own per-daemon `workflowName`, so a missing
+  name on any one fails closed.
 - **`PROGRESS.md` grounding** (grep `WOOF-10a` / `requireIdentityWired` / `S11`): backlog row 10a =
   **BUILT-VERIFIED 2026-06-06** (5/5 tests, 107/107 total at that window; no fork). The two item-10 obligation
   rows are marked **"GATE PORTION TESTED (by WOOF-10a)"**: the WOOF-05 F-3 row (controller identity leg) and the
@@ -108,16 +118,19 @@ function requireReceiverIdentityWired(address receiver) internal view {
   `setExpectedWorkflowName(<per-receiver daemon name>)` on every receiver — the `workflowId` pin is dropped) and AFTER **S6**
   seeds the registry (`registry.setController(ZIP_CONTROLLER)`), and IMMEDIATELY BEFORE the final ownership
   hand-off. Because the library is `internal`, it compiles into the deploy script — no separate deployment.
-- **Tested-negative requirement (the discharge):** the deploy test MUST include a run that attempts the hand-off
-  with identity (or controller) unset and prove it REVERTS `IdentityNotWired` at the gate. WOOF-10a delivers
-  exactly this against the REAL receivers via a `GateHarness` external wrapper (an `internal` lib fn can't be
-  `vm.expectRevert`-targeted directly):
-  - `test_Negative_IdentityUnset_GateReverts` (registry seeded, id 0),
-  - `test_Negative_ControllerUnset_GateReverts` (id set, registry unseeded),
-  - `test_Negative_BothUnset_GateReverts`,
+- **Tested-negative requirement (the discharge):** the deploy test MUST include runs that attempt the hand-off
+  with a receiver (or the controller) unwired and prove they REVERT at the gate. WOOF-10a delivers exactly this
+  against the REAL receivers via a `GateHarness` external wrapper (an `internal` lib fn can't be
+  `vm.expectRevert`-targeted directly) — `ZipcodeDeployIdentityGateTest`:
+  - `test_Negative_ReceiverUnsealed_GateReverts` (registry seeded, one receiver's identity unset → `ReceiverIdentityNotWired`),
+  - `test_Negative_NameUnset_GateReverts` (author set, name unset → `ReceiverIdentityNotWired`),
+  - `test_Negative_RegistryControllerUnset_GateReverts` (every receiver sealed, `controller() == 0` → `RegistryControllerUnset`),
+  - `test_Negative_EmptyReceivers_GateReverts` (empty fleet → `EmptyReceiverSet`, defense-in-depth),
   - `test_Positive_GatePasses_ThenRenounce_ThenFrozen` (gate passes → hand-off → inherited setters revert
-    `OwnableUnauthorizedAccount`),
-  - `test_NegativeControl_DormantVsActiveIdentity_SelectorDifference`.
+    `OwnableUnauthorizedAccount`).
+  The per-receiver author+name posture and the dormancy/K5 proofs live in the second test contract,
+  `CTR16ReceiverIdentityTest` (the `test_Behavioral_*` / `test_PreGate_*` / `test_K5_*` set, against the real
+  `SzipFarmUtilityLpOracle`). 13 tests total.
 - **Applies to every `ReceiverTemplate` subclass** — the same S10b-set identity + S11 assert + hand-off pattern
   seals the controller, registry, coordinator, and warehouse-admin receivers.
 - **Build-phase doctrine shift — hand-off, not renounce.** The spec/PROGRESS were updated (§9 `:1810-1820`,
@@ -134,15 +147,19 @@ function requireReceiverIdentityWired(address receiver) internal view {
 
 ## Gotchas
 - **Documentation / an unexercised assert line does NOT discharge.** The obligation is satisfied only by a
-  **tested negative** — a real deploy run that attempts the hand-off with `getExpectedWorkflowId()` (or
-  `controller()`) unset and proves an `IdentityNotWired` REVERT. The controller cannot self-defend (the
-  conditional identity check in `ReceiverTemplate` degrades `onReport` to Forwarder-sender-only if identity is
-  blank); the gate must externalize and prove it.
-- **`internal` library ⇒ no direct `vm.expectRevert`.** Tests must route through an external `GateHarness`
-  wrapper to assert the revert selector+args.
-- **No fork, no external addresses.** The gate is a pure two-getter view; the registry ctor's `quote.decimals()`
-  is satisfied by a 6-dp `MockUSDC`, the controller ctor only stores immutables (EOA stubs for
-  forwarder/venue/erebor are fine — origination is never exercised).
-- **Single-controller arg relies on the §9/S10b same-`WORKFLOW_ID`-in-one-loop invariant.** If a future deploy
-  ever sets per-subclass workflow ids, the representative-controller shortcut would no longer cover the whole set
-  and the assert would need to read each receiver.
+  **tested negative** — a real deploy run that attempts the hand-off with a receiver's `getExpectedAuthor()` /
+  `getExpectedWorkflowName()` (or the registry's `controller()`) unset and proves a `ReceiverIdentityNotWired` /
+  `RegistryControllerUnset` REVERT. A receiver cannot self-defend (the conditional identity check in
+  `ReceiverTemplate` degrades `onReport` to Forwarder-sender-only if identity is blank); the gate must externalize
+  and prove it.
+- **`internal` library ⇒ no direct `vm.expectRevert`.** Tests must route through an external `GateHarness` /
+  `LpGateHarness` wrapper to assert the revert selector+args.
+- **No fork, no external addresses.** The gate is a pure view of the identity + controller getters; the registry
+  ctor's `quote.decimals()` is satisfied by a 6-dp `MockUSDC` and the LP oracle ctor strict-reads an 18-dp
+  `MockLp18` (SUPPLY-ADV-13); the controller ctor only stores immutables (EOA stubs for forwarder/venue/erebor are
+  fine — origination is never exercised).
+- **CTR-16 reads every receiver — the representative shortcut is gone.** The old design read one representative
+  `WORKFLOW_ID` and inferred the rest; CTR-16 loops the full `receivers[]` array and asserts each author+name, so
+  a per-subclass name divergence (the separate-daemon model) can no longer slip through. The remaining residual is
+  the call-site invariant: the deploy must pass the complete live fleet (the `EmptyReceiverSet` guard fail-closes
+  an empty array, but the gate still trusts the script to enumerate every receiver).
