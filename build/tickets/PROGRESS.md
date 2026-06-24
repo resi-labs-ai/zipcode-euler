@@ -308,3 +308,17 @@ accepted-risk. One LOW delta:
   **29/29 green**, `forge build` clean. X-Ray §2/§4 + wire `8-B7` synced in the same commit. Promoted INFO→LOW
   (owner-only/build-phase, honest-path-recoverable, but the one engine desync that redirects rather than reverts).
   Single-model run (Claude-only).
+
+`SzipUSD.sol` reviewed (single-model, Claude ×2 missions) — SOUND (27-nSLOC vanilla OZ ERC20 + the 3 documented
+additions; no `_update`/hook/fee/rebase/pause; mint/burn Gate-only). One promoted finding; renounceOwnership =
+WONTFIX (stock OZ, Timelock-trusted), burn-without-approval = false-positive (design).
+- **SUPPLY-ADV-12** — `SzipUSD.setGate` was the *third* pointer defining the two-token conservation
+  `totalSupply() == loot.balanceOf(gate)` and the only one left mutable post-issuance after ADV-06 locked the
+  Gate-side pair (`setShareToken`/`setBaal`) → **SHIPPED to `main`**. A post-issuance re-point would hand mint/burn
+  to a Loot-less Gate and desync I-1/I-2 (no drain — strands accounting; old Loot orphaned). Fix: `setGate` now
+  `revert AlreadyIssued()` once `totalSupply() != 0` (one-liner against the token's own `totalSupply()`), symmetric
+  with `ExitGate._assertPreIssuance`; pre-issuance re-point stays free. Regression:
+  `test_szipUSD_setGate_locked_after_issuance` + `test_szipUSD_setGate_repoint_allowed_pre_issuance`; scoped suite
+  **26/26 green**, `forge build` clean. X-Ray `SzipUSD.md` (§1/§2/§3 I-4/§4/§5/§6) + wire `ExitGate-szipUSD.md`
+  synced in the same commit. Promoted INFO→LOW (owner-only/build-phase, no drain) under the ratified ADV-06
+  precedent. Single-model run (Claude-only).

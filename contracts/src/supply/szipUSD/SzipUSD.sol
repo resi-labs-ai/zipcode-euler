@@ -17,6 +17,7 @@ contract SzipUSD is ERC20, Ownable {
 
     error NotGate();
     error ZeroAddress();
+    error AlreadyIssued();
 
     event GateSet(address indexed gate);
 
@@ -26,9 +27,15 @@ contract SzipUSD is ERC20, Ownable {
         emit GateSet(gate_);
     }
 
-    /// @notice Re-point the minter/burner Gate. `onlyOwner` (Timelock), build-phase flexibility.
+    /// @notice Re-point the minter/burner Gate. `onlyOwner` (Timelock), build-phase flexibility — but only BEFORE any
+    ///         szipUSD is issued. Once `totalSupply() != 0` the sole-minter pointer is the third leg of the two-token
+    ///         conservation `totalSupply() == loot.balanceOf(gate)`; re-pointing it over a live supply would hand
+    ///         mint/burn to a Loot-less Gate and desync I-1/I-2, so it fails closed (`AlreadyIssued`) — symmetric with
+    ///         `ExitGate._assertPreIssuance` (SUPPLY-ADV-06/12). A post-issuance Gate swap must go through migration,
+    ///         not this setter. Immutability re-freeze still deferred to pre-prod.
     function setGate(address gate_) external onlyOwner {
         if (gate_ == address(0)) revert ZeroAddress();
+        if (totalSupply() != 0) revert AlreadyIssued();
         gate = gate_;
         emit GateSet(gate_);
     }

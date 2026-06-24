@@ -1,6 +1,6 @@
 # X-Ray — `SzipUSD.sol` (single-contract, test-connected)
 
-> SzipUSD | 27 nSLOC | 2109fe5 (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE**
+> SzipUSD | 28 nSLOC | `main`, working tree | Foundry | 23/06/26 (ADV-12) | **Verdict: ADEQUATE**
 
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/SzipUSD.sol`, the user-facing junior-vault share
 token — a plain OZ `ERC20` + `Ownable` whose **only** non-standard surface is `onlyGate` mint/burn (+ a Timelock
@@ -16,7 +16,7 @@ token — a plain OZ `ERC20` + `Ownable` whose **only** non-standard surface is 
 
 A 27-nSLOC ERC-20 with three additions over OZ stock:
 - `mint(to, amount)` / `burn(from, amount)` — **`onlyGate`** (the Exit Gate is the sole minter/burner, paired 1:1 with the Gate's `mintLoot`/`burnLoot`).
-- `setGate(gate_)` — `onlyOwner` (Timelock), build-phase re-point so the token survives a Gate redeploy; zero-guarded; re-freeze to immutable deferred to pre-prod.
+- `setGate(gate_)` — `onlyOwner` (Timelock), build-phase re-point so the token survives a Gate redeploy; zero-guarded; **fails closed `AlreadyIssued` once `totalSupply() != 0`** (SUPPLY-ADV-12 — re-pointable only pre-issuance); re-freeze to immutable deferred to pre-prod.
 - constructor — zero-guards the initial `gate`.
 
 Everything else (transfer/approve/allowance/totalSupply/…) is unmodified OpenZeppelin `ERC20`.
@@ -27,7 +27,7 @@ Everything else (transfer/approve/allowance/totalSupply/…) is unmodified OpenZ
 |---|---|---|
 | `mint(to, amount)` | `onlyGate` | `NotGate` otherwise; paired with the Gate's `mintLoot` |
 | `burn(from, amount)` | `onlyGate` | `NotGate` otherwise; paired with `burnLoot` |
-| `setGate(gate_)` | `onlyOwner` (Timelock) | re-point the minter/burner; `ZeroAddress` guard |
+| `setGate(gate_)` | `onlyOwner` (Timelock) | re-point the minter/burner; `ZeroAddress` guard; `AlreadyIssued` once `totalSupply() != 0` (pre-issuance only, ADV-12) |
 | ERC-20 surface | public | stock OZ — transfer/approve/etc. |
 
 No CRE operator. The token holds no custody beyond its own balances.
@@ -39,7 +39,7 @@ No CRE operator. The token holds no custody beyond its own balances.
 | I-1 | **mint/burn are Gate-only** — any other caller reverts `NotGate` | Yes | **`test_szipUSD_mint_burn_onlyGate`** (ExitGate suite — non-Gate mint AND burn revert) |
 | I-2 | **mint/burn pair 1:1 with the Gate's Loot** — `totalSupply() == loot.balanceOf(gate)` always (the two-token conservation) | Yes (cross-contract) | **`invariant_twoToken_conservation_and_zeroShares`** (ExitGate stateful invariant, ~6,400 fuzzed calls) + the ExitGate deposit/burnFor happy paths — see [ExitGate.md](ExitGate.md) |
 | I-3 | **non-rebasing, freely transferable** — NAV accrues in price, balances are stock ERC-20 | Yes | inherited OZ `ERC20` (transfer/approve/totalSupply unmodified); used as the real token across the consuming suites |
-| I-4 | **`setGate` onlyOwner + zero-guard + effect**; constructor zero-guards `gate` | Yes | **`test_szipUSD_setGate_and_ctor_zero_guard`** — ctor rejects zero; `setGate` non-owner→`OwnableUnauthorizedAccount`, zero→`ZeroAddress`, re-point takes effect, the new gate can mint and the old gate can't |
+| I-4 | **`setGate` onlyOwner + zero-guard + pre-issuance lock + effect**; constructor zero-guards `gate` | Yes | **`test_szipUSD_setGate_and_ctor_zero_guard`** — ctor rejects zero; `setGate` non-owner→`OwnableUnauthorizedAccount`, zero→`ZeroAddress`, re-point takes effect, the new gate can mint and the old gate can't; **`test_szipUSD_setGate_repoint_allowed_pre_issuance`** + **`test_szipUSD_setGate_locked_after_issuance`** (ADV-12 — re-points freely while `totalSupply()==0`, reverts `AlreadyIssued` after) |
 
 ## 4. Guards — coverage
 
@@ -47,6 +47,7 @@ No CRE operator. The token holds no custody beyond its own balances.
 |---|---|
 | `NotGate` (mint + burn) | `test_szipUSD_mint_burn_onlyGate` |
 | `setGate` onlyOwner / `ZeroAddress` / effect | `test_szipUSD_setGate_and_ctor_zero_guard` |
+| `setGate` `AlreadyIssued` (pre-issuance lock, ADV-12) | `test_szipUSD_setGate_locked_after_issuance` + `test_szipUSD_setGate_repoint_allowed_pre_issuance` |
 | constructor `ZeroAddress` | `test_szipUSD_setGate_and_ctor_zero_guard` |
 
 ## 5. Attack surfaces
@@ -59,6 +60,13 @@ No CRE operator. The token holds no custody beyond its own balances.
   token*; `test_szipUSD_setGate_and_ctor_zero_guard` proves the ctor rejects a zero gate, `setGate` rejects a
   non-owner and a zero, and after a re-point the **new** gate can mint while the **old** gate reverts `NotGate`. With
   the mint/burn gate (I-1), every surface on the token is now exercised.
+- **`setGate` re-point fails closed post-issuance (SUPPLY-ADV-12)** — `setGate` is the *third* pointer defining the
+  two-token conservation `totalSupply() == loot.balanceOf(gate)` (the other two — `ExitGate.setShareToken`/`setBaal` —
+  were locked by ADV-06). A re-point over a live supply would hand mint/burn to a Loot-less Gate and desync I-1/I-2
+  (no drain — strands accounting), so `setGate` now `revert AlreadyIssued()` once `totalSupply() != 0`, symmetric with
+  `ExitGate._assertPreIssuance`. Build-phase re-pointing stays fully available pre-issuance; a post-issuance Gate swap
+  must go through migration, not the setter. Covered by `test_szipUSD_setGate_locked_after_issuance` +
+  `test_szipUSD_setGate_repoint_allowed_pre_issuance`.
 - **Standard ERC-20 is OZ — correctly not re-tested** — transfer/approve/allowance are unmodified OpenZeppelin;
   re-testing them would re-prove audited library code. The token adds no transfer hooks, no fee-on-transfer, no
   rebasing, no pausing.
@@ -70,7 +78,7 @@ No CRE operator. The token holds no custody beyond its own balances.
 | Dedicated unit | 0 | no `SzipUSD.t.sol` |
 | Consumer (mint/burn gate) | 1 | `test_szipUSD_mint_burn_onlyGate` (`NotGate` on both) |
 | Consumer (happy mint/burn + conservation) | many | every ExitGate deposit/burnFor test + the two-token stateful invariant exercise the real token |
-| `setGate` / ctor-zero | 1 | `test_szipUSD_setGate_and_ctor_zero_guard` (onlyOwner/zero/effect + old-gate-loses-mint) |
+| `setGate` / ctor-zero | 3 | `test_szipUSD_setGate_and_ctor_zero_guard` (onlyOwner/zero/effect + old-gate-loses-mint) + `test_szipUSD_setGate_repoint_allowed_pre_issuance` + `test_szipUSD_setGate_locked_after_issuance` (ADV-12 pre-issuance lock) |
 
 The decisive non-standard surface (mint/burn gating) is tested and the supply-conservation property is under a
 stateful invariant in the Gate. Coverage % uninstrumentable (project-wide stack-too-deep); green runs confirmed in
@@ -86,7 +94,7 @@ rebasing, no custody. Held at ADEQUATE (not HARDENED) only by the absence of an 
 
 **Structural facts:**
 1. 27 nSLOC; OZ `ERC20` + `Ownable`; the transferable user share (the soulbound Loot lives in the Gate).
-2. Three additions over stock OZ: `onlyGate` `mint`/`burn` + Timelock `setGate` (+ ctor zero-guard); everything else is unmodified.
+2. Three additions over stock OZ: `onlyGate` `mint`/`burn` + Timelock `setGate` (zero-guarded + `AlreadyIssued` pre-issuance lock, ADV-12) (+ ctor zero-guard); everything else is unmodified.
 3. Non-rebasing — NAV accrues in price (`SzipNavOracle`), not balance; trades on the CoW secondary.
 4. Tests: 0 dedicated; the `NotGate` gate + `setGate`/ctor-zero are covered, and mint/burn + the two-token conservation are exercised via ExitGate (incl. its stateful invariant).
 5. No outstanding coverage gap on the contract surface; every mutator (mint/burn/`setGate`/ctor) is exercised.

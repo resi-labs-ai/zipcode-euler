@@ -296,6 +296,33 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         t.mint(alice, 1e18);
     }
 
+    /// @dev SUPPLY-ADV-12: `setGate` re-points freely while no szipUSD is issued (pre-issuance build-phase flexibility).
+    function test_szipUSD_setGate_repoint_allowed_pre_issuance() public {
+        SzipUSD t = new SzipUSD(address(gate)); // this = owner, totalSupply() == 0
+        address g1 = makeAddr("g1");
+        address g2 = makeAddr("g2");
+        t.setGate(g1);
+        assertEq(t.gate(), g1, "re-point #1 allowed pre-issuance");
+        t.setGate(g2);
+        assertEq(t.gate(), g2, "re-point #2 allowed pre-issuance");
+    }
+
+    /// @dev SUPPLY-ADV-12: once szipUSD is issued (`totalSupply() != 0`), `setGate` fails closed (`AlreadyIssued`) — the
+    ///      sole-minter pointer is the third leg of the two-token conservation and must not re-point over a live supply.
+    function test_szipUSD_setGate_locked_after_issuance() public {
+        address g1 = makeAddr("g1");
+        SzipUSD t = new SzipUSD(g1); // this = owner
+        // issue some supply via the wired gate
+        vm.prank(g1);
+        t.mint(alice, 1e18);
+        assertEq(t.totalSupply(), 1e18, "supply issued");
+        // re-point now fails closed, even for the owner with a valid non-zero gate
+        address g2 = makeAddr("g2");
+        vm.expectRevert(SzipUSD.AlreadyIssued.selector);
+        t.setGate(g2);
+        assertEq(t.gate(), g1, "gate unchanged after AlreadyIssued");
+    }
+
     // ----------------------------------------------------------------- manager-grant obligation (8-B1 F4.2)
     function test_depositFor_reverts_without_manager_grant() public {
         // Summon a SECOND substrate, build a Gate, but do NOT grant manager — depositFor must revert at mintLoot.

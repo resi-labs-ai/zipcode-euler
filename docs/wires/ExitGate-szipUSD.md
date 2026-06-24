@@ -27,7 +27,7 @@ mints to a receiver, keeping `szipUSD.totalSupply() == loot.balanceOf(gate)` and
 | Contract | What it does |
 |---|---|
 | `ExitGate` (`is Ownable, ReentrancyGuard`) | Custody + issuance + burn valve. `depositFor(asset,amount,receiver)` = NAV-proportional issuance off `SzipNavOracle.navEntry()` (round down); routes the asset into the main Safe basket; mints Loot to itself + szipUSD to the receiver. `burnFor(amount)` = the §7/8-B14 paired buy-and-burn retire (the only exit executor), `windowController`-gated, `burnLoot` from the Gate + burn the engine Safe's szipUSD, NO asset payout. `previewDeposit` = a view quote. All wiring fields are `onlyOwner` (Timelock) setters — build-phase, NOT immutable. **No `mintShares`** path exists. |
-| `SzipUSD` (`is ERC20, Ownable`) | The transferable share. `mint(to,amount)`/`burn(from,amount)` both revert `NotGate` unless `msg.sender == gate`. `gate` is a single `onlyOwner`-settable pointer (`setGate`) — build-phase re-pointable, immutability deferred to pre-prod. Nothing else non-standard. |
+| `SzipUSD` (`is ERC20, Ownable`) | The transferable share. `mint(to,amount)`/`burn(from,amount)` both revert `NotGate` unless `msg.sender == gate`. `gate` is a single `onlyOwner`-settable pointer (`setGate`) — build-phase re-pointable **only until first issuance** (`AlreadyIssued` once `totalSupply() != 0`, SUPPLY-ADV-12), immutability re-freeze still deferred to pre-prod. Nothing else non-standard. |
 
 ## Wiring — internal
 
@@ -92,8 +92,10 @@ stayers. This retires szipUSD the engine Safe bought below NAV on the CoW book.
 ### SzipUSD constructor + mint/burn authority
 `constructor(address gate_) ERC20("Zipcode Junior Vault Share", "szipUSD") Ownable(msg.sender)` — rejects a zero
 gate, sets `gate = gate_`, emits `GateSet`. `mint(to,amount)` and `burn(from,amount)` each `revert NotGate()`
-unless `msg.sender == gate`. `setGate(address)` is `onlyOwner` (Timelock, build-phase re-point). There is **no
-public mint/burn, no cap, no pause** — the Gate is the entire authority surface.
+unless `msg.sender == gate`. `setGate(address)` is `onlyOwner` (Timelock, build-phase re-point) and `revert
+AlreadyIssued()` once `totalSupply() != 0` (SUPPLY-ADV-12 — the sole-minter pointer is the third leg of the
+two-token conservation, so it fails closed over a live supply, symmetric with `ExitGate._assertPreIssuance`).
+There is **no public mint/burn, no cap, no pause** — the Gate is the entire authority surface.
 
 ## Wiring — cross-component (who points at whom)
 - **Gate `manager(2)` grant (the inbound 8-B1 F4.2 obligation).** The Gate's Loot-mint capability is granted by the
