@@ -25,8 +25,14 @@ over a governed window `W`. Consumers read a **bracketed** 18-dp share price (`1
   stale-but-nonzero one (SEC-04 / H5; see leg 3 below).
 
 The bracket defends the profitable direction both ways: a one-block spot spike UP only makes minting more
-expensive (`max`) and is ignored on exit (`min`); a DOWN spike is ignored on entry. The Gate MUST `poke()`
-(permissionless) before every issuance/exit read. The third consumer is the loss side: the
+expensive (`max`) and is ignored on exit (`min`); a DOWN spike is ignored on entry. **It ATTENUATES, not
+eliminates (SUPPLY-ADV-14):** `twapNavPerShare` values the leading `[lastUpdate, now]` segment at the current
+spot with weight `g/W` (`g = now − lastUpdate`), so a one-block move on an in-block-manipulable leg still leaks
+`~(g/W)·Δspot`; `poke()` keeps `g` small only under honest keeper liveness, it cannot un-weight a spot already
+moved this block. The only in-block-manipulable leg is the ICHI LP spot reserves when `lpTwapWindow == 0`; its
+STRUCTURAL defense is `lpTwapWindow != 0` (the fair-reserves TWAP tick), not the bracket. Consumers SHOULD
+`poke()` (permissionless) before every issuance/exit read — the Gate (`navEntry`) and the buy-burn module
+(`navExit`, SUPPLY-ADV-14) both do. The third consumer is the loss side: the
 `DefaultCoordinator` writes the recoverable impairment `provision` here (M2), which `spotNavPerShare` subtracts
 from gross.
 
@@ -180,7 +186,11 @@ additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
   zero effective supply, and the Gate is the first minter (rounds shares down), so a pre-deposit donation cannot
   profit an attacker. The oracle deliberately adds no inflation guard.
 - **`navExit` may price off a stale mark (by design).** Staleness/freshness gates `navEntry`/`fresh` only;
-  `navExit`/`grossBasketValue` keep pricing off the last good rate. The Gate's `poke()` obligation + the TWAP lag
-  (`min(spot, twap)`) are the defense.
+  `navExit`/`grossBasketValue` keep pricing off the last good rate. The TWAP lag (`min(spot, twap)`) +
+  the consumer `poke()` obligation are the defense — but the bracket only ATTENUATES an in-block spot move to
+  weight `g/W`, it does not eliminate it (SUPPLY-ADV-14). The sole in-block-manipulable leg (the ICHI LP spot
+  reserves when `lpTwapWindow == 0`) is defended STRUCTURALLY by `lpTwapWindow != 0` (fair-reserves), not the
+  bracket; deploy-ordering: do not fund the LP with `lpTwapWindow == 0`, nor open exit/issuance, inside the first
+  `W` of deployed life (the ring falls back to spot until it holds `W` of history).
 - **0.8.24 pin:** guards use `if (!cond) revert CustomError()`, never `require(cond, CustomError())` (≥0.8.26).
 - **`maxDeviationBps` is not zero-guarded** in the ctor (0 is a valid governed value); all other ctor args are.

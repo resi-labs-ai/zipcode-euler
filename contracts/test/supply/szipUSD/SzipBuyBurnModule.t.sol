@@ -79,6 +79,7 @@ contract MockNavOracle {
     uint256 public maxAgeV = 1 days; // default == MAX_BID_TTL, so the NAV-freshness fence is a no-op at default
     uint48 public oldestTsV; // 0 ⇒ report block.timestamp ("legs just pushed"), so the leg-anchored fence (SEC-13)
         // coincides with the old post-time anchor and existing fence tests behave identically
+    uint256 public pokes; // SUPPLY-ADV-14: count poke() calls so the suite can assert postBid pokes before navExit
 
     function setNavExit(uint256 v) external {
         navExitV = v;
@@ -110,6 +111,10 @@ contract MockNavOracle {
 
     function oldestRequiredLegTs() external view returns (uint48) {
         return oldestTsV == 0 ? uint48(block.timestamp) : oldestTsV;
+    }
+
+    function poke() external {
+        pokes++;
     }
 }
 
@@ -525,6 +530,15 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.prank(operator);
         module.postBid(_order(5e5, 1e18, vt));
         assertTrue(module.currentUid().length != 0, "bid posts once covered");
+    }
+
+    /// @notice SUPPLY-ADV-14: `postBid` pokes the NAV oracle before reading `navExit` (mirrors `ExitGate`),
+    ///         so the TWAP leading-segment is booked at the current block and never carries a stale `g/W` slice.
+    function test_SUPPLYADV14_postBid_pokes_before_navExit() public {
+        assertEq(oracle.pokes(), 0, "no poke before postBid");
+        vm.prank(operator);
+        module.postBid(_order(5e5, 1e18, _validTo()));
+        assertEq(oracle.pokes(), 1, "postBid poked the oracle exactly once before reading navExit");
     }
 
     function test_single_resting_bid() public {

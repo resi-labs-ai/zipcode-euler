@@ -14,6 +14,9 @@ interface INavOracle {
     function fresh() external view returns (bool);
     function maxAge() external view returns (uint256);
     function oldestRequiredLegTs() external view returns (uint48);
+    /// @dev Advance the TWAP accumulator to the current block before reading `navExit`, so the bracket's
+    ///      leading `[lastUpdate, now]` segment is not left carrying a `g/W` slice of a stale spot (SUPPLY-ADV-14).
+    function poke() external;
 }
 
 /// @dev The minimal ERC20 surface the module needs (the USDC `approve` the module builds calldata for).
@@ -362,6 +365,10 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         if (!INavOracle(navOracle).fresh()) revert StaleNav();
         if (dBps == 0 || dBps >= 10_000) revert BadDiscount();
 
+        // SUPPLY-ADV-14: poke the TWAP accumulator before reading the exit mark, so the bracket's leading
+        // `[lastUpdate, now]` segment is booked at the current block rather than carrying a `g/W` slice of a
+        // stale spot. Mirrors `ExitGate.depositFor`, which pokes before `navEntry`.
+        INavOracle(navOracle).poke();
         uint256 navExit18 = INavOracle(navOracle).navExit(); // USD-18dp per 1e18 share
 
         // Price bound (§7.2/§7.4), exact integer form (USD 18-dp basis), reconciling USDC-6dp ↔ szipUSD-18dp ↔

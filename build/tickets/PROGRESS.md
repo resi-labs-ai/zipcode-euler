@@ -334,3 +334,17 @@ WONTFIX (stock OZ, Timelock-trusted), burn-without-approval = false-positive (de
   suites green, `forge build` clean. X-Ray `SzipFarmUtilityLpOracle.md` (§2/I-7/I-8/§4 + line-ref refresh/§5/§6) +
   `docs/supply/SzipFarmUtilityLpOracle.md` + wire `8-B5-FarmUtilityLoop.md` synced in the same commit. LOW
   (Timelock-gated/frozen pre-prod; realistic mis-scale direction fail-safe). Single-model run (Claude-only).
+
+`SzipNavOracle` reviewed (5 missions; ADEQUATE, no CRITICAL/HIGH/MEDIUM confirmed — the densest-tested supply
+contract held). 2 LOW fixes shipped; spec-accuracy nits + accepted CRE-trust residuals not ticketed. Single-model
+run (Claude-only). Reports: `adversarial-review/reports/src/supply/szipnavoracle/`.
+- **SUPPLY-ADV-14** — the TWAP bracket only ATTENUATES (not eliminates) an in-block spot move: `twapNavPerShare`
+  values the leading `[lastUpdate, now]` segment at current spot with weight `g/W`, and `poke()` cannot un-weight a
+  spot already moved this block (raw MEDIUM deflated to LOW — the sole in-block-manipulable leg is the ICHI LP when
+  `lpTwapWindow == 0`, whose structural defense is fair-reserves). Folded in: `SzipBuyBurnModule.postBid` read
+  `navExit` **un-poked** (vs `ExitGate` which pokes before `navEntry`) + the cold-ring first-`W`-of-deploy window →
+  **SHIPPED to `main`**. Fix: `_postBid` now `poke()`s before `navExit` (`INavOracle` extended with `poke()`);
+  NatSpec `:48` corrected (bracket attenuates to `g/W`; fair-reserves is the LP defense; deploy-ordering noted).
+  Optional `maxPokeGap` ctor-revert hardening DEFERRED (ctor-arg blast radius too wide for a LOW; no TWAP-math
+  change shipped). Regression: `test_SUPPLYADV14_postBid_pokes_before_navExit`; buy-burn **54/54**, NAV **64/64**,
+  `forge build` clean. Synced: X-Ray `SzipNavOracle.md` §5 + `SzipBuyBurnModule.md` I-2, wires `8-B4`/`8-B14`.

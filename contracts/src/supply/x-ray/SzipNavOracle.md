@@ -111,7 +111,10 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
   delta at exactly 2 wei with `sum <= gross`. A regression that broke the decomposition would now be caught here.
 - **Documented accepted trade-offs (not gaps).** zipUSD valued at flat $1 on the basket leg (a de-peg over-issues —
   LOW, §7, mitigated by capacity-gated minting); `navExit` may price off a stale-but-good mark by design (the §7
-  asymmetry, keeper-`poke`-maintained); `writeProvision` unbounded at the oracle (bound in M2); xALPHA `exchangeRate`
+  asymmetry, keeper-`poke`-maintained — **but the bracket only ATTENUATES an in-block spot move to weight `g/W`, it
+  does not eliminate it: SUPPLY-ADV-14**; the sole in-block-manipulable leg, the ICHI LP spot reserves when
+  `lpTwapWindow == 0`, is defended structurally by `lpTwapWindow != 0` (fair-reserves), and the buy-burn module now
+  `poke()`s before `navExit` like the Gate); `writeProvision` unbounded at the oracle (bound in M2); xALPHA `exchangeRate`
   is an M1 stand-in (production Rubicon getter verified at bridge integration); no first-depositor guard (the Gate
   owns genesis). All are NatSpec-documented security-review acceptances.
 - **Inherited residuals.** The `IchiAlgebraFairReserves` TWAP path (when `lpTwapWindow != 0`) carries the lib's X-2

@@ -46,9 +46,17 @@ interface IFarmUtilityDebt {
 ///        makes minting more expensive (a DOWN spike is ignored); `navExit = min` so an UP spike is ignored (no
 ///        exit-rich). Sub-window spot moves cannot be turned into a profitable mint or exit.
 ///      - `navExit` prices off the last good mark and MAY be stale (asymmetric by design): staleness pauses
-///        *issuance* (`navEntry`/`fresh`), never *exit*. The defense is the TWAP lag (`min(spot, twap)`), so the
-///        Gate MUST `poke()` before every exit/issuance read; `poke()` is permissionless so any keeper can maintain
-///        it. `lastUpdate` is public for freshness audit.
+///        *issuance* (`navEntry`/`fresh`), never *exit*. The TWAP bracket (`min`/`max(spot, twap)`) ATTENUATES an
+///        in-block spot move but does NOT eliminate it: `twapNavPerShare` values the leading `[lastUpdate, now]`
+///        segment at the current spot with weight `g/W` (`g = now - lastUpdate`), so a one-block move still leaks
+///        `~(g/W)·Δspot` into the read. `poke()` keeps `g` small only under honest keeper liveness — it CANNOT
+///        un-weight a spot already moved this block (it books the same spot over the same gap). The only in-block-
+///        manipulable leg is the ICHI LP spot reserves when `lpTwapWindow == 0`; its STRUCTURAL defense is
+///        `lpTwapWindow != 0` (the fair-reserves TWAP tick), NOT the bracket. Deploy-ordering: do not fund the LP
+///        with `lpTwapWindow == 0`, nor open exit/issuance, inside the first `W` of deployed life — the ring falls
+///        back to spot until it holds `W` of history. Consumers SHOULD `poke()` before reading (the Gate and the
+///        buy-burn module do); `poke()` is permissionless so any keeper can maintain it; `lastUpdate` is public for
+///        freshness audit. (SUPPLY-ADV-14.)
 ///      - `writeProvision` is UNBOUNDED at the oracle by design — the bound (down <= atRisk*(1-recoveryFloor), up by
 ///        realized receipts) lives in the `DefaultCoordinator` (M2), which the oracle trusts. Until wired,
 ///        `writeProvision` reverts for everyone (fail-closed); item-10 deploy verifies the wiring before the Timelock hand-off.
