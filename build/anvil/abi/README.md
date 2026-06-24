@@ -8,7 +8,7 @@ Every contract on the live anvil board, with its ABI. Pairs with `../contract-ma
 - `external/*.json` — **external/live contracts** the protocol sits on (full verified ABIs from Basescan, plus the
   full EVK `IEVault` interface for our EVault proxies, and a canonical `ERC20.json` for tokens).
 - `index.json` — **the resolver**: maps each deployed **address → `{name, abi, kind}`**, where `abi` is the path to
-  the ABI file (relative to `build/anvil/`) and `kind` is `protocol` / `external` / `standin`. 55 addresses.
+  the ABI file (relative to `build/anvil/`) and `kind` is `protocol` / `external` / `standin` / `demo`. 56 addresses.
 
 ## How a frontend uses it (viem)
 ```ts
@@ -30,6 +30,8 @@ RPC: `http://127.0.0.1:8545` (chainId 8453). Keys/principals are in `../contract
   (`ESynth.json` — full surface incl. minter capacity); szipUSD/xALPHA have their own files.
 - **Safes** (main/sidecar/warehouse) use `external/GnosisSafe.json` (the 1.4.1 L2 singleton ABI the proxies delegate to).
 - **Runtime-minted contracts** have no fixed address yet (resolve at call time): per-line lien tokens use
-  `LienCollateralToken.json`; per-market borrow guards use `FarmUtilityBorrowGuard.json`.
+  `LienCollateralToken.json`; the per-line EVC sub-account (`new LineAccount{salt: lienId}` in the adapter at
+  origination) uses `LineAccount.json`; per-market borrow guards use `FarmUtilityBorrowGuard.json`. These have ABI
+  files but no `index.json` address entry (they don't exist until a line/market is opened).
 - Regenerate after a redeploy: `forge inspect <Name> abi --json` for protocol files; the index addresses change with
   the deploy (the catalog is fixed). External ABIs are stable (live Base contracts).

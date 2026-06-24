@@ -249,12 +249,12 @@
     "abi": "abi/external/ZodiacRoles.json",
     "kind": "external"
   },
-  "0x2a3B9C75307a409387A8d238bDE81B0B91738A61": {
+  "0xD74712fF21f9AB9468F9A2a99D7b4A20A1E05B58": {
     "name": "SzipNavOracleDemoVAMM",
     "abi": "abi/SzipNavOracleDemoVAMM.json",
     "kind": "demo"
   },
-  "0x595b4be50D190eDc54c7bb4963A2289E9cFc4735": {
+  "0x17627cbB95CE6f5b535A32432e082D5723818AF6": {
     "name": "LpStrategyModuleDemoVAMM",
     "abi": "abi/LpStrategyModuleDemoVAMM.json",
     "kind": "demo"
@@ -262,6 +262,11 @@
   "0x86C2ba30C5Ce01479eF797897FAA6791402FeDf2": {
     "name": "SiloRegistry",
     "abi": "abi/SiloRegistry.json",
+    "kind": "protocol"
+  },
+  "0x10Fff7de38A99e5f7F86E982d5dF1B0ECE7f5b01": {
+    "name": "SeniorNavAggregator",
+    "abi": "abi/SeniorNavAggregator.json",
     "kind": "protocol"
   },
   "0xF6CAAF72A788916915ce1bF111E245e0bEABCd18": {

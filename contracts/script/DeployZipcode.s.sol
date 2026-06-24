@@ -22,6 +22,7 @@ import {EulerVenueAdapter} from "../src/venue/EulerVenueAdapter.sol";
 import {ZipcodeController} from "../src/ZipcodeController.sol";
 import {ZipcodeDeployAsserts} from "../src/ZipcodeDeployAsserts.sol";
 import {SiloRegistry} from "../src/SiloRegistry.sol";
+import {SeniorNavAggregator} from "../src/SeniorNavAggregator.sol";
 
 // --- supply substrate ---
 import {SzipNavOracle} from "../src/supply/SzipNavOracle.sol";
@@ -182,6 +183,7 @@ contract DeployZipcode is SummonSubstrate {
         address durationFreeze;
         // P8 federation catalog (CTR-02/03)
         SiloRegistry siloRegistry;
+        SeniorNavAggregator seniorNav; // CTR-05 senior-solvency aggregator (Σ donation-immune senior par over silos)
         // P7 loss side
         LienXAlphaEscrow escrow;
         DefaultCoordinator coord;
@@ -570,6 +572,13 @@ contract DeployZipcode is SummonSubstrate {
         );
         if (d.controller.registry() != address(d.siloRegistry)) revert SeamSiloRegistry();
         if (d.siloRegistry.venueOf(LOCAL_SILO_ID) != address(d.adapter)) revert SeamSiloRouting();
+
+        // CTR-05: the senior-solvency telemetry aggregator — Σ donation-immune senior par-backing over every
+        //   registered silo (here just LOCAL_SILO_ID). Reads the live SiloRegistry + zipUSD; holds no funds, prices
+        //   nothing (zipUSD still mints by value / redeems at par). Deployed LAST in the main sequence so no earlier
+        //   CREATE address moves; owner (team broadcaster) → Timelock at P9. `seniorBacking()` is live immediately.
+        d.seniorNav = new SeniorNavAggregator(address(d.siloRegistry), address(d.zipUSD));
+        if (address(d.seniorNav.registry()) != address(d.siloRegistry)) revert SeamSiloRegistry();
     }
 
     // ================================================================= P9 — seal (identity -> pre-gate -> transfer)
@@ -617,6 +626,7 @@ contract DeployZipcode is SummonSubstrate {
         d.escrow.transferOwnership(tl);
         d.coord.transferOwnership(tl);
         d.siloRegistry.transferOwnership(tl); // CTR-02 catalog → Timelock (slot-accounting `controller` stays the controller)
+        d.seniorNav.transferOwnership(tl); // CTR-05 senior-solvency aggregator → Timelock
         // ZipDepositModule has NO ownable surface — its sole admin (the set-once `setGate`) is the IMMUTABLE
         // `deployer` (this script). No transfer path; a known build-phase limitation (re-deploy to re-home, or the
         // Timelock simply never needs it since setGate is re-settable only by the immutable deployer). Not transferred.

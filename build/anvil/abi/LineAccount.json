@@ -1,0 +1,18 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "evc_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "operator_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  }
+]
