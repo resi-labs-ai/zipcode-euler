@@ -56,7 +56,12 @@ into the venue pool itself.
 - **`owner` (Timelock).** Holds only the three build-phase re-point setters: `setTokens` (re-derives `scaleUp`),
   `setController`, `setRedeemController` — each `onlyOwner` + `ZeroAddress`-guarded, emitting
   `TokensSet`/`ControllerSet`/`RedeemControllerSet`. **No** sweep / pause / upgrade / mint. (§17: wiring is
-  Timelock-re-pointable in the build phase; re-freezing to immutable is DEFERRED to pre-prod.)
+  Timelock-re-pointable in the build phase; re-freezing to immutable is DEFERRED to pre-prod.) **`setTokens`
+  additionally reverts `NotQuiescent` when `totalPending != 0` or `reservedAssets != 0`** (SUPPLY-ADV-16): a
+  token/`scaleUp` re-point is only sound on a quiescent queue — open pending and an unclaimed reserve are
+  OLD-token-denominated while settle/claim read the live wiring, so a straddling re-point would strand the escrow.
+  The X-3 freeze is thus code-enforced for `setTokens` (the `controller`/`redeemController` re-points stay
+  convention-gated, as a re-point of either is denomination-safe).
 - **`controller` (the CRE redemption-settle operator, CRE-02).** The **sole** caller of `settleEpoch`
   (`if (msg.sender != controller) revert NotController()`). Distinct from the §4.4 `ZipcodeController` and from the
   `requester`/claimant.

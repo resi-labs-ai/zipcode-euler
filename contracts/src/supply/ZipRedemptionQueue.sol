@@ -94,6 +94,7 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     error NotRedeemController();
     error MultipleRequesters();
     error InsufficientClaimable();
+    error NotQuiescent();
 
     // --------------------------------------------------------------------- events
     /// @notice A redeem request escrowed zipUSD. `sender == msg.sender` (the rq Safe).
@@ -126,6 +127,12 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     /// @notice Re-point the zipUSD + USDC tokens (re-derives `scaleUp`). `onlyOwner` (Timelock), build-phase.
     function setTokens(address zipUSD_, address usdc_) external onlyOwner {
         if (zipUSD_ == address(0) || usdc_ == address(0)) revert ZeroAddress();
+        // SUPPLY-ADV-16: a token/`scaleUp` re-point is only sound on a quiescent queue. `totalPending`/`pendingShares`/
+        // the escrowed balance are OLD-`zipUSD`-denominated and `reservedAssets`/`claimableAssets` are OLD-`usdc`-
+        // denominated; settle/claim read the live wiring. Re-pointing over live state strands the OLD escrow (the burn
+        // targets a NEW token the queue holds none of) and pays reserves in the NEW unit. Code-enforce the X-3 freeze:
+        // a re-point requires no open pending AND no unclaimed reserve.
+        if (totalPending != 0 || reservedAssets != 0) revert NotQuiescent();
         uint8 zipDec = IERC20Metadata(zipUSD_).decimals();
         uint8 usdcDec = IERC20Metadata(usdc_).decimals();
         if (zipDec < usdcDec) revert DecimalsTooFew();

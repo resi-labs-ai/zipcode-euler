@@ -298,6 +298,42 @@ contract ZipRedemptionQueueTest is QueueBase {
         assertEq(zip8.balanceOf(address(queue)), 200);
     }
 
+    // -------------------------------------------------------------- setTokens quiescent-state guard (SUPPLY-ADV-16)
+    /// @notice A token/`scaleUp` re-point is only sound on a quiescent queue: open pending is OLD-`zipUSD`-denominated
+    ///         and an unclaimed reserve is OLD-`usdc`-denominated, while settle/claim read the live wiring. `setTokens`
+    ///         must revert `NotQuiescent` whenever `totalPending != 0` (open request) OR `reservedAssets != 0` (settled-
+    ///         but-unclaimed book), and succeed only once both are zero — code-enforcing the X-3 freeze so no re-point
+    ///         can straddle OLD-denominated state and strand the escrow.
+    function test_SUPPLYADV16_setTokens_rejects_repoint_under_live_state() public {
+        uint256 q = 1000e18;
+
+        // (1) open request -> totalPending != 0 -> re-point reverts.
+        _giveZip(alice, q);
+        vm.prank(alice);
+        queue.requestRedeem(q, alice, alice);
+        assertEq(queue.totalPending(), q, "pending open");
+        vm.expectRevert(ZipRedemptionQueue.NotQuiescent.selector);
+        queue.setTokens(address(zip), address(usdc));
+
+        // (2) settle -> totalPending == 0 but reservedAssets != 0 (unclaimed book) -> still reverts.
+        _deliverUsdc(q / SCALE);
+        _settle();
+        assertEq(queue.totalPending(), 0, "pending drained");
+        assertEq(queue.reservedAssets(), q / SCALE, "reserve booked, unclaimed");
+        vm.expectRevert(ZipRedemptionQueue.NotQuiescent.selector);
+        queue.setTokens(address(zip), address(usdc));
+
+        // (3) fully claim -> both zero -> the re-point now succeeds and re-derives scaleUp.
+        vm.prank(alice);
+        queue.withdraw(q / SCALE, alice, alice);
+        assertEq(queue.totalPending(), 0);
+        assertEq(queue.reservedAssets(), 0, "quiescent");
+        MockERC20 zip8 = new MockERC20(8);
+        MockERC20 usdc6 = new MockERC20(6);
+        queue.setTokens(address(zip8), address(usdc6));
+        assertEq(queue.scaleUp(), 100, "re-point succeeds on a quiescent queue, scaleUp re-derived");
+    }
+
     // -------------------------------------------------------------- setController (auth + zero + effect)
     /// @notice `setController` is `onlyOwner`, zero-guarded, and re-points the sole `settleEpoch` caller: after the
     ///         re-point the NEW controller settles and the OLD one reverts `NotController`.

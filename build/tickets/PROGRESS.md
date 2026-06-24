@@ -357,3 +357,16 @@ run (Claude-only). Reports: `adversarial-review/reports/src/supply/szipnavoracle
   / `_repoint_to_ready_vault_keeps_window`; NAV **66/66**, full supply track **587/587**, `forge build` clean. Synced:
   X-Ray `SzipNavOracle.md` I-8 + guards table, wire `8-B4`. LOW (Timelock-only, build-phase, fail-closed,
   recoverable pre-renounce). `SzipNavOracle` audit COMPLETE (2 LOW shipped, no CRITICAL/HIGH/MEDIUM).
+- **SUPPLY-ADV-16** — `ZipRedemptionQueue.setTokens` re-pointed the tokens + re-derived `scaleUp` with NO quiescent-
+  state guard: with a request open (or an unclaimed reserve), `totalPending`/escrow are OLD-`zipUSD`-denominated and
+  `reservedAssets`/`claimableAssets` OLD-`usdc`-denominated, while settle/claim read the live wiring → a straddling
+  re-point strands the escrowed zipUSD (the settle burn targets a NEW token the queue holds none of → `_burn` reverts)
+  → **SHIPPED to `main`**. Fix: `if (totalPending != 0 || reservedAssets != 0) revert NotQuiescent();` atop `setTokens`,
+  code-enforcing the X-3 freeze (the inverse zap `ZipDepositModule` avoids the class entirely by freezing `scaleUp`
+  immutable; the queue keeps it mutable but holds escrowed state). Regression:
+  `test_SUPPLYADV16_setTokens_rejects_repoint_under_live_state` (open→revert, settled-unclaimed→revert, fully-claimed→
+  succeeds); queue **47/47**, `forge build` clean. Synced: X-Ray `ZipRedemptionQueue.md` I-14 + guards table + §5 +
+  counts, wire `9-ZipRedemptionQueue`. LOW (Timelock-only, build-phase; no solvency/attribution break — failure is
+  funds stranded, not extracted; deploy-time P3 re-point is on a fresh quiescent queue, unaffected). Source:
+  adversarial-review mission 4 MEDIUM deflated to LOW + mission 1 INFO (same `setTokens` path, folded).
+  `ZipRedemptionQueue` audit COMPLETE (1 LOW shipped, no CRITICAL/HIGH/MEDIUM).
