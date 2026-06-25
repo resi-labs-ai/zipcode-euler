@@ -33,11 +33,11 @@ invariants), happy path **and** an adversarial/negative ("fuzzy") leg. Rebuilt 2
 | 13 | S10 | buy-burn full exit (NAV ticks up for stayers) | ✓ PASS |
 | 14 | spine | full venue origination (CTR-03 siloId) | ✓ PASS |
 | 15 | S9 | utilization ↔ freeze identity | ✓ PASS (identity) |
-| 16 | spine | draw + close line (CTR-03) | ✓ draw PASS; close carried |
-| 17 | S13 | engine flywheel (LP/harvest/exercise/sell/recycle) | ✓ recycle live; venue legs carried |
-| 18 | demo | vAMM auto-compounder showcase | ✓ wiring live; mechanics carried |
+| 16 | spine | draw + close line (CTR-03) | ✓ PASS |
+| 17 | S13 | engine flywheel (LP/harvest/exercise/sell/recycle) | ✓ PASS |
+| 18 | demo | vAMM auto-compounder showcase | ✓ PASS |
 | 19 | **S7** | donation seam — NAV moves with no deposit | ✓ PASS |
-| 20 | **S13** | engine end-to-end value conservation | ✓ composed |
+| 20 | **S13** | engine end-to-end value conservation | ✓ PASS |
 | 21 | **S12** | senior NAV donation-immunity | ✓ PASS |
 
 Run order: 01→04, then 06/08, 14/16, 09/10/21, 03/15, 05/13, 11/12, 17/20, 19, then 18 (after `DeployShowcaseVAMM`).
@@ -55,6 +55,10 @@ and `AlgebraIchiFairLpOracle` (prod fair-LP path, not wired on this M1 board). *
 S1 (964 precompile), S2 conservation, S4 correlated-CRE, S11 Roles scope tree (X-Rays mark them `On-chain=No`).
 
 ## Notes
-- Carried-forward legs (SP-16 close, SP-17 venue legs, SP-18 mechanics) passed end-to-end on 2026-06-10; their source
-  is unchanged this cycle — only addresses shifted (corrected to the clones). The nonce-dependent addresses
-  (engine clones, WarehouseAdminModule, the demo contracts) must be re-derived from the broadcast each deploy.
+- **All 21 SPs are live-executed PASS as of 2026-06-24** (SP-16 close, SP-17's five venue legs, SP-18 vAMM mechanics,
+  and SP-20's single-state loop were finished live in the follow-up pass). 0 flaws found.
+- The nonce-dependent addresses (engine clones, WarehouseAdminModule, the demo contracts) must be re-derived from the
+  broadcast each deploy — see `_harness.sh` (it carries the current board) and the re-derivation note in
+  `../contract-map.md`.
+- The one venue dependency that can't be forced on a frozen fork is gauge **oHYDX emission accrual** (Merkl/Voter
+  onboarding) — SP-17's harvest call-path passes; accrual reads 0. Not a code gap.

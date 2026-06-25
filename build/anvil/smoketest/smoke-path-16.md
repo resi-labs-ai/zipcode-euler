@@ -29,10 +29,13 @@ the adapter's `LineNotRepaid`). 5. re-originate the same lienId → `LienExists`
 **Notes.** Closes the venue loop opened in SP-14. The lien token is single-use (the controller's `r.lien` dup-guard
 holds forever, even post-close).
 
-**Result.** **DRAW leg PASS (live 2026-06-24); close + negatives carried from 2026-06-10.**
+**Result.** **PASS** (2026-06-24, live fork — full draw→repay→close end-to-end).
 - **DRAW (reportType 2)** live: debt 50,000e6 → **70,000e6**; `USDC.balanceOf(erebor)` 50,000e6 → **70,000e6** (+20k);
-  registry mark **re-anchored 100,000e6 → 120,000e6**; LTV held (70k ≤ 96k). ✓
-- **CLOSE + repay-to-zero + the `DebtOutstanding`/`LienExists` negatives** were proven end-to-end on 2026-06-10
-  (line closed, lien `totalSupply` 1e18 → 0 burned, `getLine.open=false`); the `_close` source is unchanged this cycle.
-  Re-verifying live here was blocked only by resolving the shifted per-line borrow account for the repay tx (the line
-  internals moved with the redeploy) — a binding detail, not a close-logic change. **No flaws in the draw/re-anchor path.**
+  registry mark **re-anchored 100,000e6 → 120,000e6**; LTV held (70k ≤ 120k·0.8 = 96k). ✓
+- **(neg) CLOSE with debt** → reverted `DebtOutstanding` (the close only succeeded *after* the repay below). ✓
+- **Repay to zero**: permissionless `borrowVault.repay(max, borrowAccount)` (borrowAccount resolved via
+  `getLine(lineRef)` — `lineRef` is an **address**, the per-line borrow vault) → status 1, debt → 0. ✓
+- **CLOSE (reportType 4)** live: `getLien.open` → **false**, lien `totalSupply` 1e18 → **0** (burned),
+  `getLine(lineRef).open` → **false**. ✓
+- **(neg) re-originate the same lienId** → `LienExists` (the controller's `r.lien` dup-guard persists post-close —
+  single-use). ✓ **No flaws** — full venue loop (originate → draw → repay → close → burn) verified live on real EE+EVK.

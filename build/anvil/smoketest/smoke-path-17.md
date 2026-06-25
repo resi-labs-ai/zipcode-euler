@@ -21,20 +21,20 @@ Sources: `portfolio-map.md`, the `8-B6/7/8/9/10` module wires + X-Rays.
 `claimReward` (oHYDX). Exercise: `exercise(amount, maxPayment, deadline)` (oHYDX→HYDX). Sell: `sellHydx` (HYDX→USDC
 via live Algebra). Recycle: `creditFreeValue` → `recycle`/`divert`. Operator-gate negative (`NotOperator`) on each.
 
-**Result.** **PASS (machinery) — RecycleModule re-verified live 2026-06-24; venue legs carried from 2026-06-10.**
-- **RecycleModule (live 2026-06-24):** `operator()`=creOperator; `creditFreeValue(1000e6)` → `freeValueAccrued`
-  **1000e6**; `recycle(1000e6)` → main Safe zipUSD **1000e18** (backed mint), ledger → **0**. Negatives:
-  `recycle(1)` w/ 0 free value → `InsufficientFreeValue`; `divert(1)` w/ `provision()==0` → `NoHole`;
-  `creditFreeValue(1)` as alice → `NotOperator`. ✓
-- **LpStrategyModule (carried):** `addLiquidity(0.1 WETH)` → ~3.07e11 LP off the real ICHI vault; `stake` against the
-  **vault-keyed ALM gauge `0x4328CE8A`** (the 2026-06-10 fork-deploy fix — the CL gauge rejects ALM shares);
-  `unstake` inverse; `addLiquidity` as alice → `NotOperator`. SUPPLY-ADV-10: all-zero `removeLiquidity` slippage →
-  `ZeroMinAmount`.
-- **ExerciseModule (carried):** `quoteStrike(100e18)`=~$1.06; `exercise` → oHYDX 100e18→0, HYDX 0→100e18, USDC −strike.
-- **SellModule (carried):** `sellHydx(100e18)` over the live Algebra HYDX/USDC pool → USDC +~$3.51.
-- **HarvestVoteModule (carried):** `claimReward()` call path PASS; oHYDX accrual 0 (the ALM gauge isn't fed emissions
-  at this fork block — a Merkl/Voter onboarding step, not a code gap). SUPPLY-ADV-11: `setJuniorTrancheEngine` syncs
-  avatar/target.
-- **Economics:** exercise 100 oHYDX for ~$1.06 → 100 HYDX → sell ~$3.51 = **+$2.45 free value** from the option
-  discount — exactly what RecycleModule routes into the basket / senior backing. **No flaws** — engine machinery sound;
-  the only unproven step is live gauge oHYDX emission accrual (venue onboarding). Addresses corrected to the clones.
+**Result.** **PASS — all five legs re-verified live 2026-06-24 against the live Base venues.**
+- **ExerciseModule:** `quoteStrike(100e18)` = **1,058,409** (~$1.06, live oHYDX option pricing); `exercise` →
+  oHYDX 100e18 → **0**, HYDX 0 → **100e18**, USDC −strike. ✓
+- **SellModule:** `sellHydx(100e18)` over the **live Algebra HYDX/USDC pool** → HYDX → **0**, USDC **+3,514,018**
+  (~$3.51). ✓
+- **LpStrategyModule:** `gauge()`=**`0x4328CE8A`** (the vault-keyed ALM gauge), `ichiVault()`=the real ICHI vault;
+  `addLiquidity(0.1 WETH, 0, 1)` → `lpBalance` **306,638,593,863**; `stake` → `stakedBalance`=that, `lpBalance` → **0**
+  (unstake is the inverse). ✓
+- **HarvestVoteModule:** `claimReward()` status 1 (call path PASS against the real gauge); `pendingReward` **0** —
+  accrual 0 because the ALM gauge isn't fed emissions at this fork block (a Merkl/Voter onboarding step, not a code gap).
+- **RecycleModule:** `creditFreeValue(1000e6)` → `freeValueAccrued` **1000e6**; `recycle(1000e6)` → main Safe zipUSD
+  **1000e18** (backed mint), ledger → **0**. Negatives: `recycle(1)`/0 free value → `InsufficientFreeValue`,
+  `divert(1)`/`provision()==0` → `NoHole`, `creditFreeValue(1)` as alice → `NotOperator`. ✓
+- **Economics:** exercise 100 oHYDX for **$1.06** → 100 HYDX → sell **$3.51** = **+$2.45 free value** from the option
+  discount — exactly what RecycleModule routes into the basket / senior backing. **No flaws** — full flywheel sound on
+  live venues; the only unproven step is live gauge oHYDX emission accrual (venue onboarding, not code). Bound to the
+  engine CLONE addresses.

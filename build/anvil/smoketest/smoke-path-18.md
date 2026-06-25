@@ -26,11 +26,13 @@ the LP.
 **Notes.** Retire by `disableModule` + pulling the LP out. The demo proves the auto-compounder loop on a real live
 venue with only the LP-leg swapped — it does NOT ship as core. The vAMM pair/gauge are existing live Base contracts.
 
-**Result.** **PASS (wiring live 2026-06-24; mechanics carried from 2026-06-10).**
-- `SzipNavOracleDemoVAMM` (`0xD74712fF…`) deployed + code present; demo `spotNavPerShare()` reads (genesis surface). ✓
+**Result.** **PASS — wiring + mechanics re-verified live 2026-06-24.**
+- `SzipNavOracleDemoVAMM` (`0xD74712fF…`) deployed + code present; demo `spotNavPerShare()` reads. ✓
 - `LpStrategyModuleDemoVAMM` **clone `0x8f18E9Fd…` is `enableModule`'d on the main Safe** (`isModuleEnabled==true`),
-  `operator()` = `creOperator` — running alongside the prod engine modules on the same Safe. ✓
-- The `addLiquidity`=`pair.mint` / stake / unstake legs against the live vAMM pair + gauge were proven 2026-06-10; the
-  demo fork's source is unchanged this cycle (HYDREX-ADV-01/02 guards restored). **No flaws** — addresses corrected to
-  the current showcase deploy (the demo contracts move every redeploy with the team nonce; re-derive from the showcase
-  broadcast). **Outside the audited core.**
+  `operator()` = `creOperator` — running alongside the prod engine modules on the same Safe. Wiring: `gauge()` = the
+  vAMM gauge `0x2dA5744C…`, LP token = the vAMM pair `0x605abD18…` (token0=HYDX, token1=USDC). ✓
+- **`addLiquidity(1000e18 HYDX, 1000e6 USDC, 1)` = `pair.mint`** → vAMM LP **187,526,493,553,938** minted; **`stake`**
+  on the vAMM gauge → `stakedBalance`=that, `lpBalance` → **0**; `addLiquidity` as alice → operator-gated. ✓
+- **No flaws** — the auto-compounder LP/stake loop runs on the live vAMM venue with only the LP-leg swapped. Addresses
+  are the current showcase deploy (the demo contracts move every redeploy with the team nonce; re-derive from the
+  showcase broadcast). **Outside the audited core.**

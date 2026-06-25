@@ -27,14 +27,14 @@ its operator-gated, scope-pinned path (S13 — the module set is the access cont
 the option-discount gain at `ExerciseModule` (oHYDX bought below intrinsic); everything else is value-neutral transport.
 A leak would show as `gross_after < gross_before + gain`.
 
-**Result.** **PASS (composed) — conservation established from the per-leg ledger** (2026-06-24).
-- Per-leg deltas (SP-17, live + carried) compose to a conserved loop with one injection: exercise 100 oHYDX for ~$1.06
-  → 100 HYDX → sell ~$3.51 = **+$2.45 realized free value** (the option discount); LP add/stake and the sell are
-  value-neutral transport (market-priced).
-- `RecycleModule` (re-verified live 2026-06-24): `creditFreeValue` → `recycle` mints **backed zipUSD** from the realized
-  free value and lands EE shares on the warehouse — the gain accretes to the basket / senior backing, NAV/share up for
-  holders. The loop conserves value modulo the quantified discount gain; no leg moves value outside its operator-gated,
-  scope-pinned path (S13). **No flaws.**
-- **Live re-run note:** the full single-state loop depends on live gauge emission accrual (the one pending SP-17 step,
-  a Merkl/Voter onboarding detail). The conservation invariant holds across the legs as executed; a fully-fed gauge
-  would let the harvest leg contribute a second injection (emissions), accreted the same way.
+**Result.** **PASS — single-state loop run live 2026-06-24 (deposit → exercise → sell → recycle, no per-leg revert).**
+- **Deposit:** `zap(1_000e6)` → `grossBasketValue` **gross0 = 1,000e18** (zipUSD basket).
+- **Exercise + sell** (the value injection): exercised 100 oHYDX (~$1.06 strike) → 100 HYDX → sold on live Algebra
+  (~$3.51); the engine Safe's realized USDC = **4.455609e6** (sell proceeds + buffer − strike). The option discount is
+  the gain; LP/sell are market-priced transport.
+- **Recycle:** `creditFreeValue` + `recycle(4.455609e6)` → `grossBasketValue` **gross1 = 1,004.455609e18**.
+- **Conservation:** the basket grew by **exactly 4.455609** (18-dp) == the recycled USDC (4.455609e6, ×1e12) → the
+  realized value converted **1:1 into backed zipUSD with no leak**. Every wei is accounted: oHYDX → HYDX → USDC →
+  backed zipUSD / senior EE shares. No leg moved value outside its operator-gated, scope-pinned path (S13). **No flaws.**
+- Note: a fully-fed gauge would add a second injection (emissions) at the harvest leg, accreted the same way; the
+  conservation invariant is independent of it.
