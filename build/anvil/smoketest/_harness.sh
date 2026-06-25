@@ -82,7 +82,7 @@ meta_for() {
 push_report() {
   local rx="$1" report="$2" meta; meta=$(meta_for "$rx")
   give_eth $FWD; imp $FWD
-  cast send "$rx" 'onReport(bytes,bytes)' "$meta" "$report" --from $FWD --unlocked --gas-limit 5000000 -r $R >/dev/null 2>&1
+  cast send "$rx" 'onReport(bytes,bytes)' "$meta" "$report" --from $FWD --unlocked --gas-limit 9000000 -r $R >/dev/null 2>&1
   local rc=$?; unimp $FWD; return $rc
 }
 
