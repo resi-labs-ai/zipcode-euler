@@ -16,8 +16,8 @@ This file covers TWO cycles, invoked separately:
   "shipped on `main`" — build the fix, gate it green, doc-sync, commit + push. One ticket per turn.
 
 The bridge group is the worked example end-to-end: reviewed 5/5 (synthesis under
-`reports/src/bridge/*/`), 3 LOW fixes built + SHIPPED to `main` (BRIDGE-ADV-02/04/05, consolidated bridge
-suite 81/81 green), 1 WONTFIX (ADV-01), 2 sound.
+`reports/src/bridge/*/`), 3 LOW fixes built + SHIPPED to `main` (consolidated bridge
+suite 81/81 green), 1 WONTFIX, 2 sound.
 
 ## Pre-flight
 1. Pick the contract: `<group>/<contract>` (e.g. `bridge/szalpharateoracle`). The group README lists what
@@ -70,8 +70,9 @@ Classify each verified finding against `contracts/src/**/x-ray/<Contract>.md`:
 Then **pressure-test severity** — this is where most of the value is:
 - A finding that depends on **distrusting a ratified trust anchor** is accepted-risk/WONTFIX, not a
   vulnerability. In particular: **the Subtensor precompile / Bittensor runtime is the protocol's trusted
-  base — precompile-distrust findings are WONTFIX (accepted runtime trust).** See the SzAlpha ADV-01
-  precedent: a raw MEDIUM was pressure-tested to WONTFIX through exactly this lens.
+  base — precompile-distrust findings are WONTFIX (accepted runtime trust):** a finding that depends on
+  distrusting the Subtensor precompile is accepted-risk, not a vuln — a raw MEDIUM pressure-tested to
+  WONTFIX through exactly this lens is the standing precedent.
 - A finding the X-Ray already flagged as an open residual: the panel's job is to *resolve* it (construct
   the incident, find the precedent delta), then classify — not to restate it.
 - "Soundness" is a valid, expected result, especially for thin wrappers. A manufactured finding is noise.
@@ -83,10 +84,11 @@ scorecard which model caught what (the empirical measure of each leg's value) wh
 
 ## Step 4 — tickets (only for genuine, actionable gaps)
 - Location: `build/tickets/audit/<GROUP>-ADV-NN-<slug>.md`. Match house style (dense, line-grounded,
-  references to `contracts/src/...` and the `reference/...` precedent; no fluff). See
-  `build/tickets/audit/BRIDGE-ADV-02-genesis-seed-atomicity.md` as the template.
-- **Fold coupled findings** into one ticket when they share a code path (ADV-02 subsumed ADV-03 because
-  the genesis condition is the same line). Splitting coupled changes risks one breaking the other.
+  references to `contracts/src/...` and the `reference/...` precedent; no fluff). Use an existing
+  filed bridge ticket as the template.
+- **Fold coupled findings** into one ticket when they share a code path (in the bridge cycle, a genesis-
+  atomicity finding subsumed a coupled one because the genesis condition is the same line). Splitting
+  coupled changes risks one breaking the other.
 - Every ticket ends with a **documentation-propagation step**: grep-verify which X-Ray/`docs/` files
   carry the affected claims (filter false positives — most generic hits are unrelated), list only those,
   gate the edits on the code landing (the X-Ray is code-truth), and flag which notes (e.g. an accepted-
@@ -95,9 +97,9 @@ scorecard which model caught what (the empirical measure of each leg's value) wh
 ## Executing a ticket (the build cycle)
 Run when the user points you at a filed `build/tickets/audit/<...>.md` to ship. The discipline mirrors
 `build/harness.md` (truth = the built contract/ABI, not prose; cold-build to zero guesses) applied to a
-contract change. Worked examples: BRIDGE-ADV-02/04/05.
+contract change. The shipped bridge fixes are the worked examples.
 
-**Workflow — RATIFIED 2026-06-22 (trunk, not branch-per-ticket):**
+**Workflow — RATIFIED (trunk, not branch-per-ticket):**
 1. **Work on `main` directly**, one ticket per turn. (The bridge fixes were first branched then
    consolidated; that ceremony is dropped — if the change is tested, compiles, valid, and doc-synced, it
    IS the new best version: build on `main`, gate, commit, push, next.)
@@ -107,7 +109,7 @@ contract change. Worked examples: BRIDGE-ADV-02/04/05.
    *behaviorally* via `acceptOwnership`); `Math.mulDiv` CANNOT saturate a genuinely-`>uint256` result (the
    `type(uint256).max`-vs-tiny-anchor case needs an early-return guard, not mulDiv).
 3. **Baseline the gate, THEN build.** Run the scoped suite green first so the gate is meaningful. Build the
-   fix bound to the real code. For a wide MECHANICAL sweep (e.g. ADV-02's 44 zero-floor test sites),
+   fix bound to the real code. For a wide MECHANICAL sweep (e.g. a 44-site zero-floor test edit),
    delegate to a cold-build `general-purpose` subagent with explicit instructions + "do NOT run any
    state-changing git command" — but YOU own the commit and YOU re-run the gate (subagents have
    auto-committed against instructions; verify `git log`/`status`).

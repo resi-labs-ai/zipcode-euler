@@ -39,7 +39,7 @@ own holdings/account directly.
 | `resetVote()` | operator-only | clears the epoch vote (unwind/emergency) |
 | `claimRebase(tokenIds)` | operator-only | `EmptyArray` guard; tolerates an imperfect operator-curated array |
 | `pendingReward` / `voteFloor` / `rebaseClaimable` | `view` | all read `juniorTrancheEngine`, not the caller |
-| `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring re-points (`setJuniorTrancheEngine` syncs `avatar`/`target`, SUPPLY-ADV-11) |
+| `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring re-points (`setJuniorTrancheEngine` syncs `avatar`/`target`) |
 
 No permissionless mutators. No custody, no approvals, no recipient parameter except the pinned `juniorTrancheEngine`.
 
@@ -66,7 +66,7 @@ No permissionless mutators. No custody, no approvals, no recipient parameter exc
 | `NotOperator` on all 5 mutators | `test_entrypoints_only_operator`, `test_fork_non_operator_reverts` |
 | `ZeroAmount` / `EmptyArray` / `LengthMismatch` | `test_guards` |
 | operator cannot redirect Safe (`setAvatar`/`setTarget`) | `test_operator_cannot_redirect_safe` |
-| 6 wiring setters (`setJuniorTrancheEngine`/`setGauge`/`setVoter`/`setRewardsDistributor`/`setOHYDX`/`setVe`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` (onlyOwner + effect + zero-guard, all 6; + `setJuniorTrancheEngine` syncs `avatar`/`target`, SUPPLY-ADV-11) |
+| 6 wiring setters (`setJuniorTrancheEngine`/`setGauge`/`setVoter`/`setRewardsDistributor`/`setOHYDX`/`setVe`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` (onlyOwner + effect + zero-guard, all 6; + `setJuniorTrancheEngine` syncs `avatar`/`target`) |
 
 ## 5. Attack surfaces
 
@@ -111,7 +111,7 @@ account-keyed statelessness, no approvals, bubbled reverts) are tested unit + li
 action's exec shape is pinned, the recipient pin and account-keyed statelessness are proven against the **real**
 Hydrex gauge/voter/ve/rewards-distributor (including the live Voter's epoch + vote-delay quirks), no token approvals
 exist, and bubbled reverts prevent silent success. **Every mutator is now exercised** (all 7 setters + the 5 operator
-actions; the 6-setter gap flagged in the first draft was filled 2026-06-20). Capped at ADEQUATE by: no fuzz/invariant
+actions; the 6-setter gap flagged in the first draft was filled). Capped at ADEQUATE by: no fuzz/invariant
 (correctly low-value for stateless single-execs), the §13 `lockVe` over-lock grief residual (bounded to the Safe,
 never theft), and the build-phase mutable wiring pending the pre-prod re-freeze — none a coverage gap.
 

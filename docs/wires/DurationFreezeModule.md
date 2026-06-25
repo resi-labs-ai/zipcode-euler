@@ -33,12 +33,12 @@ where `illiquidSeniorValue = (convertToAssets(balanceOf(warehouse)) − maxWithd
 senior USDC, 6-dp→18-dp). Because the liability does not move when `grossBasketValue` shrinks, the re-leveling
 drain (sell the free side → lower the floor → release → loop) has **no denominator to game**. The floor is exactly
 the lent-out senior dollars, live-marked — there is NO `coverageBps`/`dollarBuffer` knob (the earlier Phase-1 knobs
-were removed 2026-06-16; the §17 "structural, not a governed knob" lock is now satisfied in code; the live oracle
+were removed; the §17 "structural, not a governed knob" lock is now satisfied in code; the live oracle
 mark already reacts to xALPHA price moves so a static over-collateralization buffer was redundant).
 `utilization()`/`requiredFraction()` are RETAINED only as the §12 liquidity-run metric — they no longer gate
 `release`.
 
-**COVERAGE NUMERATOR = `committedValue() + pathLockedLpEquity()` (2026-06-13).** The
+**COVERAGE NUMERATOR = `committedValue() + pathLockedLpEquity()`.** The
 floor is checked against `coverageValue() = committedValue() + pathLockedLpEquity()`, NOT `committedValue()`
 alone — the fenced ICHI LP (most of the basket) backs the floor IN PLACE, read from the oracle's
 `pathLockedLpEquity()`, so it need not be physically hoarded in the juniorTrancheSidecar (this RESOLVES the former line-74
@@ -98,7 +98,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 - **The `SzipNavOracle` views it relies on** — `committedValue() = _grossValueOf(juniorTrancheSidecar)`,
   `freeValue() = _grossValueOf(juniorTrancheSafe)`, and `pathLockedLpEquity()` (the fenced LP across all states net
   farm utility debt). `grossBasketValue`/`_grossValueOf` now COUNT the escrow-collateralized LP + SUBTRACT the
-  farm utility strike debt (LP path-lock, 2026-06-13) — so they are no longer "unchanged", but the module still
+  farm utility strike debt (LP path-lock) — so they are no longer "unchanged", but the module still
   never moves the LP, so `grossBasketValue` stays rotation-invariant under a `commit`/`release` (which only
   move the 5 plain legs). The coverage numerator the floor checks is `coverageValue() = committedValue() +
   pathLockedLpEquity()`; `requiredCommittedValue()` is the debt-pinned floor (FLOOR note above) —
@@ -110,7 +110,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   `setZipUSD`/`setUsdc`/`setXAlpha`/`setHydx`/`setOHydx`), each zero-guarded and emitting
   `WiringSet(slot, value)`. There are NO coverage-param setters — the floor is structural
   (`min(illiquidSeniorValue, grossBasketValue)`); the `setCoverageBps`/`setDollarBuffer` knobs + the
-  `CoverageParamSet` event were REMOVED 2026-06-16 (§17 "not a governed knob"). (The ICHI LP `setIchiVault` setter
+  `CoverageParamSet` event were REMOVED (§17 "not a governed knob"). (The ICHI LP `setIchiVault` setter
   was also REMOVED — the LP is fenced in place, not a movable whitelist asset.) `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`,
   SEC-15) so a re-point cannot collapse the Timelock owner and the CRE operator into one key. The CRE operator (hot
   key) cannot call them — only the Timelock owner. Inherited
@@ -177,7 +177,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   maxWithdraw(warehouse)/convertToAssets(balanceOf(warehouse))` read; spec **§8.2 / §11-B** corrected (the
   "U = borrowed/totalAssets … idle" framing was the spec's own root error).
 - **Oracle setters are Timelock-re-pointable by design**, not set-once-renounce-frozen — confirmed intended
-  2026-06-09 (oracles are replaceable). The DefaultCoordinator set-once thesis must be reconciled before
+  (oracles are replaceable). The DefaultCoordinator set-once thesis must be reconciled before
   item-10.
 - The whole security shape is the SECURITY BOUNDARY: the operator supplies ONLY `(asset, amount)`; the module
   builds all calldata, source/dest are the literal set-once `juniorTrancheSafe`/`juniorTrancheSidecar` (no recipient param, no
@@ -188,7 +188,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 - `requiredFraction == utilization` is the final kept form. The report/§11-B escalation
   (`U_lock`/`U_max`/`maxLockFraction`) describes the as-first-built version — it was STRIPPED from the
   contract (NatSpec-only mention remains); do not treat it as live.
-- **RESOLVED 2026-06-13 (LP path-lock) — the two problems raised 2026-06-12:**
+- **RESOLVED (LP path-lock) — the two problems raised earlier:**
   1. **Threat model clarified, not obviated.** The exit topology (ExitGate mints/burns only, CoW-only exits,
      `burnFor` pays nothing out) does close the *ragequit* drain. But the freeze floor was REPURPOSED: it is
      now the debt-pinned COVERAGE floor (`requiredCommittedValue = f(illiquidSeniorValue)`) that keeps the

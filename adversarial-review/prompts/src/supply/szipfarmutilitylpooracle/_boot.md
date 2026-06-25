@@ -40,7 +40,7 @@ There is no audited code parent to diff line-for-line. Your "supposed to be" bas
   `calcScale(18, quoteDecimals, quoteDecimals)`, re-derived in `setQuote`.
 
 ## Tests
-`contracts/test/supply/SzipFarmUtilityLpOracle.t.sol` — 19/19 (4 SEC-01 write-staleness + 15 added 2026-06-20:
+`contracts/test/supply/SzipFarmUtilityLpOracle.t.sol` — 19/19 (4 write-staleness + 15 added later:
 read-path liveness fail-closed, write-value guards, forwarder gate, reportType pin, the three Timelock setters,
 ctor zero-guards). See what's proven (don't re-report) and aim PAST it — most valuably a mis-scale on a setter
 re-point or a fail-open the read-path tests don't model.

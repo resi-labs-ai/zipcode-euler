@@ -405,7 +405,7 @@ contract LpStrategyModuleDemoVAMMTest is Test {
         assertEq(s, 100e18);
     }
 
-    /// @notice REGRESSION (HYDREX-ADV-02 issue 1): the bare deployed mastercopy is init-locked at construction
+    /// @notice REGRESSION (issue 1): the bare deployed mastercopy is init-locked at construction
     ///         (via {MastercopyInitLock}), so calling `setUp` on it reverts `AlreadyInitialized` — a bare mastercopy
     ///         can never be hijacked/initialized. Clones (which never run the ctor) still `setUp` exactly once.
     function test_mastercopy_cannot_be_setUp() public {
@@ -414,7 +414,7 @@ contract LpStrategyModuleDemoVAMMTest is Test {
         mastercopy.setUp(abi.encode(owner, address(safe), operator, address(pair), address(gauge)));
     }
 
-    /// @notice REGRESSION (HYDREX-ADV-02 issue 2): a mis-RATIOED both-sided add mints only the LESSER side's pro-rata
+    /// @notice REGRESSION (issue 2): a mis-RATIOED both-sided add mints only the LESSER side's pro-rata
     ///         shares; the EXCESS of the larger side is DONATED — absorbed into reserves but minting no shares. The
     ///         Safe's LP == the lesser-side value, and the pair's reserves grow by the FULL deposited amounts.
     function test_addLiquidity_donatesExcessOfMisSizedSide() public {
@@ -436,7 +436,7 @@ contract LpStrategyModuleDemoVAMMTest is Test {
         assertEq(r1, 1000e18 + 50e18, "reserve1 absorbed the full token1 deposit");
     }
 
-    /// @notice REGRESSION (HYDREX-ADV-02 issue 2): a SINGLE-sided add on a real (existing) pair mints
+    /// @notice REGRESSION (issue 2): a SINGLE-sided add on a real (existing) pair mints
     ///         min(x, 0) == 0 shares, so the module's `minShares >= 1` floor reverts `Slippage`. The old mock's
     ///         sum-based math wrongly treated single-sided builds as legitimate.
     function test_addLiquidity_singleSided_mintsZero_revertsOnFloor() public {

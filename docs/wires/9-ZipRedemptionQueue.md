@@ -10,9 +10,9 @@
 > `tickets/sodo/9-zip-redemption-queue.md` + reports `reports/9-report.md` / `reports/credit-union-report.md`
 > (C4) are intent only — **the code is final**. Where the report/older NatSpec say the controller is
 > "immutable / never renounced," the kept code is in fact `is Ownable` with **Timelock-settable** controller,
-> redeemController and tokens (the §17 build-phase rework, 2026-06-09); this doc records the as-built form.
+> redeemController and tokens (the §17 build-phase rework); this doc records the as-built form.
 >
-> **COLLAPSED 2026-06-13.** The pro-rata / `era` / `cumRemaining` carry-forward engine and the EIP-7540 operator
+> **COLLAPSED.** The pro-rata / `era` / `cumRemaining` carry-forward engine and the EIP-7540 operator
 > surface were **removed**. With `requestRedeem` gated to a single requester (the rq Safe, C4), pro-rata computed a
 > fraction over a set of size one — dead code. What remains is the **par-burn core**: escrow → `min(available,
 > pending)` fill + burn → claim at par. Par redemption is treasury-internal plumbing (it refills the CoW buy-burn
@@ -57,7 +57,7 @@ into the venue pool itself.
   `setController`, `setRedeemController` — each `onlyOwner` + `ZeroAddress`-guarded, emitting
   `TokensSet`/`ControllerSet`/`RedeemControllerSet`. **No** sweep / pause / upgrade / mint. (§17: wiring is
   Timelock-re-pointable in the build phase; re-freezing to immutable is DEFERRED to pre-prod.) **`setTokens`
-  additionally reverts `NotQuiescent` when `totalPending != 0` or `reservedAssets != 0`** (SUPPLY-ADV-16): a
+  additionally reverts `NotQuiescent` when `totalPending != 0` or `reservedAssets != 0`**: a
   token/`scaleUp` re-point is only sound on a quiescent queue — open pending and an unclaimed reserve are
   OLD-token-denominated while settle/claim read the live wiring, so a straddling re-point would strand the escrow.
   The X-3 freeze is thus code-enforced for `setTokens` (the `controller`/`redeemController` re-points stay
@@ -144,7 +144,7 @@ From `PROGRESS.md` (rows 364–369, 371):
    REDEEM/REPAY seam) is already **DISCHARGED** by item 9.
 
 ## Gotchas
-- **The pro-rata / `era` / `cumRemaining` engine and the 7540 operator surface were REMOVED (2026-06-13).** With
+- **The pro-rata / `era` / `cumRemaining` engine and the 7540 operator surface were REMOVED.** With
   `requestRedeem` gated to a single requester (the rq Safe, C4), the carry-forward ratio computed a fraction over a
   set of size one. The collapse replaced it with a direct `min(available, pending)` fill credited to a single
   `pendingRequester`. Any future decision to *re-open* `requestRedeem` to external holders would make pro-rata
@@ -160,7 +160,7 @@ From `PROGRESS.md` (rows 364–369, 371):
   `DefaultCoordinator.writeProvision` marks impairment into the JUNIOR `SzipNavOracle` NAV (the junior CoW exit
   self-prices). This SENIOR par queue is INTENTIONALLY impairment-blind (pays $1 par regardless); no pro-rata /
   impaired-rate machinery belongs here.
-- **The time gate was already gone (2026-06-12).** `settleEpoch` is `onlyController` with no time check (on-demand,
+- **The time gate was already gone.** `settleEpoch` is `onlyController` with no time check (on-demand,
   same-block-repeatable). Do not re-introduce a time gate.
 - **"Immutable / never renounced controller" is stale.** The kept body is `is ReentrancyGuard, Ownable` with
   **Timelock-settable** `controller` / `redeemController` / tokens (§17 build-phase). Re-freezing to immutable is a

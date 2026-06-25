@@ -42,7 +42,7 @@ import {IStakingV2, IAlpha, IAddressMapping} from "../interfaces/bridge/ISubtens
 ///        - the classic first-depositor inflation attack is strictly value-destroying: to skew a victim
 ///          depositing V the attacker must donate >= V, all of which accrues to others, and a deposit
 ///          rounding to zero shares reverts (`ZeroSharesOut`) rather than silently losing funds;
-///        - `deploy964` makes a small SEED DEPOSIT in-broadcast at genesis (BRIDGE-ADV-02), closing the
+///        - `deploy964` makes a small SEED DEPOSIT in-broadcast at genesis, closing the
 ///          griefing window STRUCTURALLY (not a manual step); and a non-zero `minSharesOut` is mandatory
 ///          for every non-genesis deposit (the seed, at supply 0, is the one exempt caller).
 ///      The OZ virtual-offset (1/1) is retained for div-by-zero safety + a clean genesis 1:1 rate.
@@ -181,7 +181,7 @@ contract SzAlpha is
         returns (uint256 shares)
     {
         if (block.timestamp > deadline) revert DeadlineExpired();
-        // BRIDGE-ADV-02/03: a real caller MUST set a slippage floor. Only the genesis deposit
+        // a real caller MUST set a slippage floor. Only the genesis deposit
         // (supply 0 — the deploy seed, which has no rate to derive a floor from) may pass 0.
         if (minSharesOut == 0 && totalSupply() != 0) revert SlippageFloorRequired();
         uint256 amountRao = msg.value / RAO;
@@ -230,7 +230,7 @@ contract SzAlpha is
     {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (shares == 0) revert ZeroAmount();
-        // BRIDGE-ADV-03: redeem always requires a real floor (supply is never 0 here — no genesis exemption).
+        // redeem always requires a real floor (supply is never 0 here — no genesis exemption).
         if (minTaoOut == 0) revert SlippageFloorRequired();
 
         uint256 stakeRaoBefore = _readStake();

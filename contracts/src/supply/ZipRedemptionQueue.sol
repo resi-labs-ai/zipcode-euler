@@ -21,7 +21,7 @@ import {IZipUSD} from "../interfaces/euler/IZipUSD.sol";
 ///         single-requester treasury plumbing (see `redeemController` below), not an open creditor queue. No pro-rata
 ///         / impaired-rate machinery belongs here.
 ///
-///         SINGLE-REQUESTER TOPOLOGY (2026-06-13): `requestRedeem` is gated to ONE caller — the rq Safe (the
+///         SINGLE-REQUESTER TOPOLOGY: `requestRedeem` is gated to ONE caller — the rq Safe (the
 ///         `OffRampModule` `exec`s through it). With a single requester, par redemption is treasury-internal
 ///         plumbing: the rq Safe escrows its own idle basket zipUSD, the CRE delivers USDC (warehouse REDEEM → REPAY),
 ///         `settleEpoch` burns the zipUSD against that USDC, and the rq Safe claims it back to fund the CoW buy-burn
@@ -127,7 +127,7 @@ contract ZipRedemptionQueue is ReentrancyGuard, Ownable {
     /// @notice Re-point the zipUSD + USDC tokens (re-derives `scaleUp`). `onlyOwner` (Timelock), build-phase.
     function setTokens(address zipUSD_, address usdc_) external onlyOwner {
         if (zipUSD_ == address(0) || usdc_ == address(0)) revert ZeroAddress();
-        // SUPPLY-ADV-16: a token/`scaleUp` re-point is only sound on a quiescent queue. `totalPending`/`pendingShares`/
+        // a token/`scaleUp` re-point is only sound on a quiescent queue. `totalPending`/`pendingShares`/
         // the escrowed balance are OLD-`zipUSD`-denominated and `reservedAssets`/`claimableAssets` are OLD-`usdc`-
         // denominated; settle/claim read the live wiring. Re-pointing over live state strands the OLD escrow (the burn
         // targets a NEW token the queue holds none of) and pays reserves in the NEW unit. Code-enforce the X-3 freeze:

@@ -5,7 +5,7 @@ bought, and the bought shares are burned — NAV-per-share ticks up for the stay
 
 **Proves.** `postBid` (SP-05) → settlement delivers szipUSD to the engine Safe (simulated solver) → `ExitGate.burnFor`
 (windowController) burns Loot + szipUSD with no asset payout → spot NAV/share rises; the two-token invariant survives
-the burn; SUPPLY-ADV-14 poke-before-`navExit`. Sources: `docs/supply/szipUSD/SzipBuyBurnModule.md` + `ExitGate.md`,
+the burn; poke-before-`navExit`. Sources: `docs/supply/szipUSD/SzipBuyBurnModule.md` + `ExitGate.md`,
 wires `8-B14-SzipBuyBurnModule.md`, `ExitGate-szipUSD.md`.
 
 **Tier.** Needs-forwarder (NAV legs) + simulated CoW fill (boundary #3).
@@ -26,7 +26,7 @@ Safe szipUSD → 0; NAV2 == NAV1 (the burn finalizes the fill-time tick-up).
 **Notes.** The settlement contract + presignature are real; only the off-chain solver match is simulated. The NAV
 benefit realizes at the **fill** (effective-supply drop), `burnFor` permanently finalizes it.
 
-**Result.** **PASS** (2026-06-24, live fork; basket NAV0 = 1.5e18 from 1,000e18 zipUSD + 500e6 USDC over 1,000 shares).
+**Result.** **PASS** (live fork; basket NAV0 = 1.5e18 from 1,000e18 zipUSD + 500e6 USDC over 1,000 shares).
 - `postBid(sell=297e6, buy=200e18)` (= quoteMaxPrice·200 at the 1% discount) status 1.
 - **NAV0 (pre-exit) = 1.5e18 → NAV1 (post-fill) = 1.50375e18** (+0.25%): engine Safe holds 200e18 szipUSD, excluded
   from `_effectiveSupply` (1000→800); the discounted USDC left the basket → haircut accrues to stayers. ✓

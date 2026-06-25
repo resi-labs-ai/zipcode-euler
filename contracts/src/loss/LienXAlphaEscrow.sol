@@ -50,7 +50,7 @@ contract LienXAlphaEscrow is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
     // --------------------------------------------------------------------- wiring (Timelock-settable; build phase)
-    // NOTE (2026-06-09, §17): the wiring below is Timelock-settable, NOT immutable — the build phase keeps one admin
+    // NOTE (§17): the wiring below is Timelock-settable, NOT immutable — the build phase keeps one admin
     // key that can re-point everything (new oracle/safe/coordinator addresses) without a redeploy cascade.
     // Hardening these back to immutable (which restores the destination-integrity theft-immunity thesis) is DEFERRED
     // to the pre-production lock-down, once the wiring is proven (see §17 / `tickets/loss/8-Bx-...`).

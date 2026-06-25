@@ -29,7 +29,7 @@ board), warehouse Safe, Roles modifier, EE pool, USDC, `ZipRedemptionQueue` (= t
 the senior side SP-10's redemption queue draws from. The security boundary is the Roles **scope**, not the module
 bytecode (the module is a pure encoder).
 
-**Result.** **PASS** (2026-06-24, live fork; `redemptionBox` = `ZipRedemptionQueue` `0x7b5C04…`).
+**Result.** **PASS** (live fork; `redemptionBox` = `ZipRedemptionQueue` `0x7b5C04…`).
 - APPROVE(60k) → allowance **60,000e6**. SUPPLY(60k) → EE shares **60,000e6**, wh USDC 100,000e6 → **40,000e6** (1:1
   via the supply queue). ✓
 - REDEEM(20k shares) → EE shares 60,000e6 → **40,000e6**, wh USDC 40,000e6 → **60,000e6**. ✓

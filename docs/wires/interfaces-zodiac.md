@@ -42,7 +42,7 @@ forwarding. Both consumed only at the boundary: factory by the deployer, Roles b
 ### `IRoles.sol`
 - **Shims:** a deployed **Zodiac Roles Modifier v2** instance. Mastercopy pin
   **`ZODIAC_ROLES_MASTERCOPY 0x9646fDAD06d3e24444381f44362a3B0eB343D337`**; instances are CREATE2 clones
-  (no fixed address — the `deployModule` return). Verified 2026-06-06 against vendored
+  (no fixed address — the `deployModule` return). Verified against vendored
   `reference/zodiac-modifier-roles/packages/evm/contracts/` (`Roles.sol`, `PermissionBuilder.sol`,
   `Types.sol`).
 - **Surface (as written):**

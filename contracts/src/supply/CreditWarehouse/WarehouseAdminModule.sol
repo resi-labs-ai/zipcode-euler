@@ -41,7 +41,7 @@ contract WarehouseAdminModule is ReceiverTemplate {
     /// @notice Operation.Call as the IRoles `uint8` operation arg (Zodiac core Operation: 0=Call,1=DelegateCall).
     uint8 private constant OP_CALL = 0;
 
-    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility (redeploy a
+    // NOTE (§17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility (redeploy a
     // Roles instance / warehouseSafe / pool / repay sink and re-point with one call). Re-freeze to immutable is DEFERRED to pre-prod.
     /// @notice The deployed Zodiac Roles-modifier-v2 instance this adapter forwards through (role member).
     IRoles public roles;

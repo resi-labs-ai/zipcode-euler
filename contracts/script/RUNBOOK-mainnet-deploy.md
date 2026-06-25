@@ -122,7 +122,7 @@ inherently manual. Do them in this order before the system is live; each notes w
 The szALPHA bridge's 964 leg (`DeploySzAlphaBridge:deploy964`) is a SEPARATE broadcast on Bittensor EVM
 (chainid 964). Before it, run this read-only cast battery against a 964 RPC (e.g.
 `https://lite.chain.opentensor.ai`) with the REGISTERED netuid — it re-proves the precompile unit semantics
-the wrapper is built on (verified 2026-06-12 against SN64; expected output *shapes* below, values vary):
+the wrapper is built on (verified against SN64; expected output *shapes* below, values vary):
 
 ```bash
 RPC=https://lite.chain.opentensor.ai; NETUID=<registered netuid>
@@ -143,9 +143,9 @@ runtime changed; `deploy964`'s `_assertAlphaPrecompile` would also fail. Unit ta
 `docs/wires/8x-01-szALPHA-bridge.md`, `reference/rubicon/README.md`.
 
 Pre-`deploy964`: fund the deployer with ≥ ~1 TAO. **`deploy964` now seeds the genesis stake in-broadcast**
-(BRIDGE-ADV-02 — seed shares auto-burned to `0xdead`); there is NO manual post-deploy seed step.
+(seed shares auto-burned to `0xdead`); there is NO manual post-deploy seed step.
 
 Post-`deploy964` (in order; see 8x-01 item-10):
 - [ ] Timelock calls `lockBox.acceptOwnership()` (2-step handoff).
 - [ ] Timelock calls `pool.acceptOwnership()` — `deployBase` already PROPOSED the pool-ownership handoff
-      in-broadcast (BRIDGE-ADV-05); only the 2-step accept is manual. Then `setRemoteLane` per direction (ops rate limits).
+      in-broadcast; only the 2-step accept is manual. Then `setRemoteLane` per direction (ops rate limits).

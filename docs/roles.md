@@ -37,7 +37,7 @@ SUPPLY and REDEEM inject the adapter's `warehouseSafe` as the deposit/redeem rec
 
 This is checked on-chain AT THE `setWarehouseSafe` ENTRY POINT. `setWarehouseSafe` reverts `AvatarMismatch(warehouseSafe_, avatar)` unless the modifier's `avatar()` ALREADY equals the new address — so a one-sided re-point *through that setter* can't be saved.
 
-IMPORTANT (CWH-ADV-01): this check is entry-point-local, NOT a maintained invariant. Two other Timelock-power paths can still desync the pair WITHOUT tripping `AvatarMismatch`:
+IMPORTANT: this check is entry-point-local, NOT a maintained invariant. Two other Timelock-power paths can still desync the pair WITHOUT tripping `AvatarMismatch`:
 - `adapter.setRoles(newModifier)` — re-points to a modifier whose `avatar()` may differ from the current `warehouseSafe` (no parity re-check on this setter);
 - `roles.setAvatar(other)` called directly on the modifier — changes `avatar` without touching the adapter.
 
@@ -55,7 +55,7 @@ Because `setWarehouseSafe` checks parity, the two updates must run in this order
 
 Doing step 2 first reverts. After both, confirm `roles.avatar() == adapter.warehouseSafe()`. The new Safe must also have the modifier `enableModule`'d and be funded/provisioned before live ops resume.
 
-The other adapter wiring (`setRoleKey`, `setEePool`, `setUsdc`, `setRedemptionBox`) has no ordering constraint at the setter, BUT a single-contract re-point of these alone FAILS CLOSED: the REPAY-`to` and APPROVE-`spender` scope pins are deploy-baked `EqualTo(compValue)`, so re-pointing the adapter slot does not move the pin — the modifier rejects the new target (`ParameterNotAllowed`/`TargetAddressNotAllowed`). A real value redirect (e.g. moving the REPAY sink) requires a PAIRED off-chain re-scope on the modifier (`scopeFunction`) too — two Timelock actions on two contracts. `setRoles` additionally re-desyncs avatar parity (see CWH-ADV-01 above) — re-establish parity after it. All adapter setters are `onlyOwner` (Timelock); re-freezing to immutable is deferred to pre-prod (§17 build-phase flexibility).
+The other adapter wiring (`setRoleKey`, `setEePool`, `setUsdc`, `setRedemptionBox`) has no ordering constraint at the setter, BUT a single-contract re-point of these alone FAILS CLOSED: the REPAY-`to` and APPROVE-`spender` scope pins are deploy-baked `EqualTo(compValue)`, so re-pointing the adapter slot does not move the pin — the modifier rejects the new target (`ParameterNotAllowed`/`TargetAddressNotAllowed`). A real value redirect (e.g. moving the REPAY sink) requires a PAIRED off-chain re-scope on the modifier (`scopeFunction`) too — two Timelock actions on two contracts. `setRoles` additionally re-desyncs avatar parity (see above) — re-establish parity after it. All adapter setters are `onlyOwner` (Timelock); re-freezing to immutable is deferred to pre-prod (§17 build-phase flexibility).
 
 ==================================================================================
 ## Why the adapter holds no power

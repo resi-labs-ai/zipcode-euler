@@ -75,7 +75,7 @@ msg.sender, and the Hydrex Voter is **account-keyed** (no per-NFT id is ever tra
   hard-locked (that would require marking vendored zodiac-core setters `virtual` — reference deps stay pristine).
   `setOperator` re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse the two roles
   into one key — preserving the init-time (`setUp`) separation across re-points.
-- **`setJuniorTrancheEngine` moves `avatar`/`target` in lockstep** (SUPPLY-ADV-11), not only at `setUp`: it sets
+- **`setJuniorTrancheEngine` moves `avatar`/`target` in lockstep**, not only at `setUp`: it sets
   `avatar = target = juniorTrancheEngine` on every re-point so the engine-Safe invariant cannot be split. Because
   `juniorTrancheEngine` is the `exerciseVe` recipient (and every balance/floor-read subject), it MUST equal the
   exec'ing Safe (`target`) — else a lone re-point would burn the OLD Safe's oHYDX while minting the veNFT to the NEW

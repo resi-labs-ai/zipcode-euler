@@ -29,7 +29,7 @@ the adapter's `LineNotRepaid`). 5. re-originate the same lienId → `LienExists`
 **Notes.** Closes the venue loop opened in SP-14. The lien token is single-use (the controller's `r.lien` dup-guard
 holds forever, even post-close).
 
-**Result.** **PASS** (2026-06-24, live fork — full draw→repay→close end-to-end).
+**Result.** **PASS** (live fork — full draw→repay→close end-to-end).
 - **DRAW (reportType 2)** live: debt 50,000e6 → **70,000e6**; `USDC.balanceOf(erebor)` 50,000e6 → **70,000e6** (+20k);
   registry mark **re-anchored 100,000e6 → 120,000e6**; LTV held (70k ≤ 120k·0.8 = 96k). ✓
 - **(neg) CLOSE with debt** → reverted `DebtOutstanding` (the close only succeeded *after* the repay below). ✓

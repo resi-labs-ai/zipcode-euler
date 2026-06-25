@@ -4,7 +4,7 @@
 # That share IS the collateral token for the farm utility EVK market (8-B6 / DEC-03).
 #
 # Run AFTER zipusd-xalpha-pool.sh. Resets on anvil restart + redeploy.
-#   bash build/anvil/zipusd-xalpha-ichi-vault.sh
+#   bash build/anvil/recipes/zipusd-xalpha-ichi-vault.sh
 set -euo pipefail
 
 R=${RPC_URL:-http://127.0.0.1:8545}

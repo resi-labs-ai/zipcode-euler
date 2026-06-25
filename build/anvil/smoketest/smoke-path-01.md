@@ -31,9 +31,9 @@ base USDC market, USDC. Principals: alice = acct[6], bob = acct[8].
 
 **Notes.** `burn` is reachable only by the redemption queue (SP-10). `deposit` (no szipUSD) vs `zap` (mints szipUSD,
 SP-06). EVC deferred vault-status check: a bare `eth_estimateGas` OOGs with `ReentrancySentryOOG`; send with a
-~20–30% gas buffer (frontend/relayer note, carried from the 2026-06-10 run).
+~20–30% gas buffer (frontend/relayer note, carried from the prior run).
 
-**Result.** **PASS** (2026-06-24, real txs on the live fork; reverted to clean baseline first).
+**Result.** **PASS** (real txs on the live fork; reverted to clean baseline first).
 - `deposit(1_000e6)` status 1 (gas 413,392): `zipUSD.balanceOf(alice)` 0 → **1,000e18**; `totalSupply` 0 → **1,000e18**.
 - `EE.totalAssets()` 0 → **1,000e6**; `EE.balanceOf(warehouseSafe)` 0 → **1,000e6** shares (1:1 genesis); USDC routed
   all the way into the **base USDC market** (0 → **1,000e6**) via supplyQueue[0]; alice USDC → 0.

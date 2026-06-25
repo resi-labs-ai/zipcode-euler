@@ -52,7 +52,7 @@ contract ZipcodeController is ReceiverTemplate {
     uint8 internal constant RT_LIQUIDATION = 6;
 
     // ----- cross-component wiring (5-arg ctor; NO EVC) -----
-    // NOTE (2026-06-09, §17): the wiring below is Timelock-settable, NOT immutable — build-phase flexibility so a
+    // NOTE (§17): the wiring below is Timelock-settable, NOT immutable — build-phase flexibility so a
     // redeployed venue/factory/registry/off-ramp is a one-call re-point, not a redeploy cascade. The Timelock is the
     // owner (via ReceiverTemplate's Ownable). Lock down pre-production.
     /// @notice The venue adapter — every on-chain venue effect goes through this `IZipcodeVenue` seam. Timelock-settable.

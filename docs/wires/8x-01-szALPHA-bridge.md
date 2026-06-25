@@ -10,7 +10,7 @@
 > Source of truth = the kept code under `contracts/src/bridge/` + `contracts/script/DeploySzAlphaBridge.s.sol`.
 > Ticket `tickets/bridge/8x-01-szalpha-wrapper-cct.md` + report `reports/8x-01-report.md` are intent only —
 > **the `.sol` is final/authoritative**. Every claim below was read out of the code.
-> **2026-06-12 rework:** units/asset-conversion fix + lock/release topology + on-chain AMM quotes, aligned to
+> **Rework:** units/asset-conversion fix + lock/release topology + on-chain AMM quotes, aligned to
 > the proven production pattern (Project Rubicon — see `reference/rubicon/` and §Provenance below).
 
 ## Role
@@ -39,7 +39,7 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
 - **`DeploySzAlphaBridge`** — the both-chain deploy + self-serve wire script, with an aggressive deploy-assert
   battery including a live Alpha-precompile probe on 964.
 
-## Units (the load-bearing convention — verified against the live 964 runtime + Rubicon, 2026-06-12)
+## Units (the load-bearing convention — verified against the live 964 runtime + Rubicon)
 | Quantity | Unit |
 |---|---|
 | `msg.value`, native payouts | TAO, 18-dp wei |
@@ -57,7 +57,7 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
 | `src/bridge/SzAlphaLockReleasePool.sol` (`is LockReleaseTokenPool`) | 964 | Ctor asserts `localTokenDecimals == 18` (`LocalDecimalsNot18`) + `rmnProxy == canonicalRmn` (`RmnNotCanonical`); pins hooks `address(0)`; custody = the wired `ERC20LockBox`. `typeAndVersion() = "SzAlphaLockReleasePool 1.0.0"`. |
 | `ERC20LockBox` (vendored canonical) | 964 | Per-token custody with an owner-managed authorized-caller list. A pool rotation (RMN/CCIP upgrade) re-points the authorized caller — **no fund migration**. Owner → timelock (2-step). |
 | `src/bridge/SzAlphaTokenPool.sol` (`is BurnMintTokenPool`) | Base only | Same S8/S9 ctor asserts; hooks pinned. `typeAndVersion() = "SzAlphaTokenPool 1.0.0"`. |
-| `script/DeploySzAlphaBridge.s.sol` (`is Script`) | both | `deploy964` (seeds genesis in-broadcast, BRIDGE-ADV-02) / `deployBase` / `setRemoteLane` + the assert battery (incl. the 964 Alpha-precompile probe + `totalSupply() > 0` post-seed). Holds the verified 964 + Base CCT address books. |
+| `script/DeploySzAlphaBridge.s.sol` (`is Script`) | both | `deploy964` (seeds genesis in-broadcast) / `deployBase` / `setRemoteLane` + the assert battery (incl. the 964 Alpha-precompile probe + `totalSupply() > 0` post-seed). Holds the verified 964 + Base CCT address books. |
 | `src/interfaces/bridge/ISubtensorPrecompiles.sol` | — | Minimal local `IStakingV2` (`addStake`/`removeStake`/`getStake`) + `IAlpha` (`getAlphaPrice`/`getMovingAlphaPrice`/`simSwapTaoForAlpha`/`simSwapAlphaForTao`) + `IAddressMapping` — **selectors only**, never used as a call target. Units pinned per function. |
 | `src/interfaces/bridge/ICctRegistry.sol` | — | Minimal `IRegistryModuleOwnerCustom.registerAdminViaGetCCIPAdmin` + `ITokenAdminRegistry.{acceptAdminRole,setPool,getPool,transferAdminRole,getTokenConfig}` (the last two added SEC-03/H4 for the 2-step registry-admin handoff). |
 | `src/interfaces/bridge/IXAlphaRate.sol` | — | The `exchangeRate()` face the NAV oracle (8-B4) + CRE-03 (8x-02) read. |
@@ -137,7 +137,7 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
   `getCCIPAdmin()` view) + `lockBox.transferOwnership(timelock)` (**2-step** — the timelock must
   `acceptOwnership()`, a runbook step) → asserts (incl. **`getTokenConfig(token).pendingAdministrator==ccipAdmin`**,
   NOT the old false-confidence `getCCIPAdmin()==ccipAdmin` view check).
-- **Genesis seed (folded into `deploy964`, BRIDGE-ADV-02):** `deploy964` seeds ~1 TAO in-broadcast right
+- **Genesis seed (folded into `deploy964`):** `deploy964` seeds ~1 TAO in-broadcast right
   after the proxy is live and auto-burns the seed shares to `0xdead` — closing the first-depositor griefing
   window *structurally* (no manual step). At supply 0 the seed is the one legitimate `minSharesOut == 0`
   caller; the standalone `seedDeposit` function is removed. Fund the deployer ≥ ~1 TAO before `deploy964`.
@@ -152,7 +152,7 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
   registryModule / factory + `_hasCode(armProxy)`; `_assertDeployed` checks `owner()==timelock` (S1);
   `_assertPoolRmnAndDecimals` checks decimals==18 (S8) + canonical RMN (S9). **Wiring MUST NOT proceed
   unless every assert passes.**
-- **Address books (verified on-chain 2026-06-09).** Base: chainSelector `15971525489660198786`, router
+- **Address books (verified on-chain).** Base: chainSelector `15971525489660198786`, router
   `0x881e…58bCD`, TAR `0x6f6C…1e37`, registryModule `0xAFEd…D77f`, factory `0xcD66…4D16`, armProxy
   `0xC842…d3E8`. 964: chainSelector `2135107236357186872`, router `0xD941…60B8`, TAR `0xe72d…8Be6`,
   registryModule `0xcDca…35C3`, factory `0x8FE3…1602`, armProxy `0x02A4…894d`.
@@ -173,12 +173,12 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
 - **Follow-up (recorded, out of scope):** source NAV's `LEG_ALPHA_USD` from `IAlpha.getMovingAlphaPrice`
   (EMA, manipulation-resistant) × TAO/USD in the CRE workflow, replacing off-chain price APIs.
 
-## Item-10 deploy facts (PROGRESS row 373 — updated 2026-06-12)
+## Item-10 deploy facts (PROGRESS row 373)
 1. **Supply the real fixtures.** Pass the registered `NETUID` (≤ uint16 max) + `VALIDATOR_HOTKEY` to
    `deploy964`.
 2. **Run `deploy964` on a 964 RPC.** Exercises the 964 CCT 5-address asserts + the Alpha-precompile probe —
    un-fork-testable here (no public Subtensor fork node).
-3. **Seed is automatic (BRIDGE-ADV-02):** `deploy964` seeds ~1 TAO in-broadcast and burns the shares to
+3. **Seed is automatic:** `deploy964` seeds ~1 TAO in-broadcast and burns the shares to
    `0xdead` — fund the deployer ≥ ~1 TAO beforehand; no separate seed step.
 4. **Timelock accepts lockbox ownership** (`lockBox.acceptOwnership()` — 2-step handoff from the script).
 4b. **Durable admin finalizes the REGISTRY-admin handoff (SEC-03/H4 — MANDATORY).** The deploy script
@@ -188,17 +188,17 @@ Four contracts, two chains, joined by a Chainlink CCT lane — **LOCK/RELEASE on
    deploy Script remains a live registry admin — the one residual interruption window; accept promptly. Verify
    `getTokenConfig(token).administrator == <durable>` after.
 5. **Wire the lane.** Once BOTH pools exist, call `setRemoteLane` per direction with ops-decided rate
-   limits, under the timelock. (Pool ownership is now transferred to the timelock IN `deployBase` —
-   BRIDGE-ADV-05; the timelock only needs to `acceptOwnership()`, 2-step `Ownable2Step`.)
+   limits, under the timelock. (Pool ownership is now transferred to the timelock IN `deployBase`;
+   the timelock only needs to `acceptOwnership()`, 2-step `Ownable2Step`.)
 6. ~~Calibrate denomination~~ **RESOLVED:** the unit table above is verified against the live runtime
-   (Rubicon's audited wrapper + the Rust precompile source + live cast probes, 2026-06-12), and
+   (Rubicon's audited wrapper + the Rust precompile source + live cast probes), and
    `_assertAlphaPrecompile` re-proves it at deploy time. The pre-deploy cast battery lives in
    `script/RUNBOOK-mainnet-deploy.md`.
 7. **Wire the consumers.** Wire the deployed `SzAlpha`/mirror as the `xALPHA` leg into 8-B5/8-B6 + 8-Bx
    `LienXAlphaEscrow.xAlpha` (via `setXAlpha`), replacing the stand-in. Assert the production token is
    hookless / feeless / non-rebasing.
 
-## Provenance — the proven pattern (Project Rubicon, researched 2026-06-12)
+## Provenance — the proven pattern (Project Rubicon)
 - **Who:** General TAO Ventures + Chainlink, launched 2025-11; 18 live xAlpha tokens bridged 964 → Base
   (xTAO, xSN4…xSN120), audited by Hashlock (Oct 2025). Docs + full address book:
   `https://docs.rubiconbridge.io/developer/contract-addresses`; audit:

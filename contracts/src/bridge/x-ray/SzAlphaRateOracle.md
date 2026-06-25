@@ -35,7 +35,7 @@ Immutables (deploy-time, ctor-guarded): `maxStaleness` (≠0), `window` (≠0), 
 | I-1 | `latest.ts` strictly monotonic (no replay / out-of-order) | Yes | `test_push_stale_or_replayed_reverts` + **`invariant_latestTsTracksMonotonicAccepted`** (256×128k calls, 0 reverts) |
 | I-2 | a published rate is never 0 (`exchangeRate()==0` ⇒ never pushed only) | Yes | `test_push_zeroRate_reverts`, `test_push_lands_and_serves_rate` |
 | I-3 | anchor state machine: `curAnchor` seeds once, retires to `prevAnchor` when `ts - curAnchor.ts >= window`; APR derives against `prevAnchor` (else `curAnchor`) | Yes | `test_derives_apr_from_rate_growth`, `test_derives_real_validator_short_window`, `test_apr_zero_before_warm` + **`testFuzz_aprBoundedAndNonNegative`** (roll exercised across the rate/Δ domain) + **`invariant_aprBoundedNeverReverts`** (every reachable roll state) |
-| I-4 | derived APR ∈ [0, `aprCap`]; floored at 0 on slash/decline/flat; **view is total (never reverts) for ANY pushed rate** (BRIDGE-ADV-04 saturation guards) | Yes | `test_apr_slash_is_zero_not_negative`, `test_apr_cap_clamps`, `test_apr_extremeRate_saturatesToCapNoRevert` + **`testFuzz_aprBoundedAndNonNegative`** + **`invariant_aprBoundedNeverReverts`** (both now full-uint256-domain, no longer vacuous) |
+| I-4 | derived APR ∈ [0, `aprCap`]; floored at 0 on slash/decline/flat; **view is total (never reverts) for ANY pushed rate** (saturation guards) | Yes | `test_apr_slash_is_zero_not_negative`, `test_apr_cap_clamps`, `test_apr_extremeRate_saturatesToCapNoRevert` + **`testFuzz_aprBoundedAndNonNegative`** + **`invariant_aprBoundedNeverReverts`** (both now full-uint256-domain, no longer vacuous) |
 | I-5 | no deviation band — a large *legit* move publishes verbatim (design non-guard) | Yes (by absence) | `test_large_legit_jump_is_published` |
 | S3 | consumed by `SzipNavOracle` (issuance gates on `fresh()`); oracle exposes freshness, does not enforce the consumer gate | No (cross-contract) | consumer-side; system-map seam S3 |
 
@@ -57,7 +57,7 @@ Constructor guards all tested: `test_ctor_reverts_zeroForwarder` / `_zeroMaxStal
   `prevAnchor` when present. Worth fuzzing the roll boundary (exactly-`window`, rapid pushes, long gaps) — covered
   by example today, not exhaustively.
 
-- **APR annualization precision/overflow — RESOLVED (BRIDGE-ADV-04).** `intrinsicAprBps` multiplies up
+- **APR annualization precision/overflow — RESOLVED.** `intrinsicAprBps` multiplies up
   *before* dividing (`(rNow-a.rate)*BPS*SECONDS_PER_YEAR / (a.rate*dt)`) to preserve sub-bps per-tempo
   growth. Pre-fix the multiply-up overflowed (uint256 panic) for `rNow-a.rate > ~2^218` — and the
   `invariant_aprBoundedNeverReverts` that "proved" totality was vacuous (fuzz domain bounded `1e24 ≈ 2^80`,
@@ -75,7 +75,7 @@ Constructor guards all tested: `test_ctor_reverts_zeroForwarder` / `_zeroMaxStal
 | Stateless fuzz | **1** | `testFuzz_aprBoundedAndNonNegative` — anchor-roll + APR over the rate/Δ domain (256 runs) |
 | Stateful invariant | **2** | `invariant_latestTsTracksMonotonicAccepted` + `invariant_aprBoundedNeverReverts` (256×128k calls, 0 reverts) |
 
-**Gap filled (2026-06-20).** The three tier-mover additions are now present and green:
+**Gap filled.** The three tier-mover additions are now present and green:
 1. **`invariant_latestTsTracksMonotonicAccepted`** — `latest.ts` always equals the strictly-increasing
    last-accepted ts (I-1 monotonicity as a stateful property; the handler asserts strict increase on every accept).
 2. **`testFuzz_aprBoundedAndNonNegative`** — fuzzes the anchor roll (Δ ≥ window always rolls) + the APR math:

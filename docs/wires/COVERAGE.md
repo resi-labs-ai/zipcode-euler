@@ -1,21 +1,21 @@
 # wires/ — coverage manifest (every file in `contracts/` → its doc)
 
 Provable completeness check for the wiring map. Every Solidity file under `contracts/` is mapped to the
-`wires/` doc that documents it. Inventory taken 2026-06-10, updated 2026-06-12 (8x-01 lock/release rework
+`wires/` doc that documents it. Inventory taken, then updated (8x-01 lock/release rework
 added `SzAlphaLockReleasePool.sol`; deploy-track sweep added `DeployLocal.s.sol`/`DeployMainnet.s.sol`/
-`test/DeployZipcode.t.sol`), updated 2026-06-14 (fair-LP oracle added `ConcentratedLiquidity.sol` +
+`test/DeployZipcode.t.sol`), updated (fair-LP oracle added `ConcentratedLiquidity.sol` +
 `IchiAlgebraFairReserves.sol` + `AlgebraIchiFairLpOracle.sol` + `IAlgebraOraclePlugin.sol` +
-`AlgebraIchiFairLpOracle.t.sol`), updated 2026-06-16 (CTR-01 added `CloneReportReceiver.sol` — the reusable
-clone-safe CRE report socket), updated 2026-06-18 (CTR-02 added `SiloRegistry.sol` — the multi-pool/federation
-silo catalog + admission gate, the first contract of the scaling/federation workstream), updated 2026-06-18 (CTR-05
+`AlgebraIchiFairLpOracle.t.sol`), updated (CTR-01 added `CloneReportReceiver.sol` — the reusable
+clone-safe CRE report socket), updated (CTR-02 added `SiloRegistry.sol` — the multi-pool/federation
+silo catalog + admission gate, the first contract of the scaling/federation workstream), updated (CTR-05
 added `SeniorNavAggregator.sol` — the donation-immune Σ senior par-backing view across silos, fourth contract of the
-scaling/federation workstream), updated 2026-06-19 (CTR-06b added `script/JuniorTrancheDeployer.s.sol` — the reusable
-per-junior tranche deployer, the per-silo analogue of `CreditWarehouseDeployer`, + its fork test), updated 2026-06-19
+scaling/federation workstream), updated (CTR-06b added `script/JuniorTrancheDeployer.s.sol` — the reusable
+per-junior tranche deployer, the per-silo analogue of `CreditWarehouseDeployer`, + its fork test), updated
 (CTR-06c added `script/SiloDeployer.s.sol` — the silo orchestrator that composes the four sub-deployers + the per-silo
-venue front into one complete silo, the final child of the re-scoped CTR-06, + its fork test), updated 2026-06-19
+venue front into one complete silo, the final child of the re-scoped CTR-06, + its fork test), updated
 (CTR-08 added the behavior note `CTR-08-structure-2-revolving.md` — structure-2 revolving lines as an operating mode
 over the as-built stack, ZERO contract change; the 5 revolving tests + the CTR-04 withdraw-queue mock regression fix
-land in the existing `test/ZipcodeController.t.sol`), updated 2026-06-22 (added the SEC-14
+land in the existing `test/ZipcodeController.t.sol`), updated (added the SEC-14
 `MastercopyInitLock.sol` init-lock mixin — inherited by all 9 szipUSD engine modules, previously documented
 inline across the engine wires but never inventoried): **40 product
 contracts + 11 scripts + 31 interface shims + 34 test/helper files**, plus a **demo/fork-only addendum** (section E): **2

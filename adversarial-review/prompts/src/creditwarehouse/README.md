@@ -24,7 +24,7 @@ There's no audited parent for the encoder, but the modifier it forwards to IS au
 `reference/zodiac-modifier-roles/packages/evm/contracts/Roles.sol` + `PermissionBuilder.sol`. Diff the
 adapter's `execTransactionWithRole` call shape, the `Operation` enum (0=Call/1=DelegateCall), and the
 `ExecutionOptions` enum (0=None…3=Both) against the real modifier; the local mirror
-`contracts/src/interfaces/zodiac/IRoles.sol` claims byte-for-byte parity (verified 2026-06-06). The
+`contracts/src/interfaces/zodiac/IRoles.sol` claims byte-for-byte parity (verified). The
 fork-integration test suite (28 units) drives the REAL deployed modifier — its strength is that the decisive
 scope rejections are exercised, not mocked.
 

@@ -25,7 +25,7 @@ interface IEVC {
 /// calldata extraction. The gate is operator-authorization, NOT an owner / haveCommonOwner check: the
 /// per-line borrow account has its own owner-prefix and shares no prefix with the borrowDriver.
 contract CREGatingHook is IHookTarget {
-    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
+    // NOTE (§17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
     /// @notice The EVK vault factory; used to validate the caller is a factory proxy (vault). Timelock-settable.
     IGenericFactory public eVaultFactory;
     /// @notice The Ethereum Vault Connector; queried for operator authorization. Timelock-settable.

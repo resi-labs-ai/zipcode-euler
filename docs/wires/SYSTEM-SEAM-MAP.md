@@ -3,7 +3,7 @@
 > **Truth source = the kept code under `contracts/` + the per-component `wires/` docs.** This map is *derived*:
 > it stitches the cross-contract (`X-N`) and economic (`E-N`) seam blocks from the per-contract X-Rays
 > (`contracts/src/**/x-ray/`) onto the wiring edges in this folder. Where it disagrees with `contracts/`, the
-> code wins. Authored 2026-06-20 from the X-Ray pass (bridge / loss / CreditWarehouse / hydrex-demo + the
+> code wins. Authored from the X-Ray pass (bridge / loss / CreditWarehouse / hydrex-demo + the
 > szipUSD portfolio) + `8-B4-SzipNavOracle.md` and the `interfaces/` dependency surface.
 
 ## What this is (and is not)

@@ -15,7 +15,7 @@ interface INavOracle {
     function maxAge() external view returns (uint256);
     function oldestRequiredLegTs() external view returns (uint48);
     /// @dev Advance the TWAP accumulator to the current block before reading `navExit`, so the bracket's
-    ///      leading `[lastUpdate, now]` segment is not left carrying a `g/W` slice of a stale spot (SUPPLY-ADV-14).
+    ///      leading `[lastUpdate, now]` segment is not left carrying a `g/W` slice of a stale spot.
     function poke() external;
 }
 
@@ -352,7 +352,7 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         address gate = coverageGate;
         if (gate != address(0) && !ICoverageGate(gate).covered()) revert Undercovered();
         if (order.validTo <= block.timestamp || order.validTo > block.timestamp + MAX_BID_TTL) revert BadValidTo();
-        // NAV-freshness fence (the collapsed "fulfillment controller", 2026-06-09): a resting bid must not be able
+        // NAV-freshness fence (the collapsed "fulfillment controller"): a resting bid must not be able
         // to fill against a NAV mark that has since gone stale. `navExit` is priced now off `fresh()` legs, but the
         // order rests until `validTo`. The legs feeding `navExit` may already be up to `maxAge` old at post-time
         // (`fresh()` only requires age ≤ `maxAge`), so anchoring the ceiling to POST-time (`now + maxAge`) allowed a
@@ -365,7 +365,7 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         if (!INavOracle(navOracle).fresh()) revert StaleNav();
         if (dBps == 0 || dBps >= 10_000) revert BadDiscount();
 
-        // SUPPLY-ADV-14: poke the TWAP accumulator before reading the exit mark, so the bracket's leading
+        // poke the TWAP accumulator before reading the exit mark, so the bracket's leading
         // `[lastUpdate, now]` segment is booked at the current block rather than carrying a `g/W` slice of a
         // stale spot. Mirrors `ExitGate.depositFor`, which pokes before `navEntry`.
         INavOracle(navOracle).poke();

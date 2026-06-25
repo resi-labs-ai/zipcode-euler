@@ -27,7 +27,7 @@ its operator-gated, scope-pinned path (S13 — the module set is the access cont
 the option-discount gain at `ExerciseModule` (oHYDX bought below intrinsic); everything else is value-neutral transport.
 A leak would show as `gross_after < gross_before + gain`.
 
-**Result.** **PASS — single-state loop run live 2026-06-24 (deposit → exercise → sell → recycle, no per-leg revert).**
+**Result.** **PASS — single-state loop run live (deposit → exercise → sell → recycle, no per-leg revert).**
 - **Deposit:** `zap(1_000e6)` → `grossBasketValue` **gross0 = 1,000e18** (zipUSD basket).
 - **Exercise + sell** (the value injection): exercised 100 oHYDX (~$1.06 strike) → 100 HYDX → sold on live Algebra
   (~$3.51); the engine Safe's realized USDC = **4.455609e6** (sell proceeds + buffer − strike). The option discount is

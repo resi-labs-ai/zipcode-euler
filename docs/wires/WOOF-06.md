@@ -8,7 +8,7 @@
 
 > Source of truth = the kept code `contracts/src/supply/ZipDepositModule.sol`. Ticket
 > `tickets/woof/WOOF-06-deposit-module.md` + report `reports/WOOF-06-report.md` are intent. The seam flipped
-> 2026-06-07 to the two-token Gate model; this doc reads the **final code** (the `gate.depositFor` →
+> to the two-token Gate model; this doc reads the **final code** (the `gate.depositFor` →
 > transferable szipUSD seam), not the retired EE-pool-share `stake` seam.
 
 ## Role

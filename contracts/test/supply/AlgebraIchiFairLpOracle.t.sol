@@ -176,7 +176,7 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
         new AlgebraIchiFairLpOracle(noPluginVault, WINDOW);
     }
 
-    /// @notice SUPPLY-ADV-02: a non-zero but UNINITIALIZED plugin fails CLOSED at deploy — matching the sibling
+    /// @notice a non-zero but UNINITIALIZED plugin fails CLOSED at deploy — matching the sibling
     ///         gate `SzipNavOracle.setLpTwapWindow:267`. A fresh plugin would otherwise return a well-formed
     ///         length-2 timepoint set encoding a near-spot/frozen "TWAP"; the ctor refuses to build against it.
     function test_ctor_revert_uninitializedPlugin() public {
@@ -198,7 +198,7 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
         caller.call(vault, WINDOW);
     }
 
-    /// @notice SUPPLY-ADV-02 residual, settled empirically: the DEPLOYED Algebra Integral plugin fails CLOSED on
+    /// @notice settled empirically: the DEPLOYED Algebra Integral plugin fails CLOSED on
     ///         window UNDER-COVERAGE. A window longer than the plugin's accumulated history (10y ≫ Base's age)
     ///         makes `getTimepoints` request a timepoint older than the oldest stored one, which reverts rather
     ///         than extrapolating a fake `cum[0]`. This is the fail-open-vs-closed uncertainty the synthesis
@@ -211,7 +211,7 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
         caller.call(VAULT, tenYears);
     }
 
-    /// @notice SUPPLY-ADV-03: the `BadTimepoints` defense-in-depth shape guard in `_meanTick`. An INITIALIZED plugin
+    /// @notice the `BadTimepoints` defense-in-depth shape guard in `_meanTick`. An INITIALIZED plugin
     ///         (passes the `PluginNotReady` gate) whose `getTimepoints` returns a non-length-2 set reverts
     ///         `BadTimepoints` rather than indexing a malformed array. A conforming Algebra plugin always returns
     ///         length-2 (the lib builds `secondsAgos` as `new uint32[](2)`), so this exercises the otherwise-dead
@@ -345,7 +345,7 @@ contract MockVaultNoPlugin {
 }
 
 /// @notice An Algebra pool stub reporting a fixed (non-zero) plugin address — drives the readiness gate past the
-///         `plugin == address(0)` check and onto the `isInitialized()` check (SUPPLY-ADV-02).
+///         `plugin == address(0)` check and onto the `isInitialized()` check.
 contract MockPoolWithPlugin {
     address public immutable plugin;
 
@@ -354,7 +354,7 @@ contract MockPoolWithPlugin {
     }
 }
 
-/// @notice An Algebra oracle-plugin stub that is NOT initialized — the SUPPLY-ADV-02 fail-closed case. `getTimepoints`
+/// @notice An Algebra oracle-plugin stub that is NOT initialized — the fail-closed case. `getTimepoints`
 ///         reverts (a fresh plugin has no usable history), but the readiness gate trips on `isInitialized()` first.
 contract MockUninitializedPlugin {
     function isInitialized() external pure returns (bool) {
@@ -368,7 +368,7 @@ contract MockUninitializedPlugin {
 
 /// @notice An INITIALIZED Algebra oracle-plugin stub whose `getTimepoints` returns a MALFORMED (non-length-2) set —
 ///         passes the `isInitialized()` readiness gate and reaches `_meanTick`, driving the `BadTimepoints` shape
-///         guard (SUPPLY-ADV-03). A conforming plugin always returns length-2.
+///         guard. A conforming plugin always returns length-2.
 contract MockBadTimepointsPlugin {
     function isInitialized() external pure returns (bool) {
         return true;

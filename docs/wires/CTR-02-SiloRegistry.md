@@ -76,7 +76,7 @@ curator gets senior backing only by registering a SELF-CONSISTENT silo.
 - **→ each silo's components (read-only, at admission only).** `addSilo` dereferences the freeze / escrow /
   defaultCoordinator / adapter getters once, to verify self-consistency; it stores plain addresses and never calls
   them again. No write path into any silo contract.
-- **← `SeniorNavAggregator`** (CTR-05, BUILT 2026-06-18) reads `allSiloIds()` → `getSilo(id).{eePool,warehouseSafe,
+- **← `SeniorNavAggregator`** (CTR-05, BUILT) reads `allSiloIds()` → `getSilo(id).{eePool,warehouseSafe,
   active}` to sum senior par-backing across silos (`seniorBacking` sums ALL silos; `activeSeniorBacking` filters on
   `active`). The struct getter is the canonical read; no per-field getters owed. See `CTR-05-SeniorNavAggregator.md`.
 - **← `SiloDeployer`** (CTR-06) calls `addSilo` after stamping a fresh silo.

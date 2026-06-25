@@ -296,7 +296,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         t.mint(alice, 1e18);
     }
 
-    /// @dev SUPPLY-ADV-12: `setGate` re-points freely while no szipUSD is issued (pre-issuance build-phase flexibility).
+    /// @dev `setGate` re-points freely while no szipUSD is issued (pre-issuance build-phase flexibility).
     function test_szipUSD_setGate_repoint_allowed_pre_issuance() public {
         SzipUSD t = new SzipUSD(address(gate)); // this = owner, totalSupply() == 0
         address g1 = makeAddr("g1");
@@ -307,7 +307,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         assertEq(t.gate(), g2, "re-point #2 allowed pre-issuance");
     }
 
-    /// @dev SUPPLY-ADV-12: once szipUSD is issued (`totalSupply() != 0`), `setGate` fails closed (`AlreadyIssued`) — the
+    /// @dev once szipUSD is issued (`totalSupply() != 0`), `setGate` fails closed (`AlreadyIssued`) — the
     ///      sole-minter pointer is the third leg of the two-token conservation and must not re-point over a live supply.
     function test_szipUSD_setGate_locked_after_issuance() public {
         address g1 = makeAddr("g1");
@@ -501,7 +501,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         assertEq(szip.totalSupply(), 12e18, "supply down by the retired amount");
     }
 
-    // ----------------------------------------------------------------- path coverage gap-fills (2026-06-20)
+    // ----------------------------------------------------------------- path coverage gap-fills
     /// @notice The xALPHA deposit branch: the whitelist accepts {zipUSD, xALPHA} but the rest of the suite only
     ///         deposits zip. Exercise the `valueOf(xAlpha, …)` issuance path — shares match `previewDeposit`, the
     ///         xALPHA lands in the basket, and the two-token invariant holds.
@@ -539,8 +539,8 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         _assertInvariants();
     }
 
-    // ----------------------------------------------------------------- audit hardening (SUPPLY-ADV-06/07)
-    /// @notice SUPPLY-ADV-06: the conservation-defining pointers (`baal`→`loot`, `shareToken`) are re-pointable only
+    // ----------------------------------------------------------------- audit hardening
+    /// @notice the conservation-defining pointers (`baal`→`loot`, `shareToken`) are re-pointable only
     ///         BEFORE any szipUSD is issued; once `totalSupply() != 0` they fail closed (`AlreadyWired`) so a re-point
     ///         cannot strand the paired Loot / fork the I-1 identity.
     function test_setBaal_locked_after_issuance() public {
@@ -564,7 +564,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         assertEq(g.loot(), sub.loot, "pre-issuance setBaal re-derives loot");
     }
 
-    /// @notice SUPPLY-ADV-06: `burnFor` carries the same explicit `NotWired` guard as `depositFor` (:159) when the
+    /// @notice `burnFor` carries the same explicit `NotWired` guard as `depositFor` (:159) when the
     ///         share token is unset — an explicit revert, not an incidental EVM call-to-codeless-address revert.
     function test_burnFor_reverts_when_shareToken_unwired() public {
         ExitGate g = new ExitGate(sub.baal, address(oracle), address(zip), address(xa), TVL_CAP);
@@ -576,7 +576,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         g.burnFor(1e18);
     }
 
-    /// @notice SUPPLY-ADV-07: a fee-on-transfer deposit leg credits the basket less than `amount`, but `shares` is
+    /// @notice a fee-on-transfer deposit leg credits the basket less than `amount`, but `shares` is
     ///         priced off `valueOf(asset, amount)` (the full amount) — so without a received-delta check it would
     ///         over-issue szipUSD against backing the basket never got. The guard reverts `TransferShortfall`.
     function test_depositFor_feeOnTransfer_reverts() public {

@@ -26,12 +26,12 @@ batch-with-bad-entry leaves the prior mark intact; backdated replay rejected; no
 
 **Notes.** This is the price rail origination (SP-14) and liquidation gating ride on. `validityWindow` = 365 days.
 
-**Result.** **PASS** (2026-06-24, live fork; registry `0xbF1801C7…`).
+**Result.** **PASS** (live fork; registry `0xbF1801C7…`).
 - Push reportType-3 `[zipUSD=1000e6, xALPHA=2000e6]` → ok. Readback: `1e18 zipUSD`→**1000e6**, `5e17 zipUSD`→**500e6**,
   `1e18 xALPHA`→**2000e6** (proportional, 18→6 dp). ✓
 - **(neg) all-or-nothing + strict-18dp:** batch `[zipUSD=9999e6, USDC]` left zipUSD's mark at **1000e6** (no partial
   write; `InvalidLienDecimals(USDC)`). ✓
 - **(neg) StaleReport:** backdated re-push of zipUSD left the mark at **1000e6** (rejected the replay). ✓
 - **(neg) non-forwarder:** alice's `onReport` did not write (`InvalidSender`). ✓
-- Staleness window + `PriceOracle_TooStale` proven 2026-06-10 (needs a 365-day warp). **No flaws** — the strict-18dp +
+- Staleness window + `PriceOracle_TooStale` proven (needs a 365-day warp). **No flaws** — the strict-18dp +
   StaleReport ADV guards hold.

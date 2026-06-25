@@ -66,7 +66,7 @@ No permissionless mutators, no custody. `recycle`/`divert` route value only to t
 | `InsufficientFreeValue` | `test_recycle_overspend_leaves_accrued_and_callcount_unchanged` |
 | Stream-2 setters (`setNavOracle`/`setEePool`/`setWarehouseSafe`) | `test_stream2_setters_repoint_only_owner` (onlyOwner + zero-guard + effect + event) |
 | operator cannot redirect Safe | `test_operator_cannot_redirect_safe` |
-| 3 wiring setters (`setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc`) | `test_wiring_setters_repoint_only_owner` — onlyOwner + zero-guard + effect + `WiringSet` event (all 3), incl. the `setJuniorTrancheEngine` avatar/target sync (SUPPLY-ADV-08) |
+| 3 wiring setters (`setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc`) | `test_wiring_setters_repoint_only_owner` — onlyOwner + zero-guard + effect + `WiringSet` event (all 3), incl. the `setJuniorTrancheEngine` avatar/target sync |
 
 ## 5. Attack surfaces
 
@@ -86,7 +86,7 @@ No permissionless mutators, no custody. `recycle`/`divert` route value only to t
 - **3 wiring setters — now covered** — `test_wiring_setters_repoint_only_owner` exercises
   `setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc` for onlyOwner + zero-guard + effect + `WiringSet` event.
   With the stream-2 trio and `setOperator` (SEC-15), **every wiring setter is now exercised**. `setJuniorTrancheEngine`
-  syncs `avatar`/`target` in lockstep (`:188-190`, SUPPLY-ADV-08), matching the syncing siblings (Sell/Exercise/
+  syncs `avatar`/`target` in lockstep (`:188-190`), matching the syncing siblings (Sell/Exercise/
   LpStrategy/FarmUtilityLoop) — the engine-Safe invariant `avatar == target == juniorTrancheEngine` must hold because
   `divert` reads `juniorTrancheEngine` as the executor account for its `BackingShortfall` balance-delta guard (`:325/:332`),
   so a non-syncing re-point would have left that guard measuring a non-executing Safe (fail-closed DoS on `divert`,
@@ -113,7 +113,7 @@ two-layer enforcement, the SEC-09 cumulative bound, CEI ordering) are tested uni
 **ADEQUATE** — the most stateful fleet module, and its state is well-defended: the free-value ledger conservation,
 the two-layer (policy + hard-backing) free-value enforcement, the CEI reentrancy argument, and especially the SEC-09
 cumulative-divert bound (with the exact-fill / reset / stale-remark edge cases) are all tested, unit + fork. **Every
-mutator is now exercised** (all 7 setters + the 3 legs + `creditFreeValue`; the 3-setter gap was filled 2026-06-20).
+mutator is now exercised** (all 7 setters + the 3 legs + `creditFreeValue`; the 3-setter gap was filled).
 Capped at ADEQUATE by: the §17 `creditFreeValue` operator-trust residual (bounded by hard-backing, not eliminated),
 no Foundry stateful invariant on the ledger (optional — boundary cases are covered deterministically), and the
 build-phase mutable wiring pending the pre-prod re-freeze — none a coverage gap.

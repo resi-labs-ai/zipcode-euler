@@ -212,7 +212,7 @@ contract SzipFarmUtilityLpOracleTest is Test {
         lpo.getQuote(1e18, LP, usdc); // old key no longer supported
     }
 
-    /// @notice SUPPLY-ADV-13: `setLpToken` rejects a non-18-dp key. The shared `scale` bakes in base=18 and is NOT
+    /// @notice `setLpToken` rejects a non-18-dp key. The shared `scale` bakes in base=18 and is NOT
     ///         re-derived on a re-point, so a non-18-dp key would silently mis-scale every quote (over-value for >18dp).
     function test_setLpToken_non18Decimals_reverts() public {
         address lp6 = address(new DecimalsMock(6));
@@ -220,7 +220,7 @@ contract SzipFarmUtilityLpOracleTest is Test {
         lpo.setLpToken(lp6);
     }
 
-    /// @notice SUPPLY-ADV-13: `setLpToken` rejects a code-less key — a `decimals()` staticcall to an EOA returns empty
+    /// @notice `setLpToken` rejects a code-less key — a `decimals()` staticcall to an EOA returns empty
     ///         data, so the STRICT guard reverts (unlike `BaseAdapter._getDecimals`, which would silent-fallback to 18).
     function test_setLpToken_codeless_reverts() public {
         address eoa = address(0xABCD);
@@ -260,7 +260,7 @@ contract SzipFarmUtilityLpOracleTest is Test {
         new SzipFarmUtilityLpOracle(address(0), usdc, VALIDITY, LP);
     }
 
-    /// @notice SUPPLY-ADV-13: the ctor rejects a non-18-dp LP key for the same reason as `setLpToken` (base-18 `scale`).
+    /// @notice the ctor rejects a non-18-dp LP key for the same reason as `setLpToken` (base-18 `scale`).
     ///         The zero-guard runs first, so `address(0)` still reverts `ZeroAddress` (see `_zeroLpToken_reverts`).
     function test_ctor_non18LpToken_reverts() public {
         address lp8 = address(new DecimalsMock(8));

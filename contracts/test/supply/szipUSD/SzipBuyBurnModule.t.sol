@@ -79,7 +79,7 @@ contract MockNavOracle {
     uint256 public maxAgeV = 1 days; // default == MAX_BID_TTL, so the NAV-freshness fence is a no-op at default
     uint48 public oldestTsV; // 0 ⇒ report block.timestamp ("legs just pushed"), so the leg-anchored fence (SEC-13)
         // coincides with the old post-time anchor and existing fence tests behave identically
-    uint256 public pokes; // SUPPLY-ADV-14: count poke() calls so the suite can assert postBid pokes before navExit
+    uint256 public pokes; // count poke() calls so the suite can assert postBid pokes before navExit
 
     function setNavExit(uint256 v) external {
         navExitV = v;
@@ -136,7 +136,7 @@ contract MockCoverageGate {
 /// @notice 8-B14 buy-and-burn BID module. Unit tests (recording mock Safe) for validation/authority/atomicity/exec-
 ///         discipline + Base-mainnet fork tests for the LIVE GPv2Settlement PRESIGN + USDC allowance + uid vector.
 contract SzipBuyBurnModuleTest is ForkConfig {
-    // -- live Base CoW / USDC (verified `cast`, 2026-06-08) ------------------
+    // -- live Base CoW / USDC (verified `cast`) ------------------
     address internal constant COW_SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
     address internal constant COW_VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
     bytes32 internal constant COW_DOMAIN_SEPARATOR =
@@ -411,7 +411,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.stopPrank();
     }
 
-    /// @dev SUPPLY-ADV-05: the three value-load-bearing wiring setters `_cancelBid` dereferences (`settlement`/
+    /// @dev the three value-load-bearing wiring setters `_cancelBid` dereferences (`settlement`/
     ///      `vaultRelayer`/`usdc`) must refuse a re-point while a bid is live. Otherwise a re-point between post and
     ///      cancel would make `_cancelBid` flip the presign / zero the allowance on the NEW wiring, stranding the OLD
     ///      presign + allowance LIVE (a fillable bid the owner believes was cancelled). Cancel-before-rewire is forced.
@@ -532,7 +532,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         assertTrue(module.currentUid().length != 0, "bid posts once covered");
     }
 
-    /// @notice SUPPLY-ADV-14: `postBid` pokes the NAV oracle before reading `navExit` (mirrors `ExitGate`),
+    /// @notice `postBid` pokes the NAV oracle before reading `navExit` (mirrors `ExitGate`),
     ///         so the TWAP leading-segment is booked at the current block and never carries a stale `g/W` slice.
     function test_SUPPLYADV14_postBid_pokes_before_navExit() public {
         assertEq(oracle.pokes(), 0, "no poke before postBid");

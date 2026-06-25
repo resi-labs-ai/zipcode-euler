@@ -28,7 +28,7 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @notice The `reportType` (§4.4 report ABI) the registry accepts.
     uint8 public constant REVALUATION = 3;
 
-    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
+    // NOTE (§17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
     /// @notice The unit of account (USDC). Timelock-settable.
     address public quote;
     /// @notice The long, line-term read-staleness window (no upper-bound cap; the mark is event-driven). Timelock-settable.

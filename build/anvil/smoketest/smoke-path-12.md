@@ -5,7 +5,7 @@ that the intrinsic-APR view is saturation-safe.
 
 **Proves.** `SzAlphaRateOracle.onReport` reportType 8 `(uint256 rate, uint48 ts)` → `exchangeRate`/`fresh`; the rate
 flows into `SzipNavOracle`'s xALPHA leg (`xAlphaUSD = rate · legCache[ALPHA_USD] / 1e18`); the freshness fence;
-**BRIDGE-ADV-04** saturation-guarded `intrinsicAprBps()` (total, no overflow). Sources: `docs/bridge.md`, wires `8x-02-SzAlphaRateOracle.md`.
+saturation-guarded `intrinsicAprBps()` (total, no overflow). Sources: `docs/bridge.md`, wires `8x-02-SzAlphaRateOracle.md`.
 
 **Tier.** Needs-forwarder.
 
@@ -25,11 +25,11 @@ NAV xALPHA leg reflects the rate; `intrinsicAprBps` returns a bounded value (no 
 **Notes.** Cross-chain conservation (lock/release on 964) is `On-chain=No` (deploy-topology, seam S2) — out of scope on
 the Base fork. Here we prove the Base-side rate rail + the NAV consumption + the freshness asymmetry (issuance side, SP-07).
 
-**Result.** **PASS** (2026-06-24, live fork).
+**Result.** **PASS** (live fork).
 - Pre-seed `exchangeRate`=**0**, `fresh()`=**false**. Post-seed (rate 1e18): `exchangeRate`=**1e18**, `fresh()`=**true**. ✓
 - NAV `valueOf(xAlpha, 1e18)` = **1e8** = `rate(1e18)·alphaUSD(1e8)/1e18` — the rate feeds the leg. ✓
 - `intrinsicAprBps()` = **0** at rate 1e18 (no premium); **saturation-safe** — returns a bounded value, never reverts
-  (BRIDGE-ADV-04). ✓
+  ✓
 - The 1.5e18 re-push was **bounded** (per-update deviation guard kept `exchangeRate` at 1e18) — the rate cannot jump
   arbitrarily in one report. ✓
 - After +2-day warp: `fresh()` = **false**. ✓ **No flaws.**

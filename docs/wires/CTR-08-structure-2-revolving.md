@@ -14,8 +14,8 @@ the reports: the line is opened ONCE and then borrow -> permissionless repay -> 
 line, the SAME oracle key, and the SAME EulerEarn slot. The CRE simply never files an `RT_CLOSE` until the
 borrower is disqualified or retired.
 
-Repo is the safe default; revolving is the option for when an insurance policy exists (PROGRESS session decision
-2026-06-18 — accommodate BOTH structures). This note pins the mode so a future change cannot silently break it.
+Repo is the safe default; revolving is the option for when an insurance policy exists (PROGRESS session
+decision to accommodate BOTH structures). This note pins the mode so a future change cannot silently break it.
 
 ## Why zero contract change
 Two as-built facts make revolving free:

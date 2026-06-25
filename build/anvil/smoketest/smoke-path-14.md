@@ -33,7 +33,7 @@ fail-closed routing). (A zero-address registry would revert `RegistryUnset`.)
 draw of 50k against a 100k mark at 80% borrowLTV clears the per-line EVK health check via router→registry — the
 isolated LTV gate is live.
 
-**Result.** **PASS** (2026-06-24, live fork; one atomic report, ~6M gas; lien `0x689c43ea…`).
+**Result.** **PASS** (live fork; one atomic report, ~6M gas; lien `0x689c43ea…`).
 - Lien minted at **`0xAA69847B…`** (CREATE2, **2728** bytes, supply 1e18). `getLien(lienId)` = (`0xAA69847B…`,
   lineRef `0x61a6bba7…`, **open=true**). ✓
 - Registry mark: `getQuote(1e18 lien→USDC)` = **100,000e6** == equityMark, fresh (priced via the per-line router). ✓

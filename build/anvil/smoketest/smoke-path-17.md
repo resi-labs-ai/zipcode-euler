@@ -6,8 +6,8 @@ emissions into basket value. Each leg is its own operator action on the main Saf
 **Proves.** `LpStrategyModule` (add/stake/unstake on the live ICHI vault + Hydrex ALM gauge); `HarvestVoteModule`
 (claim oHYDX, lock veHYDX, vote); `ExerciseModule` (oHYDX→HYDX paid exercise); `SellModule` (HYDX→USDC via Algebra);
 `RecycleModule` (credit free value, recycle USDC→backed zipUSD, divert to fill provisions); the engine module set on
-the shared Safe IS the access control (S13). New-guard negatives: SUPPLY-ADV-08/11 avatar/target sync on
-`setJuniorTrancheEngine` (Recycle/Harvest), SUPPLY-ADV-10 zero-slippage `removeLiquidity` reject (LpStrategy).
+the shared Safe IS the access control (S13). New-guard negatives: avatar/target sync on
+`setJuniorTrancheEngine` (Recycle/Harvest), zero-slippage `removeLiquidity` reject (LpStrategy).
 Sources: `portfolio-map.md`, the `8-B6/7/8/9/10` module wires + X-Rays.
 
 **Tier.** Needs-forwarder for NAV; each venue leg needs token seeding + live venue cooperation.
@@ -21,7 +21,7 @@ Sources: `portfolio-map.md`, the `8-B6/7/8/9/10` module wires + X-Rays.
 `claimReward` (oHYDX). Exercise: `exercise(amount, maxPayment, deadline)` (oHYDX→HYDX). Sell: `sellHydx` (HYDX→USDC
 via live Algebra). Recycle: `creditFreeValue` → `recycle`/`divert`. Operator-gate negative (`NotOperator`) on each.
 
-**Result.** **PASS — all five legs re-verified live 2026-06-24 against the live Base venues.**
+**Result.** **PASS — all five legs re-verified live against the live Base venues.**
 - **ExerciseModule:** `quoteStrike(100e18)` = **1,058,409** (~$1.06, live oHYDX option pricing); `exercise` →
   oHYDX 100e18 → **0**, HYDX 0 → **100e18**, USDC −strike. ✓
 - **SellModule:** `sellHydx(100e18)` over the **live Algebra HYDX/USDC pool** → HYDX → **0**, USDC **+3,514,018**

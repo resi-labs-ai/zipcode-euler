@@ -64,7 +64,7 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
 | `setUp` zero-addr / owner==operator / safes-distinct | `test_setUp_rejects_zero_addresses`, `_rejects_owner_equals_operator`, `_rejects_juniorTrancheSafe_equals_juniorTrancheSidecar` |
 | `initializer` once + mastercopy init-locked (SEC-14) | `test_setUp_initializer_once`, `test_mastercopy_init_locked`, `test_SEC14_mastercopy_setUp_reverts` |
 | `setOperator` owner-recheck (SEC-15) | `test_SEC15_setOperator_owner_recheck` |
-| `setJuniorTrancheSafe`/`setJuniorTrancheSidecar` safes-distinct re-check (SUPPLY-ADV-04) — a re-point cannot collapse the two Safes to one (mirrors `setUp`) | `test_setSafes_reject_collapse_to_equal` |
+| `setJuniorTrancheSafe`/`setJuniorTrancheSidecar` safes-distinct re-check — a re-point cannot collapse the two Safes to one (mirrors `setUp`) | `test_setSafes_reject_collapse_to_equal` |
 | `NotOperator` on commit/release | `test_commit_nonOperator_reverts`, `test_release_nonOperator_reverts` |
 | `ZeroAmount` on commit/release | `test_commit_zeroAmount_reverts`, `test_release_zeroAmount_reverts` |
 | `UnvaluedAsset` whitelist | `test_commit_unvalued_asset_reverts`, `test_release_unvalued_asset_reverts` |
@@ -97,7 +97,7 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
   a leg (`setUsdc`, etc.) could desync the whitelist from what the oracle prices (the `setUp` reads them live to
   avoid exactly this drift; the setters reintroduce the drift risk if used carelessly). All zero-guarded; the
   destination guarantees hold after the deferred pre-prod immutable re-freeze. Untested: the 12 setters' effects (the
-  shared `onlyOwner` gate is proven on `setAvatar`/`setTarget` + `setOperator`). **SUPPLY-ADV-04 (2026-06-23):** the
+  shared `onlyOwner` gate is proven on `setAvatar`/`setTarget` + `setOperator`). The
   two Safe setters now also re-check `juniorTrancheSafe != juniorTrancheSidecar` (mirroring `setUp` + the SEC-15
   `setOperator` pattern) — previously a Timelock re-point could collapse the two Safes to one, making a `release` a
   self-transfer that trivially clears the floor (I-1). Tested by `test_setSafes_reject_collapse_to_equal`.

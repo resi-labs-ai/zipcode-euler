@@ -22,7 +22,7 @@ contract MockUSDC {
 }
 
 /// @notice A minimal 18-dp ERC20 stand-in for the ICHI LP share. The LP oracle ctor strict-reads `lpToken.decimals()`
-///         (SUPPLY-ADV-13) and rejects anything but 18, so the key must be a live 18-dp contract, not a `makeAddr` EOA.
+///         and rejects anything but 18, so the key must be a live 18-dp contract, not a `makeAddr` EOA.
 contract MockLp18 {
     function decimals() external pure returns (uint8) {
         return 18;
@@ -208,7 +208,7 @@ contract LpGateHarness {
 ///              receiver sealed to daemon-B. This is the whole point of per-receiver names (a shared author cannot
 ///              separate the separate daemons).
 ///         No fork: the oracle ctor reads `quote.decimals()` (6-dp `MockUSDC`) and strict-reads `lpToken.decimals()`
-///         (18-dp `MockLp18`, SUPPLY-ADV-13) before storing `lpToken`.
+///         (18-dp `MockLp18`) before storing `lpToken`.
 contract CTR16ReceiverIdentityTest is Test {
     LpGateHarness internal harness;
     MockUSDC internal usdc;

@@ -19,7 +19,7 @@
 `if (recoveryFloor_ >= 1e18) revert InvalidRecoveryFloor()` · `DefaultCoordinator.sol:132` · the floor is a fraction < 100%; a default must mark down a positive amount.
 
 #### G-3
-`if (escrow_==0) revert ZeroAddress()` · `DefaultCoordinator.sol` `setEscrow` · `setEscrow` cannot wire a null escrow. Grants NO standing allowance (LOSS-ADV-01); `_lock` approves the exact bond amount just-in-time and resets to 0.
+`if (escrow_==0) revert ZeroAddress()` · `DefaultCoordinator.sol` `setEscrow` · `setEscrow` cannot wire a null escrow. Grants NO standing allowance; `_lock` approves the exact bond amount just-in-time and resets to 0.
 
 #### G-4
 `if (navOracle_==0) revert ZeroAddress()` · `DefaultCoordinator.sol:153` · re-point keeps a live provision sink.

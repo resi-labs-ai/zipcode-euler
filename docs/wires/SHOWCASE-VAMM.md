@@ -78,7 +78,7 @@ then `_exec(pair, IVammPair.mint(juniorTrancheEngine))`, decode `shares`, `share
 - `_cloneModule(new LpStrategyModuleDemoVAMM(), setUp(team, juniorTrancheSafe, op, pair, gauge), juniorTrancheSafe)` via the Zodiac
   `ModuleProxyFactory` (distinct salt), then `enableModule` on the main Safe via the team's 1-of-n pre-validated
   `execTransaction` (copied verbatim from `DeployZipcode._cloneModule`/`_enableModuleOnSafe`/`_execAsTeam`).
-- **Live anvil addresses (deployed 2026-06-10):** `SzipNavOracleDemoVAMM` `0xF84eF3BA83BB62C88502241B878983D79708e371`,
+- **Live anvil addresses:** `SzipNavOracleDemoVAMM` `0xF84eF3BA83BB62C88502241B878983D79708e371`,
   `LpStrategyModuleDemoVAMM` `0xB76FfBa3d1973f61b0E2e3b09536B15283e18dFC`. (Demo addresses are NOT deterministic across
   redeploys — read them from the run log / `build/anvil/contract-map.md` "Showcase / demo".)
 - **Mainnet path:** the same script with a mainnet RPC + the team key (the vAMM pair/gauge are real Base addresses).

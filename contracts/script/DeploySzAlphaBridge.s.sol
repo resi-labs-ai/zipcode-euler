@@ -35,11 +35,11 @@ import {IAlpha} from "../src/interfaces/bridge/ISubtensorPrecompiles.sol";
 contract DeploySzAlphaBridge is Script {
     address internal constant ALPHA_PRECOMPILE = 0x0000000000000000000000000000000000000808;
 
-    /// @dev BRIDGE-ADV-02: the in-broadcast genesis seed (~1 TAO). Staked at supply 0 and the shares
+    /// @dev the in-broadcast genesis seed (~1 TAO). Staked at supply 0 and the shares
     ///      burned (sent to 0xdead) so the first-depositor griefing window never opens permissionlessly.
     uint256 internal constant GENESIS_SEED = 1e18; // ~1 TAO
 
-    // --- CCT address book (verified on-chain 2026-06-09; Base typeAndVersion re-read live) ---
+    // --- CCT address book (verified on-chain; Base typeAndVersion re-read live) ---
     struct CctConfig {
         uint64 chainSelector;
         address router; // Router 1.2.0
@@ -108,7 +108,7 @@ contract DeploySzAlphaBridge is Script {
         );
         token = SzAlpha(payable(address(new ERC1967Proxy(address(impl), initData))));
 
-        // BRIDGE-ADV-02: seed the genesis stake IN-BROADCAST so there is no permissionless zero-supply
+        // seed the genesis stake IN-BROADCAST so there is no permissionless zero-supply
         // window. At supply 0 the deposit slippage floor is exempt (this is the only legitimate
         // `minSharesOut == 0` caller). The seed shares are a burnt cost, not a position — send to 0xdead.
         uint256 seedShares = token.deposit{value: GENESIS_SEED}(0, type(uint256).max);
@@ -161,7 +161,7 @@ contract DeploySzAlphaBridge is Script {
                 == ccipAdmin,
             "registry admin handoff failed"
         );
-        // BRIDGE-ADV-02: a broadcast that didn't seed must fail loudly — genesis must never go live empty.
+        // a broadcast that didn't seed must fail loudly — genesis must never go live empty.
         require(token.totalSupply() > 0, "genesis not seeded");
     }
 
@@ -187,7 +187,7 @@ contract DeploySzAlphaBridge is Script {
         // post-deploy to finalize. Until then this script remains a live admin (the one residual window).
         ITokenAdminRegistry(cfg.tokenAdminRegistry).transferAdminRole(address(token), timelock);
 
-        // BRIDGE-ADV-05: hand the burn/mint POOL's ownership to the timelock (2-step Ownable2Step). The pool
+        // hand the burn/mint POOL's ownership to the timelock (2-step Ownable2Step). The pool
         // owner controls the mint-source config (applyChainUpdates / addRemotePool) + the inbound rate limiter,
         // so it must NOT remain on the deployer EOA. Mirror has no owner() (AccessControl, handed off below).
         // The timelock finalizes via pool.acceptOwnership() post-deploy (runbook) — proposes timelock here.
@@ -201,7 +201,7 @@ contract DeploySzAlphaBridge is Script {
             "registry admin handoff failed"
         );
         // (Chainlink Ownable2Step keeps the pending owner private — no on-chain getter to assert here;
-        // the 2-step handoff is verified behaviorally in the fork test via acceptOwnership. BRIDGE-ADV-05.)
+        // the 2-step handoff is verified behaviorally in the fork test via acceptOwnership.)
         // Hand the mirror's mint-control + ccipAdmin view to the timelock; revoke the deployer. The mirror's
         // constructor granted DEFAULT_ADMIN_ROLE + ccipAdmin to THIS contract (the `new SzAlphaMirror`
         // caller), so the revoke target is `address(this)`, not the external caller.

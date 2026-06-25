@@ -25,7 +25,7 @@ import {TickMath, FullMath} from "../libraries/ConcentratedLiquidity.sol";
 ///
 /// @dev Params are immutable (a cheap, replaceable clone, per the repo's oracle philosophy): re-pointing the vault
 ///      or TWAP window is a redeploy + a one-call router re-point, not a setter. `quote` is pinned to the pool's
-///      token1 at construction. Validated on-chain 2026-06-14 against HYDX/USDC vault 0xfF8B…73f7.
+///      token1 at construction. Validated on-chain against HYDX/USDC vault 0xfF8B…73f7.
 contract AlgebraIchiFairLpOracle is BaseAdapter {
     using IchiAlgebraFairReserves for address;
 
@@ -52,7 +52,7 @@ contract AlgebraIchiFairLpOracle is BaseAdapter {
         address pool = IICHIVault(vault_).pool();
         address plugin = IAlgebraPool(pool).plugin();
         if (plugin == address(0)) revert IchiAlgebraFairReserves.NoPlugin();
-        // SUPPLY-ADV-02: fail a fresh/uninitialized plugin CLOSED at deploy, matching the sibling gate
+        // fail a fresh/uninitialized plugin CLOSED at deploy, matching the sibling gate
         // `SzipNavOracle.setLpTwapWindow:267` on the identical plugin. (`fairReserves` re-checks at read-time.)
         if (!IAlgebraOraclePlugin(plugin).isInitialized()) revert IchiAlgebraFairReserves.PluginNotReady();
         lpToken = vault_;

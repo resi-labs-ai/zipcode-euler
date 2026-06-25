@@ -20,8 +20,8 @@ separate lower-privilege CCIP registrar. Bridged-out supply is *locked, not burn
 
 | Function | Access | Value | Notes |
 |---|---|---|---|
-| `deposit(minSharesOut, deadline)` | permissionless | TAO in | `nonReentrant`, `whenNotPaused`; mints measured delta; **`minSharesOut` MUST be non-zero except at genesis (supply 0)** — else `SlippageFloorRequired` (BRIDGE-ADV-02/03) |
-| `redeem(shares, minTaoOut, deadline)` | permissionless | TAO out | `nonReentrant`, **NOT** pausable (S3/S11); **`minTaoOut` MUST be non-zero** — else `SlippageFloorRequired` (BRIDGE-ADV-03) |
+| `deposit(minSharesOut, deadline)` | permissionless | TAO in | `nonReentrant`, `whenNotPaused`; mints measured delta; **`minSharesOut` MUST be non-zero except at genesis (supply 0)** — else `SlippageFloorRequired` |
+| `redeem(shares, minTaoOut, deadline)` | permissionless | TAO out | `nonReentrant`, **NOT** pausable (S3/S11); **`minTaoOut` MUST be non-zero** — else `SlippageFloorRequired` |
 | `receive()` | permissionless | TAO in | accepts precompile payout; empty body |
 | `setCCIPAdmin(newAdmin)` | `onlyCcipAdmin` | — | rotate registrar |
 | `pause()` / `unpause()` | `onlyOwner` (Timelock) | — | pauses deposit only |

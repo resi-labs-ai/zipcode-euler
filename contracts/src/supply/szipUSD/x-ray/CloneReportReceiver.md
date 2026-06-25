@@ -12,7 +12,7 @@ inherits it.
 > only of a *dedicated* file — the report socket IS covered (fail-closed gate, wrong-caller, workflow-id, report↔
 > operator equivalence, ERC165) via `SzipBuyBurnModule.t.sol::test_CTR01_*`. The remaining gap is narrower still: a
 > **reusable base proven by only one consumer** has no isolated suite (the `expectedAuthor` branch — flagged in the
-> first draft — was filled by `test_CTR01_workflow_author_mismatch_reverts_match_passes` on 2026-06-20).
+> first draft — was filled by `test_CTR01_workflow_author_mismatch_reverts_match_passes`).
 
 ## 1. What it is
 

@@ -6,7 +6,7 @@ Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/FarmUtilityBor
 (§4.3, security F8a) installed on the farm utility USDC borrow vault at `OP_BORROW`. **No dedicated test file** — its
 two decisive security properties are exercised via its sibling `test/FarmUtilityLoopModule.t.sol` (the anti-spoof
 `isHookTarget` + the account-identity borrow gate, the latter against the **real** EVK/EVC market). The
-admin/wiring surface — previously the gap — is **now covered too** (2026-06-20): 3 guard tests total.
+admin/wiring surface — previously the gap — is **now covered too**: 3 guard tests total.
 
 > Why this guard matters: the farm utility borrow vault holds **≈0 at rest** and is **JIT-funded from the
 > warehouse's shared resting USDC** (the `usdcReservoir` idle depositor cash) just before a harvest, via

@@ -86,7 +86,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
   vendored zodiac-core function `virtual` and override it — which the ratified posture at `SellModule.sol:203-206`
   deliberately declines for the parallel `setAvatar`/`setTarget` setters ("reference deps stay pristine"). Same
   accepted-residual class: `onlyOwner` (Timelock), unreachable by the CRE operator, no drain/redirect/escalation by any
-  non-owner — a governance footgun, not an exploit path. Surfaced by the 2026-06-23 adversarial review (mission 4).
+  non-owner — a governance footgun, not an exploit path. Surfaced by the adversarial review (mission 4).
 
 ## 6. Test analysis
 
@@ -105,7 +105,7 @@ stack-too-deep); green run confirmed.
 **ADEQUATE** — a clean swap-leg fleet module whose load-bearing controls are well-covered: the recipient/pair pin
 (proven on the real Algebra router), the `maxSellHydx` size cap (the defense against dumping the HYDX basket), the
 `minOut`/deadline slippage abort, approval hygiene, and bubbled reverts. **Every mutator is now exercised** (all 7
-setters + the 3 swap legs; the 6-setter gap, incl. the avatar/target sync, was filled 2026-06-20). Capped at
+setters + the 3 swap legs; the 6-setter gap, incl. the avatar/target sync, was filled). Capped at
 ADEQUATE by: no fuzz/invariant (correctly low-value for deterministic swaps), the §10.1 operator-sizing residual
 (bounded by the size cap + `minOut` + the pins), and the build-phase mutable wiring pending the pre-prod re-freeze —
 neither a coverage gap.

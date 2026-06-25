@@ -32,7 +32,8 @@ contract's resolve/slash safety is judgeable in isolation; each `_boot.md` requi
 ## Pressure-test severity hard (carry into every synthesis)
 The §13 grief ceiling (X-1) and the build-phase mutable wiring (X-2) are **ratified residuals**, not vulns:
 - A finding that merely requires distrusting the CRE/DON within the documented grief ceiling is
-  ACCEPTED-RISK / INFO (the X-1 precedent — like the SzAlpha ADV-01 precompile-distrust deflation).
+  ACCEPTED-RISK / INFO (the X-1 precedent — the same lens as the precompile-distrust deflation, where a
+  finding that depends on distrusting the ratified runtime trust anchor is accepted-risk, not a vuln).
 - A finding that merely restates "the Timelock can re-point a sink in the build phase" is INFO unless it
   shows a re-point that **drains** rather than griefs/redirects. The sharpest such question is the
   coordinator's MAX-allowance re-point (`setEscrow` → an attacker escrow gets a MAX allowance over the

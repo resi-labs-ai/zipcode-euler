@@ -24,16 +24,16 @@ the coverage floor (debt-pinned). 3. `commit(USDC, X)` until `committedValue() �
 **Assertions** (On-chain=Yes): `utilization() == requiredFraction()` exactly; the floor gates release (below-floor
 release reverts, above-floor succeeds).
 
-**Notes.** The freeze module was reworked to a **debt-pinned coverage floor** (per [[durationfreeze-incomplete]] resolved
-2026-06-13/16): the floor is the senior coverage requirement, not a literal `utilization·grossBasketValue`. LP is
+**Notes.** The freeze module was reworked to a **debt-pinned coverage floor** (per [[durationfreeze-incomplete]]):
+the floor is the senior coverage requirement, not a literal `utilization·grossBasketValue`. LP is
 counted in place via `pathLockedLpEquity`. `commit` reads no floor (SP-03); only `release` does.
 
-**Result.** **PASS (identity proven live, 2026-06-24).**
+**Result.** **PASS (identity proven live).**
 - Real utilization created: warehouse holds **100,000e6** EE shares; after a 60,000e6 origination draw,
   `maxWithdraw(warehouse)` = **40,000e6** (60k illiquid).
 - **`utilization()` = `requiredFraction()` = `0.594…e18` — EXACTLY equal** (no escalation). ✓ This is the headline:
   the required coverage fraction tracks senior utilization 1:1.
 - `requiredCommittedValue()` = **1,000e18** (the debt-pinned coverage floor — here it pins to the full junior basket
   given the senior debt vs the small basket). `grossBasketValue()` = 1,000e18.
-- `release` floor enforcement (`FreezeFloorBreach` 0x7287752d) proven 2026-06-10; the `release` floor check is the
+- `release` floor enforcement (`FreezeFloorBreach` 0x7287752d) proven; the `release` floor check is the
   reworked debt-pinned gate. **No flaws** — the utilization↔required-fraction identity holds exactly on real EE state.

@@ -46,7 +46,7 @@ No custody. The only state is the single live bid (`currentUid`/`currentSellAmou
 | ID | Property | On-chain | Proven by |
 |---|---|---|---|
 | I-1 | **single resting bid** — a second `postBid` while one is live reverts `BidAlreadyLive`; cancel/partial-fill re-arms | Yes | **`test_single_resting_bid`**, `test_partial_fill_then_repost` |
-| I-2 | **exact discount price bound** — paid ≤ `buyAmount × navExit × (1−d)`, integer-exact (never rounds up into an above-NAV fill); priced off `navExit` not twap; `_postBid` **`poke()`s the oracle before reading `navExit`** (SUPPLY-ADV-14, mirrors `ExitGate`) so the exit mark is not left carrying a `g/W` slice of a stale spot | Yes | **`test_price_bound_boundary_divisible`**/`_non_divisible`, `test_bid_at_or_above_nav_reverts`, `test_deep_discount_passes`, `test_prices_off_navExit_not_twap`, **`test_SUPPLYADV14_postBid_pokes_before_navExit`** |
+| I-2 | **exact discount price bound** — paid ≤ `buyAmount × navExit × (1−d)`, integer-exact (never rounds up into an above-NAV fill); priced off `navExit` not twap; `_postBid` **`poke()`s the oracle before reading `navExit`** (mirrors `ExitGate`) so the exit mark is not left carrying a `g/W` slice of a stale spot | Yes | **`test_price_bound_boundary_divisible`**/`_non_divisible`, `test_bid_at_or_above_nav_reverts`, `test_deep_discount_passes`, `test_prices_off_navExit_not_twap`, **`test_SUPPLYADV14_postBid_pokes_before_navExit`** |
 | I-3 | **NAV-freshness leg-anchored fence (SEC-13)** — `validTo ≤ oldestRequiredLegTs + maxAge`, so a fill lands against a mark at most `maxAge` old (not `2·maxAge`); fails closed at the edges | Yes | **`test_SEC13_two_maxAge_window_closed`**, `_fill_age_capped_at_maxAge`, `_edge_legs_at_freshness_limit_fail_closed`, `_fresh_legs_near_term_validTo_posts`, `test_freshness_fence_binds_before_BadValidTo`, `validTo_at_maxAge_boundary`/`_one_past` |
 | I-4 | **caps + kill-switch** — `sellAmount > buybackCap` reverts; `buybackCap==0` reverts every post; `buyAmount > MAX_BUY_AMOUNT` reverts | Yes | `test_cap_exceeded_reverts`, **`test_killswitch_zero_cap_always_reverts`**, `test_buyAmount_too_large_reverts` |
 | I-5 | **coverage path-lock outflow gate** — `postBid` blocked while `!covered()`; gate-off (0) = ungated | Yes | **`test_postBid_coverage_gate`** (gate false → `Undercovered`, true → posts, off → ungated) |
@@ -54,7 +54,7 @@ No custody. The only state is the single live bid (`currentUid`/`currentSellAmou
 | I-7 | **canonical GPv2 uid** — the on-chain order hash matches the CoW encoding exactly | Yes | **`test_orderUid_known_answer_vector`** (56-byte uid == an out-of-band `cast` KAT; owner==engine, validTo tail), `test_typehash_constant` |
 | I-8 | **atomic post / idempotent cancel** — approve + presign are one tx (a presign revert rolls back the approve); cancel no-ops when no live bid | Yes | **`test_atomicity_second_exec_revert_rolls_back`**, `test_exec_discipline_postBid_calls`/`_cancelBid_calls` |
 | I-9 | **two doors, one guard set** — the CRE `POST_BID` path enforces the identical `_postBid` validations as the operator path | Yes | `test_CTR01_report_postBid_equals_operator_postBid` (byte-identical uid/sellAmount), the CTR-01 block (see [CloneReportReceiver.md](CloneReportReceiver.md)) |
-| X-1 | §10.1 residual: operator sizes the 3 order fields — bounded, not theft | **No** | recipient pinned to the Safe + the price/cap/coverage/freshness gates cap it; a compromised Timelock could redirect avatar/target (accepted, same Timelock governs all). Build-phase wiring re-points are Timelock-only and closed by the pre-prod immutable re-freeze; the three value-load-bearing setters now refuse a re-point under a live bid (`BidAlreadyLive`, SUPPLY-ADV-05) so a rewire can't strand a presign/allowance. The `setJuniorTrancheEngine`↔oracle-free-Safe binding (the undercovered-fill window's free-side-USDC premise) is an off-chain wiring convention with no on-chain interlock — accepted X-1, governance-bounded |
+| X-1 | §10.1 residual: operator sizes the 3 order fields — bounded, not theft | **No** | recipient pinned to the Safe + the price/cap/coverage/freshness gates cap it; a compromised Timelock could redirect avatar/target (accepted, same Timelock governs all). Build-phase wiring re-points are Timelock-only and closed by the pre-prod immutable re-freeze; the three value-load-bearing setters now refuse a re-point under a live bid (`BidAlreadyLive`) so a rewire can't strand a presign/allowance. The `setJuniorTrancheEngine`↔oracle-free-Safe binding (the undercovered-fill window's free-side-USDC premise) is an off-chain wiring convention with no on-chain interlock — accepted X-1, governance-bounded |
 
 ## 4. Guards — coverage
 
@@ -67,7 +67,7 @@ No custody. The only state is the single live bid (`currentUid`/`currentSellAmou
 | `ZeroAmount` / `BadValidTo` / `BidAlreadyLive` / `CapExceeded` / `Undercovered` / `StaleNav` / `BidAboveDiscount` / `BuyAmountTooLarge` / `ValidToBeyondNavFreshness` | the I-1…I-6 tests above |
 | `setCoverageGate` (on/off) | `test_postBid_coverage_gate` |
 | 6 wiring setters (`setJuniorTrancheEngine`/`setNavOracle`/`setSzipUSD`/`setUsdc`/`setSettlement`/`setVaultRelayer`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` — onlyOwner + effect + zero-guard (all 6) |
-| `setSettlement`/`setVaultRelayer`/`setUsdc` no-live-bid re-check (`BidAlreadyLive`) — the 3 setters `_cancelBid` dereferences refuse a re-point under a live bid, so a rewire can't strand the old presign/allowance (SUPPLY-ADV-05) | `test_SUPPLYADV05_wiring_setters_reject_rewire_under_live_bid` |
+| `setSettlement`/`setVaultRelayer`/`setUsdc` no-live-bid re-check (`BidAlreadyLive`) — the 3 setters `_cancelBid` dereferences refuse a re-point under a live bid, so a rewire can't strand the old presign/allowance | `test_SUPPLYADV05_wiring_setters_reject_rewire_under_live_bid` |
 
 ## 5. Attack surfaces
 
@@ -103,7 +103,7 @@ No custody. The only state is the single live bid (`currentUid`/`currentSellAmou
 
 | Category | Count | Notes |
 |---|---|---|
-| Module unit | ~42 | setUp/guards/SEC-14/15, all 7 wiring setters (incl. the SUPPLY-ADV-05 no-live-bid re-check on settlement/relayer/usdc), single-bid, price-bound boundaries, caps/killswitch, coverage gate, the SEC-13 freshness-fence cluster (4), freshness gate, exec-discipline + atomicity, the uid KAT + typehash |
+| Module unit | ~42 | setUp/guards/SEC-14/15, all 7 wiring setters (incl. the no-live-bid re-check on settlement/relayer/usdc), single-bid, price-bound boundaries, caps/killswitch, coverage gate, the SEC-13 freshness-fence cluster (4), freshness gate, exec-discipline + atomicity, the uid KAT + typehash |
 | Receiver (CTR-01) | 8 | the inherited `CloneReportReceiver` socket (fail-closed clone, forwarder, workflow id/author, report↔operator equivalence, supportsInterface) — see its own X-Ray |
 | Base-fork | 1 | `test_fork_postBid_stores_presignature_and_allowance` (real `GPv2Settlement` — presign stored + VaultRelayer allowance set) |
 | Stateless fuzz / invariant | 0 | price-bound is a fuzz candidate, but the integer boundaries are pinned deterministically |
@@ -118,7 +118,7 @@ CoW. Coverage % uninstrumentable (project-wide stack-too-deep); green run confir
 best-covered after the freeze floor: the exact discount price bound, the cap + kill-switch, the coverage path-lock,
 the freshness gate, and especially the SEC-13 leg-anchored NAV-freshness fence are all densely tested; the canonical
 GPv2 uid is KAT-pinned; post is atomic and the two doors share one guard set; the presign path is fork-verified
-against real CoW. **Every mutator is now exercised** (the 6-setter gap was filled 2026-06-20). Capped below HARDENED
+against real CoW. **Every mutator is now exercised** (the 6-setter gap was filled). Capped below HARDENED
 by: no fuzz on the price-bound arithmetic (boundaries are pinned deterministically instead), and the §10.1 /
 Timelock-redirect residuals (accepted, governance-bounded) — neither a coverage gap.
 

@@ -7,7 +7,7 @@
 # Idempotent-ish: re-running re-mints xALPHA depth and adds another LP position; the pool is
 # only created once (createAndInitializePoolIfNecessary is a no-op if it already exists).
 #
-# Run:  bash build/anvil/zipusd-xalpha-pool.sh
+# Run:  bash build/anvil/recipes/zipusd-xalpha-pool.sh
 set -euo pipefail
 
 R=${RPC_URL:-http://127.0.0.1:8545}

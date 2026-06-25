@@ -65,7 +65,7 @@ No permissionless entry points; no recipient parameter anywhere.
   (process, not on-chain). Tested for owner-gating + zero-reject.
 - **Exact-amount allowance from the coordinator** — `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull is the
   only way funds enter. The coordinator grants the escrow only an exact-amount just-in-time allowance per lock and
-  resets it to 0 (LOSS-ADV-01); there is **no standing allowance**. (The earlier MAX allowance was NOT made safe by
+  resets it to 0; there is **no standing allowance**. (The earlier MAX allowance was NOT made safe by
   the escrow's non-sweepability — an ERC-20 allowance authorizes the spender to move the owner's tokens to ANY
   destination, so a standing MAX to a re-pointable escrow was a drain primitive over the coordinator's reserve; the
   JIT approval closes it.) `test_lock_zeroAllowance_reverts` / `_insufficientBalance_reverts` pin the pull.
@@ -97,5 +97,5 @@ grief-only blast radius). Tests axis is individually HARDENED.
 1. 96 nSLOC; plain `Ownable` + `ReentrancyGuard`; 4 `onlyCoordinator`+`nonReentrant` state-changers + 4 Timelock setters; 0 permissionless surface.
 2. No recipient parameter on any path — xALPHA reaches only `bondOriginator` / `adminSafe` / `juniorTrancheSafe`.
 3. Tests: 44 unit + 1 fuzz + 2 invariant + 5 reentrancy — conservation + three-destination routing invariant-asserted.
-4. Non-sweepable; the coordinator grants only an exact-amount just-in-time allowance per lock (no standing allowance — LOSS-ADV-01), so a re-pointed escrow has no allowance to drain the coordinator's reserve.
+4. Non-sweepable; the coordinator grants only an exact-amount just-in-time allowance per lock (no standing allowance), so a re-pointed escrow has no allowance to drain the coordinator's reserve.
 5. Build-phase wiring is Timelock-re-pointable; destination integrity is absolute after the deferred pre-prod immutable re-freeze (process, not code) — the X-2 residual.

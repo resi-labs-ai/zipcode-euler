@@ -207,7 +207,7 @@ contract DefaultCoordinatorTest is CoordBase {
     // ---------------------------------------------------------------- setEscrow
     function test_setEscrow_emits_and_grants_no_standing_allowance() public {
         // fresh coordinator (un-wired) to assert the EscrowSet emit + that NO standing allowance is granted
-        // (LOSS-ADV-01: _lock approves the exact bond amount JIT; setEscrow itself leaves allowance at 0).
+        // (_lock approves the exact bond amount JIT; setEscrow itself leaves allowance at 0).
         DefaultCoordinator c = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
         LienXAlphaEscrow e = new LienXAlphaEscrow(address(xalpha), address(c), adminSafe, juniorTrancheSidecar);
         vm.expectEmit(true, true, true, true, address(c));
@@ -219,7 +219,7 @@ contract DefaultCoordinatorTest is CoordBase {
 
     function test_setEscrow_repoint_works_no_standing_allowance() public {
         // build phase (§17): setEscrow re-points (no set-once lock), and grants NO standing allowance to the new
-        // escrow — so a re-pointed escrow has nothing to drain (LOSS-ADV-01).
+        // escrow — so a re-pointed escrow has nothing to drain.
         LienXAlphaEscrow e2 = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
         coordinator.setEscrow(address(e2));
         assertEq(address(coordinator.escrow()), address(e2));
@@ -227,7 +227,7 @@ contract DefaultCoordinatorTest is CoordBase {
     }
 
     function test_lock_jit_allowance_leaves_no_standing_allowance() public {
-        // LOSS-ADV-01 regression: a lock succeeds via the exact-amount JIT approval, and leaves zero standing
+        // regression: a lock succeeds via the exact-amount JIT approval, and leaves zero standing
         // allowance both before and after — there is no MAX allowance for a re-pointed escrow to exploit.
         uint256 amt = 100e18;
         _fund(amt);
@@ -253,7 +253,7 @@ contract DefaultCoordinatorTest is CoordBase {
         MockERC20 x2 = new MockERC20(18);
         coordinator.setXAlpha(address(x2));
         assertEq(address(coordinator.xAlpha()), address(x2));
-        // no standing re-approval of the new token (LOSS-ADV-01): _lock grants the exact amount JIT instead.
+        // no standing re-approval of the new token: _lock grants the exact amount JIT instead.
         assertEq(x2.allowance(address(coordinator), address(escrow)), 0, "no standing allowance after token re-point");
     }
 

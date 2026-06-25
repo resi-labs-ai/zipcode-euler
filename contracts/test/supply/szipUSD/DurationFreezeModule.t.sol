@@ -412,7 +412,7 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         );
     }
 
-    /// @dev SUPPLY-ADV-04: the two Safe setters must mirror `setUp`'s distinctness guard — a re-point can never
+    /// @dev the two Safe setters must mirror `setUp`'s distinctness guard — a re-point can never
     ///      collapse the two Safes to one address (which would make a `release` a self-transfer that trivially
     ///      clears the floor, neutralizing I-1). Pre-fix both setters guarded only the zero address.
     function test_setSafes_reject_collapse_to_equal() public {

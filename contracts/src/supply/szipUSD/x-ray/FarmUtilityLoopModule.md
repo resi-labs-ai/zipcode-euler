@@ -110,7 +110,7 @@ adjacent `SzipFarmUtilityLpOracle` cluster, the `FarmUtilityBorrowGuard` tests, 
 controls are the best-covered after DurationFreezeModule: the F1 aggregate cap + killswitch, the EVK over-LTV /
 no-collateral / stale-mark fail-closed checks, the guard's account-identity pin, repay exactness, and the full
 4-step revolve are all proven **on the real EVK/EVC market**, with exec-discipline + atomicity on the mock side.
-**Every wiring setter is now exercised** (the 6-setter gap, incl. the avatar/target sync, was filled 2026-06-20).
+**Every wiring setter is now exercised** (the 6-setter gap, incl. the avatar/target sync, was filled).
 Capped at ADEQUATE by: no fuzz/invariant (acceptable — the hard bounds are EVK-enforced and tested), the §10.1
 operator-sizing residual (bounded by cap + health + guard), and the build-phase mutable wiring pending the pre-prod
 re-freeze — none a coverage gap.

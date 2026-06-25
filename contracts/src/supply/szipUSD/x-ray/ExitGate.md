@@ -5,10 +5,10 @@
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/ExitGate.sol`, the **#3 drill** from
 `portfolio-map.md` — the custody + issuance + exit core, the **sole szipUSD minter/burner** and **sole Baal `Loot`
 custodian**. Connected to `test/ExitGate.t.sol`: **23 base-fork unit + 1 stateful invariant = 24 tests, all
-passing** (was 18; +5 from the SUPPLY-ADV-06/07 hardening, +1 pre-existing `setGate` ctor test).
+passing** (was 18; +5 from the hardening, +1 pre-existing `setGate` ctor test).
 
 > Drill goal (from the map): *add an invariant test for `szipUSD.totalSupply() == loot.balanceOf(gate)`; confirm no
-> `ragequit` path is reachable.* **Both done (2026-06-20):** a Foundry stateful invariant
+> `ragequit` path is reachable.* **Both done:** a Foundry stateful invariant
 > (`invariant_twoToken_conservation_and_zeroShares`) now fuzzes a multi-actor deposit/transfer/burn handler against
 > the real Baal + oracle — **~6,400 calls, 0 reverts, 0 violations** — and the two path gaps (`xALPHA` deposit,
 > `burnFor` under-funded engine) are filled. No `ragequit` is reachable: the contract calls only
@@ -67,9 +67,9 @@ paired burn (retire).
 | `NotWindowController` | `test_burnFor_pure_supply_retire` |
 | `xALPHA` deposit branch (`valueOf(xAlpha,…)`) | `test_depositFor_xAlpha_path` (+ fuzzed in the invariant handler) |
 | `burnFor` under-funded engine → atomic rollback | `test_burnFor_reverts_when_engine_underfunded` |
-| `NotWired` (shareToken / engine unset) | `depositFor` path asserted positive; **`burnFor` now carries an explicit `shareToken != 0 → NotWired` guard** (SUPPLY-ADV-06) — `test_burnFor_reverts_when_shareToken_unwired` |
-| **`TransferShortfall`** — `depositFor` requires the basket to receive exactly `amount` (FoT/rebasing over-issue guard, SUPPLY-ADV-07) | `test_depositFor_feeOnTransfer_reverts` (1% FoT leg → revert) |
-| **`AlreadyWired`** — `setShareToken`/`setBaal` re-point locked once szipUSD is issued (SUPPLY-ADV-06) | `test_setShareToken_locked_after_issuance`, `test_setBaal_locked_after_issuance`, `test_setBaal_repoint_allowed_pre_issuance` |
+| `NotWired` (shareToken / engine unset) | `depositFor` path asserted positive; **`burnFor` now carries an explicit `shareToken != 0 → NotWired` guard** — `test_burnFor_reverts_when_shareToken_unwired` |
+| **`TransferShortfall`** — `depositFor` requires the basket to receive exactly `amount` (FoT/rebasing over-issue guard) | `test_depositFor_feeOnTransfer_reverts` (1% FoT leg → revert) |
+| **`AlreadyWired`** — `setShareToken`/`setBaal` re-point locked once szipUSD is issued | `test_setShareToken_locked_after_issuance`, `test_setBaal_locked_after_issuance`, `test_setBaal_repoint_allowed_pre_issuance` |
 
 ## 5. Attack surfaces
 
@@ -92,13 +92,13 @@ paired burn (retire).
   balance intact; invariant survives).
 - **Build-phase mutable wiring** — 8 `onlyOwner` setters incl. `setBaal` (re-derives `loot`/`juniorTrancheSafe`).
   Re-pointing the Baal or token mid-life is a Timelock act; `test_setters_repoint_and_auth` covers the access +
-  re-point. The standing residual is the deferred pre-prod immutable re-freeze. **SUPPLY-ADV-06 (2026-06-23):** the
+  re-point. The standing residual is the deferred pre-prod immutable re-freeze. The
   two *conservation-defining* pointers — `setShareToken` and `setBaal` — are now belt-and-suspanders locked in-contract
   via `_assertPreIssuance()` (revert `AlreadyWired` once `SzipUSD(shareToken).totalSupply() != 0`), so a mid-life
   re-point cannot strand the paired Loot / fork the I-1 identity even before the global re-freeze lands; the other five
   setters are I-1-neutral and stay re-pointable. `burnFor` also gained the explicit `shareToken != 0 → NotWired` guard
   for symmetry with `depositFor`.
-- **FoT/rebasing deposit leg (SUPPLY-ADV-07, 2026-06-23)** — `depositFor` now snapshots the basket balance around the
+- **FoT/rebasing deposit leg** — `depositFor` now snapshots the basket balance around the
   `safeTransferFrom` and reverts `TransferShortfall` unless it rose by exactly `amount`. Closes the latent over-issue
   where a fee-on-transfer leg (introducible only via `setTokens`) would mint szipUSD against backing the basket never
   received. Adopts the in-house `DurationFreezeModule` received-delta pattern.
@@ -120,7 +120,7 @@ the decisive conservation invariant is now fuzzed across arbitrary interleavings
 **ADEQUATE** *(a hair from HARDENED)* — the design is sound and the dangerous surface is deliberately minimal: sole
 minter/burner with paired Loot↔szipUSD accounting, zero custody, no `ragequit`, no `mintShares`, fail-closed
 issuance, `nonReentrant` on both mutators — all tested against the **real** Baal substrate and oracle. With the
-2026-06-20 gap-fills, the decisive two-token conservation (and zero-shares) is now under a **fuzzed stateful
+gap-fills, the decisive two-token conservation (and zero-shares) is now under a **fuzzed stateful
 invariant** (~6,400 calls, 0 violations) rather than deterministic sequences alone, and the two previously-uncovered
 paths (`xALPHA` deposit, `burnFor` under-funded engine) are closed. Capped at ADEQUATE (not HARDENED) only by the
 residual `NotWired`/negative-ctor revert paths not being directly exercised, and the build-phase mutable wiring

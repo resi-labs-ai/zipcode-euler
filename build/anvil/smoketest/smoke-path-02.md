@@ -29,15 +29,15 @@ the pricing primitive the whole junior side hinges on (feeds S8 issuance, S9 fre
 `StalePrice`; basket reads fail-close `RateUnseeded`. The additivity identity `free+committed==gross` is verified in
 the **funded + seeded** state (SP-06), since at genesis the basket reads fail-closed.
 
-**Notes.** **Drift vs the 2026-06-10 run (correct, no flaw):** `grossBasketValue` etc. then returned `0`; they now
-**fail-close `RateUnseeded()`** (the BRIDGE-ADV-02 structural genesis-seed guard) — the basket cannot be priced until
+**Notes.** **Drift vs the prior run (correct, no flaw):** `grossBasketValue` etc. then returned `0`; they now
+**fail-close `RateUnseeded()`** (the structural genesis-seed guard) — the basket cannot be priced until
 the rate oracle is seeded. This agrees with `fresh()==false`. Issuance therefore depends on a prior CRE seed
 (legs + rate); see SP-06/SP-12.
 
-**Result.** **PASS** (2026-06-24, reads + 2 `poke` txs on the live fork; clean baseline).
+**Result.** **PASS** (reads + 2 `poke` txs on the live fork; clean baseline).
 - `spotNavPerShare()` = `navExit()` = `twapNavPerShare()` = **1e18** (GENESIS_NAV; twap flat across a +600s warp). ✓
 - `valueOf(zipUSD,100e18)` = **100e18**; `fresh()` = **false**. ✓
 - `navEntry()` **reverted** (leg-staleness fail-closed). ✓
 - `grossBasketValue()`/`committedValue()`/`freeValue()`/`valueOf(xAlpha,·)` **reverted `RateUnseeded()` (0x006806f9)** —
   the new genesis-seed guard. ✓ Additivity deferred to the seeded/funded state (SP-06). **No flaws** (stricter than the
-  2026-06-10 behavior — fail-closed where it previously returned 0).
+  prior behavior — fail-closed where it previously returned 0).

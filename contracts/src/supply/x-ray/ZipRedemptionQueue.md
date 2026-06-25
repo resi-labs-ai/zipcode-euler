@@ -2,12 +2,12 @@
 
 > ZipRedemptionQueue | 146 nSLOC | 8b7c67c (`main`, working tree) | Foundry | 20/06/26 | **Verdict: HARDENED** *(modulo no external audit)*
 
-> **Update 2026-06-20:** the two gaps below (I-14 `setTokens` auth/zero/`DecimalsTooFew`/`scaleUp` re-derive, I-15
+> **Update:** the two gaps below (I-14 `setTokens` auth/zero/`DecimalsTooFew`/`scaleUp` re-derive, I-15
 > `setController` auth/zero/effect) are **CLOSED** — 2 new setter tests added to `ZipRedemptionQueue.t.sol` (44
 > unit+invariant green; + the 2 real-ESynth fork tests). Every wiring setter is now exercised, including the live
 > re-derivation of the par `scaleUp`. Verdict lifted to HARDENED.
 
-> **Update 2026-06-24 (SUPPLY-ADV-16):** `setTokens` now carries a **quiescent-state guard** — a token/`scaleUp`
+> **Update:** `setTokens` now carries a **quiescent-state guard** — a token/`scaleUp`
 > re-point reverts `NotQuiescent` when `totalPending != 0` (open request) OR `reservedAssets != 0` (settled-but-
 > unclaimed book). This code-enforces the X-3 freeze for this contract: a re-point can no longer straddle
 > OLD-denominated escrow/reserve and strand the escrowed zipUSD (the settle burn targets the live `zipUSD`, which the
@@ -73,7 +73,7 @@ re-derived on `setTokens`; the ctor/`setTokens` revert `DecimalsTooFew` if USDC 
 | I-11 | **real-ESynth burn seam** — two REPAY rounds, `totalSupply` drops by exactly `filledShares`, zero EulerEarn coupling | Yes | **`test_fork_twoRepayRounds_drain_realESynthBurn`** |
 | I-12 | **ctor guards** — zero ×3, `DecimalsTooFew` | Yes | **`test_ctor_zero_address_reverts`**, `_ctor_reverts_when_usdc_finer_than_zip`, `_ctor_state` |
 | I-13 | **`setRedeemController` discipline** — onlyOwner, zero, re-pointable | Yes | **`test_setRedeemController_discipline`** |
-| I-14 | **`setTokens` — onlyOwner + zero + `DecimalsTooFew` + `scaleUp` re-derivation + quiescent-state guard** | Yes | **`test_setTokens_guards_and_scaleUp_rederive`** — non-owner/zero×2/`DecimalsTooFew` revert; re-point to an 8/6 pair re-derives `scaleUp` to 100 and the whole-unit guard floors at it live (150 reverts, 200 escrows); **`test_SUPPLYADV16_setTokens_rejects_repoint_under_live_state`** — a re-point with `totalPending != 0` OR `reservedAssets != 0` reverts `NotQuiescent` (SUPPLY-ADV-16) |
+| I-14 | **`setTokens` — onlyOwner + zero + `DecimalsTooFew` + `scaleUp` re-derivation + quiescent-state guard** | Yes | **`test_setTokens_guards_and_scaleUp_rederive`** — non-owner/zero×2/`DecimalsTooFew` revert; re-point to an 8/6 pair re-derives `scaleUp` to 100 and the whole-unit guard floors at it live (150 reverts, 200 escrows); **`test_SUPPLYADV16_setTokens_rejects_repoint_under_live_state`** — a re-point with `totalPending != 0` OR `reservedAssets != 0` reverts `NotQuiescent` |
 | I-15 | **`setController` — onlyOwner + zero + effect** (re-pointed controller can settle, old cannot) | Yes | **`test_setController_guards_and_effect`** — non-owner/zero revert; after re-point the new controller settles and the old reverts `NotController` |
 
 ## 4. Guards — coverage
@@ -115,7 +115,7 @@ exercised — no outstanding gap.
   scaleUp_rederive` now pins auth/zero/`DecimalsTooFew` AND proves the re-derive is live — re-pointing to an 8/6 pair
   drops `scaleUp` to 100 and the whole-unit guard immediately floors at it (150 reverts, 200 escrows). A regression
   that mis-derived the scale would now be caught. Same anti-hardcode property class as `ZipDepositModule`'s `scaleUp`.
-  **SUPPLY-ADV-16:** `setTokens` additionally reverts `NotQuiescent` when `totalPending != 0` or `reservedAssets != 0`,
+  `setTokens` additionally reverts `NotQuiescent` when `totalPending != 0` or `reservedAssets != 0`,
   so a re-point can never straddle OLD-denominated escrow/reserve and strand the escrowed zipUSD — the X-3 freeze is
   now code-enforced for this contract, not convention-only. (Unlike the inverse zap `ZipDepositModule`, which froze
   `scaleUp`/`zipUSD`/`usdc` `immutable`, the queue keeps them mutable but is the one holding escrowed cross-call state.)
@@ -131,7 +131,7 @@ exercised — no outstanding gap.
 | Gates + SEC-12 + parity + donation + reentrancy + no-sweep | ~12 | every revert path on request/settle/claim; canonical-shares emit |
 | Stateful invariants | 4 | solvency (paid ≤ delivered), reserved ≤ balance, zipBalance ≥ pending, claimable ≤ reserved |
 | Real-ESynth Base-fork | 2 | two-REPAY-round drain (real burn, no EE coupling) + no-sweep-selector ABI check |
-| Wiring setters (`setTokens` / `setController` / `setRedeemController`) | 4 | all four wiring setters: auth + zero + effect; `setTokens` also re-derives `scaleUp` + `DecimalsTooFew` + the quiescent-state guard (`NotQuiescent`, SUPPLY-ADV-16) |
+| Wiring setters (`setTokens` / `setController` / `setRedeemController`) | 4 | all four wiring setters: auth + zero + effect; `setTokens` also re-derives `scaleUp` + `DecimalsTooFew` + the quiescent-state guard (`NotQuiescent`) |
 
 Coverage % uninstrumentable (project-wide `Stack too deep`); 45 unit+invariant green (+ 2 real-ESynth fork). The
 par-burn engine, the solvency invariants, the single-requester fence, donation hygiene, the no-sweep guarantee, the
@@ -144,7 +144,7 @@ delivered) under four stateful invariants, its par round-trip exact across multi
 single-requester collapse fenced by `MultipleRequesters`, donation hygiene proven both ways, the no-fund-extraction
 guarantee asserted positively and negatively, the real-`ESynth` burn seam fork-proven over two REPAY rounds with zero
 EulerEarn coupling, and now all four wiring setters (incl. the live `scaleUp` re-derivation in `setTokens`). The two
-prior setter gaps are CLOSED (2026-06-20). The only residuals are the build-phase re-settable wiring (Ownable→Timelock,
+prior setter gaps are CLOSED. The only residuals are the build-phase re-settable wiring (Ownable→Timelock,
 frozen pre-prod — a subsystem-wide process item) and the absence of an external audit; neither a code or coverage gap.
 
 **Structural facts:**
@@ -152,4 +152,4 @@ frozen pre-prod — a subsystem-wide process item) and the absence of an externa
 2. Par-burn core (single-requester collapse): escrow → fill `min(available, pending)` + burn → claim at par; impairment-blind by design (junior side prices impairment, not this).
 3. `scaleUp` derived from `decimals()` (re-derived on `setTokens`); par credits round DOWN, sub-`scaleUp` dust locked forever (KR-5), never swept (KR-2).
 4. Solvency under 4 stateful invariants; real-ESynth burn + warehouse REPAY proven on a Base fork; SEC-12 canonical-shares emit.
-5. Tests: 47 (41 unit + 4 stateful invariant + 2 real-ESynth fork). No outstanding gap — all wiring setters now exercised incl. the live `scaleUp` re-derivation + the quiescent-state guard (I-14, SUPPLY-ADV-16) and `setController` re-point (I-15).
+5. Tests: 47 (41 unit + 4 stateful invariant + 2 real-ESynth fork). No outstanding gap — all wiring setters now exercised incl. the live `scaleUp` re-derivation + the quiescent-state guard (I-14) and `setController` re-point (I-15).

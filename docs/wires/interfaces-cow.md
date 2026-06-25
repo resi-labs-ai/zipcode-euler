@@ -13,7 +13,7 @@ the §7 buy-and-burn bid module (8-B14) touches; interfaced + forked, never comp
 
 ## What it shims
 The CoW Protocol `GPv2Settlement` singleton on Base 8453 — `COW_SETTLEMENT 0x9008D19f58AAbD9eD0D60971565AA8510560ab41`
-(same address on all chains). Verified live on Base 8453 (2026-06-08, `cast`):
+(same address on all chains). Verified live on Base 8453 (`cast`):
 - `domainSeparator()` => `0xd72ffa789b6fae41254d0b5a13e6e1e92ed947ec6a251edf1cf0b6c02c257b4b` — EIP-712 domain for CoW orders.
 - `vaultRelayer()` => `0xC92E8bdf79f0507f65a392b0ab4667716BFE0110` — the GPv2VaultRelayer, the spender sell tokens (USDC) are `approve`d to. Read live (not pinned) in module setUp / `BaseAddresses` book.
 - `setPreSignature(bytes,bool)` selector `0xec6cb13f` — stores a presignature keyed by the `owner` packed into `orderUid`; that `owner` MUST == `msg.sender`.

@@ -27,7 +27,7 @@ accrues to existing holders and is not extractable by a new entrant.
 denominator + first-depositor guard are the mitigation, not an on-chain invariant). In production the counted Safes
 hold only deposited/earned value; a donation is a gift to existing holders. Documented, not "fixed".
 
-**Result.** **PASS — seam demonstrated** (2026-06-24, live fork).
+**Result.** **PASS — seam demonstrated** (live fork).
 - Pre-donation: gross **1,000e18**, spot NAV **1e18**, szipUSD supply **1,000e18** (`valueOf(xAlpha,1e18)`=1e18). 
 - After donating **500e18 xALPHA** to the main Safe: gross **1,500e18** (+500e18), spot NAV **1.5e18**, szipUSD supply
   **unchanged at 1,000e18** → **NAV moved with no deposit (S7)**. ✓

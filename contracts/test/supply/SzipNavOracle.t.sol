@@ -1137,7 +1137,7 @@ contract SzipNavOracleTest is Test {
         assertEq(freshOracle.lpTwapWindow(), 0);
     }
 
-    /// @notice SUPPLY-ADV-15: with a non-zero LP-TWAP window already live, re-pointing `setLpPosition` to a vault
+    /// @notice with a non-zero LP-TWAP window already live, re-pointing `setLpPosition` to a vault
     ///         whose pool exposes NO plugin must revert `LpTwapPluginNotReady` — NOT silently leave the live window
     ///         over a pluginless pool (which bricks every LP-containing NAV read, irrecoverable post-renounce).
     function test_SUPPLYADV15_setLpPosition_repoint_to_pluginless_reverts() public {
@@ -1158,7 +1158,7 @@ contract SzipNavOracleTest is Test {
         oracle.setLpPosition(address(ivBad), address(gBad));
     }
 
-    /// @notice SUPPLY-ADV-15: re-pointing to a DIFFERENT but equally-ready vault under a live window succeeds and
+    /// @notice re-pointing to a DIFFERENT but equally-ready vault under a live window succeeds and
     ///         preserves the window (the re-validation passes; intent is kept, not silently zeroed).
     function test_SUPPLYADV15_setLpPosition_repoint_to_ready_vault_keeps_window() public {
         (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();

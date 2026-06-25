@@ -16,7 +16,7 @@ token — a plain OZ `ERC20` + `Ownable` whose **only** non-standard surface is 
 
 A 27-nSLOC ERC-20 with three additions over OZ stock:
 - `mint(to, amount)` / `burn(from, amount)` — **`onlyGate`** (the Exit Gate is the sole minter/burner, paired 1:1 with the Gate's `mintLoot`/`burnLoot`).
-- `setGate(gate_)` — `onlyOwner` (Timelock), build-phase re-point so the token survives a Gate redeploy; zero-guarded; **fails closed `AlreadyIssued` once `totalSupply() != 0`** (SUPPLY-ADV-12 — re-pointable only pre-issuance); re-freeze to immutable deferred to pre-prod.
+- `setGate(gate_)` — `onlyOwner` (Timelock), build-phase re-point so the token survives a Gate redeploy; zero-guarded; **fails closed `AlreadyIssued` once `totalSupply() != 0`** (re-pointable only pre-issuance); re-freeze to immutable deferred to pre-prod.
 - constructor — zero-guards the initial `gate`.
 
 Everything else (transfer/approve/allowance/totalSupply/…) is unmodified OpenZeppelin `ERC20`.
@@ -60,7 +60,7 @@ No CRE operator. The token holds no custody beyond its own balances.
   token*; `test_szipUSD_setGate_and_ctor_zero_guard` proves the ctor rejects a zero gate, `setGate` rejects a
   non-owner and a zero, and after a re-point the **new** gate can mint while the **old** gate reverts `NotGate`. With
   the mint/burn gate (I-1), every surface on the token is now exercised.
-- **`setGate` re-point fails closed post-issuance (SUPPLY-ADV-12)** — `setGate` is the *third* pointer defining the
+- **`setGate` re-point fails closed post-issuance** — `setGate` is the *third* pointer defining the
   two-token conservation `totalSupply() == loot.balanceOf(gate)` (the other two — `ExitGate.setShareToken`/`setBaal` —
   were locked by ADV-06). A re-point over a live supply would hand mint/burn to a Loot-less Gate and desync I-1/I-2
   (no drain — strands accounting), so `setGate` now `revert AlreadyIssued()` once `totalSupply() != 0`, symmetric with
@@ -89,7 +89,7 @@ the consuming suites.
 **ADEQUATE** — a deliberately vanilla, non-rebasing ERC-20 whose only non-standard surface (Gate-only mint/burn) is
 tested, and whose meaningful property (1:1 supply-with-Loot conservation) is proven by the Gate's fuzzed stateful
 invariant. The standard ERC-20 is unmodified OZ (correctly not re-tested). **Every surface on the token is now
-exercised** — the `setGate`/ctor-zero gap was closed 2026-06-20. No outstanding coverage gap; no transfer hooks, no
+exercised** — the `setGate`/ctor-zero gap was closed. No outstanding coverage gap; no transfer hooks, no
 rebasing, no custody. Held at ADEQUATE (not HARDENED) only by the absence of an external audit.
 
 **Structural facts:**

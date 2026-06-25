@@ -27,7 +27,7 @@ mints to a receiver, keeping `szipUSD.totalSupply() == loot.balanceOf(gate)` and
 | Contract | What it does |
 |---|---|
 | `ExitGate` (`is Ownable, ReentrancyGuard`) | Custody + issuance + burn valve. `depositFor(asset,amount,receiver)` = NAV-proportional issuance off `SzipNavOracle.navEntry()` (round down); routes the asset into the main Safe basket; mints Loot to itself + szipUSD to the receiver. `burnFor(amount)` = the §7/8-B14 paired buy-and-burn retire (the only exit executor), `windowController`-gated, `burnLoot` from the Gate + burn the engine Safe's szipUSD, NO asset payout. `previewDeposit` = a view quote. All wiring fields are `onlyOwner` (Timelock) setters — build-phase, NOT immutable. **No `mintShares`** path exists. |
-| `SzipUSD` (`is ERC20, Ownable`) | The transferable share. `mint(to,amount)`/`burn(from,amount)` both revert `NotGate` unless `msg.sender == gate`. `gate` is a single `onlyOwner`-settable pointer (`setGate`) — build-phase re-pointable **only until first issuance** (`AlreadyIssued` once `totalSupply() != 0`, SUPPLY-ADV-12), immutability re-freeze still deferred to pre-prod. Nothing else non-standard. |
+| `SzipUSD` (`is ERC20, Ownable`) | The transferable share. `mint(to,amount)`/`burn(from,amount)` both revert `NotGate` unless `msg.sender == gate`. `gate` is a single `onlyOwner`-settable pointer (`setGate`) — build-phase re-pointable **only until first issuance** (`AlreadyIssued` once `totalSupply() != 0`), immutability re-freeze still deferred to pre-prod. Nothing else non-standard. |
 
 ## Wiring — internal
 
@@ -38,7 +38,7 @@ mints to a receiver, keeping `szipUSD.totalSupply() == loot.balanceOf(gate)` and
 - **Derives** `loot = IBaal(baal_).lootToken()` and `juniorTrancheSafe = IBaal(baal_).avatar()` from the Baal — these are not
   ctor args, they are read off the substrate. The deployer becomes `owner` (handed to the Timelock at item 10).
 
-All wiring is **Timelock-settable, NOT immutable** (`§17`, 2026-06-09 build-phase): a redeployed Baal/oracle/token/
+All wiring is **Timelock-settable, NOT immutable** (`§17` build-phase): a redeployed Baal/oracle/token/
 Safe is a one-call re-point, not a redeploy cascade. The `onlyOwner` setters:
 - `setShareToken(address szipUSD_)` → sets `shareToken` (szipUSD is deployed *after* the Gate, so it is wired in
   post-construction; `depositFor` reverts `NotWired` until this is set).
@@ -47,7 +47,7 @@ Safe is a one-call re-point, not a redeploy cascade. The `onlyOwner` setters:
 - `setBaal(address)` → re-points and **re-derives** `loot` + `juniorTrancheSafe`.
 - `setNavOracle(address)`, `setTokens(zipUSD_, xAlpha_)`, `setTvlCap(uint256)` (rejects 0).
 
-**Pre-issuance lock on the two conservation-defining pointers (SUPPLY-ADV-06).** `setShareToken` and `setBaal`
+**Pre-issuance lock on the two conservation-defining pointers.** `setShareToken` and `setBaal`
 (which re-derives `loot`) call `_assertPreIssuance()` — they revert `AlreadyWired` once `shareToken != 0 &&
 SzipUSD(shareToken).totalSupply() != 0`. A mid-life re-point would strand the Gate's paired Loot / fork the I-1
 identity (`totalSupply == loot.balanceOf(gate)`) onto a token it no longer tracks, so it fails closed; both stay
@@ -63,7 +63,7 @@ do **not** touch the I-1 identity and stay re-pointable until the pre-prod immut
 4. **TVL-cap backstop:** `if (navOracle.grossBasketValue() + value > tvlCap) revert TvlCapExceeded()`.
 5. `shares = value * 1e18 / navE` — **round DOWN** (favors the vault); `shares != 0` (`ZeroShares`).
 6. `IERC20(asset).safeTransferFrom(msg.sender, juniorTrancheSafe, amount)` — the asset lands straight in the basket (main
-   Safe); the Gate keeps **zero custody** of it. **Received-delta guard (SUPPLY-ADV-07):** snapshots the basket
+   Safe); the Gate keeps **zero custody** of it. **Received-delta guard:** snapshots the basket
    balance around the transfer and reverts `TransferShortfall` unless it rose by exactly `amount` — a fee-on-transfer
    / rebasing leg that credited less would over-issue szipUSD against backing the basket never received (`shares` is
    priced off the full `amount` at step 3). Same guard the sibling `DurationFreezeModule` carries.
@@ -84,7 +84,7 @@ at execution). View-only ⇒ it cannot `poke()` first; it reads the accumulator 
 
 ### `burnFor(uint256 amount)` — the only exit executor (paired buy-and-burn, §7 / 8-B14)
 `nonReentrant`. `if (msg.sender != windowController) revert NotWindowController()`; `shareToken != 0` (`NotWired`,
-SUPPLY-ADV-06 — explicit, symmetric with `depositFor`, not an incidental call-to-codeless-address revert);
+explicit, symmetric with `depositFor`, not an incidental call-to-codeless-address revert);
 `juniorTrancheEngine != 0` (`NotWired`); `amount != 0`. Then `baal.burnLoot(_one(address(this)), _one(amount))` + `SzipUSD(shareToken).burn(juniorTrancheEngine, amount)`
 — pure supply reduction on **both** sides, **no asset payout**, basket untouched ⇒ NAV-per-share ticks up for
 stayers. This retires szipUSD the engine Safe bought below NAV on the CoW book.
@@ -93,7 +93,7 @@ stayers. This retires szipUSD the engine Safe bought below NAV on the CoW book.
 `constructor(address gate_) ERC20("Zipcode Junior Vault Share", "szipUSD") Ownable(msg.sender)` — rejects a zero
 gate, sets `gate = gate_`, emits `GateSet`. `mint(to,amount)` and `burn(from,amount)` each `revert NotGate()`
 unless `msg.sender == gate`. `setGate(address)` is `onlyOwner` (Timelock, build-phase re-point) and `revert
-AlreadyIssued()` once `totalSupply() != 0` (SUPPLY-ADV-12 — the sole-minter pointer is the third leg of the
+AlreadyIssued()` once `totalSupply() != 0` (the sole-minter pointer is the third leg of the
 two-token conservation, so it fails closed over a live supply, symmetric with `ExitGate._assertPreIssuance`).
 There is **no public mint/burn, no cap, no pause** — the Gate is the entire authority surface.
 

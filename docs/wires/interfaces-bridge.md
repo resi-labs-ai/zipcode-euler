@@ -147,7 +147,7 @@ interface IXAlphaRate {
 - **`exchangeRate()` is the drop-in NAV read** on both sides — no pushed APR is needed (resolves 8x-02; see
   `SzAlphaRateOracle.sol`). The interface pins only this one face.
 - **M1 vs production:** M1 xALPHA is an 18-dp mock ERC20 exposing this getter; the production swap-in is the
-  bridged Rubicon LST wrapper (`LiquidStakedV3`). **Verified 2026-06-12:** its `exchangeRate()` selector
+  bridged Rubicon LST wrapper (`LiquidStakedV3`). **Verified:** its `exchangeRate()` selector
   matches this face (verified source vendored at `reference/rubicon/LiquidStakedV3.flattened.sol`); note its
   rate nets pending treasury/yield fees, and Rubicon ships NO on-Base rate primitive — our `SzAlphaRateOracle`
   push is an extension beyond the proven pattern. See `8x-01-szALPHA-bridge.md` §Provenance + `reference/rubicon/`.

@@ -17,7 +17,7 @@ escrow/NAV machinery. Loose-coupling pattern; both are Timelock-re-pointable at 
 
 ## ILienXAlphaEscrow.sol
 **Shims** (internal-seam): the bond seam `DefaultCoordinator` drives. Concrete implementer =
-`contracts/src/supply/szipUSD/.../LienXAlphaEscrow.sol` (kept in-repo; signatures BUILT-VERIFIED 2026-06-09
+`contracts/src/supply/szipUSD/.../LienXAlphaEscrow.sol` (kept in-repo; signatures BUILT-VERIFIED
 against `:111/:128/:147/:165/:60/:62`). Four `onlyCoordinator` state-changers + two bond views.
 
 **Declared surface** (exact):
@@ -43,7 +43,7 @@ capital/cohort routing paths.
   `lock`/`release` take **no recipient parameter** — the bond can flow only to the escrow-recorded
   `bondOriginator` / capital / cohort sinks; the coordinator cannot redirect it to an arbitrary address.
 - `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull requires the coordinator hold the xALPHA; the coordinator
-  approves the exact bond `amount` just-in-time inside `_lock` and resets to 0 (no standing allowance — LOSS-ADV-01),
+  approves the exact bond `amount` just-in-time inside `_lock` and resets to 0 (no standing allowance),
   a wiring precondition not visible on the seam.
 
 ---

@@ -115,7 +115,7 @@ to set-once targets, the mint recipient is hard-pinned to the basket, the strike
 option with an on-chain `PaymentExceedsMax` backstop, and no standing approval survives. Its load-bearing properties
 are tested unit + live-fork, and the same-block `paymentAmount == quoteStrike` check answers the "does the view match
 the charge" question directly. **Every mutator on the contract is now exercised** (all 4 setters + the operator
-action; the side-effects flagged in the first draft were filled 2026-06-20). The remaining distance to HARDENED is
+action; the side-effects flagged in the first draft were filled). The remaining distance to HARDENED is
 **not a coverage gap** — it is (a) the deliberate, justified absence of fuzz/invariant (a deterministic 3-call
 sequence with no arithmetic gives a fuzzer nothing to probe) and (b) two off-chain residuals no test in this file
 can reach: the `maxPayment`-cushion sizing (§10.1 / 8-B11) and the pre-prod immutable re-freeze (process, not code).

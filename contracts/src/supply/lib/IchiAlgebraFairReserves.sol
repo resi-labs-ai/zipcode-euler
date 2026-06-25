@@ -18,7 +18,7 @@ import {TickMath, LiquidityAmounts} from "../../libraries/ConcentratedLiquidity.
 ///      in-block swaps (`L` changes only on the vault's mint/burn; the TWAP tick is a time-average). Idle vault
 ///      balances are added as-is (they are token amounts, not price-sensitive in composition).
 ///
-///      Validated on-chain 2026-06-14 against HYDX/USDC vault 0xfF8B…73f7 (pool 0x51f0…D3D2): the TWAP
+///      Validated on-chain against HYDX/USDC vault 0xfF8B…73f7 (pool 0x51f0…D3D2): the TWAP
 ///      reconstruction reproduces `getTotalAmounts()` while unmanipulated, and `base0 + limit0 + idle0` matched
 ///      `getTotalAmounts0()` to the wei.
 library IchiAlgebraFairReserves {
@@ -26,7 +26,7 @@ library IchiAlgebraFairReserves {
     error NoPlugin();
     /// @notice The plugin exists but is not initialized — a fresh plugin reverts/returns garbage on a TWAP read,
     ///         so fail closed rather than price off an uninitialized timepoint array (matches the sibling
-    ///         `SzipNavOracle.setLpTwapWindow` gate on the identical plugin — see SUPPLY-ADV-02).
+    ///         `SzipNavOracle.setLpTwapWindow` gate on the identical plugin).
     error PluginNotReady();
     /// @notice The plugin returned an unusable timepoint set.
     error BadTimepoints();
@@ -43,7 +43,7 @@ library IchiAlgebraFairReserves {
         address pool = IICHIVault(vault).pool();
         address plugin = IAlgebraPool(pool).plugin();
         if (plugin == address(0)) revert NoPlugin();
-        // Read-time readiness gate (SUPPLY-ADV-02): a non-zero but UNINITIALIZED plugin would return a
+        // Read-time readiness gate: a non-zero but UNINITIALIZED plugin would return a
         // well-formed length-2 set encoding a near-spot/frozen "TWAP". Fail closed here so BOTH consumers
         // (this oracle + SzipNavOracle's LP leg) are covered at read-time, not only at deploy/set-time.
         // (`isInitialized()` is necessary-not-sufficient: under-coverage of `window` itself fails closed in

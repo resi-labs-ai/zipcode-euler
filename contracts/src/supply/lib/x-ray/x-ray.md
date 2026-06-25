@@ -70,7 +70,7 @@ spot manipulation of LP value.
 **Adversary Ranking:**
 
 1. **TWAP-source weakness** (X-2) — if the Algebra plugin's observation cardinality is too low or the window too short, a sustained multi-block attack could move the "TWAP." This is the real residual and it lives in pool config, not here.
-2. **Vendored-math transcription error** (X-1) — ruled out by the 2026-06-20 faithfulness diff; the copy carries UniV3's audit assurance.
+2. **Vendored-math transcription error** (X-1) — ruled out by the faithfulness diff; the copy carries UniV3's audit assurance.
 3. **Out-of-domain inputs** — ticks beyond ±MAX_TICK revert in `TickMath` (fail-closed, not mis-priced).
 
 See [entry-points.md](entry-points.md) — no permissionless or stateful entry points.
@@ -101,7 +101,7 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 
 > **ConcentratedLiquidity (`TickMath`, `LiquidityAmounts`)** — vendored UniV3
 > - Assumes: in-domain ticks (±MAX_TICK), base amounts ≤ uint128.
-> - Validates: `TickMath` reverts out-of-range (fail-closed); faithfulness diff confirmed 2026-06-20.
+> - Validates: `TickMath` reverts out-of-range (fail-closed); faithfulness diff confirmed.
 > - Mutability: frozen vendored copy.
 > - On failure: reverts; no mis-price path.
 
@@ -139,7 +139,7 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 | Aspect | Status | Notes |
 |--------|--------|-------|
 | README | Missing (in scope dir) | Design fully in NatSpec |
-| NatSpec | Thorough | The "WHY" block (`:14-23`) states the manipulation thesis and records the 2026-06-14 on-chain validation against vault `0xfF8B…73f7` to the wei |
+| NatSpec | Thorough | The "WHY" block (`:14-23`) states the manipulation thesis and records the on-chain validation against vault `0xfF8B…73f7` to the wei |
 | Spec/Whitepaper | External | `claude-zipcode.md` (out of dir) |
 | Inline Comments | Excellent | base/limit/idle steps and the −∞ rounding convention all annotated |
 
@@ -175,7 +175,7 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 
 ## 6. Developer & Git History
 
-> Repo shape: normal_dev. `IchiAlgebraFairReserves.sol` was introduced as part of the 2026-06-14 fair-LP oracle + redemption-queue/freeze rework (the manipulation-resistance hardening of the LP valuation path).
+> Repo shape: normal_dev. `IchiAlgebraFairReserves.sol` was introduced as part of the fair-LP oracle + redemption-queue/freeze rework (the manipulation-resistance hardening of the LP valuation path).
 
 ### Contributors
 
@@ -189,7 +189,7 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 |--------|-------|------------|
 | Unique contributors | 1 | Single-dev |
 | Merge commits | 0 | No peer-review trail in git |
-| On-chain validation | Yes | NatSpec records a 2026-06-14 live cross-check vs `getTotalAmounts()` to the wei |
+| On-chain validation | Yes | NatSpec records a live cross-check vs `getTotalAmounts()` to the wei |
 
 ### Security Observations
 

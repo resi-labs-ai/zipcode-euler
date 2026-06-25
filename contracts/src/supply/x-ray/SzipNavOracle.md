@@ -2,7 +2,7 @@
 
 > SzipNavOracle | 360 nSLOC | 8b7c67c (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE** *(a hair from HARDENED — the best-tested contract in the supply subsystem)*
 
-> **Update 2026-06-20:** the two gaps below (I-15 setter auth/zero-guards, I-16 the `committedValue()+freeValue()`
+> **Update:** the two gaps below (I-15 setter auth/zero-guards, I-16 the `committedValue()+freeValue()`
 > additive identity) are **CLOSED** — 3 new tests added to `SzipNavOracle.t.sol` (64/64 green). Every Timelock
 > setter's `onlyOwner`/zero-guard is now exercised, and the per-Safe decomposition identity is pinned exactly (plain
 > legs) and to ≤2 wei (split LP). The only residual now is the absence of a stateful fuzz invariant + no external audit.
@@ -57,7 +57,7 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
 | I-5 | **staleness asymmetry** — stale legs pause issuance (`navEntry`/`fresh` revert `StalePrice`) but never exit | Yes | **`test_staleness_pauses_issuance_not_exit`**, `_staleness_single_leg_hydx_stale` |
 | I-6 | **xALPHA rate gate (SEC-04 + cross-chain)** — unseeded rate (`exchangeRate()==0`) fails ALL reads closed (`RateUnseeded`); a wired stale rate halts issuance, not exit | Yes | **`test_SEC04_unseeded_rate_fails_closed`** / `_seeded_rate_prices_correctly` / `_asymmetry_preserved_when_stale`; `test_xAlphaRateOracle_gates_issuance_not_exit` / `_unset_uses_fallback` |
 | I-7 | **LP marked-through in all states** — loose + gauge-staked + escrow-collateralized, net of strike debt; `postCollateral`/`borrow` cycle is NAV-invariant; unknown LP token fails closed; supply-0 / unset guards | Yes | **`test_lp_marked_through`**, `_farmUtility_nav_invariant_across_post`, `_farmUtility_escrow_leg_and_debt`, `_lp_unknown_token_reverts`, `_lp_supplyLp_zero_guard`, `_lp_unset_contributes_zero`, `_farmUtility_debt_saturates_at_zero`, `_lpShareValue_pro_rata` |
-| I-8 | **SEC-10 LP-TWAP window validation** — `setLpTwapWindow(>0)` requires `ichiVault` wired + an initialized plugin else `LpTwapPluginNotReady`; `(0)` is always a valid escape; the ready path reads through `fairReserves`. **Enforced at BOTH wiring sites (SUPPLY-ADV-15):** the shared `_assertLpTwapReady()` runs on `setLpTwapWindow` (arm the window) AND on `setLpPosition` (re-point the vault under a live window), so a non-zero window can never coexist with an unready vault (the brick-every-read / post-renounce-irrecoverable state) | Yes | **`test_SEC10_no_plugin_reverts`** / `_uninitialized_plugin_reverts` / `_ready_pool_succeeds_and_reads_twap` / `_escape_zero_always_succeeds`; **`test_SUPPLYADV15_setLpPosition_repoint_to_pluginless_reverts`** / `_repoint_to_ready_vault_keeps_window` |
+| I-8 | **SEC-10 LP-TWAP window validation** — `setLpTwapWindow(>0)` requires `ichiVault` wired + an initialized plugin else `LpTwapPluginNotReady`; `(0)` is always a valid escape; the ready path reads through `fairReserves`. **Enforced at BOTH wiring sites:** the shared `_assertLpTwapReady()` runs on `setLpTwapWindow` (arm the window) AND on `setLpPosition` (re-point the vault under a live window), so a non-zero window can never coexist with an unready vault (the brick-every-read / post-renounce-irrecoverable state) | Yes | **`test_SEC10_no_plugin_reverts`** / `_uninitialized_plugin_reverts` / `_ready_pool_succeeds_and_reads_twap` / `_escape_zero_always_succeeds`; **`test_SUPPLYADV15_setLpPosition_repoint_to_pluginless_reverts`** / `_repoint_to_ready_vault_keeps_window` |
 | I-9 | **provision write** — sole writer `DefaultCoordinator`, immediate, unbounded (floors NAV at 0); reverts for all until wired | Yes | **`test_provision_auth_and_immediate`**, `_provision_unbounded_floors_at_zero` |
 | I-10 | **SEC-13 anchor** — `oldestRequiredLegTs` = min of the two legs, folding the wired rate's `lastUpdate` only when seeded | Yes | **`test_SEC13_oldestRequiredLegTs_min_of_two_legs`** / `_folds_rate_ts_when_wired` |
 | I-11 | **genesis + effective supply** — `GENESIS_NAV` at zero effective supply; engine pre-burn subtracted; underflow floors to genesis | Yes | **`test_genesis_*`** (2), `_nav_engine_pending_burn_subtracts` / `_underflow_floors_to_genesis` |
@@ -77,7 +77,7 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
 | `RateUnseeded` | `_xAlphaUSD:575` | `test_SEC04_unseeded_rate_fails_closed` |
 | `StalePrice` / `StaleRate` | `navEntry`/`fresh` | `test_staleness_*`, `_xAlphaRateOracle_gates_*` |
 | `UnknownLpToken` | `_legPriceOfToken:590` | `test_lp_unknown_token_reverts`, `_valueOf_unsupported_asset_reverts` |
-| `LpTwapPluginNotReady` | `_assertLpTwapReady()` — shared by `setLpTwapWindow` (arm) + `setLpPosition` (re-point under live window, SUPPLY-ADV-15) | `test_SEC10_*`, `test_SUPPLYADV15_*` |
+| `LpTwapPluginNotReady` | `_assertLpTwapReady()` — shared by `setLpTwapWindow` (arm) + `setLpPosition` (re-point under live window) | `test_SEC10_*`, `test_SUPPLYADV15_*` |
 | ctor `ZeroAddress` | `:200` | `test_ctor_rejects_zero` |
 | `setShareToken` onlyOwner | `:227` | `test_setShareToken_setOnce_and_auth` |
 | `setLpPosition` `ZeroAddress` | `:235` | `test_setLpPosition_setOnce` |
@@ -112,7 +112,7 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
 - **Documented accepted trade-offs (not gaps).** zipUSD valued at flat $1 on the basket leg (a de-peg over-issues —
   LOW, §7, mitigated by capacity-gated minting); `navExit` may price off a stale-but-good mark by design (the §7
   asymmetry, keeper-`poke`-maintained — **but the bracket only ATTENUATES an in-block spot move to weight `g/W`, it
-  does not eliminate it: SUPPLY-ADV-14**; the sole in-block-manipulable leg, the ICHI LP spot reserves when
+  does not eliminate it**; the sole in-block-manipulable leg, the ICHI LP spot reserves when
   `lpTwapWindow == 0`, is defended structurally by `lpTwapWindow != 0` (fair-reserves), and the buy-burn module now
   `poke()`s before `navExit` like the Gate); `writeProvision` unbounded at the oracle (bound in M2); xALPHA `exchangeRate`
   is an M1 stand-in (production Rubicon getter verified at bridge integration); no first-depositor guard (the Gate
@@ -135,7 +135,7 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
 | `committedValue`+`freeValue` identity | 2 (added) | exact (plain legs) + ≤2-wei (split LP, worst case) |
 | Fork / fuzz / invariant | 1 fork sig-check | no stateful fuzz (the TWAP ring + bracket are deterministic-tested; a `spotNavPerShare` conservation invariant would be the next hardening step) |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); **64 tests green** (61 + 3 added 2026-06-20). This is
+Coverage % uninstrumentable (project-wide `Stack too deep`); **64 tests green** (61 + 3). This is
 the most thoroughly tested contract in the supply subsystem — every economic guard, every SEC regression, the full
 write path, the defensive TWAP/bracket core, all setter auth, and the per-Safe decomposition identity are directly
 proven. The only residual is the absence of a stateful fuzz invariant.
@@ -147,7 +147,7 @@ proven. The only residual is the absence of a stateful fuzz invariant.
 xALPHA fail-closed), the all-or-nothing guarded push path (incl. the SEC-01 monotonic guard the deviation band cannot
 catch), the marked-through LP across all states with the mid-loop blind spot closed, the SEC-10 plugin validation,
 the SEC-13 anchor, provision auth, and the forwarder identity/renounce are all directly proven. The two prior gaps
-are now **CLOSED** (2026-06-20): all seven Timelock setters' `onlyOwner`/zero-guards are exercised (I-15), and the
+are now **CLOSED**: all seven Timelock setters' `onlyOwner`/zero-guards are exercised (I-15), and the
 `committedValue() + freeValue() == grossBasketValue()` additive identity is pinned exactly for plain legs and to ≤2
 wei for a split LP (I-16). Held below HARDENED now only by the absence of a stateful fuzz invariant (a
 `spotNavPerShare` conservation/monotonicity property would be the next step), the inherited TWAP-config residual (the

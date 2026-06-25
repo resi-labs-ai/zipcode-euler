@@ -104,7 +104,7 @@ function requireIdentityWired(address[] memory receivers, address registry) inte
   for the whole set" inference is DROPPED — each receiver carries its own per-daemon `workflowName`, so a missing
   name on any one fails closed.
 - **`PROGRESS.md` grounding** (grep `WOOF-10a` / `requireIdentityWired` / `S11`): backlog row 10a =
-  **BUILT-VERIFIED 2026-06-06** (5/5 tests, 107/107 total at that window; no fork). The two item-10 obligation
+  **BUILT-VERIFIED** (5/5 tests, 107/107 total at that window; no fork). The two item-10 obligation
   rows are marked **"GATE PORTION TESTED (by WOOF-10a)"**: the WOOF-05 F-3 row (controller identity leg) and the
   WOOF-02 F7 row (registry `controller()` leg) are discharged jointly by this one assert; their **OTHER clauses
   remain OPEN** (the 5-arg ctor, `setController`@S6 wiring, and the sequenced ownership hand-off calls are still
@@ -156,7 +156,7 @@ function requireIdentityWired(address[] memory receivers, address registry) inte
   `LpGateHarness` wrapper to assert the revert selector+args.
 - **No fork, no external addresses.** The gate is a pure view of the identity + controller getters; the registry
   ctor's `quote.decimals()` is satisfied by a 6-dp `MockUSDC` and the LP oracle ctor strict-reads an 18-dp
-  `MockLp18` (SUPPLY-ADV-13); the controller ctor only stores immutables (EOA stubs for forwarder/venue/erebor are
+  `MockLp18`; the controller ctor only stores immutables (EOA stubs for forwarder/venue/erebor are
   fine — origination is never exercised).
 - **CTR-16 reads every receiver — the representative shortcut is gone.** The old design read one representative
   `WORKFLOW_ID` and inferred the rest; CTR-16 loops the full `receivers[]` array and asserts each author+name, so

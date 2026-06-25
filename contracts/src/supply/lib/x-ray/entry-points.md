@@ -14,7 +14,7 @@ through a consumer call.
 
 `AlgebraIchiFairLpOracle / SzipNavOracle → IchiAlgebraFairReserves.fairReserves(vault, window)` →
    ├─ `IICHIVault(vault).pool()` → `IAlgebraPool(pool).plugin()`  ◄── `revert NoPlugin` if 0
-   ├─ `IAlgebraOraclePlugin(plugin).isInitialized()`  ◄── `revert PluginNotReady` if false (read-time gate, SUPPLY-ADV-02)
+   ├─ `IAlgebraOraclePlugin(plugin).isInitialized()`  ◄── `revert PluginNotReady` if false (read-time gate)
    ├─ `_meanTick(plugin, window)` → `IAlgebraOraclePlugin.getTimepoints([window, 0])`  ◄── `revert BadTimepoints` if !len 2
    │     → `sqrtP = TickMath.getSqrtRatioAtTick(meanTick)`
    ├─ base:  `getBasePosition()` → `LiquidityAmounts.getAmountsForLiquidity(sqrtP, lower, upper, L_base)`
@@ -36,7 +36,7 @@ through a consumer call.
 | Reads | vault `pool`/`plugin`/positions/bounds/token0/token1/balances; plugin `isInitialized`/`getTimepoints` |
 | State modified | none (view) |
 | Value flow | none — returns computed amounts only |
-| Reverts | `NoPlugin` (pool exposes no TWAP plugin); `PluginNotReady` (plugin not initialized — SUPPLY-ADV-02 read-time gate); `BadTimepoints` (bubbled from `_meanTick`) |
+| Reverts | `NoPlugin` (pool exposes no TWAP plugin); `PluginNotReady` (plugin not initialized — read-time gate); `BadTimepoints` (bubbled from `_meanTick`) |
 
 ### `_meanTick(address plugin, uint32 window)`
 
@@ -57,5 +57,5 @@ through a consumer call.
 | Dependency | Why it matters |
 |------------|----------------|
 | Algebra oracle plugin | The TWAP source (`getTimepoints`). Its observation cardinality / honesty bounds the manipulation guarantee. Absent → `NoPlugin` (fail closed). |
-| ConcentratedLiquidity (`TickMath`, `LiquidityAmounts`) | The vendored UniV3 tick→reserve math; correctness is upstream Uniswap's (frozen copy, faithfulness diff confirmed 2026-06-20). |
+| ConcentratedLiquidity (`TickMath`, `LiquidityAmounts`) | The vendored UniV3 tick→reserve math; correctness is upstream Uniswap's (frozen copy, faithfulness diff confirmed). |
 | ICHI vault | Supplies position liquidity `L` + tick bounds + idle balances; `L` only changes on mint/burn (the swap-immune input). |

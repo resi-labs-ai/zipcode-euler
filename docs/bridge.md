@@ -97,7 +97,7 @@ References:
 [reference/MANIFEST.md]
 [reference/rubicon/README.md]
 
-The bridge copies a proven, audited design — Project Rubicon (General TAO Ventures + Chainlink, live since Nov 2025, Hashlock-audited "Secure" Oct 2025). We verified its real contracts on-chain on 2026-06-12 and modeled ours on them.
+The bridge copies a proven, audited design — Project Rubicon (General TAO Ventures + Chainlink, live since Nov 2025, Hashlock-audited "Secure" Oct 2025). We verified its real contracts on-chain and modeled ours on them.
 
 - Rubicon — [rubicon/LiquidStakedV3.flattened.sol]
 SzAlpha was designed to follow Rubicon's live staking contract on Bittensor.

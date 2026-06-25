@@ -284,7 +284,7 @@ contract SzAlphaBridgeTest is Test {
     }
 
     // ================================================================
-    // │   BRIDGE-ADV-02/03: mandatory slippage floor (genesis-exempt)  │
+    // │   mandatory slippage floor (genesis-exempt)                    │
     // ================================================================
 
     function test_floor_genesisDepositMayPassZero() public {
@@ -897,7 +897,7 @@ contract SzAlphaBaseForkTest is Test {
         assertTrue(mirror.hasRole(mirror.DEFAULT_ADMIN_ROLE(), timelock), "admin -> timelock");
         assertFalse(mirror.hasRole(mirror.DEFAULT_ADMIN_ROLE(), address(deployer)), "deployer revoked");
 
-        // BRIDGE-ADV-05: the burn/mint POOL's ownership (mint-source + rate-limiter authority) is handed to
+        // the burn/mint POOL's ownership (mint-source + rate-limiter authority) is handed to
         // the timelock (2-step). Chainlink Ownable2Step keeps pendingOwner private, so prove the proposal
         // behaviorally: only the proposed owner can accept — the timelock accepting => it was the target.
         assertEq(pool.owner(), address(deployer), "pool owner still deployer pre-accept (2-step)");
@@ -950,7 +950,7 @@ contract SzAlphaAdminHandoffTest is Test {
         deployer = new DeploySzAlphaBridge();
         // SzAlpha.initialize reads AddressMapping (0x80C) once to cache the wrapper coldkey.
         vm.etch(ADDRESS_MAPPING, address(new MockAddressMapping()).code);
-        // BRIDGE-ADV-02: deploy964 now runs the in-broadcast genesis seed (a real deposit), so the
+        // deploy964 now runs the in-broadcast genesis seed (a real deposit), so the
         // staking/Alpha precompiles must be live and priced (etch copies code, NOT storage — set par).
         vm.etch(STAKING_V2, address(new MockSubtensorStaking()).code);
         vm.etch(ALPHA_PRECOMPILE, address(new MockAlphaPrecompile()).code);

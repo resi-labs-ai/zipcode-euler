@@ -56,7 +56,7 @@ interface IFarmUtilityDebt {
 ///        with `lpTwapWindow == 0`, nor open exit/issuance, inside the first `W` of deployed life — the ring falls
 ///        back to spot until it holds `W` of history. Consumers SHOULD `poke()` before reading (the Gate and the
 ///        buy-burn module do); `poke()` is permissionless so any keeper can maintain it; `lastUpdate` is public for
-///        freshness audit. (SUPPLY-ADV-14.)
+///        freshness audit.
 ///      - `writeProvision` is UNBOUNDED at the oracle by design — the bound (down <= atRisk*(1-recoveryFloor), up by
 ///        realized receipts) lives in the `DefaultCoordinator` (M2), which the oracle trusts. Until wired,
 ///        `writeProvision` reverts for everyone (fail-closed); item-10 deploy verifies the wiring before the Timelock hand-off.
@@ -229,7 +229,7 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase)
-    // NOTE (2026-06-09, §17): re-pointable by the Timelock, NOT set-once — build-phase flexibility so a redeployed
+    // NOTE (§17): re-pointable by the Timelock, NOT set-once — build-phase flexibility so a redeployed
     // share token / LP / engine Safe / coordinator is a one-call re-point, not a redeploy cascade. Lock down pre-prod.
     /// @notice Wire/re-point the szipUSD share token (the supply denominator). `onlyOwner` (Timelock).
     function setShareToken(address szipUSD_) external onlyOwner {
@@ -243,7 +243,7 @@ contract SzipNavOracle is ReceiverTemplate {
         if (ichiVault_ == address(0) || gauge_ == address(0)) revert ZeroAddress();
         ichiVault = ichiVault_;
         gauge = gauge_;
-        // SEC-10 / SUPPLY-ADV-15: if a non-zero LP-TWAP window is already live, the re-pointed vault must itself
+        // SEC-10: if a non-zero LP-TWAP window is already live, the re-pointed vault must itself
         // satisfy the readiness invariant — else every LP-containing NAV read would brick (fail-closed) at
         // read-time, irrecoverable after renounce. Re-assert against the NEW vault (the same check `setLpTwapWindow`
         // runs at arm-time), so the invariant holds at BOTH wiring sites, not just where the window is armed.
@@ -278,7 +278,7 @@ contract SzipNavOracle is ReceiverTemplate {
         emit LpTwapWindowSet(lpTwapWindow_);
     }
 
-    /// @dev SEC-10 / SUPPLY-ADV-15: assert the LP-TWAP readiness invariant — a non-zero `lpTwapWindow` requires
+    /// @dev SEC-10: assert the LP-TWAP readiness invariant — a non-zero `lpTwapWindow` requires
     ///      `ichiVault` wired and its pool's plugin present + `isInitialized()`. Shared by `setLpTwapWindow` (arm
     ///      the window) and `setLpPosition` (re-point the vault under a live window) so a non-zero window can never
     ///      coexist with an unready vault — the state that bricks every LP-containing NAV read. `isInitialized()`

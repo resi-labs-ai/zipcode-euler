@@ -25,7 +25,7 @@ Pure math libraries have no state, entry points, access control, or invariants, 
 
 [contracts/src/libraries/x-ray/library-review.md] — the faithfulness + port review
 
-* Faithfulness: DIFFED 2026-06-20, CONFIRMED — no logic divergence. All four libraries were compared against the cited upstream (reference/euler-price-oracle/lib/v3-core|v3-periphery): FullMath assembly ops, all 20 TickMath magic constants + bounds, the LiquidityAmounts formulas, and TickQuote.getQuoteAtTick all match. Only deltas are value-preserving cosmetics (local Q96 constant) and omitted unused functions. So the copy carries upstream's audit/formal-verification pedigree.
+* Faithfulness: DIFFED, CONFIRMED — no logic divergence. All four libraries were compared against the cited upstream (reference/euler-price-oracle/lib/v3-core|v3-periphery): FullMath assembly ops, all 20 TickMath magic constants + bounds, the LiquidityAmounts formulas, and TickQuote.getQuoteAtTick all match. Only deltas are value-preserving cosmetics (local Q96 constant) and omitted unused functions. So the copy carries upstream's audit/formal-verification pedigree.
 * No need to re-fuzz the library — UniV3 FullMath/TickMath are among the most audited/formally-verified math in DeFi; fuzzing re-proves Uniswap's work. The only copy-specific risk was a transcription typo, ruled out by the diff.
 * 0.8.x port: every function is wrapped in unchecked (intentional wraparound is load-bearing for mulDiv's 512-bit trick and the tick-ratio chain). This is the correct port, but standard overflow protection is OFF — the bounds must hold by construction.
 * Partial vendoring: only the forward getSqrtRatioAtTick is present (the inverse getTickAtSqrtRatio is not) — fine iff the oracle only ever goes tick→price.

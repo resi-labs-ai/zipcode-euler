@@ -9,11 +9,11 @@
 > Source of truth = `contracts/src/ZipcodeController.sol`. Ticket
 > `tickets/woof/WOOF-05-controller.md` + report `reports/WOOF-05-report.md` + spec `claude-zipcode.md` §4.4
 > are intent. This doc reads the kept code as the final form and records how the controller is wired and what
-> it points at. (Build-phase doctrine note, §17/2026-06-09: the cross-component pointers below are now
+> it points at. (Build-phase doctrine note, §17: the cross-component pointers below are now
 > **Timelock-settable**, not immutable, and ownership is **transferred to the Timelock**, not renounced — the
 > ticket/spec older "immutable via renounce" wording is reconciled against the code throughout.)
 >
-> **CTR-03 (2026-06-18) — siloId routing over `SiloRegistry`.** The controller is now multi-pool: the report
+> **CTR-03 — siloId routing over `SiloRegistry`.** The controller is now multi-pool: the report
 > paths resolve `venue` per origination from `SiloRegistry.venueOf(siloId)` (CTR-02) instead of the single
 > `venue` pointer. Added: a `registry` wiring slot (NOT in ctor — wired post-deploy via `setRegistry`), an inline
 > `ISiloRegistry` interface, errors `RegistryUnset`/`SiloUnrouted`, `LienRecord.siloId`, a trailing `siloId` on
@@ -199,7 +199,7 @@ before `burn`**. It never holds the lien outside an origination/close call windo
 
 Spec/PROGRESS grounding: `claude-zipcode.md` §4.4 (5-arg ctor `(forwarder, venue, lienFactory, oracleRegistry,
 erebor)`, no EVC handle; immutable-Forwarder-via-non-virtual-setters reconciled to "transfer to Timelock, not
-renounce" 2026-06-09); `tickets/PROGRESS.md` item-6/WOOF-05 row (BUILT-VERIFIED, 26/26 live-fork) + item-10
+renounce"); `tickets/PROGRESS.md` item-6/WOOF-05 row (BUILT-VERIFIED, 26/26 live-fork) + item-10
 obligations (5-arg ctor, `ZIP_ORACLE_REG.setController` at S6, identity-set-then-`transferOwnership(timelock)`
 with the per-receiver author≠0 AND name≠0 pre-gate, CTR-16).
 
@@ -220,7 +220,7 @@ The controller's deploy/wiring is **item-10 (§9)**:
   `ZIP_ORACLE_REG.controller() != 0` immediately before sealing, aborting the deploy otherwise (security F-3 /
   F-1). **Code-supported posture (reconciliation):** the kept `ReceiverTemplate` exposes both
   `renounceOwnership()` (inherited OZ `Ownable`) and `transferOwnership(addr)`. The older ticket/spec wording
-  said "S11 renounceOwnership"; the **current spec (§4.4, revised 2026-06-09) and §17 build-phase doctrine say
+  said "S11 renounceOwnership"; the **current spec (§4.4, revised) and §17 build-phase doctrine say
   `transferOwnership(timelock)`, NOT renounce** — so CRE workflows can be rebuilt/upgraded behind the ≈2-day
   Timelock veto. The contract supports either (it adds no override); item-10 should use
   `transferOwnership(timelock)` guarded by the same author≠0 AND name≠0 pre-gate. (The pre-gate is the

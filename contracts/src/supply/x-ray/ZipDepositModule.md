@@ -2,7 +2,7 @@
 
 > ZipDepositModule | 90 nSLOC | 8b7c67c (`main`, working tree) | Foundry | 20/06/26 | **Verdict: HARDENED** *(modulo no external audit)*
 
-> **Update 2026-06-20:** the two completeness gaps below (I-13 `scaleUp` derivation at non-default decimal pairs,
+> **Update:** the two completeness gaps below (I-13 `scaleUp` derivation at non-default decimal pairs,
 > I-14 the zap-side USDC→eePool allowance-settle) are **CLOSED** — a new `scaleUp`-derivation test (3 pairs, each with
 > a realized deposit) + allowance assertions on the zap and sequential paths. Mock-gate suite 29 green (+ the
 > real-Gate fork suite). Every guard, branch, derived property, and documented invariant on the contract is now
@@ -80,7 +80,7 @@ No owner/pause/upgrade. The module is stateless and custodies nothing.
 | ctor `ZeroAddress` ×4 / `DecimalsTooFew` | `:85,:90` | `test_ctor_zero_address_reverts`, `_ctor_reverts_when_usdc_finer_than_zip` |
 
 Every revert path, derived property, and documented invariant is now exercised — including the `scaleUp` derivation
-at non-default decimal pairs (I-13) and the zap-side USDC→eePool allowance-settle (I-14), closed 2026-06-20.
+at non-default decimal pairs (I-13) and the zap-side USDC→eePool allowance-settle (I-14), closed.
 
 ## 5. Attack surfaces
 
@@ -129,7 +129,7 @@ are hygiene, not economics, and they are now exhaustively proven: net-zero custo
 delta-based cleanliness check regression-tested both ways (donation-survives + under-pull-reverts, incl. fuzz),
 reentrancy guarded on both callouts, capacity-bounded mint with atomic rollback, the `scaleUp` derivation pinned
 across decimal pairs (I-13), the documented allowance-settle asymmetry pinned on both paths (I-14), and a real-Gate
-Base-fork end-to-end with the two-token invariant. The two prior completeness gaps are CLOSED (2026-06-20). The only
+Base-fork end-to-end with the two-token invariant. The two prior completeness gaps are CLOSED. The only
 residuals are the build-phase re-settable `setGate` (frozen pre-prod, a subsystem-wide process item) and the absence
 of an external audit — neither a code or coverage gap. Every guard, branch, derived property, and documented
 invariant on the contract is exercised.

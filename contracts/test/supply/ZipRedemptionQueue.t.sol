@@ -298,7 +298,7 @@ contract ZipRedemptionQueueTest is QueueBase {
         assertEq(zip8.balanceOf(address(queue)), 200);
     }
 
-    // -------------------------------------------------------------- setTokens quiescent-state guard (SUPPLY-ADV-16)
+    // -------------------------------------------------------------- setTokens quiescent-state guard
     /// @notice A token/`scaleUp` re-point is only sound on a quiescent queue: open pending is OLD-`zipUSD`-denominated
     ///         and an unclaimed reserve is OLD-`usdc`-denominated, while settle/claim read the live wiring. `setTokens`
     ///         must revert `NotQuiescent` whenever `totalPending != 0` (open request) OR `reservedAssets != 0` (settled-

@@ -26,13 +26,13 @@ over a governed window `W`. Consumers read a **bracketed** 18-dp share price (`1
 
 The bracket defends the profitable direction both ways: a one-block spot spike UP only makes minting more
 expensive (`max`) and is ignored on exit (`min`); a DOWN spike is ignored on entry. **It ATTENUATES, not
-eliminates (SUPPLY-ADV-14):** `twapNavPerShare` values the leading `[lastUpdate, now]` segment at the current
+eliminates:** `twapNavPerShare` values the leading `[lastUpdate, now]` segment at the current
 spot with weight `g/W` (`g = now − lastUpdate`), so a one-block move on an in-block-manipulable leg still leaks
 `~(g/W)·Δspot`; `poke()` keeps `g` small only under honest keeper liveness, it cannot un-weight a spot already
 moved this block. The only in-block-manipulable leg is the ICHI LP spot reserves when `lpTwapWindow == 0`; its
 STRUCTURAL defense is `lpTwapWindow != 0` (the fair-reserves TWAP tick), not the bracket. Consumers SHOULD
 `poke()` (permissionless) before every issuance/exit read — the Gate (`navEntry`) and the buy-burn module
-(`navExit`, SUPPLY-ADV-14) both do. The third consumer is the loss side: the
+(`navExit`) both do. The third consumer is the loss side: the
 `DefaultCoordinator` writes the recoverable impairment `provision` here (M2), which `spotNavPerShare` subtracts
 from gross.
 
@@ -80,7 +80,7 @@ is NOT renounce-frozen here, §17).
 7. **Farm utility strike debt SUBTRACTED** (only if `borrowVault != 0`): `_farmUtilityDebt(safe) =
    IFarmUtilityDebt(borrowVault).debtOf(safe) × 1e12` (USDC 6-dp -> 18-dp). The loop's borrowed USDC is counted in
    leg (2), so its debt must net out — making a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle
-   NAV-invariant (closes the §8.2 mid-loop blind spot; LP path-lock 2026-06-13).
+   NAV-invariant (closes the §8.2 mid-loop blind spot; LP path-lock).
 
 **`grossBasketValue()`** sums legs (1)–(6) then SUBTRACTS the farm utility debt (saturating at 0). **New views:**
 `pathLockedLpEquity()` = `_lpValue(_lpShares(juniorTrancheSafe)) − _farmUtilityDebt(juniorTrancheSafe)` — **MAIN-SAFE ONLY** (double-count fix: the juniorTrancheSidecar LP + debt are already owned by `committedValue()` =
@@ -113,7 +113,7 @@ lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wir
 **The wiring setters** (`onlyOwner`, Timelock; each emits an event; all zero-guarded):
 - `setShareToken(szipUSD_)` → `shareToken` (the supply denominator).
 - `setLpPosition(ichiVault_, gauge_)` → `ichiVault` + `gauge` (the LP reserves + staked-LP source). Re-pointable;
-  if a non-zero `lpTwapWindow` is live, re-asserts SEC-10 readiness against the new vault (SUPPLY-ADV-15).
+  if a non-zero `lpTwapWindow` is live, re-asserts SEC-10 readiness against the new vault.
 - `setFarmUtilityLeg(escrowVault_, borrowVault_)` → `escrowVault` + `borrowVault` (the 8-B5 farm utility leg: escrow-
   collateralized LP counted + strike debt subtracted; both set together, both zero-guarded).
 - `setJuniorTrancheEngine(juniorTrancheEngine_)` → `juniorTrancheEngine` (the 8-B14 buy-and-burn Safe, denominator-excluded).
@@ -126,7 +126,7 @@ lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wir
   otherwise make every NAV read revert via `_lpValue`→`fairReserves`→`NoPlugin`). `isInitialized()` is
   necessary-not-sufficient: the residual window > accumulated-history edge (observation cardinality is NOT
   on-chain-queryable) still fails closed at read-time in `getTimepoints` and is recoverable via `setLpTwapWindow(0)`.
-  **Enforced at BOTH wiring sites (SUPPLY-ADV-15):** the check is the shared `_assertLpTwapReady()`, run on
+  **Enforced at BOTH wiring sites:** the check is the shared `_assertLpTwapReady()`, run on
   `setLpTwapWindow` (arm) AND on `setLpPosition` (re-point the vault) when a non-zero window is already live — so
   re-pointing the LP to a plugin-less pool reverts instead of silently leaving a live window over an unready vault
   (which would brick every LP-containing NAV read, irrecoverable after renounce since `setLpTwapWindow(0)` would
@@ -172,7 +172,7 @@ additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
 - **`transferOwnership(timelock)` LAST — NOT `renounceOwnership()`** (§17 build-phase: Forwarder/identity/wiring
   stay Timelock-re-pointable; hard immutability deferred to pre-prod). This supersedes the older "renounce-freeze
   at deploy" framing the ticket inherited from the WOOF-02 pattern.
-- **8x-02 xALPHA rate-source split (OPEN, superintendent 2026-06-09).** The built oracle originally **conflated**
+- **8x-02 xALPHA rate-source split (OPEN, superintendent).** The built oracle originally **conflated**
   rate-source and balance-token: the single immutable `xAlpha` was read BOTH as `IXAlphaRate(xAlpha).exchangeRate()`
   (the rate) AND `IERC20(xAlpha).balanceOf(...)` (the basket balance) — fine in M1 because the stand-in exposed
   both faces. Production splits them: the basket holds `SzAlphaMirror` (a plain `BurnMintERC20`, **no**
@@ -194,7 +194,7 @@ additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
 - **`navExit` may price off a stale mark (by design).** Staleness/freshness gates `navEntry`/`fresh` only;
   `navExit`/`grossBasketValue` keep pricing off the last good rate. The TWAP lag (`min(spot, twap)`) +
   the consumer `poke()` obligation are the defense — but the bracket only ATTENUATES an in-block spot move to
-  weight `g/W`, it does not eliminate it (SUPPLY-ADV-14). The sole in-block-manipulable leg (the ICHI LP spot
+  weight `g/W`, it does not eliminate it. The sole in-block-manipulable leg (the ICHI LP spot
   reserves when `lpTwapWindow == 0`) is defended STRUCTURALLY by `lpTwapWindow != 0` (fair-reserves), not the
   bracket; deploy-ordering: do not fund the LP with `lpTwapWindow == 0`, nor open exit/issuance, inside the first
   `W` of deployed life (the ring falls back to spot until it holds `W` of history).

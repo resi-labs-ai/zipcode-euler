@@ -43,7 +43,7 @@ input; zipUSD still mints by value and redeems at par. The warehouse adapter add
 in `CreditWarehouseDeployer`); bind by name. Retired silos still count toward `seniorBacking` (I-3) — not exercised
 on this single-silo board.
 
-**Result.** **PASS** (2026-06-24, real txs on the live fork; aggregator at `0x10Fff7de…5b01`).
+**Result.** **PASS** (real txs on the live fork; aggregator at `0x10Fff7de…5b01`).
 - SUPPLY seeded the warehouse Safe with **50,000e6 EE shares** (USDC 100,000e6 → 50,000e6; `convertToAssets`=50,000e6, 1:1).
 - **Happy (I-1/I-2):** `seniorBacking()` = `seniorBackingOf(LOCAL)` = **50,000·1e18·1e... = 50000000000000000000000**
   (5e22, 18-dp) == `convertToAssets(50,000e6)·1e12`. ✓

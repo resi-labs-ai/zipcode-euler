@@ -47,7 +47,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 | X-1 | **coverage path-lock** — `removeLiquidity` reverts `Undercovered` unless `coverageGate.lpBurnKeepsCovered(shares)`; gate==0 ⇒ ungated (M1 legacy) | Yes (reads `DurationFreezeModule`) | **`test_removeLiquidity_coverage_gate`** — all three states: gate `false` → `Undercovered`, gate `true` → dissolves, gate OFF (0) → ungated |
 | I-1 | **deposit `to` + all balance reads hard-pinned to `juniorTrancheEngine`** | Yes | `test_exec_discipline_addLiquidity_single`/`_both_legs` (deposit `to == safe`), `test_views_read_juniorTrancheEngine`, **`test_fork_real_vault_single_sided_deposit`** (shares land in the Safe) |
 | I-2 | **no standing approval** — approve→deposit→reset; atomic rollback on inner failure | Yes | `test_exec_discipline_*`, **`test_atomicity_addLiquidity_single_deposit_fail_rolls_back`**, `_both_legs_resets_both`, `_stake_deposit_fail_rolls_back`, fork (`allowance == 0` after) |
-| I-3 | **slippage floors — non-zero MANDATORY on BOTH legs** — `minShares != 0` on add (`ZeroMinShares`), and not-both-zero on remove (`ZeroMinAmount`, SUPPLY-ADV-10). The remove floor is the *sole* sandwich guard: the ICHI `withdraw` self-protects with nothing (decomposes at the current tick), unlike `deposit` (vault hysteresis), so the CRE sizes it off the TWAP fair reserves (SUPPLY-ADV-09) | Yes | `test_addLiquidity_slippage_floor`, `test_zero_minShares_reverts`, `test_removeLiquidity_slippage_floor`, `test_removeLiquidity_zero_minAmount_reverts`, **`test_fork_slippage_floor_snapshot_guarded`** (probe-then-floor+1 → `Slippage`) |
+| I-3 | **slippage floors — non-zero MANDATORY on BOTH legs** — `minShares != 0` on add (`ZeroMinShares`), and not-both-zero on remove (`ZeroMinAmount`). The remove floor is the *sole* sandwich guard: the ICHI `withdraw` self-protects with nothing (decomposes at the current tick), unlike `deposit` (vault hysteresis), so the CRE sizes it off the TWAP fair reserves | Yes | `test_addLiquidity_slippage_floor`, `test_zero_minShares_reverts`, `test_removeLiquidity_slippage_floor`, `test_removeLiquidity_zero_minAmount_reverts`, **`test_fork_slippage_floor_snapshot_guarded`** (probe-then-floor+1 → `Slippage`) |
 | I-4 | **exec false-return hard-reverts with bubbled inner data** | Yes | `test_exec_bubbles_custom_error`, `_no_data_falls_back_to_ExecFailed`, `test_disallowed_side_bubbles_on_mock`, **`test_fork_disallowed_side_reverts`** (real vault `allowToken1==false`) |
 | I-5 | **live-read `token0`/`token1` off the vault** — approval targets can't drift | Yes | `test_setUp_rejects_zero_token_leg`, **`test_fork_real_vault_single_sided_deposit`** (token0==WETH/token1==USDC live) |
 | I-6 | **stake/unstake credit the Safe as msg.sender** (no EVC/borrow, no tokenId state) | Yes | `test_exec_discipline_stake_and_unstake`, **`test_fork_full_cycle_real_safe_mock_lp`** |
@@ -83,9 +83,9 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
   conservative min/max share bracketing), so `addLiquidity`'s mandatory `minShares` (`ZeroMinShares`) is
   belt-and-suspenders there. `withdraw` self-protects with **nothing** — it decomposes liquidity at the current
   pool tick — so `removeLiquidity`'s `minAmount0/1` is the *only* protection on the dissolution hop. Two controls:
-  (1) on-chain, not-both-zero is now mandatory (`ZeroMinAmount`, SUPPLY-ADV-10, `test_removeLiquidity_zero_
+  (1) on-chain, not-both-zero is now mandatory (`ZeroMinAmount`, `test_removeLiquidity_zero_
   minAmount_reverts`); (2) off-chain, the CRE sizes the floor off the TWAP fair reserves (`IchiAlgebraFairReserves`,
-  the same value the coverage gate uses), NOT spot (SUPPLY-ADV-09 / KEEPER-02). `test_fork_slippage_floor_snapshot_
+  the same value the coverage gate uses), NOT spot (KEEPER-02). `test_fork_slippage_floor_snapshot_
   guarded` probes the achievable shares on the real vault then proves floor+1 reverts.
 - **The 6 wiring setters — now covered** — `test_wiring_setters_onlyOwner_effect_and_zeroGuard` exercises
   `setJuniorTrancheEngine`/`setOperator`/`setIchiVault`/`setGauge`/`setToken0`/`setToken1` for onlyOwner + effect +
@@ -114,7 +114,7 @@ stack-too-deep); green run confirmed.
 `removeLiquidity` to `DurationFreezeModule`'s floor) is tested across all three gate states, with solid approval
 hygiene, atomic rollback, slippage floors, and live-ICHI fork coverage. **Every mutator is now exercised** (all 7
 setters + the 4 operator actions; the 6-setter gap — including the previously-missing SEC-15 owner-recheck and the
-avatar/target sync — was filled 2026-06-20). Capped at ADEQUATE by: no fuzz/invariant (correctly low-value), and the
+avatar/target sync — was filled). Capped at ADEQUATE by: no fuzz/invariant (correctly low-value), and the
 build-phase mutable wiring pending the pre-prod re-freeze — neither a coverage gap.
 
 **Structural facts:**

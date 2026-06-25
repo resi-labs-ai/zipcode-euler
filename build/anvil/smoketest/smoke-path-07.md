@@ -25,7 +25,7 @@ the last-good value (exit never blocked).
 **Notes.** This is the fail-open-on-exit / fail-closed-on-entry posture: a holder can always exit at the last honest
 mark; only new issuance waits for a fresh CRE push. Re-seeding restores `navEntry`.
 
-**Result.** **PASS** (2026-06-24, live fork; `_harness.sh` seed).
+**Result.** **PASS** (live fork; `_harness.sh` seed).
 - `zap(1_000e6)` → alice **1,000e18** szipUSD. `transfer(bob,100e18)` → bob **100e18**, alice **900e18** (plain ERC-20). ✓
 - Fresh: `navEntry == navExit == 1e18`, `fresh()==true`.
 - After **+2 day** warp (marks stale): `fresh()==false`; **`navEntry()` reverted `StalePrice` (0x9bbfef51)**;

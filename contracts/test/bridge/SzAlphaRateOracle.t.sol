@@ -187,7 +187,7 @@ contract SzAlphaRateOracleTest is Test {
     ///         so the APR derives `rNow` vs the rolled `prevAnchor` over Δ. Must never revert, must clamp to the
     ///         cap, and must floor at 0 on a decline/flat (a slash is 0, not negative — `uint32`).
     function testFuzz_aprBoundedAndNonNegative(uint256 rPrev, uint256 rNow, uint32 dtSeed) public {
-        // BRIDGE-ADV-04: fuzz the FULL uint256 rate domain (the push path has no upper bound) so this
+        // fuzz the FULL uint256 rate domain (the push path has no upper bound) so this
         // actually reaches the former overflow ceiling (~2^218) instead of staying ~138 bits below it.
         rPrev = bound(rPrev, 1, type(uint256).max);
         rNow = bound(rNow, 1, type(uint256).max);
@@ -200,7 +200,7 @@ contract SzAlphaRateOracleTest is Test {
         if (rNow <= rPrev) assertEq(apr, 0, "decline/flat must annualize to 0");
     }
 
-    /// @notice BRIDGE-ADV-04: an absurd pushed rate (the push path has NO upper bound — "no deviation band")
+    /// @notice an absurd pushed rate (the push path has NO upper bound — "no deviation band")
     ///         must SATURATE the advisory APR to `aprCap`, NOT revert. Pre-fix the multiply-up at the
     ///         former `:140` overflowed (uint256 panic) for `rNow - rPrev > ~2^218`; the saturation guards
     ///         make the view total. This is the regression the (now-widened) fuzz/invariant also covers.
@@ -228,7 +228,7 @@ contract RateOracleHandler is Test {
 
     function push(uint256 rate, uint256 tsSeed) external {
         uint48 ts = uint48(bound(tsSeed, 1, block.timestamp));
-        rate = bound(rate, 0, type(uint256).max); // BRIDGE-ADV-04: full domain (0 still exercises ZeroRate; huge rates exercise the APR saturation)
+        rate = bound(rate, 0, type(uint256).max); // full domain (0 still exercises ZeroRate; huge rates exercise the APR saturation)
         bytes memory report = abi.encode(uint8(8), abi.encode(rate, ts));
         vm.prank(forwarder);
         try oracle.onReport("", report) {

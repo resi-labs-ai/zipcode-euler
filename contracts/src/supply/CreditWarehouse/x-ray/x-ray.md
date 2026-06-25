@@ -147,7 +147,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 > - **3 Cross-Contract Invariants** (`X-1` … `X-3`) — Roles-scope-is-the-boundary, avatar parity (X-2 now enforced on-chain → I-4), mutable wiring
 > - **0 Economic Invariants** — this is a router; the economic invariants live in EulerEarn / the loss + NAV subsystems
 >
-> The primary control (X-1, param-pinning) is still **On-chain=No** — it lives in the Roles scope; X-2 (avatar parity) moved on-chain as of 2026-06-20.
+> The primary control (X-1, param-pinning) is still **On-chain=No** — it lives in the Roles scope; X-2 (avatar parity) moved on-chain.
 
 ---
 
@@ -182,7 +182,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 ### Gaps
 
-> **CORRECTION (2026-06-20):** an earlier draft of this report claimed the decisive Roles-scope integration test was "not present." That was wrong. `test/WarehouseAdminModule.t.sol` is a **fork integration suite against the real deployed Roles modifier** and already covers the full scope-rejection matrix: `test_Scope_PinsParams_DepositReceiver`/`_TransferTo` (param pins), `test_CallOnly_RejectsValueAndDelegatecall` (value + **delegatecall** rejected), `test_Escalation_Blocked` (enableModule/addOwner/wrong-target/wrong-selector), `test_NonMember_Reverts`, forwarder-gate, reentrancy, atomicity, malformed-payload. The decisive control IS proven.
+> **CORRECTION:** an earlier draft of this report claimed the decisive Roles-scope integration test was "not present." That was wrong. `test/WarehouseAdminModule.t.sol` is a **fork integration suite against the real deployed Roles modifier** and already covers the full scope-rejection matrix: `test_Scope_PinsParams_DepositReceiver`/`_TransferTo` (param pins), `test_CallOnly_RejectsValueAndDelegatecall` (value + **delegatecall** rejected), `test_Escalation_Blocked` (enableModule/addOwner/wrong-target/wrong-selector), `test_NonMember_Reverts`, forwarder-gate, reentrancy, atomicity, malformed-payload. The decisive control IS proven.
 
 - **No fuzz/invariant tests** — low priority: a deterministic stateless encoder with no arithmetic; fuzzing adds little.
 - **`warehouseSafe ↔ roles.avatar()` parity — NOW ENFORCED ON-CHAIN (the last residual)** — the contract's own documented #1 hazard is closed in code: `setWarehouseSafe` reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`. Proven by `test_Parity_OneSidedRepoint_RevertsAtSetter` (one-sided re-point reverts, slot unchanged) + `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds` (avatar-first → accepted). The scope-level rejection backstop stays covered by `test_Scope_PinsParams_DepositReceiver`. The defense-in-depth assertion the earlier draft suggested is implemented; runbook + invariant documented in `docs/roles.md`.
@@ -219,7 +219,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 | SHA | Date | Subject | Score | Key Signal |
 |-----|------|---------|------:|------------|
-| a428db7 | 2026-06-14 | fair-LP oracle + redemption-queue/freeze rework | 19 | broad multi-domain diff (file touched among many) |
+| a428db7 |  | fair-LP oracle + redemption-queue/freeze rework | 19 | broad multi-domain diff (file touched among many) |
 | c7ac42d | — | 8-Bw CreditWarehouse (senior custody) BUILT-VERIFIED | 16 | the build-verify commit that introduced this contract |
 | 81df630 / 5f3706d / ea79c4e | — | Safe-identity standardize / deploy orchestrator / loss-side wiring | 17 | repo-wide wiring sweeps that re-touched this file |
 
@@ -241,7 +241,7 @@ See [entry-points.md](entry-points.md) — no permissionless entry points.
 
 **HARDENED** *(modulo the pre-prod immutable re-freeze + no external audit; revised up from ADEQUATE — see correction below)* — clean, defensively hardcoded encoder with clear roles + Timelock, and its decisive control (the Zodiac Roles scope) is **proven by a fork integration suite** that exercises the full scope-rejection matrix against the real deployed modifier. All three gaps prior drafts flagged are now closed: the six `onlyOwner` setters (tested), avatar parity (**now enforced on-chain** — `setWarehouseSafe` reverts `AvatarMismatch`), and the missing in-scope doc (`docs/roles.md`). The only residuals are process — the deferred pre-prod immutable re-freeze of the build-phase wiring — and the absence of an external audit; no code or coverage gap remains. No fuzz/invariant (correctly low-value for a deterministic router).
 
-> **CORRECTION (2026-06-20):** the first draft graded this FRAGILE on the reasoning that the Roles-scope integration test was absent. That was a misread — `WarehouseAdminModule.t.sol` is a fork integration suite that already proves the scope rejects redirected receivers, wrong REPAY dests, value, delegatecall, and target/selector escalation. With the decisive control demonstrably covered, the honest tier is ADEQUATE.
+> **CORRECTION:** the first draft graded this FRAGILE on the reasoning that the Roles-scope integration test was absent. That was a misread — `WarehouseAdminModule.t.sol` is a fork integration suite that already proves the scope rejects redirected receivers, wrong REPAY dests, value, delegatecall, and target/selector escalation. With the decisive control demonstrably covered, the honest tier is ADEQUATE.
 
 **Structural facts:**
 1. 110 nSLOC, 1 non-upgradeable contract holding no custody; 0 permissionless entry points.

@@ -28,7 +28,7 @@ contract SzipFarmUtilityLpOracle is ReceiverTemplate, BaseAdapter {
     ///         CRE-§8 ratifies it later — see the 8-B5 cross-ticket obligation).
     uint8 public constant LP_MARK = 7;
 
-    // NOTE (2026-06-09, §17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
+    // NOTE (§17): wiring below is Timelock-settable, NOT immutable — build-phase flexibility. Lock pre-prod.
     /// @notice The unit of account (USDC). Timelock-settable.
     address public quote;
     /// @notice The single priced key: the ICHI LP share token (18-dp). Timelock-settable.

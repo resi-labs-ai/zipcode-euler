@@ -2,7 +2,7 @@
 
 > CreditWarehouse Admin | 10 guards | 6 inferred | 2 not enforced on-chain (X-1 scope, X-3 re-freeze)
 
-> The defining feature of this scope: the load-bearing invariants are **cross-contract** — the primary enforcement (param-pinning, Call-only) lives in the Zodiac Roles scope, not this bytecode (X-1, On-chain=No). The avatar-parity invariant (X-2) was On-chain=No; it is now **checked on-chain at the `setWarehouseSafe` entry point** (`AvatarMismatch`) — but this is entry-point-local, NOT a maintained standing invariant: `setRoles` and an external `Roles.setAvatar` can re-desync the pair afterward (both **fail-closed** at the scope's live `EqualToAvatar` receiver pin — no leak; see X-2 / CWH-ADV-01). The single-contract guards below are the "belt" to the scope's "suspenders".
+> The defining feature of this scope: the load-bearing invariants are **cross-contract** — the primary enforcement (param-pinning, Call-only) lives in the Zodiac Roles scope, not this bytecode (X-1, On-chain=No). The avatar-parity invariant (X-2) was On-chain=No; it is now **checked on-chain at the `setWarehouseSafe` entry point** (`AvatarMismatch`) — but this is entry-point-local, NOT a maintained standing invariant: `setRoles` and an external `Roles.setAvatar` can re-desync the pair afterward (both **fail-closed** at the scope's live `EqualToAvatar` receiver pin — no leak; see X-2). The single-contract guards below are the "belt" to the scope's "suspenders".
 
 ---
 
@@ -36,7 +36,7 @@
 `if (dest != redemptionBox) revert WrongRedemptionBox(dest)` · `WarehouseAdminModule.sol:189` · REPAY self-enforces the sink even before the Roles scope checks it.
 
 #### G-10
-`if (roles.avatar() != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av)` · `WarehouseAdminModule.sol:148` · `setWarehouseSafe` checks avatar parity on-chain (X-2 / I-4): a one-sided re-point **through this setter** cannot be saved (the paired re-point is `Roles.setAvatar` first). NOTE: this is entry-point-local — `setRoles` and an external `Roles.setAvatar` can still desync the pair (fail-closed at the scope; CWH-ADV-01).
+`if (roles.avatar() != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av)` · `WarehouseAdminModule.sol:148` · `setWarehouseSafe` checks avatar parity on-chain (X-2 / I-4): a one-sided re-point **through this setter** cannot be saved (the paired re-point is `Roles.setAvatar` first). NOTE: this is entry-point-local — `setRoles` and an external `Roles.setAvatar` can still desync the pair (fail-closed at the scope).
 
 *Plus the `UnsupportedOpType` revert and the unreachable `RoleExecFailed` (defense-in-depth — the modifier already reverts with `shouldRevert=true`).*
 
@@ -90,7 +90,7 @@ On-chain: **No** (enforcement is in the external Roles scope)
 
 **If violated** — a mis-scoped policy (wildcarded param, granted delegatecall option, wrong selector set) removes the primary control; only this contract's hardcoding/injection remains. This is the #1 audit artifact and it is not in this file.
 
-#### X-2 (checked on-chain at the setWarehouseSafe entry point — see I-4; CWH-ADV-01)
+#### X-2 (checked on-chain at the setWarehouseSafe entry point — see I-4)
 
 On-chain: **entry-point-local** (checked in `setWarehouseSafe`; NOT a maintained invariant — other re-point paths fail-closed)
 
@@ -112,7 +112,7 @@ On-chain: **No** (build phase)
 
 **Callee side** — the documented pre-prod immutable lock-down (§17) — a process step, **not** on-chain enforced.
 
-**If violated** — a compromised/over-powered owner re-points a slot (e.g. `redemptionBox`/`eePool`/`usdc`). A single-contract re-point alone **fails-closed**: the REPAY-`to` and APPROVE-`spender` scope pins are deploy-baked `OP_EQUAL_TO(compValue)`, so re-pointing the adapter slot does NOT move the pin — the modifier rejects the new target (`ParameterNotAllowed` / `TargetAddressNotAllowed`). A real value redirect (e.g. the REPAY sink becoming owner-chosen) requires a **paired off-chain re-scope** — re-pointing the slot here AND re-running `scopeFunction` on the modifier, i.e. two Timelock actions on two contracts. The pre-prod re-freeze closes this. (CWH-ADV-01.)
+**If violated** — a compromised/over-powered owner re-points a slot (e.g. `redemptionBox`/`eePool`/`usdc`). A single-contract re-point alone **fails-closed**: the REPAY-`to` and APPROVE-`spender` scope pins are deploy-baked `OP_EQUAL_TO(compValue)`, so re-pointing the adapter slot does NOT move the pin — the modifier rejects the new target (`ParameterNotAllowed` / `TargetAddressNotAllowed`). A real value redirect (e.g. the REPAY sink becoming owner-chosen) requires a **paired off-chain re-scope** — re-pointing the slot here AND re-running `scopeFunction` on the modifier, i.e. two Timelock actions on two contracts. The pre-prod re-freeze closes this.
 
 ---
 

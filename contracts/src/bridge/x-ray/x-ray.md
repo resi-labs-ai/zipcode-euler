@@ -237,7 +237,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 | Line coverage | Unavailable — project-wide `Stack too deep` (fails even with `--ir-minimum`) | Coverage tool |
 | Branch coverage | Unavailable — same reason | Coverage tool |
 
-### Test Depth (post gap-fill, 2026-06-20)
+### Test Depth (post gap-fill)
 
 | Category | Count | Contracts Covered |
 |----------|-------|-------------------|
@@ -251,7 +251,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 - **No formal verification** — the conservation/rate properties (`I-1`, `E-1`) are good Certora/Halmos candidates; the Foundry invariant suites now assert them under fuzzing, so this is a hardening step, not a hole.
 - **Coverage unmeasurable** — the project does not compile under the coverage instrumenter (stack-too-deep); test *existence* (incl. fuzz/invariant) is confirmed by scan + run, but line/branch reach is unknown. Worth a coverage-only build profile.
-- *(Resolved 2026-06-20: the prior "no fuzz/invariant" gap — SzAlpha and SzAlphaRateOracle each gained a stateless fuzz + Foundry invariant suite. See their per-contract X-Rays.)*
+- *(Resolved: the prior "no fuzz/invariant" gap — SzAlpha and SzAlphaRateOracle each gained a stateless fuzz + Foundry invariant suite. See their per-contract X-Rays.)*
 
 ---
 
@@ -321,7 +321,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 ## X-Ray Verdict
 
-**ADEQUATE (scope-wide)** *(was FRAGILE; raised 2026-06-20 after the per-contract pass + gap-fills)* — all five
+**ADEQUATE (scope-wide)** *(was FRAGILE; raised after the per-contract pass + gap-fills)* — all five
 contracts now carry dedicated test-connected X-Rays at ADEQUATE: roles + trust boundaries clear, timelock + pause,
 and the two real-logic contracts (SzAlpha, SzAlphaRateOracle) now have fuzz + Foundry invariant coverage of their
 load-bearing properties (share conservation, rate-floor, ts-monotonicity, anchor-roll/APR). Held below HARDENED

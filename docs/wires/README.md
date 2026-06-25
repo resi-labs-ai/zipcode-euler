@@ -12,7 +12,7 @@
 
 > **Retired-citation note.** Each component doc's header cites its `tickets/...` + `reports/...` (and some
 > cite `reports/baal-spec.md` or `audit/2.md`/`audit/3-results.md`) as the "intent" behind the code. **Those
-> artifacts were deleted 2026-06-10** — they survive only as historical labels of what the intent was; the
+> artifacts were deleted** — they survive only as historical labels of what the intent was; the
 > live truth is the `contracts/...` citation + this map. Any "deferred `audit/*` L-row" obligation a doc names
 > now lives in `build/tickets/PROGRESS.md` → "Open obligations / seams" (it folds into the item-10 fork run).
 
@@ -22,7 +22,7 @@ Contracts involved · Wiring internal (ctor/setUp, immutables, setter-wired poin
 Wiring cross-component (who points at whom) · Item-10 deploy facts · Gotchas.
 
 This map is the substrate the **item-10 deploy/wiring script** is authored from: the deploy script connects
-documented pins, it does not rediscover them. Authored 2026-06-09/10 (a full pass over the built contract set).
+documented pins, it does not rediscover them. Authored from a full pass over the built contract set.
 
 **Completeness:** `COVERAGE.md` is the file-level manifest — every `.sol` under `contracts/` (32 product
 contracts + 6 scripts + 30 interface shims + 28 test/helper files) mapped to its doc. Nobody forgotten.
@@ -191,7 +191,7 @@ The order `DeployZipcode` realizes (phases P0–P9; see `DeployZipcode.md`), ove
    `DurationFreeze`, `OffRamp` (enable on the right Safe(s), wire operators, the shared-LP/one-bank/juniorTrancheEngine
    asserts).
 6. **Loss side:** `LienXAlphaEscrow` → `DefaultCoordinator` (`setEscrow` — no standing allowance, `_lock` approves
-   the exact amount JIT (LOSS-ADV-01); oracle `setDefaultCoordinator`, fund launch xALPHA).
+   the exact amount JIT; oracle `setDefaultCoordinator`, fund launch xALPHA).
 7. **Seal:** the four NAV-oracle wiring setters; all `ReceiverTemplate` identity-set (S10b) → the
    `requireIdentityWired` pre-gate → `transferOwnership(timelock)` everywhere (P9). A fork-execution run of
    `deploy()` (the never-yet-run acceptance) + subgraph addresses follow.

@@ -41,13 +41,13 @@ token). The `ichiVault` slot name is kept so the `setUp` ABI + setters + deploy 
 - **`_exec` bubbles inner revert data** (`:180-185`) — the Gnosis Safe swallows inner reverts and returns
   `(false, data)`; an unchecked exec would silently report a failed deposit as success. This hard-reverts.
 - **Clone via `ModuleProxyFactory`** — per-clone config is set-once storage in `setUp` (not `immutable`), mastercopy
-  init-locked. **(HYDREX-ADV-02, 2026-06-22: this claim was FALSE — the fork inherited plain `Module`, not the
+  init-locked. **(this claim was FALSE — the fork inherited plain `Module`, not the
   parent's `MastercopyInitLock`, so the bare mastercopy was NOT locked. Now FIXED — the fork inherits
   `MastercopyInitLock` like the parent; proven by `test_mastercopy_cannot_be_setUp`.)**
 - `setAvatar`/`setTarget` inherited `onlyOwner` (zodiac-core) — the operator hot key cannot reach them (`:167-170`).
 
 These properties were proven for the prod `LpStrategyModule` (36 unit tests, ICHI path) and are proven for this
-fork in `test/hydrex-demo-fork/LpStrategyModuleDemoVAMM.t.sol`. **HYDREX-ADV-02 (2026-06-22): the ported
+fork in `test/hydrex-demo-fork/LpStrategyModuleDemoVAMM.t.sol`. **The ported
 `MockVammPair` originally summed both legs (`(in0+in1)/pps`) — it did NOT model real Solidly `mint`, so the
 share-math suite (incl. the fuzz) validated a formula the live pair doesn't implement and wrongly treated
 single-sided builds as legitimate. The mock now faithfully models Solidly `mint` —
@@ -68,13 +68,13 @@ the donate-excess and single-sided (mints-0 → reverts) cases. Now **24 unit + 
 - **Operator (hot CRE key)** — can grief/mis-size the LP build (bounded by `minShares`, no custody), and drive
   stake/unstake. Bounded, but on an untested seam.
 
-## 5. Test analysis (gap-filled 2026-06-20)
+## 5. Test analysis
 
 | Category | Count | Notes |
 |---|---|---|
-| Dedicated unit (this contract) | 23 | `test/hydrex-demo-fork/LpStrategyModuleDemoVAMM.t.sol` — ported from the prod parent; `MockVammPair` now models real Solidly `mint` (HYDREX-ADV-02) + the mastercopy-lock / donate-excess / single-sided regression tests |
+| Dedicated unit (this contract) | 23 | `test/hydrex-demo-fork/LpStrategyModuleDemoVAMM.t.sol` — ported from the prod parent; `MockVammPair` now models real Solidly `mint` + the mastercopy-lock / donate-excess / single-sided regression tests |
 | Stateless fuzz | **1** | `testFuzz_addLiquidityShareMathAndFloor` (256 runs) — now `min`-based share math + exact `minShares` floor |
-| Suite status | **24/24 green** | `forge test` (was 21/21; +3 HYDREX-ADV-02 regression tests, mock made faithful) |
+| Suite status | **24/24 green** | `forge test` (was 21/21; +3 regression tests, mock made faithful) |
 
 The ported suite covers the swapped seam end-to-end: `setUp` wiring + zero-arg guards, operator-only gating,
 owner-only `setAvatar`/`setTarget`, single- and both-sided `addLiquidity` share math, the slippage floor, the
@@ -85,7 +85,7 @@ just its parent.
 
 ## X-Ray Verdict
 
-**ADEQUATE** *(was EXPOSED; raised 2026-06-20)* — the prior EXPOSED was purely the absence of dedicated tests.
+**ADEQUATE** *(was EXPOSED)* — the prior EXPOSED was purely the absence of dedicated tests.
 The prod parent's suite has now been ported (ICHI mock → vAMM-pair mock) and run green (20 unit + 1 fuzz, 21/21),
 so the one part that differs from the audited parent — the vAMM `addLiquidity` mint, its exec discipline,
 atomicity, and slippage floor — is covered, including a share-math fuzz. Tests axis is ADEQUATE (unit + fuzz).

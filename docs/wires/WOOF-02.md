@@ -166,7 +166,7 @@ kept code.)
   and re-pointable (the test sets it twice with different values). Same for `quote`/`validityWindow`: the ticket/
   spec say `immutable`, the kept code makes them **mutable** storage with `setQuote`/`setValidityWindow`. This is
   the deliberate §17 "build-phase Timelock-settable, lock pre-prod" rework (memory: `oracle-replaceable-timelock-
-  wiring`), and the `// NOTE (2026-06-09, §17)` comment at `:26` records it.
+  wiring`), and the `// NOTE (§17)` comment at `:26` records it.
 - **Renounce vs Timelock-held.** Spec §4.1, the WOOF-02 ticket/report, and `ZipcodeDeployAsserts`'s NatSpec all
   frame Forwarder immutability as `renounceOwnership()` after identity wiring. Under the kept §17 build-phase
   posture, ownership is **transferred to the Timelock (not renounced)** and the renounce is deferred to pre-prod.

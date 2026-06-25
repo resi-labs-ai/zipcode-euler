@@ -280,7 +280,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 ## X-Ray Verdict
 
-**ADEQUATE (scope-wide)** *(was EXPOSED; raised 2026-06-20 after porting the prod parents' suites)* — both demo
+**ADEQUATE (scope-wide)** *(was EXPOSED; raised after porting the prod parents' suites)* — both demo
 forks now carry dedicated test-connected X-Rays at ADEQUATE. The prior EXPOSED was purely the absence of dedicated
 tests; the swapped vAMM seams (LP `mint`, LP `getReserves()` valuation) are now covered by suites ported from the
 audited prod parents with the ICHI mock replaced by a vAMM-pair mock — 45 functions incl. 2 fuzz, **21/21 + 24/24

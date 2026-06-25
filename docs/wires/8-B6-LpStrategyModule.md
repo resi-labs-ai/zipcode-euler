@@ -20,7 +20,7 @@ Safe for the 8-B5 harvest loop (`unstake` → `IGauge.withdraw`), and decompose 
 scalar amounts; the module builds all calldata to set-once wired targets and the deposit/withdraw `to` / every
 balance read is the literal `juniorTrancheEngine`.
 
-**`removeLiquidity` is the LP→legs dissolution hop, now COVERAGE-GATED (LP path-lock, 2026-06-13).** It is the
+**`removeLiquidity` is the LP→legs dissolution hop, now COVERAGE-GATED (LP path-lock).** It is the
 global-wind-down feeder (`unstake` → `removeLiquidity` → `SellModule.sellXAlpha` → zipUSD → senior par queue →
 buy-burn bid). It is the ONLY path that turns the fenced LP into exitable legs, so it is bounded to the coverage
 EXCESS: `removeLiquidity` reverts `Undercovered` unless `coverageGate.lpBurnKeepsCovered(shares)` (i.e.
@@ -73,7 +73,7 @@ coverageGate)`. Order is load-bearing:
   to 0; finally `shares < minShares → Slippage`. Deposit `to` is the literal `juniorTrancheEngine` — the minted LP lands in the
   Safe. No standing approvals (exact-amount, reset defensively).
 - **`removeLiquidity(shares, minAmount0, minAmount1) → (amount0, amount1)`** — `ZeroAmount` guard (shares); then
-  the **ZERO-FLOOR GUARD**: `if minAmount0 == 0 && minAmount1 == 0 → ZeroMinAmount` (SUPPLY-ADV-10 — the ICHI
+  the **ZERO-FLOOR GUARD**: `if minAmount0 == 0 && minAmount1 == 0 → ZeroMinAmount` (the ICHI
   `withdraw` self-protects with nothing, so this floor is the SOLE sandwich guard; at least one leg must be
   floored). Then the **COVERAGE GATE**: `if coverageGate != 0 && !ICoverageGate(coverageGate).lpBurnKeepsCovered(shares) →
   Undercovered` (only the coverage EXCESS may be liquefied). Then exactly 1 `exec`: `IICHIVault.withdraw(shares,
@@ -158,8 +158,8 @@ wired nor referenced.
   `DTL` at certain blocks. Pin a block before relying on those two tests (logged in PROGRESS as latent fragility);
   the module logic is unaffected.
 - **A zero slippage floor is rejected on BOTH legs** — `minShares == 0` on add (`ZeroMinShares`) and both
-  `minAmount0/1 == 0` on remove (`ZeroMinAmount`, SUPPLY-ADV-10). Verified against the real ICHI source: the
+  `minAmount0/1 == 0` on remove (`ZeroMinAmount`). Verified against the real ICHI source: the
   *deposit* self-protects (spot-vs-TWAP hysteresis), so its floor is belt-and-suspenders; the *withdraw* self-
   protects with nothing (decomposes at the current tick), so its floor is the SOLE sandwich guard — which is why
   the remove guard is at-least-one-non-zero and the CRE sizes it off the TWAP fair reserves, not spot
-  (SUPPLY-ADV-09 / KEEPER-02).
+  (KEEPER-02).

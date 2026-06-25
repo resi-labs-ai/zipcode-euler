@@ -2,7 +2,7 @@
 
 > AlgebraIchiFairLpOracle | 58 nSLOC | 8b7c67c (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE** *(a hair from HARDENED)*
 
-> **Update 2026-06-20:** the coverage gaps below (ctor guards, unsupported-pair / zero-supply fail-closed reverts,
+> **Update:** the coverage gaps below (ctor guards, unsupported-pair / zero-supply fail-closed reverts,
 > rounding direction, and the high-`sqrtP` branch of `_token0InQuote`) are **CLOSED** — 8 new tests added to
 > `AlgebraIchiFairLpOracle.t.sol` (13/13 green). Every entry point and every revert on the contract is now exercised.
 
@@ -67,7 +67,7 @@ No CRE operator, no owner, no permissionless mutator. The contract is pure read.
 | `PriceOracle_NotSupported` (zero supply) | `_getQuote:79` | `test_getQuote_revert_zeroSupply` (mocked `totalSupply()==0`) |
 
 The functional/economic surface (I-1…I-4) is fork-proven; the fail-closed reverts (I-6/I-7), the rounding direction
-(I-5), and the high-`sqrtP` branch (I-8) — formerly the coverage gap — **are now closed** (8 tests, 2026-06-20).
+(I-5), and the high-`sqrtP` branch (I-8) — formerly the coverage gap — **are now closed** (8 tests).
 **Every guard and every entry point on the contract is now exercised.**
 
 ## 5. Attack surfaces
@@ -108,7 +108,7 @@ The functional/economic surface (I-1…I-4) is fork-proven; the fail-closed reve
 | — manipulation invariance (the keystone) | 1 | `test_fork_manipulation_invariance` |
 | — EVK router resolution | 1 | `test_fork_resolves_through_euler_router` |
 | — deploy P5 fair-oracle market build | 1 | `test_fork_farmUtility_market_builds_with_fair_oracle` (`lpTwapWindow != 0` branch, no CRE seed) |
-| Edge / fail-closed (added 2026-06-20) | 8 | ctor `ZeroAddress`/`ZeroWindow`/`NoPlugin`; unsupported base/quote; zero supply; rounds-down; high-`sqrtP` branch (harness) |
+| Edge / fail-closed | 8 | ctor `ZeroAddress`/`ZeroWindow`/`NoPlugin`; unsupported base/quote; zero supply; rounds-down; high-`sqrtP` branch (harness) |
 | Fuzz / invariant | 0 | correctly omitted — pricing is pure arithmetic over vendored UniV3 math |
 
 Coverage % uninstrumentable (project-wide `Stack too deep`); **13/13 green** (5 fork + 8 edge). The economic surface
@@ -120,8 +120,8 @@ in-file coverage gap.
 **ADEQUATE** *(a hair from HARDENED)* — a thin, stateless, ownerless pricing wrapper whose decisive property
 (manipulation invariance) is fork-proven where it lives (`IchiAlgebraFairReserves`) and re-proven here end-to-end
 through `getQuote`, whose pro-rata identity and EVK-router/deploy-P5 resolution are fork-proven against the live
-HYDX/USDC vault, and whose math is pure UniV3-style tick valuation. **The prior coverage gaps are now closed**
-(2026-06-20): the fail-closed reverts (unsupported pair / zero supply / `NoPlugin` / ctor zero-guards), the
+HYDX/USDC vault, and whose math is pure UniV3-style tick valuation. **The prior coverage gaps are now closed**:
+the fail-closed reverts (unsupported pair / zero supply / `NoPlugin` / ctor zero-guards), the
 rounding-down direction, and the `_token0InQuote` high-`sqrtP` branch each have a dedicated test (13/13 green). Held
 below HARDENED now only by off-chain/upstream residuals: the inherited TWAP-cardinality/window trust lives in pool
 config (the lib's X-2), the tick math is vendored UniV3 (the lib's X-1), and there is no external audit.

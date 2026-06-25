@@ -6,6 +6,7 @@ or expose real flaws before mainnet**.
 
 - **`contract-map.md`** — the live address board (every spec binds to it).
 - **`smoke-path-NN.md`** — one grounded path each. Run one at a time.
+- **`recipes/`** — manual fork build-recipes that stand up the **real** zipUSD/xALPHA ICHI pool + vault (a substrate the SP suite deliberately lacks — it uses the showcase VAMM stand-in). See `recipes/zipusd-xalpha-pool.md`.
 
 ## Running anvil (where it lives)
 - **Endpoint:** `http://127.0.0.1:8545` · chainId `8453` (Base mainnet fork) · fork block `47096000`.

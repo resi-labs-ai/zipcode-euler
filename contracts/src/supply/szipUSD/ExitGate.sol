@@ -39,7 +39,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // --------------------------------------------------------------------- wiring (Timelock-settable; build phase)
-    // NOTE (2026-06-09, §17): all wiring below is Timelock-settable, NOT immutable — build-phase flexibility so a
+    // NOTE (§17): all wiring below is Timelock-settable, NOT immutable — build-phase flexibility so a
     // redeployed Baal substrate / oracle / token / safe is a one-call re-point, not a redeploy cascade. Lock pre-prod.
     IBaal public baal;
     SzipNavOracle public navOracle;

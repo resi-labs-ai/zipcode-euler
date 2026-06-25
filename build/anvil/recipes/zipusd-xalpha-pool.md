@@ -93,6 +93,6 @@ backing is real and single-sided, just not yet range-placed.
 
 ## Re-run
 
-`bash build/anvil/zipusd-xalpha-pool.sh` — pool creation is idempotent
+`bash build/anvil/recipes/zipusd-xalpha-pool.sh` — pool creation is idempotent
 (`createAndInitializePoolIfNecessary` no-ops if it exists); the xALPHA mint is a top-up; each
 run adds one more full-range LP position to the deployer. Resets on anvil restart + redeploy.

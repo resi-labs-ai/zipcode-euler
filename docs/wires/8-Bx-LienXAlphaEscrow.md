@@ -101,7 +101,7 @@ call) — see the security thesis.
   `coordinator` slot at deploy. The coordinator **is** that wired address from S-deploy; it owns the full
   bond lifecycle (LOCK/RELEASE M1-live, slash M2), custodies the protocol's launch xALPHA reserve, and
   grants the escrow only an exact-amount just-in-time allowance per `_lock` (approve `amount` → pull → reset to
-  0; no standing allowance — LOSS-ADV-01) so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull
+  0; no standing allowance) so `lockXAlpha`'s `safeTransferFrom(coordinator, …)` pull
   succeeds without leaving an allowance a re-pointed escrow could drain. (`DefaultCoordinator` wiring: PROGRESS row 367 — `setEscrow` + RESOLVE/WRITEOFF →
   `slashXAlphaToCapital`(if>0)→`slashXAlphaToCohort`, reading `escrow.bondAmount` to skip cohort on a
   full-capital-slash; the capital-vs-premium split is the off-chain CRE `capitalSlashAmount` arg.)

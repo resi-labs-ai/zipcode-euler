@@ -137,7 +137,7 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
         // sub-bps (~0.0016% per 72-min tempo for an ~11% alpha-APR validator); a two-step `(rNow-rPrev)*BPS/rPrev`
         // truncates that to 0 and the feed silently reads 0% for any short window. Multiplying up before the divide
         // keeps the precision (verified against live netuid-64 validators: 11.4 / 19.7 / 20.7%).
-        // BRIDGE-ADV-04: saturate rather than overflow — keep this view TOTAL for ANY pushed rate (the push
+        // saturate rather than overflow — keep this view TOTAL for ANY pushed rate (the push
         // path has no upper bound by design, "no deviation band"). A growth large enough to overflow the
         // multiply-up annualizes far beyond aprCap (⇒ return aprCap); a rate large enough to overflow the
         // `a.rate * dt` denominator makes the true APR ~0 (⇒ return 0). Both checks are overflow-free

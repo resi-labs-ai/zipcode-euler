@@ -36,7 +36,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// @dev CLONE FACT (§18.6, proven on 8-B14/8-B5): a `ModuleProxyFactory` clone shares the mastercopy's runtime
 ///      bytecode, so `immutable` is identical for every clone — it CANNOT carry per-clone `setUp` config. EVERY
 ///      per-clone wired address is plain set-once storage written in `setUp` under `initializer`, NOT `immutable`.
-///      The mastercopy is init-locked at deploy (via {MastercopyInitLock} — HYDREX-ADV-02; was plain `Module`).
+///      The mastercopy is init-locked at deploy (via {MastercopyInitLock}; was plain `Module`).
 contract LpStrategyModuleDemoVAMM is MastercopyInitLock {
     // --------------------------------------------------------------------- set-once storage (NOT immutable — clone)
     /// @notice The engine Safe (`avatar == target == juniorTrancheEngine`); the deposit `to` + every balance read.

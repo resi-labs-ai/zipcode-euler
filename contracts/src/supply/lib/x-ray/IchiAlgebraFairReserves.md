@@ -2,7 +2,7 @@
 
 > IchiAlgebraFairReserves | 43 nSLOC | `main` (working tree) | Foundry | 22/06/26 | **Verdict: HARDENED** *(only residual is the off-chain TWAP-source trust, X-2)*
 
-> **Update 2026-06-22 (SUPPLY-ADV-02 + ADV-03):** the lib now has a read-time `isInitialized()` plugin-readiness
+> **Update:** the lib now has a read-time `isInitialized()` plugin-readiness
 > gate (`PluginNotReady`, ADV-02) — a THIRD fail-closed revert beyond `NoPlugin`/`BadTimepoints`. All three are now
 > unit-tested via mock plugins (`NoPlugin`, `PluginNotReady` ctor+read, `BadTimepoints` — ADV-03), and the TWAP
 > window under-coverage residual (X-2) is settled empirically by a live-fork revert test. The earlier
@@ -50,7 +50,7 @@ the consumer (1h / 3600s on the deployed oracle).
 | I-3 | **fail-closed on a bad TWAP source** — no plugin reverts `NoPlugin`; an uninitialized plugin reverts `PluginNotReady` (ADV-02 read-time gate); a malformed timepoint set reverts `BadTimepoints` | Yes | `:45`, `:53`, `:92`; **all three now tested** via mock plugins — `test_..._noPlugin`, `test_ctor_revert_uninitializedPlugin` + `test_fairReserves_revert_uninitializedPlugin`, `test_fairReserves_revert_badTimepoints` (ADV-03); under-coverage fails closed on the live plugin (`test_fork_underCoverageWindow_failsClosed`) |
 | I-4 | **`_meanTick` rounds toward −∞** on a negative remainder (consult convention; avoids off-by-one upward bias at negative ticks) | Yes | code (`:85`); inherited from the UniV3 convention, exercised indirectly by I-1/I-2 (live tick is negative for HYDX/USDC) |
 | I-5 | reserves = base recon + limit recon + idle balances; idle added as raw token amounts (composition not price-sensitive) | Yes | follows from `:54-70`; `test_fork_tvl_and_holder_value` confirms the summed dollar TVL + pro-rata identity is sane |
-| X-1 | the tick→reserve math (`TickMath`, `LiquidityAmounts`) is correct | **No** (vendored) | `ConcentratedLiquidity` is frozen UniV3 math — audited/formally-verified upstream; faithfulness diff confirmed 2026-06-20 (`libraries/x-ray/library-review.md`) |
+| X-1 | the tick→reserve math (`TickMath`, `LiquidityAmounts`) is correct | **No** (vendored) | `ConcentratedLiquidity` is frozen UniV3 math — audited/formally-verified upstream; faithfulness diff confirmed (`libraries/x-ray/library-review.md`) |
 | X-2 | the Algebra plugin's TWAP is honest (sufficient observation cardinality, not stale, window not gameable over its length) | **No** (pool/off-chain) | the TWAP source is the Algebra pool's oracle plugin — integrity is a pool-config/economic property, not enforced here |
 
 ## 4. Guards — coverage
@@ -80,7 +80,7 @@ the consumer (1h / 3600s on the deployed oracle).
 - **Fail-closed paths now tested (I-3) — gap closed.** `NoPlugin`, `PluginNotReady` (ADV-02), and `BadTimepoints`
   (ADV-03) all have mock-plugin unit tests; the previously-flagged "one real test gap" is closed.
 - **In-domain inputs (X-1 boundary)** — the tick→reserve math is vendored frozen UniV3 (`ConcentratedLiquidity`);
-  the only copy-specific risk (a transcription typo) was ruled out by the 2026-06-20 faithfulness diff. The residual
+  the only copy-specific risk (a transcription typo) was ruled out by the faithfulness diff. The residual
   is feeding in-domain inputs (ticks within ±MAX_TICK, base ≤ uint128) — `TickMath` reverts out-of-range, so this
   fails closed rather than mis-prices.
 

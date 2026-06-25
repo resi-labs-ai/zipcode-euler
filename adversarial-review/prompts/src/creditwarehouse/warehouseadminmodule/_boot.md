@@ -37,7 +37,7 @@ There is no audited parent for the encoder itself, but the engine it forwards to
   `allowFunction` L102). Confirm the adapter's `execTransactionWithRole(to, value, data, operation, roleKey,
   shouldRevert)` call shape, the `Operation` enum (0=Call/1=DelegateCall), and the `ExecutionOptions` enum
   (0=None,1=Send,2=DelegateCall,3=Both) match the real modifier. The local mirror is
-  `contracts/src/interfaces/zodiac/IRoles.sol` (claims byte-for-byte parity, verified 2026-06-06) — attack
+  `contracts/src/interfaces/zodiac/IRoles.sol` (claims byte-for-byte parity, verified) — attack
   whether the encoded calldata + the `(to, operation, roleKey, shouldRevert)` args are what the real modifier
   + its scope will actually accept (a mismatch is fail-closed DoS, not a leak — say which).
 - **`ReceiverTemplate`** — `reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol` — the

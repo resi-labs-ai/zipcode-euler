@@ -36,7 +36,7 @@ the **first engine Zodiac Module** — it set the `is Module` / `setUp`-under-`i
 | `SzipBuyBurnModule` (`is MastercopyInitLock, CloneReportReceiver`) | The whole bid engine. `setUp`-under-`initializer` set-once wiring (10 args, +`coverageGate`; NO immutable — clone); the bid bodies live in **internal `_postBid(GPv2OrderInput memory)` / `_cancelBid()`** (single-resting-bid + every validation), reached by TWO doors: (1) `onlyOperator` `postBid` / operator-or-owner `cancelBid` (the operator hot key), and (2) the **CRE report socket** `_processReport` (CTR-01, below). `_postBid` = validate the 3-field order → single-resting-bid → cap → **coverage gate `covered()`** → price-bound vs `navExit` → NAV-freshness fence → build canonical GPv2 uid → `exec` USDC `approve(vaultRelayer)` + `exec` `setPreSignature(uid,true)`; `_cancelBid` = presig→false + allowance→0 (idempotent). `_orderUid` (`GPv2OrderInput memory`, in-contract canonical GPv2 hashing); `onlyOwner` (Timelock) governed-param setters (`setDiscountBps`/`setBuybackCap`) + 8 Timelock-settable wiring setters (incl. `setCoverageGate`) + the 3 inherited receiver-wiring setters (`setForwarder`/`setExpectedWorkflowId`/`setExpectedAuthor`); `currentBid`/`quoteMaxPrice` views. |
 | `CloneReportReceiver` (`abstract is Ownable, IReceiver`; `contracts/src/supply/szipUSD/CloneReportReceiver.sol`) | **CTR-01** — the reusable clone-compatible CRE report socket mixed into the module. `is Ownable` reuses zodiac-core's `factory/Ownable.sol` (the SAME base `Module` derives from ⇒ C3 merges to ONE `owner`/`onlyOwner`, no clash). `onReport(metadata, report)` **fails CLOSED** (`forwarder == 0 \|\| msg.sender != forwarder ⇒ InvalidForwarder` — the clone inversion vs `ReceiverTemplate`'s "zero ⇒ open") → optional workflow-id/author check → `_processReport`. No constructor (clone-safe); `forwarder`/`expectedWorkflowId`/`expectedAuthor` are Timelock-settable, default zero (inert socket). `_decodeMetadata` replicated VERBATIM from `ReceiverTemplate` (offsets 32/64/74). Reusable by the other operator/controller modules unchanged. |
 | `IGPv2Settlement` (`contracts/src/interfaces/cow/IGPv2Settlement.sol`) | The minimal CoW `GPv2Settlement` surface (Base 8453 `0x9008…ab41`, same address all chains): `domainSeparator()` + `vaultRelayer()` (both read LIVE in `setUp`), `setPreSignature(bytes,bool)` (the PRESIGN target — the `owner` packed into `orderUid` MUST == `msg.sender` == the engine Safe), `preSignature(bytes)` (read-back: 0 = unsigned). |
-| `INavOracle` (declared inline in the .sol) | The minimal `SzipNavOracle` surface the module reads: `navExit()` (= `min(spot, twap)`, NEVER reverts on staleness — the §3 buyer-conservative exit mark), `fresh()` (both pushed legs within `maxAge` — gates `postBid`), `maxAge()` (the NAV-freshness fence bound), `oldestRequiredLegTs()` (SEC-13 — the oldest required-leg push timestamp; the fence anchors `validTo ≤ this + maxAge`), and `poke()` (SUPPLY-ADV-14 — called before `navExit` to book the TWAP leading-segment at the current block). |
+| `INavOracle` (declared inline in the .sol) | The minimal `SzipNavOracle` surface the module reads: `navExit()` (= `min(spot, twap)`, NEVER reverts on staleness — the §3 buyer-conservative exit mark), `fresh()` (both pushed legs within `maxAge` — gates `postBid`), `maxAge()` (the NAV-freshness fence bound), `oldestRequiredLegTs()` (SEC-13 — the oldest required-leg push timestamp; the fence anchors `validTo ≤ this + maxAge`), and `poke()` (called before `navExit` to book the TWAP leading-segment at the current block). |
 | `ICoverageGate` (declared inline in the .sol) | The coverage seam `postBid` reads (the `DurationFreezeModule`): `covered() → bool`. Zero ⇒ gate OFF (M1 / kill-switch). **Note:** `covered()` gates POST time only — the solver FILL is intentionally NOT fill-time coverage-gated, because the USDC spent is free-side engine-Safe value `coverageValue()` already EXCLUDES, so a post-coverage-drift fill cannot breach the floor. A CoW coverage-recheck HOOK is rejected (`APP_DATA == 0` forbids hooks). |
 | `IERC20Approve` (declared inline) | The `approve(spender, amount)` face the module builds calldata for (the USDC → VaultRelayer allowance). |
 
@@ -69,7 +69,7 @@ enters the hash). Validation order:
 1. `currentUid.length != 0` ⇒ `BidAlreadyLive` (single-resting-bid invariant — a re-post must `cancelBid` first).
 2. `sellAmount == 0 || buyAmount == 0` ⇒ `ZeroAmount`; `buyAmount > MAX_BUY_AMOUNT (1e30)` ⇒ `BuyAmountTooLarge`.
 3. `sellAmount > buybackCap` ⇒ `CapExceeded` (so `buybackCap == 0` reverts every post = the kill-switch).
-3b. **COVERAGE GATE** (LP path-lock, 2026-06-13): `if coverageGate != 0 && !ICoverageGate(coverageGate).covered()
+3b. **COVERAGE GATE** (LP path-lock): `if coverageGate != 0 && !ICoverageGate(coverageGate).covered()
    ⇒ Undercovered` — a buy-burn bid is a free-side outflow (spends basket USDC to retire szipUSD), blocked while
    juniorTrancheSidecar+LP coverage is below the debt floor (incl. a price-drift breach). Transparent at zero senior debt
    (`floor = 0 ⇒ covered() == true`). `coverageGate == 0` is the M1 / kill-switch state.
@@ -84,7 +84,7 @@ enters the hash). Validation order:
    tighter — `anchor + maxAge < now < validTo`); `StaleNav` stays reachable via the **rate-stale** path (fresh pushed
    legs but a stale wired cross-chain rate, which the leg-only anchor does not pre-empt).
 7. **`INavOracle(navOracle).poke()` THEN** read `navExit18 = INavOracle(navOracle).navExit()` (USD-18dp per 1e18
-   share). The poke (SUPPLY-ADV-14, mirrors `ExitGate.depositFor` before `navEntry`) books the TWAP's leading
+   share). The poke (mirrors `ExitGate.depositFor` before `navEntry`) books the TWAP's leading
    `[lastUpdate, now]` segment at the current block so the exit mark does not carry a `g/W` slice of a stale spot.
    **Price bound** (exact
    no-truncation integer form, USD-18dp basis, floored against the buyer): `sellAmount * 1e12 * 10_000 * 1e18 >
@@ -106,7 +106,7 @@ live bid. Else `exec setPreSignature(uid, false)` + `exec approve(vaultRelayer, 
 zero the allowance), `delete currentUid`, `currentSellAmount = 0`, emit `BidCancelled`. The presig→false + the
 allowance→0 together close the partial-fill double-fill (stale presignature + refreshed approval) vector.
 
-### Report socket — the CRE second door (CTR-01, 2026-06-16)
+### Report socket — the CRE second door (CTR-01)
 `postBid`/`cancelBid` are `onlyOperator` (a hot-key EOA), but `cre-sdk-go`'s only on-chain WRITE is
 `WriteReport` (DON-signed report → immutable Keystone Forwarder → `IReceiver.onReport`); it has **no raw-tx /
 keeper primitive** (verified across the whole SDK). So a wasip1 CRE workflow could not drive the operator
@@ -146,7 +146,7 @@ liveness only).
   `setOperator` additionally re-checks `operator != owner` (`OwnerIsOperator`, SEC-15) so a re-point cannot collapse
   the Timelock owner and the CRE operator into one key. The three value-load-bearing setters `_cancelBid`
   dereferences — `setSettlement`, `setVaultRelayer`, `setUsdc` — additionally revert `BidAlreadyLive` while a bid is
-  live (`currentUid.length != 0`, SUPPLY-ADV-05): re-pointing under a live bid would make `_cancelBid` flip the
+  live (`currentUid.length != 0`): re-pointing under a live bid would make `_cancelBid` flip the
   presign / zero the allowance on the NEW wiring and strand the OLD presign + allowance LIVE (a fillable
   believed-cancelled bid), so cancel-before-rewire is forced. A
   redeployed oracle/Safe/settlement/gate is a one-call re-point, not a redeploy cascade
@@ -210,7 +210,7 @@ on-chain gate). `currentBid()` returns `(currentUid, currentSellAmount)` for mon
   "renounce-freeze at deploy" framing).
 
 ## Gotchas
-- **The NAV-freshness fence is the COLLAPSED "fulfillment controller" (credit-union C2, 2026-06-09).** Per the
+- **The NAV-freshness fence is the COLLAPSED "fulfillment controller" (credit-union C2).** Per the
   superintendent directive there is **no separate `ExitFulfillmentController`** — its only on-chain value-add (the
   `validTo` freshness fence) was folded directly into `postBid` (error `ValidToBeyondNavFreshness`, plus
   `maxAge()` + `oldestRequiredLegTs()` added to the local `INavOracle`). A resting bid must not fill against a NAV

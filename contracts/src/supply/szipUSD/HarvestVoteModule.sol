@@ -128,7 +128,7 @@ contract HarvestVoteModule is MastercopyInitLock {
 
     /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock). Moves `avatar`/`target` in
     ///         lockstep so the engine-Safe invariant `avatar == target == juniorTrancheEngine` holds after a re-point
-    ///         (SUPPLY-ADV-11): `juniorTrancheEngine` is the `exerciseVe` recipient + every balance/floor-read subject,
+    ///         `juniorTrancheEngine` is the `exerciseVe` recipient + every balance/floor-read subject,
     ///         so it MUST equal the exec'ing Safe (`target`) — else `lockVe` would burn the old Safe's oHYDX while
     ///         minting the veNFT to the new engine. Matches the syncing siblings (Sell/Exercise/LpStrategy/FarmLoop/Recycle).
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {

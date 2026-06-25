@@ -10,11 +10,11 @@
 > Source of truth = the kept code: `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol` +
 > `contracts/script/CreditWarehouseDeployer.sol`. Ticket `tickets/sodo/8-Bw-credit-warehouse.md` + report
 > `reports/8-Bw-report.md` + spec `claude-zipcode.md` §4.5/§8.5 are intent — the code is the final form.
-> (Build-phase doctrine, §17/2026-06-09: the adapter's cross-component pointers are **Timelock-settable**, not
+> (Build-phase doctrine, §17: the adapter's cross-component pointers are **Timelock-settable**, not
 > immutable, and ownership is **transferred to the Timelock**, not renounced; re-freeze to immutable is DEFERRED
 > to pre-prod. The older "six immutables" / "renounce" wording in the ticket/report is reconciled here.)
 >
-> Last reconciled against the kept code @ `5f3706d` (2026-06-10). If the contract has moved past that commit,
+> Last reconciled against the kept code @ `5f3706d`. If the contract has moved past that commit,
 > re-diff this doc before trusting its claims.
 
 **In one breath:** a Gnosis Safe holds the EulerEarn shares that back every zipUSD in circulation. A Chainlink
@@ -32,7 +32,7 @@ float** (the "protocol's holding"). The Safe's **admin** is a deployed **Zodiac 
 `Module`, NEVER `enableModule`'d). It holds **no custody and enforces no scope**: it is a pure encoder that
 decodes the §4.4/§8.5 CRE report envelope into exactly one of the four pinned ops and forwards it through
 `Roles.execTransactionWithRole(to, 0, data, Call, roleKey, true)`. **The security boundary is the Roles scope,
-not this bytecode** (the user-ratified "no bespoke privileged contract" decision, 2026-06-06).
+not this bytecode** (the user-ratified "no bespoke privileged contract" decision).
 
 ## Custody character — the Safe accumulates SHARES; USDC is pure pass-through (load-bearing)
 The warehouseSafe is a **share-accumulator, not a USDC account.** It holds `EulerEarn` shares; free USDC lives

@@ -64,7 +64,7 @@ Scope: `DefaultCoordinator`, `LienXAlphaEscrow`. View/pure excluded. **There are
 
 | Contract | Function | Parameters | State Modified |
 |----------|----------|------------|----------------|
-| DefaultCoordinator | `setEscrow()` | escrow_ | `escrow` (no standing allowance; `_lock` approves exact amount JIT — LOSS-ADV-01) |
+| DefaultCoordinator | `setEscrow()` | escrow_ | `escrow` (no standing allowance; `_lock` approves exact amount JIT) |
 | DefaultCoordinator | `setNavOracle()` | navOracle_ | `navOracle` |
 | DefaultCoordinator | `setXAlpha()` | xAlpha_ | `xAlpha` (+ re-approve escrow if wired) |
 | DefaultCoordinator | `setRecoveryFloor()` | newFloor (`<1e18`) | `recoveryFloor` (future defaults only) |

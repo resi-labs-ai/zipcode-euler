@@ -30,9 +30,9 @@ after borrow; cap negative reverts; `outstandingDebt`==0 after repay; LP fully r
 borrow rejected by the guard.
 
 **Notes.** This is the **farm utility** vault's utilization, not the EE senior pool's (SP-15 reads the EE pool). IRM is
-`ZeroIRM` (real 0%-rate config) so no interest accrues. SUPPLY-ADV-13 strict-18dp LP-key guard lives on the LP oracle.
+`ZeroIRM` (real 0%-rate config) so no interest accrues. The strict-18dp LP-key guard lives on the LP oracle.
 
-**Result.** **PASS** (2026-06-24, live fork; `_harness.sh` seed + token seeding).
+**Result.** **PASS** (live fork; `_harness.sh` seed + token seeding).
 - Wiring: `operator()`=creOperator, `borrowCap()`=**1e12 ($1M)**, `lpToken()`=ICHI; borrow-vault `cash` 0 → **200,000e6**.
 - `postCollateral(150,000e18)` status 1 → `postedCollateral` **150,000e18** (escrow shares). ✓
 - `borrow(100,000e6)` status 1 → main USDC **100,000e6**, `outstandingDebt` **100,000e6** (EVC liquidity check passed

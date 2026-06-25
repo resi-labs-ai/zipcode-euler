@@ -435,7 +435,7 @@ contract SzipNavOracleDemoVAMMTest is Test {
         assertEq(oracle.spotNavPerShare(), net * 1e18 / supply, "spot = (gross-provision)*1e18/supply");
     }
 
-    // ----------------------------------------------------------------- HYDREX-ADV-01: restored parent guards
+    // ----------------------------------------------------------------- restored parent guards
     /// @notice obsSpacing throttle (back-ported): permissionless poke() spam must NOT evict the TWAP ring —
     ///         obsIndex advances at most once per obsSpacing, not once per poke (else the bracket collapses to spot).
     function test_obsSpacing_pokeSpam_cannot_collapse_window() public {

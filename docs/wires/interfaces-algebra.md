@@ -22,7 +22,7 @@ Hard distinction baked into every shim: **Algebra Integral, NOT Uniswap V3** —
 **no `fee` field** (Algebra is fee-by-pair, set in the pool's `globalState`, not a per-call tier).
 For the **base-factory** HYDX/USDC pool, `deployer == address(0)`.
 
-## Live external pins (BaseAddresses.sol, on-chain-verified 2026-06-06)
+## Live external pins (BaseAddresses.sol, on-chain-verified)
 | Constant | Address | Shimmed by |
 |---|---|---|
 | `ALGEBRA_SWAP_ROUTER` | `0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e` | `ISwapRouter` |
@@ -66,7 +66,7 @@ in `BaseAddresses.sol` comments only.
 - **Consumed by:** none. RESERVED for the planned **8-B9 range-sell ladder** (`NFPM.mint` / `positions`;
   `build/pending-docs/hydrex.md` §9.1, ticket `KEEPER-01b`) — NOT implemented in any contract. The prod LP path
   uses ICHI (`IICHIVault.deposit`/`withdraw`), the demo uses the vAMM pair (`IVammPair.mint`); neither touches the
-  NFPM. (Used directly via `cast` in `build/anvil/zipusd-xalpha-pool.sh` for local pool bootstrapping only.)
+  NFPM. (Used directly via `cast` in `build/anvil/recipes/zipusd-xalpha-pool.sh` for local pool bootstrapping only.)
 - **Gotchas:** `mint(MintParams)` selector = **0xfe3f3be7** (the 3-leading-address struct including
   `deployer`); the guessed UniV3 10-field struct `0x9cc1a283` is ABSENT — Algebra **omits `fee`, ADDS
   `address deployer`** (3rd field). `positions` = `0x99fbab88`, return tuple is **12 fields** (includes

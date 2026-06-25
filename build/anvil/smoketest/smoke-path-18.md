@@ -6,8 +6,8 @@ demo LP module is enabled on the SAME engine Safe alongside the prod modules.
 
 **Proves.** `SzipNavOracleDemoVAMM` prices the live vAMM HYDX/USDC LP (HYDX via the pushed `LEG_HYDX_USD`, USDC $1,
 6→18dp); `LpStrategyModuleDemoVAMM` (`addLiquidity` = `pair.mint`; stake/unstake on the vAMM gauge) enabled on the main
-Safe via Zodiac; surgical forks of the verified NAV oracle + LP module with ONLY the LP-leg seam changed (HYDREX-ADV-01
-restored the 3 audited guards the demo NAV fork had dropped; HYDREX-ADV-02 restored MastercopyInitLock). Sources:
+Safe via Zodiac; surgical forks of the verified NAV oracle + LP module with ONLY the LP-leg seam changed (the 3 audited
+guards the demo NAV fork had dropped were restored, as was MastercopyInitLock). Sources:
 `docs/SHOWCASE-VAMM.md` (a.k.a. `build/wires/SHOWCASE-VAMM.md`), `contracts/src/hydrex-demo-fork/x-ray/`.
 
 **Tier.** Demo (outside the audited core). Deployed by `DeployShowcaseVAMM.s.sol` AFTER the main deploy.
@@ -26,7 +26,7 @@ the LP.
 **Notes.** Retire by `disableModule` + pulling the LP out. The demo proves the auto-compounder loop on a real live
 venue with only the LP-leg swapped — it does NOT ship as core. The vAMM pair/gauge are existing live Base contracts.
 
-**Result.** **PASS — wiring + mechanics re-verified live 2026-06-24.**
+**Result.** **PASS — wiring + mechanics re-verified live.**
 - `SzipNavOracleDemoVAMM` (`0xD74712fF…`) deployed + code present; demo `spotNavPerShare()` reads. ✓
 - `LpStrategyModuleDemoVAMM` **clone `0x8f18E9Fd…` is `enableModule`'d on the main Safe** (`isModuleEnabled==true`),
   `operator()` = `creOperator` — running alongside the prod engine modules on the same Safe. Wiring: `gauge()` = the

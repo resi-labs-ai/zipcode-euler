@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 /// @title BaseAddresses
 /// @notice Validated Base mainnet (chainId 8453) address constants for the
 ///         protocols Zipcode interfaces+forks against. Status flags per the
-///         2026-06-06 superintendent verification pass (WOOF-00). All addresses
+///         superintendent verification pass (WOOF-00). All addresses
 ///         are EIP-55 checksummed (the all-lowercase form does NOT compile as a
 ///         Solidity address literal).
 library BaseAddresses {
@@ -22,14 +22,14 @@ library BaseAddresses {
     // -- Gnosis Safe (CONFIRMED on Basescan) --------------------------------
     address internal constant SAFE_PROXY_FACTORY_1_3_0 = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
     address internal constant SAFE_L2_SINGLETON_1_4_1 = 0x29fcB43b46531BcA003ddC8FCB67FFE91900C762;
-    // The Safe proxy factory the BaalSummoner (0x22e0…) is ACTUALLY configured with — verified 2026-06-07 by
+    // The Safe proxy factory the BaalSummoner (0x22e0…) is ACTUALLY configured with — verified by
     // reading BaalSummoner storage slot 208 on Base mainnet (it is a 1.3.0 GnosisSafeProxyFactory deployment, a
     // DIFFERENT address from 0xa6B7…). Used for the 8-B1 main-Safe CREATE2 precompute; the compute==avatar
     // fail-closed assert in SummonSubstrate guards any drift. The summoner's `gnosisSingleton` (read live) =
     // 0x69f4D1788e39c87893C980c06EdF4b7f686e2938.
     address internal constant BAAL_SAFE_PROXY_FACTORY = 0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC;
 
-    // -- Baal (CORRECTED 2026-06-06 — the prior labels were SCRAMBLED) ------
+    // -- Baal (CORRECTED — the prior labels were SCRAMBLED) ------
     // Source of truth: reference/Baal/deployments/base/*.json (cross-checked on-chain via template()).
     // The base summoner (summonBaal / summonBaalFromReferrer) is 0x22e0..., NOT 0x97Aaa... (that is the
     // AdvToken variant). Confirmed: BaalSummoner(0x22e0).template() => 0xE0F33E95... == Baal.json singleton.
@@ -51,16 +51,16 @@ library BaseAddresses {
     /// @dev The Voter's voting escrow (veHYDX) — alias of VEHYDX, named per the 8-B7 ticket Deliverable list.
     ///      Read live in the module's `setUp` off `Voter.ve()`; this constant is the address-book + fork-test anchor.
     address internal constant HYDREX_VE = 0x25B2ED7149fb8A05f6eF9407d9c8F878f59cd1e1;
-    /// @dev The Hydrex RewardsDistributor = Minter._rewards_distributor() (0x4b1cd5da), read live 2026-06-08. The
+    /// @dev The Hydrex RewardsDistributor = Minter._rewards_distributor() (0x4b1cd5da), read live. The
     ///      per-veNFT anti-dilution rebase (`claim_many`/`claimable`). On-chain-verified this window.
     address internal constant HYDREX_REWARDS_DISTRIBUTOR = 0x6FCa200fE1F71Be1b8714aCFB5e9d3a147cceD42;
     /// @dev The Hydrex Minter — the rebase/epoch driver. NOT imported by any module (the 8-B7 module hard-wires the
-    ///      RewardsDistributor; `Minter._rewards_distributor()` = HYDREX_REWARDS_DISTRIBUTOR, verified live 2026-06-08).
+    ///      RewardsDistributor; `Minter._rewards_distributor()` = HYDREX_REWARDS_DISTRIBUTOR, verified live).
     ///      The address-book anchor for item-10 deploy (derive the RewardsDistributor via `Minter._rewards_distributor()`
-    ///      at deploy). The 8-B7 fork test declares its own test-local copy. Verified live 2026-06-08.
+    ///      at deploy). The 8-B7 fork test declares its own test-local copy. Verified live.
     address internal constant HYDREX_MINTER = 0xA7D64625F45548a19B2A19e28E7546bb2839003E;
     address internal constant ALGEBRA_NFPM = 0xC63E9672f8e93234C73cE954a1d1292e4103Ab86;
-    // CORRECTED 2026-06-06 (on-chain verified): the ICHI vault FACTORY is read from the deposit guard's
+    // CORRECTED (on-chain verified): the ICHI vault FACTORY is read from the deposit guard's
     // ICHIVaultFactory() getter = 0x2b52c416. The old 0x7d11De61... constant was MIS-LABELED — it is a Gnosis
     // Safe (getOwners() => 7 owners), the ICHI admin/deployer multisig, NOT the factory the interfaces call.
     address internal constant ICHI_VAULT_FACTORY = 0x2b52c416F723F16e883E53f3f16435B51300280a;
@@ -74,7 +74,7 @@ library BaseAddresses {
     ///      `exactInputSingle` `deployer` arg is address(0). `exactInputSingle(...)` selector 0x1679c792.
     address internal constant ALGEBRA_SWAP_ROUTER = 0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e;
 
-    // -- CoW Protocol (verified live on Base 8453, 2026-06-08 via `cast`) ----
+    // -- CoW Protocol (verified live on Base 8453 via `cast`) ----
     /// @dev GPv2Settlement — SAME address all chains. `domainSeparator()` on Base =
     ///      0xd72ffa789b6fae41254d0b5a13e6e1e92ed947ec6a251edf1cf0b6c02c257b4b. The 8-B14 buy-burn module signs
     ///      PRESIGN orders here via `setPreSignature(bytes,bool)` (selector 0xec6cb13f).
