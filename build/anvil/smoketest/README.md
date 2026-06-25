@@ -2,8 +2,9 @@
 
 Each `smoke-path-NN.md` pushes **real smoke through the real machinery** on the running anvil (Base fork @ 47096000):
 fire the actual functions at the actual deployed contracts, prove a named **seam** holds (the per-contract X-Ray
-invariants), happy path **and** an adversarial/negative ("fuzzy") leg. Rebuilt 2026-06-24 from
-`../smoke-path-x-ray-update.md` (the recipe); supersedes the old flat `../smoke-path-NN.md`.
+invariants), happy path **and** an adversarial/negative ("fuzzy") leg. Rebuilt 2026-06-24 from the docs/X-Ray/seam
+model (the per-contract `x-ray/` invariants + `docs/wires/SYSTEM-SEAM-MAP.md`); supersedes the old flat
+`../smoke-path-NN.md`.
 
 ## How to run
 - **Bind by NAME, never paste hex.** `source _harness.sh` gives the address book (engine modules are the live
