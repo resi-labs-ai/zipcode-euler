@@ -18,14 +18,19 @@ paths prove the joints). Three sources do the work for you — do not invent any
    with an **On-chain=Yes/No** flag. Lift the `On-chain=Yes` ones into the SP's Assertions, by ID.
 3. **`build/anvil/contract-map.md` is the only address source.** Bind by role/name, not pasted hex (see Preconditions).
 
-## Preconditions (do these first)
+## Preconditions
 
-- **SIZE-01 must be resolved.** `EulerVenueAdapter` is 38 bytes over EIP-170 and blocks `--broadcast`
-  (`build/tickets/contracts/trim-eulervenueadapter.md`). Until it is trimmed and the board re-broadcasts, the suite
-  cannot run and addresses cannot be refreshed. Resolve it, redeploy, regenerate `contract-map.md` — THEN run SPs.
-- **Re-bind every address.** The redeploy (SIZE fix + the new `SiloRegistry`) shifts addresses. Resolve them from
-  the broadcast `broadcast/DeployLocal.s.sol/8453/run-latest.json` (or the regenerated `contract-map.md`) by
-  contract NAME, and stop pasting truncated hex into SPs — that is why the current SPs rot on every redeploy.
+- **SIZE-01 is RESOLVED (2026-06-22) and the board is live.** `EulerVenueAdapter` is 24054 bytes (under EIP-170,
+  +522 margin); the board re-broadcasts clean. As of 2026-06-24 the board is freshly re-broadcast from HEAD on a
+  clean anvil @ 47096000, all `contract-map.md` addresses verified to have code on-chain, every `abi/` regenerated,
+  and `SeniorNavAggregator` (CTR-05) is now wired onto the single-silo board. The suite can run.
+- **The rebuilt suite lives in `build/anvil/smoketest/`.** The old flat `build/anvil/smoke-path-NN.md` were the
+  2026-06-10 run; they bound by stale truncated hex from an old deploy (they rot on every redeploy) and predate the
+  CTR-03 `siloId` routing + the post-2026-06-10 guards. The `smoketest/` rewrite supersedes them.
+- **Re-bind every address by NAME.** Resolve at run time from `contract-map.md` (or the broadcast
+  `broadcast/DeployLocal.s.sol/8453/runLocal-latest.json`) by contract NAME. Never paste truncated hex.
+- **Isolate each SP.** Take one `evm_snapshot` after deploy = the clean baseline; `evm_revert` to it before each SP
+  (reverting consumes the snapshot, so re-snapshot after each revert) so SPs don't contaminate each other.
 
 ## Coverage table — seam → what to assert → current SP → status
 
@@ -45,9 +50,9 @@ Status: **covered** (an SP proves it), **partial** (touched but the seam's real 
 | S9 NAV→DurationFreeze floor | `release` can't drop coverage below `committed+pathLockedLp` | SP-03, SP-15 | covered | `docs/supply/szipUSD/DurationFreezeModule.md` I-1/I-2 |
 | S10 NAV→BuyBurn bid | bid priced at `navExit`, fenced to `oldestRequiredLegTs` | SP-05, SP-13 | covered | `docs/supply/szipUSD/SzipBuyBurnModule.md` I-2/I-3 |
 | S11 Warehouse→Roles→Safe→EE | the 4 ops route only through the Roles scope; avatar parity | SP-09 | covered (scope tree audited off-chain) | `docs/supply/CreditWarehouse/WarehouseAdminModule.md` |
-| S12 EE shares→senior NAV donation-immune | aggregate reads `convertToAssets(balanceOf(safe))`, never `balanceOf(pool)` | — | **gap** (SeniorNavAggregator not on this board yet) | `docs/SeniorNavAggregator.md` I-1 |
-| S13 engine module set on shared Safes | module set IS the access control; cross-module value conservation | SP-17 | partial (flywheel runs; end-to-end conservation not asserted) | `portfolio-map.md`; each module ELI20 |
-| credit spine (not an S#): CTR-03 routing | origination resolves venue via `SiloRegistry.venueOf(siloId)`; line count bumps | SP-14, SP-16 | **drifted** (now needs `siloId`; see below) | `docs/ZipcodeController.md`, `docs/SiloRegistry.md` |
+| S12 EE shares→senior NAV donation-immune | aggregate reads `convertToAssets(balanceOf(safe))`, never `balanceOf(pool)` | **SP-21** | **covered** (SeniorNavAggregator now on the board) | `docs/SeniorNavAggregator.md` I-1; X-Ray I-1/I-2/I-6 |
+| S13 engine module set on shared Safes | module set IS the access control; cross-module value conservation | SP-17, **SP-20** | covered (SP-17 per-leg + SP-20 end-to-end conservation) | `portfolio-map.md`; each module ELI20 |
+| credit spine (not an S#): CTR-03 routing | origination resolves venue via `SiloRegistry.venueOf(siloId)`; line count bumps | SP-14, SP-16 | **covered** (rebuilt with the 8-field `siloId` payload; see below) | `docs/ZipcodeController.md`, `docs/SiloRegistry.md` |
 | lien pricing (not an S#): revaluation | reportType-3 batch reprices liens; staleness window; strict-18dp | SP-08 | covered | `docs/ZipcodeOracleRegistry.md` |
 
 ## Drift to fix across ALL SPs (catch these while you go)
@@ -118,13 +123,34 @@ Docs: docs/supply/ZipDepositModule.md · X-Ray: contracts/src/supply/x-ray/ZipDe
 - **Add SP-20 — engine flywheel end-to-end value conservation (S13).** deposit → LP → harvest → exercise → sell →
   recycle, asserting basket value is conserved across the full loop. The szipUSD portfolio-map + SYSTEM-SEAM-MAP §7
   both call this out as proven node-by-node but never end-to-end.
-- **Defer SP-21 — senior NAV donation-immunity (S12)** until `SeniorNavAggregator` is on the board (it deploys
-  with the multi-silo hub, not this single-silo `DeployLocal`).
+- **SP-21 — senior NAV donation-immunity (S12) — NOW UNBLOCKED.** `SeniorNavAggregator` is wired into
+  `DeployZipcode`/`DeployLocal` (deployed last in the main sequence; reads the live `SiloRegistry` + zipUSD; owner
+  = Timelock). Write it: seed senior par via a CRE SUPPLY report, assert `seniorBacking()` ==
+  `convertToAssets(balanceOf(warehouseSafe))·1e12` (I-1/I-2), then the fuzzy leg — donate raw USDC to the EE pool
+  address + send EE shares away ⇒ `seniorBacking()` unmoved (I-1); zero-supply ⇒ `uint256.max` (I-6).
 - **Do NOT write SPs for:** S1 (964 precompile magnitude), S2 conservation (deploy-topology/964), the S4
   correlated-CRE-compromise (model it, don't fork-test), the S11 Roles scope tree (audit the deployed tree
   directly). The X-Rays mark these `On-chain=No`/off-chain.
 
+## New-guard coverage (the work since the 2026-06-10 run)
+
+The rebuilt suite must PROVE the post-2026-06-10 adversarial-review guards on the wired board — each is a
+fuzzy/negative leg in the SP that touches its contract:
+- `ZipcodeOracleRegistry` strict-18dp + `StaleReport` (SP-08); ctor `quote_` zero-guard.
+- `ZipRedemptionQueue` quiescent-state `setTokens` guard (SP-10).
+- `SzipNavOracle` poke-before-`navExit` + LP-TWAP readiness on `setLpPosition` (SP-13).
+- `SzipFarmUtilityLpOracle` strict-18dp LP-key guard (SP-04).
+- `SzipUSD` `setGate` post-issuance lock `AlreadyIssued` (SP-06).
+- `HarvestVoteModule`/`RecycleModule` avatar/target sync on `setJuniorTrancheEngine` (SP-17).
+- `LpStrategyModule` zero-slippage `removeLiquidity` reject (SP-17).
+- `ExitGate` conservation-setter locks + FoT received-delta guard (SP-06).
+- `SzipBuyBurnModule` refuse wiring re-point under a live bid (SP-05).
+- `DurationFreezeModule` Safe-distinctness on the freeze setters (SP-03).
+- `DefaultCoordinator` exact-amount JIT escrow approval, no standing MAX (SP-11).
+- `SzAlphaRateOracle` saturation-guarded `intrinsicAprBps` (SP-12).
+
 ## Update the README catalog when done
 
-`build/anvil/README.md` has the SP catalog table (headline question per SP). After the pass, align it: add the
-seam ID each SP proves, and add the new SP-19/20 (and SP-21 when it lands).
+`build/anvil/README.md`: repoint the catalog at `smoketest/`, add a **Seam** column (the S-id each SP proves),
+add rows for SP-19/20/21, and add the snapshot/revert isolation note. Add `build/anvil/smoketest/README.md` with
+the catalog + run order + the coverage-vs-board gap list.

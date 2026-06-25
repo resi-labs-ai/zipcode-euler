@@ -64,47 +64,47 @@
     "abi": "abi/SzipFarmUtilityLpOracle.json",
     "kind": "protocol"
   },
-  "0x9a59A47A42fb5D951c599BE0C9Af008D93ebe831": {
+  "0x8B7B057bB2B9A7F06929BdB89132005C1Fafd294": {
     "name": "SzipBuyBurnModule",
     "abi": "abi/SzipBuyBurnModule.json",
     "kind": "protocol"
   },
-  "0xa61c6B0E0CbA10Dad5ac06325ab95E5246c48DC2": {
+  "0xea9b76bB08d14E40f04409393B1F113E4999Efb2": {
     "name": "FarmUtilityLoopModule",
     "abi": "abi/FarmUtilityLoopModule.json",
     "kind": "protocol"
   },
-  "0x897d82285833933A79e2A3daC4759a7C47B0044e": {
+  "0x25cf123dB6700650aC387515519c287031c48aD8": {
     "name": "LpStrategyModule",
     "abi": "abi/LpStrategyModule.json",
     "kind": "protocol"
   },
-  "0x2246C8b9756b255DBBEb50eb6f13511B93Eb13ee": {
+  "0xf1DEbc425Da983d08FC713a06E655D1018556C1e": {
     "name": "HarvestVoteModule",
     "abi": "abi/HarvestVoteModule.json",
     "kind": "protocol"
   },
-  "0x10aa41B6A18FD128568D5e92012Fba4C6fE45f0f": {
+  "0xaD54085b62Ef94923f980314444b63c526Aac4e2": {
     "name": "ExerciseModule",
     "abi": "abi/ExerciseModule.json",
     "kind": "protocol"
   },
-  "0xEbbB5EA0C4e3E719D5125002c8f91bCCD0B8913E": {
+  "0x1fCe5c71C12E5786A9966455375Cdb2843B8BEAa": {
     "name": "SellModule",
     "abi": "abi/SellModule.json",
     "kind": "protocol"
   },
-  "0x953e739AcD9a07B1Aa8d6e1F04a6B7e7BEAf7b5b": {
+  "0x28b0109B3ac79fA14F2E1914D44872BD6b32B97f": {
     "name": "RecycleModule",
     "abi": "abi/RecycleModule.json",
     "kind": "protocol"
   },
-  "0xA444F4653A4DFd06FA6C7128e9A714c68EebF55D": {
+  "0x2e0Ba43db83E0D3bBc2537836955890F3fAA7434": {
     "name": "OffRampModule",
     "abi": "abi/OffRampModule.json",
     "kind": "protocol"
   },
-  "0x675fdf5507b337cA98E3B40B59462B37A8DC050b": {
+  "0x3Bcd8BD1282B083C10bdba2a5E205Bc9A094f2FE": {
     "name": "DurationFreezeModule",
     "abi": "abi/DurationFreezeModule.json",
     "kind": "protocol"
@@ -124,7 +124,7 @@
     "abi": "abi/SzAlphaRateOracle.json",
     "kind": "protocol"
   },
-  "0x28b0109B3ac79fA14F2E1914D44872BD6b32B97f": {
+  "0x24D7910DCaF4cd27F07e877C588F8EEA0e992A3a": {
     "name": "WarehouseAdminModule",
     "abi": "abi/WarehouseAdminModule.json",
     "kind": "protocol"

@@ -47,27 +47,36 @@ CRE push (impersonate Forwarder) · xALPHA (stand-in ERC20) · CoW fill (simulat
 (mocked per §17). Everything else is real Base bytecode.
 
 ## Catalog
-| # | Path | Tier | Headline question it answers |
-|---|---|---|---|
-| 01 | zipUSD utility-dollar lifecycle | pure on-chain | does zipUSD mint/transfer/park; who can mint/burn |
-| 02 | NAV oracle genesis + read surface | pure on-chain | what's a share worth at genesis; FREE+COMMITTED additivity |
-| 03 | DurationFreeze commit (rq→non-rq move) | pure on-chain | can a zodiac module move value to the non-rq Safe |
-| 04 | Farm utility borrow/repay (real EVK) | pure on-chain | lines of credit + utilization on a real borrow vault |
-| 05 | Buy-burn bid post/cancel | needs-forwarder | the CoW limit order set + price bound |
-| 06 | Junior zap → share issuance | needs-forwarder | shares per zipUSD; Loot→gate, szipUSD→depositor |
-| 07 | szipUSD secondary transfer + NAV asymmetry | needs-forwarder | sell shares; entry pauses on stale, exit doesn't |
-| 08 | Revaluation batch → registry | needs-forwarder | CRE reprices liens; staleness window |
-| 09 | Warehouse senior ops (SUPPLY/APPROVE/REDEEM/REPAY) | needs-forwarder | the senior EE custody ops via Roles scope |
-| 10 | Senior par-epoch redemption | needs-forwarder | request→settle→claim at par |
-| 11 | Loss bond lifecycle | needs-forwarder | default provisioning drops NAV; bond slash |
-| 12 | xALPHA rate push | needs-forwarder | rate freshness feeds the NAV xALPHA leg |
-| 13 | Buy-burn full exit | needs-forwarder | sell shares for USDC + exit; NAV ticks up for stayers |
-| 14 | Full venue origination | needs-forwarder | the venue spine end-to-end (real EE) |
-| 15 | Utilization ↔ freeze identity | needs-forwarder | does %utilization == %committed in the non-rq Safe |
-| 16 | Draw + close line | needs-forwarder | re-anchor seed; repay→close burns the lien |
-| 17 | Engine flywheel | needs-forwarder | LP/harvest/exercise/sell/recycle against live venues |
-| 18 | vAMM auto-compounder showcase | demo | the demo oracle prices a live vAMM HYDX/USDC LP the prod oracle can't; demo LP module on the existing Safe |
+
+> **The runnable suite lives in `smoketest/`** (`smoketest/smoke-path-NN.md`), rebuilt 2026-06-24 from the
+> docs/X-Ray/seam model (`smoke-path-x-ray-update.md`). Each spec binds to `contract-map.md` **by name**, proves a
+> named seam + the contract's `On-chain=Yes` invariants, and carries a happy path **and** a fuzzy/negative leg.
+> SPs are isolated by `evm_snapshot`/`evm_revert` to a clean post-deploy baseline. See `smoketest/README.md`.
+
+| # | Path | Seam | Tier | Headline question it answers |
+|---|---|---|---|---|
+| 01 | zipUSD utility-dollar lifecycle | →S12 | pure on-chain | does zipUSD mint/transfer/park; who can mint/burn |
+| 02 | NAV oracle genesis + read surface | S8-in | pure on-chain | what's a share worth at genesis; FREE+COMMITTED additivity |
+| 03 | DurationFreeze commit (rq→non-rq move) | S9 | pure on-chain | can a zodiac module move value to the non-rq Safe |
+| 04 | Farm utility borrow/repay (real EVK) + borrow guard | — | pure on-chain | lines of credit + utilization; borrow pinned to the engine Safe |
+| 05 | Buy-burn bid post/cancel | S10 | needs-forwarder | the CoW limit order set + price bound; no re-point under a live bid |
+| 06 | Junior zap → share issuance | S8 | needs-forwarder | shares per zipUSD; Loot→gate, szipUSD→depositor; setter locks |
+| 07 | szipUSD secondary transfer + NAV asymmetry | S3 | needs-forwarder | sell shares; entry pauses on stale, exit doesn't |
+| 08 | Revaluation batch → registry | lien | needs-forwarder | CRE reprices liens; staleness window; strict-18dp/StaleReport |
+| 09 | Warehouse senior ops (SUPPLY/APPROVE/REDEEM/REPAY) | S11 | needs-forwarder | the senior EE custody ops via Roles scope |
+| 10 | Senior par-epoch redemption | — | needs-forwarder | request→settle→claim at par; quiescent setTokens guard |
+| 11 | Loss bond lifecycle | S5/S6 | needs-forwarder | default provisioning drops NAV; bond slash; JIT escrow approval |
+| 12 | xALPHA rate push | S2/S3 | needs-forwarder | rate freshness feeds the NAV xALPHA leg; saturation guard |
+| 13 | Buy-burn full exit | S10 | needs-forwarder | sell shares for USDC + exit; NAV ticks up; poke-before-navExit |
+| 14 | Full venue origination (CTR-03 siloId) | spine | needs-forwarder | the venue spine end-to-end (real EE); siloId routing |
+| 15 | Utilization ↔ freeze identity | S9 | needs-forwarder | does %utilization == %committed in the non-rq Safe |
+| 16 | Draw + close line (CTR-03 siloId) | spine | needs-forwarder | re-anchor seed; repay→close burns the lien |
+| 17 | Engine flywheel | S13 | needs-forwarder | LP/harvest/exercise/sell/recycle against live venues |
+| 18 | vAMM auto-compounder showcase | demo | demo | the demo oracle prices a live vAMM HYDX/USDC LP the prod oracle can't |
+| 19 | Donation seam (NAV moves with no deposit) | **S7** | needs-forwarder | a direct transfer into a counted Safe moves NAV; the Gate denominator absorbs it |
+| 20 | Engine flywheel end-to-end value conservation | **S13** | needs-forwarder | is basket value conserved across deposit→LP→harvest→exercise→sell→recycle |
+| 21 | Senior NAV donation-immunity | **S12** | needs-forwarder | Σ senior par reads `convertToAssets(balanceOf(safe))`, never `balanceOf(pool)` |
 
 Run order suggestion: 01→04 (no CRE) to warm up, then 06/08 (issuance + pricing), then 14/16 (origination),
-09/10 (senior), 03/15 (freeze), 05/13 (CoW exit), 11/12 (loss/bridge), 17 (flywheel), then 18 (the showcase layer —
-after `DeployShowcaseVAMM.s.sol`).
+09/10/21 (senior), 03/15 (freeze), 05/13 (CoW exit), 11/12 (loss/bridge), 17/20 (flywheel), 19 (donation seam),
+then 18 (the showcase layer — after `DeployShowcaseVAMM.s.sol`). Each SP `evm_revert`s to the clean baseline first.

@@ -12,9 +12,11 @@ The Zipcode protocol, deployed + wired on a **local anvil forking Base mainnet @
 > CTR-05 `SeniorNavAggregator` (newly wired into the deployer, deployed LAST in the main sequence so no earlier CREATE
 > moved). Every other main-protocol + runtime-created address is byte-for-byte identical to the prior board, and the
 > on-chain runtime bytecode equals the HEAD artifacts (verified). The `build/anvil/abi/` ABIs were regenerated from the
-> same HEAD source in lockstep. **The two SHOWCASE demo addresses moved again** (see the Showcase section): they trail
-> the `team` nonce, and adding the aggregator's `new` bumped it — their addresses below are the current values.
-> (Prior 2026-06-22 SIZE-01 note: `EulerVenueAdapter` was trimmed under EIP-170 to 24054 / +522 margin.)
+> same HEAD source in lockstep. **The two SHOWCASE demo addresses AND the `WarehouseAdminModule` adapter moved** —
+> all three are nonce-dependent (the demos trail the `team` nonce; the warehouse adapter is a plain `new` inside
+> `CreditWarehouseDeployer`, non-deterministic across deploys — old smoke specs used yet another address). **Re-derive
+> these three from `broadcast/DeployLocal.s.sol/8453/runLocal-latest.json` after every deploy**; the rest of the board
+> is deterministic. (Prior 2026-06-22 SIZE-01 note: `EulerVenueAdapter` trimmed under EIP-170 to 24054 / +522 margin.)
 
 > **Real contracts, not mocks.** The senior pool is a REAL EulerEarn pool created off the live factory + curator-
 > configured; the base USDC market is a REAL EVK vault; the farm utility market is real EVK; Safe/Baal/Zodiac/CoW/ICHI/
@@ -83,7 +85,7 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 | Piece | Address |
 |---|---|
 | Warehouse Safe (EE-share + USDC custodian; EE feeRecipient) | `0x7975E1eFB09690E42C5B574B1768cdFA11e8693c` |
-| WarehouseAdminModule (CRE adapter — SUPPLY/APPROVE/REPAY/REDEEM) | `0x28b0109B3ac79fA14F2E1914D44872BD6b32B97f` |
+| WarehouseAdminModule (CRE adapter — SUPPLY/APPROVE/REPAY/REDEEM; the sole Roles role-member) | `0x24D7910DCaF4cd27F07e877C588F8EEA0e992A3a` |
 | Roles modifier (Zodiac Roles-v2 proxy; `avatar==target==`Warehouse Safe, owner=`godOwner`; the WarehouseAdminModule is its sole role member — this scope config is the real param-pinning, per SEAM-MAP S11) | `0x2f1f2e5cCB88E0B543A5d3B6c8e0095c754FE984` |
 
 ## Senior pool — REAL EulerEarn (8-Bw)
@@ -101,18 +103,26 @@ report pusher) = `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` — impersonate vi
 | EulerRouter (escrow → LP → lpOracle) | `0x83cf98139A35830C90aa28f9e9abf198Fcf6A795` |
 | FarmUtilityBorrowGuard (OP_BORROW hook on the borrow vault; pins borrowing to the engine Safe) | `0x3b7ca6e87a2536DEB720eBd6eD3B348738F1fAa3` |
 
-## Engine modules (zodiac proxies, all Timelock-owned; operator = `creOperator`)
-| Module | Address | Enabled on |
-|---|---|---|
-| SzipBuyBurnModule | `0x9a59A47A42fb5D951c599BE0C9Af008D93ebe831` | main Safe |
-| FarmUtilityLoopModule | `0xa61c6B0E0CbA10Dad5ac06325ab95E5246c48DC2` | main Safe |
-| LpStrategyModule | `0x897d82285833933A79e2A3daC4759a7C47B0044e` | main Safe |
-| HarvestVoteModule | `0x2246C8b9756b255DBBEb50eb6f13511B93Eb13ee` | main Safe |
-| ExerciseModule | `0x10aa41B6A18FD128568D5e92012Fba4C6fE45f0f` | main Safe |
-| SellModule | `0xEbbB5EA0C4e3E719D5125002c8f91bCCD0B8913E` | main Safe |
-| RecycleModule | `0x953e739AcD9a07B1Aa8d6e1F04a6B7e7BEAf7b5b` | main Safe |
-| OffRampModule | `0xA444F4653A4DFd06FA6C7128e9A714c68EebF55D` | main Safe (rq) |
-| DurationFreezeModule | `0x675fdf5507b337cA98E3B40B59462B37A8DC050b` | main + sidecar |
+## Engine modules (Zodiac module CLONES, all Timelock-owned; operator = `creOperator`)
+> **IMPORTANT (2026-06-24 correction):** each engine module is deployed as a **mastercopy** (deployed once, listed in
+> the `Mastercopy` column / `abi/index.json`'s old values) and then **EIP-1167-cloned + initialized + `enableModule`'d**
+> on the Safe. **The clone is the live, functional module** (operator/avatar/target set, enabled); the mastercopy is
+> inert (`operator()==0`, not enabled). **Bind to the `Clone` address.** The ABI is identical (the clone delegates to
+> the mastercopy), so `abi/*.json` is unchanged. Clones are nonce/salt-dependent — **re-derive each deploy** from the
+> Safe's module list: `getModulesPaginated(0x1, 50)` on the main Safe `0x0B9C…`, then match each clone's EIP-1167
+> implementation target to the `Mastercopy` column below.
+
+| Module | Clone (live — call this) | Enabled on | Mastercopy (ABI ref / inert) |
+|---|---|---|---|
+| SzipBuyBurnModule | `0x8B7B057bB2B9A7F06929BdB89132005C1Fafd294` | main Safe | `0x9a59A47A42fb5D951c599BE0C9Af008D93ebe831` |
+| FarmUtilityLoopModule | `0xea9b76bB08d14E40f04409393B1F113E4999Efb2` | main Safe | `0xa61c6B0E0CbA10Dad5ac06325ab95E5246c48DC2` |
+| LpStrategyModule | `0x25cf123dB6700650aC387515519c287031c48aD8` | main Safe | `0x897d82285833933A79e2A3daC4759a7C47B0044e` |
+| HarvestVoteModule | `0xf1DEbc425Da983d08FC713a06E655D1018556C1e` | main Safe | `0x2246C8b9756b255DBBEb50eb6f13511B93Eb13ee` |
+| ExerciseModule | `0xaD54085b62Ef94923f980314444b63c526Aac4e2` | main Safe | `0x10aa41B6A18FD128568D5e92012Fba4C6fE45f0f` |
+| SellModule | `0x1fCe5c71C12E5786A9966455375Cdb2843B8BEAa` | main Safe | `0xEbbB5EA0C4e3E719D5125002c8f91bCCD0B8913E` |
+| RecycleModule | `0x28b0109B3ac79fA14F2E1914D44872BD6b32B97f` | main Safe | `0x953e739AcD9a07B1Aa8d6e1F04a6B7e7BEAf7b5b` |
+| OffRampModule | `0x2e0Ba43db83E0D3bBc2537836955890F3fAA7434` | main Safe (rq) | `0xA444F4653A4DFd06FA6C7128e9A714c68EebF55D` |
+| DurationFreezeModule | `0x3Bcd8BD1282B083C10bdba2a5E205Bc9A094f2FE` | main + sidecar | `0x675fdf5507b337cA98E3B40B59462B37A8DC050b` |
 
 ## Loss side
 | Contract | Address |
