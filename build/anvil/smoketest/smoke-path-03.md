@@ -37,11 +37,13 @@ main Safe, sidecar Safe, `creOperator`, `SzAlphaRateOracle`, `SzipNavOracle`, US
 freeze is by design (over-freeze grief is the §12 metric-4 alarm). FoT `TransferShortfall` guard present; exercised
 only if a fee-on-transfer token is staged.
 
-**Result.** **PARTIAL — negatives PASS; happy path gated on the rate-seed preamble** (2026-06-24, clean baseline).
+**Result.** **PASS** (2026-06-24, live fork; clean baseline + `seed_marks` preamble via `_harness.sh`).
+- **Happy `commit(USDC,50_000e6)` as `creOperator`** (status 1, gas 237,620): main USDC 100,000e6 → **50,000e6**;
+  sidecar 0 → **50,000e6** (exact move); `committedValue()` 0 → **50,000e18** (6→18, USDC $1). ✓
 - **(neg) operator gate:** `commit(USDC,1e6)` as alice → **`NotOperator` (0x7c214f04)**. ✓
-- **Happy `commit(USDC,50k)` as operator reverted `RateUnseeded` (0x006806f9)** — trace shows it calls
-  `SzipNavOracle.committedValue()` → `SzAlphaRateOracle.exchangeRate()` = 0 (unseeded) → revert. **Not a flaw** — it is
-  the correct fail-closed posture; it needs the universal rate-seed preamble (above). Re-run with the rate seeded to
-  complete the main→sidecar move assertion.
-- Address note: the map previously listed the **mastercopy** `0x675fdf…` (inert: `operator()==0`, not enabled). The
-  live module is the **clone** `0x3Bcd8BD1…`. Map + `index.json` corrected 2026-06-24.
+- **(neg) whitelist:** `commit(WETH,1e18)` as operator → **`UnvaluedAsset(WETH)` (0x205b5d50)** (rejected before body). ✓
+- **Finding (correct fail-closed, no flaw):** without the seed preamble, `commit` reverts `RateUnseeded` (0x006806f9) —
+  it reads `SzipNavOracle.committedValue()` → `SzAlphaRateOracle.exchangeRate()`; both must be seeded. This is the
+  universal NAV-touch precondition, not a freeze bug.
+- **Address note:** the map previously listed the **mastercopy** `0x675fdf…` (inert: `operator()==0`, not enabled);
+  the live module is the **clone** `0x3Bcd8BD1…`. Map + `index.json` corrected 2026-06-24. **No flaws.**
