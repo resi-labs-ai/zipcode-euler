@@ -1,0 +1,21 @@
+# Inline context for CLUSTER 4 (non-agentic legs). '#' = comment.
+
+# --- workflows owned ---
+cre/warehouse/README.md
+cre/warehouse/workflow.go
+cre/keeper/internal/job/redemption_job.go
+cre/keeper/README.md
+cre/zipreport/README.md
+
+# --- seams ---
+contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol
+contracts/src/supply/ZipRedemptionQueue.sol
+contracts/src/supply/szipUSD/OffRampModule.sol
+
+# --- wires + spec + ticket ---
+docs/wires/8-Bw-CreditWarehouse.md
+docs/wires/9-ZipRedemptionQueue.md
+docs/wires/OffRampModule.md
+docs/roles.md
+build/claude-zipcode.md          # §8.2, §8.3, §8.5
+build/tickets/cre/CRE-OPS-ROUTING.md

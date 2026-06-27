@@ -1,0 +1,18 @@
+# Inline context for CLUSTER 7 (non-agentic legs). '#' = comment.
+
+# --- shared workflows / libs / spine ---
+cre/zipreport/README.md
+cre/scaffold/README.md
+cre/scaffold/workflow.go
+cre/keeper/README.md
+cre/keeper/internal/job/job.go
+cre/keeper/internal/job/identity_job.go
+
+# --- the identity model (base + clone + borrow-gate) ---
+reference/x402-cre-price-alerts/contracts/interfaces/ReceiverTemplate.sol
+contracts/src/supply/szipUSD/CloneReportReceiver.sol
+contracts/src/CREGatingHook.sol
+
+# --- spec + monitoring doc ---
+build/claude-zipcode.md          # §8.0, §8.11, §17
+build/pending-docs/monitoring.md

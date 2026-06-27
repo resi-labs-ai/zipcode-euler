@@ -1,0 +1,20 @@
+# Inline context for CLUSTER 2 (non-agentic legs). '#' = comment.
+
+# --- workflows owned ---
+cre/sharefeeds/workflow.go
+cre/szalpha-rate/README.md
+cre/szalpha-rate/main.go
+cre/zipreport/README.md
+
+# --- oracle report receivers ---
+contracts/src/supply/SzipNavOracle.sol
+contracts/src/supply/SzipFarmUtilityLpOracle.sol
+contracts/src/bridge/SzAlphaRateOracle.sol
+contracts/src/supply/AlgebraIchiFairLpOracle.sol
+
+# --- wires + spec ---
+docs/wires/8-B4-SzipNavOracle.md
+docs/wires/8-B5-FarmUtilityLoop.md
+docs/wires/8x-02-SzAlphaRateOracle.md
+docs/wires/FairLpOracle.md
+build/claude-zipcode.md   # §8.6, §8.8

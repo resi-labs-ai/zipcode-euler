@@ -1,0 +1,21 @@
+# Inline context for CLUSTER 3 (non-agentic legs). '#' = comment.
+
+# --- workflows owned ---
+cre/buyburn-bid/README.md
+cre/buyburn-bid/workflow.go
+cre/keeper/internal/job/burn_job.go
+cre/keeper/README.md
+cre/zipreport/README.md
+
+# --- seams ---
+contracts/src/supply/szipUSD/SzipBuyBurnModule.sol
+contracts/src/supply/szipUSD/ExitGate.sol
+contracts/src/supply/szipUSD/SzipUSD.sol
+contracts/src/supply/szipUSD/CloneReportReceiver.sol
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+
+# --- wires + spec ---
+docs/wires/8-B14-SzipBuyBurnModule.md
+docs/wires/ExitGate-szipUSD.md
+docs/wires/DurationFreezeModule.md
+build/claude-zipcode.md   # §8.7 (buy-burn half), §6

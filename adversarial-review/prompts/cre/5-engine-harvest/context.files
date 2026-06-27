@@ -1,0 +1,31 @@
+# Inline context for CLUSTER 5 (non-agentic legs). '#' = comment.
+
+# --- workflows owned (keeper Jobs) ---
+cre/keeper/internal/job/strike_loop_job.go
+cre/keeper/internal/job/winddown_lp_job.go
+cre/keeper/internal/job/identity_job.go
+cre/keeper/internal/job/job.go
+cre/keeper/README.md
+
+# --- the operator-socket engine modules (Q8 hot zone) ---
+contracts/src/supply/szipUSD/HarvestVoteModule.sol
+contracts/src/supply/szipUSD/FarmUtilityLoopModule.sol
+contracts/src/supply/szipUSD/ExerciseModule.sol
+contracts/src/supply/szipUSD/SellModule.sol
+contracts/src/supply/szipUSD/RecycleModule.sol
+contracts/src/supply/szipUSD/LpStrategyModule.sol
+contracts/src/supply/szipUSD/DurationFreezeModule.sol
+
+# --- wires + spec + tickets + pending-docs ---
+docs/wires/8-B5-FarmUtilityLoop.md
+docs/wires/8-B6-LpStrategyModule.md
+docs/wires/8-B7-HarvestVoteModule.md
+docs/wires/8-B8-ExerciseModule.md
+docs/wires/8-B9-SellModule.md
+docs/wires/8-B10-RecycleModule.md
+docs/wires/DurationFreezeModule.md
+build/claude-zipcode.md          # §8.7 (engine operator path)
+build/tickets/cre/KEEPER-01b-OPEN-POLICY.md
+build/tickets/cre/KEEPER-02-winddown-lp-dissolution.md
+build/pending-docs/auto-compounder.md
+build/pending-docs/hydrex.md

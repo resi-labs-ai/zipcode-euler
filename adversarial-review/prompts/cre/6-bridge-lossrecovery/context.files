@@ -1,0 +1,20 @@
+# Inline context for CLUSTER 6 (non-agentic legs). '#' = comment.
+
+# --- workflows owned ---
+cre/szalpha-rate/README.md
+cre/szalpha-rate/main.go
+
+# --- bridge + loss-custody seams ---
+contracts/src/bridge/SzAlpha.sol
+contracts/src/bridge/SzAlphaTokenPool.sol
+contracts/src/bridge/SzAlphaMirror.sol
+contracts/src/bridge/SzAlphaRateOracle.sol
+contracts/src/loss/LienXAlphaEscrow.sol
+contracts/src/loss/DefaultCoordinator.sol
+
+# --- wires + spec ---
+docs/wires/8x-01-szALPHA-bridge.md
+docs/wires/8x-02-SzAlphaRateOracle.md
+docs/wires/8-Bx-LienXAlphaEscrow.md
+build/claude-zipcode.md          # §8.4, §8.8, §11
+build/tickets/PROGRESS.md        # "Open obligations" — loss-recovery seam

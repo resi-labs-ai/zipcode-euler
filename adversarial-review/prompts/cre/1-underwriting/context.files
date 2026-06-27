@@ -1,0 +1,27 @@
+# Inline context for CLUSTER 1 (non-agentic legs). Agentic agents read the files themselves. '#' = comment.
+
+# --- workflows owned ---
+cre/revaluation/README.md
+cre/revaluation/workflow.go
+cre/controller/README.md
+cre/controller/workflow.go
+cre/coordinator/README.md
+cre/coordinator/workflow.go
+cre/zipreport/README.md
+
+# --- report receivers + the contracts the controller drives ---
+contracts/src/ZipcodeController.sol
+contracts/src/ZipcodeOracleRegistry.sol
+contracts/src/loss/DefaultCoordinator.sol
+contracts/src/SiloRegistry.sol
+contracts/src/venue/EulerVenueAdapter.sol
+contracts/src/venue/LineAccount.sol
+contracts/src/LienTokenFactory.sol
+contracts/src/LienCollateralToken.sol
+
+# --- wires + spec ---
+docs/wires/WOOF-05.md
+docs/wires/WOOF-02.md
+docs/wires/DefaultCoordinator.md
+docs/roles.md
+build/claude-zipcode.md   # §8.1, §8.4, §8.9, §8.10
