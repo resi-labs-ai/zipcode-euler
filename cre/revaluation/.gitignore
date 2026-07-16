@@ -1,0 +1,7 @@
+# Built artifacts
+*.wasm
+/cre-revaluation
+
+# Local secrets / env (never commit)
+/.env
+secrets.yaml

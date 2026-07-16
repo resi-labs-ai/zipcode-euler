@@ -1,0 +1,12 @@
+/cre-scaffold
+*.wasm
+
+# Environment / secrets
+*.env
+.env
+secrets.yaml
+config.json
+
+# System files
+.DS_Store
+*.DS_Store

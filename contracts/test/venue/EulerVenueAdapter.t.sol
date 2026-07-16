@@ -1,0 +1,1721 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity 0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {ForkConfig} from "../ForkConfig.sol";
+import {BaseAddresses} from "../../script/BaseAddresses.sol";
+
+import {EulerVenueAdapter} from "../../src/venue/EulerVenueAdapter.sol";
+import {IZipcodeVenue} from "../../src/venue/IZipcodeVenue.sol";
+import {LineAccount} from "../../src/venue/LineAccount.sol";
+import {CREGatingHook} from "../../src/CREGatingHook.sol";
+import {ZipcodeOracleRegistry} from "../../src/ZipcodeOracleRegistry.sol";
+import {LienCollateralToken} from "../../src/LienCollateralToken.sol";
+import {SzipPerspectiveProbe} from "../../script/SzipPerspectiveProbe.sol";
+import {LineIrm} from "../../script/LineIrm.sol";
+
+import {RPow} from "evk/EVault/shared/lib/RPow.sol";
+import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
+import {IEVault, IBorrowing} from "evk/EVault/IEVault.sol";
+import {EulerRouter} from "euler-price-oracle/EulerRouter.sol";
+import {IEVC} from "evc/interfaces/IEthereumVaultConnector.sol";
+import {IEulerEarn, MarketAllocation} from "euler-earn/interfaces/IEulerEarn.sol";
+import {IERC4626 as IOZERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Errors as PriceErrors} from "euler-price-oracle/lib/Errors.sol";
+
+/// @notice A zero-rate IRM (IIRM face: computeInterestRate(address,uint256,uint256)).
+contract ZeroIRM {
+    function computeInterestRate(address, uint256, uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function computeInterestRateView(address, uint256, uint256) external pure returns (uint256) {
+        return 0;
+    }
+}
+
+/// @notice A recording IEulerEarn mock — only the surface the adapter touches. EulerEarn pins solc 0.8.26 so it
+///         cannot be `new`-ed under 0.8.24; the adapter imports only the interface, so a focused recording mock
+///         suffices for the unit/fork test (the live EE path is the audit S9/L4 integration).
+contract MockEulerEarn {
+    // Mirror the real EulerEarn supply-queue cap so the H2 brick (SEC-06) is reproducible at the unit level.
+    uint256 internal constant MAX_QUEUE_LENGTH = 30; // ConstantsLib.MAX_QUEUE_LENGTH
+
+    error MaxQueueLengthExceeded();
+    /// @dev Mirrors EulerEarn's `afterTimelock` (reference EulerEarn.sol:185-189,507): a same-tx `acceptCap` after a
+    ///      `submitCap` that set `validAt = now + timelock` reverts while `timelock != 0`. SEC-08's openLine precheck
+    ///      fires BEFORE this — so without the fix, openLine builds all line proxies, THEN reverts here (orphaned).
+    error TimelockNotElapsed();
+    /// @dev Mirrors EulerEarn.reallocate's terminal invariant (reference EulerEarn.sol:441): the zero-sum check
+    ///      `if (totalWithdrawn != totalSupplied) revert InconsistentReallocation()`. This is the exact revert
+    ///      the L9/SEC-11 donation grief triggers when `fund` sizes targets off the donation-skewed live balance
+    ///      while reallocate measures positions off the unskewed TRACKED `config.balance`.
+    error InconsistentReallocation();
+    /// @dev Mirrors EulerEarn.reallocate's per-market gate (reference EulerEarn.sol:390).
+    error MarketNotEnabled(address id);
+    /// @dev Mirrors EulerEarn.updateWithdrawQueue's removal guard (reference EulerEarn.sol:362): a market whose cap is
+    ///      not yet zeroed cannot be removed from the withdraw queue. CTR-04's closeLine zeroes the cap (submitCap 0)
+    ///      BEFORE the prune, so it never trips; a removal without the cap-zero would.
+    error InvalidMarketRemovalNonZeroCap(address id);
+    /// @dev Mirrors EulerEarn.updateWithdrawQueue's removal guard (reference EulerEarn.sol:366): a non-empty market
+    ///      can only be removed after its removableAt timelock elapses. closeLine defunds to zero first, so the
+    ///      removed market is empty and this never bites; modeled for faithfulness.
+    error InvalidMarketRemovalNonZeroSupply(address id);
+
+    /// @notice The pool asset (USDC) the mock moves between markets during a faithful reallocate.
+    address public immutable asset;
+
+    // ----- EE-tracked per-market config (security L9/SEC-11) -----
+    // The crux of the donation bug: EE tracks each market's supplied SHARE balance INTERNALLY (`config.balance`),
+    // updated ONLY through the deposits/redeems EE itself performs. A direct share transfer into the pool inflates
+    // the market vault's live `balanceOf(EE)` but NOT this tracked balance (reference IEulerEarn.sol:69,73 "ignores
+    // direct shares transfer"). reallocate measures every position as `previewRedeem(config.balance)` — NOT
+    // `convertToAssets(balanceOf)` — so a target sized off the live balance diverges from EE's own accounting and
+    // breaks the zero-sum check. This mock mirrors that: `cfgBalance` is bumped only inside `reallocate`/`seedConfig`.
+    mapping(address => uint112) public cfgBalance; // EE-tracked share balance per market
+    mapping(address => bool) public cfgEnabled; // a market is reallocate-eligible once its cap is accepted
+    // CTR-04: per-market cap (reference _setCap :801 sets `marketConfig.cap = supplyCap`). openLine submits
+    // type(uint136).max so a line's cap is max until closeLine's submitCap(0). A cap DECREASE (incl. ->0) applies
+    // immediately (reference :298-299 / _setCap decrease branch). The withdraw-queue removal guard (reference :362)
+    // requires this to be 0 before a market drops. NOT the hardcoded max the old config() returned.
+    mapping(address => uint136) public cfgCap;
+
+    /// @notice The EE pool timelock (SEC-08). Default 0 (immediate cap config); a test raises it as the EE owner.
+    uint256 public timelock;
+    /// @notice The EE pool's factory (SEC-08); `SzipPerspectiveProbe` reaches it via `creator()` to gate the probe.
+    address public creator;
+
+    address[] public submittedCaps;
+    address[] public acceptedCaps;
+    IOZERC4626[] internal _queue;
+    // CTR-04: the WITHDRAW queue — the array whose hard MAX_QUEUE_LENGTH cap (reference _setCap :785) actually
+    // bricks origination. Independent of the supply queue (`_queue`). Pushed once on a market's first enable, and
+    // pruned by updateWithdrawQueue on closeLine.
+    IOZERC4626[] internal _withdrawQueue;
+
+    // last-reallocate recording
+    address[] public lastReallocIds;
+    uint256[] public lastReallocAssets;
+    uint256 public reallocCount;
+
+    constructor(address asset_) {
+        asset = asset_;
+    }
+
+    function submitCap(IOZERC4626 id, uint256 cap) external {
+        submittedCaps.push(address(id));
+        // CTR-04: record the per-market cap. A decrease (incl. ->0, closeLine's revoke) is IMMEDIATE — matching
+        // _setCap's decrease branch (reference :298-299,801), no timelock. openLine submits type(uint136).max so a
+        // line's cap reads max until close. The withdraw-queue removal guard reads this (must be 0 to remove).
+        cfgCap[address(id)] = uint136(cap);
+    }
+
+    function acceptCap(IOZERC4626 id) external {
+        if (timelock != 0) revert TimelockNotElapsed(); // faithful afterTimelock: same-tx accept fails while > 0
+        acceptedCaps.push(address(id));
+        _enableMarket(address(id)); // faithful: accepting a cap enables the market + pushes the withdraw-queue slot
+    }
+
+    /// @dev CTR-04: faithful first-enable path (reference _setCap :782-794). Called by BOTH acceptCap (the line
+    ///      onboarding path) and the base/farm utility seedConfig enable path. On a market's FIRST enable it pushes the
+    ///      market onto the WITHDRAW queue and enforces the hard MAX_QUEUE_LENGTH (30) cap (reference :783-785) — the
+    ///      BINDING cap that bricks the ~29th lifetime openLine absent CTR-04's reclaim. Guarded against double-push
+    ///      (an already-enabled market re-onboarded does not re-push), like _setCap's `if (!marketConfig.enabled)`.
+    function _enableMarket(address id) internal {
+        if (cfgEnabled[id]) return; // already enabled -> no re-push (reference _setCap :782 guard)
+        _withdrawQueue.push(IOZERC4626(id));
+        if (_withdrawQueue.length > MAX_QUEUE_LENGTH) revert MaxQueueLengthExceeded(); // reference :785
+        cfgEnabled[id] = true;
+    }
+
+    /// @dev The EE-tracked config getter the L9/SEC-11 `_eeSupplyAssets` helper reads. ABI-identical to the real
+    ///      `IEulerEarn.config(IERC4626)` (struct `MarketConfig memory` — encodes the same as this 4-tuple).
+    ///      CTR-04: `cap` now reports the TRACKED per-market cap (max for an open line, 0 after closeLine's
+    ///      submitCap(0)) rather than a hardcoded max — the withdraw-queue removal guard reads it. `removableAt`
+    ///      stays 0 (no per-market timelock in the mock); `.balance`/`.enabled` remain load-bearing as before.
+    function config(IOZERC4626 id) external view returns (uint112 balance, uint136 cap, bool enabled, uint64 removableAt) {
+        return (cfgBalance[address(id)], cfgCap[address(id)], cfgEnabled[address(id)], 0);
+    }
+
+    /// @dev Test helper: seed the EE-tracked position for a market the test funded DIRECTLY (bypassing reallocate,
+    ///      e.g. `_fundBaseMarket`/`_supplyToLine`). Records `shares` as legitimately-tracked supply + enables the
+    ///      market. A donation, by contrast, transfers shares to the EE address WITHOUT calling this — so
+    ///      `balanceOf(EE) > cfgBalance`, which is exactly the L9 skew.
+    function seedConfig(address market, uint256 shares) external {
+        cfgBalance[market] += uint112(shares);
+        // CTR-04: the base/farm utility enable path also takes a withdraw-queue slot on first enable (faithful to
+        // _setCap's first-enable push), via the SAME guarded helper acceptCap uses — so re-seeding an already-enabled
+        // market does not re-push, and a freshly-seeded base market occupies one slot exactly like the real EE.
+        _enableMarket(market);
+    }
+
+    /// @dev SEC-08 test hook: the external EE owner raises the timelock post-deploy.
+    function setTimelock(uint256 t) external {
+        timelock = t;
+    }
+
+    /// @dev SEC-08 test hook: point the probe at a given factory (the live EE factory, or a mock that rejects).
+    function setCreator(address c) external {
+        creator = c;
+    }
+
+    function setSupplyQueue(IOZERC4626[] calldata q) external {
+        // Faithful to EulerEarn.setSupplyQueue (reference :328): reject a queue past the hard cap. This is the
+        // exact revert SEC-06's prune prevents — without the prune the queue grows unboundedly to this bound.
+        if (q.length > MAX_QUEUE_LENGTH) revert MaxQueueLengthExceeded();
+        delete _queue;
+        for (uint256 i; i < q.length; ++i) {
+            _queue.push(q[i]);
+        }
+    }
+
+    /// @dev test helper: is `market` present in the current supply queue?
+    function queueContains(address market) external view returns (bool) {
+        for (uint256 i; i < _queue.length; ++i) {
+            if (address(_queue[i]) == market) return true;
+        }
+        return false;
+    }
+
+    function supplyQueueLength() external view returns (uint256) {
+        return _queue.length;
+    }
+
+    function supplyQueue(uint256 i) external view returns (IOZERC4626) {
+        return _queue[i];
+    }
+
+    // ----- CTR-04: withdraw-queue surface (the BINDING queue) -----
+
+    function withdrawQueueLength() external view returns (uint256) {
+        return _withdrawQueue.length;
+    }
+
+    function withdrawQueue(uint256 i) external view returns (IOZERC4626) {
+        return _withdrawQueue[i];
+    }
+
+    /// @dev test helper: is `market` present in the current withdraw queue?
+    function withdrawQueueContains(address market) external view returns (bool) {
+        for (uint256 i; i < _withdrawQueue.length; ++i) {
+            if (address(_withdrawQueue[i]) == market) return true;
+        }
+        return false;
+    }
+
+    /// @dev Faithful to EulerEarn.updateWithdrawQueue (reference EulerEarn.sol:340-380): KEEP-indexes semantics — the
+    ///      caller passes the indexes to retain; every current index NOT listed is removed. For each removed market the
+    ///      removal guards (reference :362-371) run: cap must be 0 (else InvalidMarketRemovalNonZeroCap), and a NON-empty
+    ///      market needs its removableAt timelock elapsed (the mock has no per-market removableAt, so a non-empty
+    ///      removal reverts InvalidMarketRemovalNonZeroSupply — closeLine defunds first, so the removed line is empty
+    ///      and removes freely). Removed markets have their config cleared (`delete config[id]` :373); the queue is
+    ///      rebuilt from the kept indexes. closeLine passes the surviving indexes by ADDRESS, dropping only lineRef.
+    function updateWithdrawQueue(uint256[] calldata indexes) external {
+        uint256 currLength = _withdrawQueue.length;
+        bool[] memory seen = new bool[](currLength);
+        IOZERC4626[] memory newQueue = new IOZERC4626[](indexes.length);
+
+        for (uint256 i; i < indexes.length; ++i) {
+            uint256 prevIndex = indexes[i]; // out-of-bounds reverts natively, like the reference
+            newQueue[i] = _withdrawQueue[prevIndex];
+            seen[prevIndex] = true;
+        }
+
+        for (uint256 i; i < currLength; ++i) {
+            if (!seen[i]) {
+                address id = address(_withdrawQueue[i]);
+                // reference :362 — a non-zeroed cap blocks removal (closeLine's submitCap(0) clears this).
+                if (cfgCap[id] != 0) revert InvalidMarketRemovalNonZeroCap(id);
+                // reference :365-366 — a non-empty market can only drop after its (here-absent) removableAt; closeLine
+                // defunds to zero first, so expectedSupplyAssets(id) == previewRedeem(0) == 0 and this is skipped.
+                if (expectedSupplyAssets(IOZERC4626(id)) != 0) revert InvalidMarketRemovalNonZeroSupply(id);
+                // reference :373 — clear the removed market's config.
+                cfgEnabled[id] = false;
+                cfgCap[id] = 0;
+                cfgBalance[id] = 0;
+            }
+        }
+
+        delete _withdrawQueue;
+        for (uint256 i; i < newQueue.length; ++i) {
+            _withdrawQueue.push(newQueue[i]);
+        }
+    }
+
+    /// @dev reference EulerEarn.sol:492 — expectedSupplyAssets(id) = previewRedeem(config.balance). Identical to the
+    ///      adapter's `_eeSupplyAssets`; the withdraw-queue removal guard sizes the empty-market check off it.
+    function expectedSupplyAssets(IOZERC4626 id) public view returns (uint256) {
+        return IEVault(address(id)).previewRedeem(cfgBalance[address(id)]);
+    }
+
+    /// @dev Faithful to EulerEarn.reallocate (reference EulerEarn.sol:383-442): ABSOLUTE-target, zero-sum, sized off
+    ///      the TRACKED `config.balance` (NOT live `balanceOf`). Single-pass in allocation order, mirroring the
+    ///      reference exactly so both the SEC-07 strand/reclaim AND the L9/SEC-11 donation-grief are reproducible:
+    ///      per market, `supplyAssets = previewRedeem(config.balance)`; if `target < supplyAssets` it withdraws the
+    ///      difference (or, when `target == 0`, redeems ALL tracked shares — the reference's :397-402
+    ///      "donations can be withdrawn" full-redeem branch); else it supplies `target - supplyAssets`; finally the
+    ///      `totalWithdrawn != totalSupplied -> InconsistentReallocation` invariant (reference :441). `cfgBalance`
+    ///      is updated on every move (reference :415,:431) so the tracked balance stays the source of truth — a
+    ///      direct share donation never touches it. Callers (`fund`, `closeLine` defund) order withdraw-before-supply
+    ///      so the single in-order pass has cash before it deposits. Real USDC moves between the real EVK vaults.
+    function reallocate(MarketAllocation[] calldata allocs) external {
+        delete lastReallocIds;
+        delete lastReallocAssets;
+        uint256 totalSupplied;
+        uint256 totalWithdrawn;
+        for (uint256 i; i < allocs.length; ++i) {
+            lastReallocIds.push(address(allocs[i].id));
+            lastReallocAssets.push(allocs[i].assets);
+            address id = address(allocs[i].id);
+            if (!cfgEnabled[id]) revert MarketNotEnabled(id);
+            IEVault v = IEVault(id);
+
+            uint256 supplyShares = cfgBalance[id];
+            uint256 supplyAssets = v.previewRedeem(supplyShares);
+            uint256 target = allocs[i].assets;
+            uint256 withdrawn = supplyAssets > target ? supplyAssets - target : 0;
+
+            if (withdrawn > 0) {
+                uint256 shares;
+                if (target == 0) {
+                    // reference :397-402: target 0 redeems ALL shares (sweeps any donation), withdrawn reset to 0.
+                    shares = supplyShares;
+                    withdrawn = 0;
+                }
+                uint256 withdrawnAssets;
+                uint256 withdrawnShares;
+                if (shares == 0) {
+                    withdrawnAssets = withdrawn;
+                    withdrawnShares = v.withdraw(withdrawn, address(this), address(this));
+                } else {
+                    withdrawnAssets = v.redeem(shares, address(this), address(this));
+                    withdrawnShares = shares;
+                }
+                cfgBalance[id] = uint112(supplyShares - withdrawnShares);
+                totalWithdrawn += withdrawnAssets;
+            } else {
+                uint256 suppliedAssets = target > supplyAssets ? target - supplyAssets : 0;
+                if (suppliedAssets == 0) continue;
+                IERC20(asset).approve(id, suppliedAssets);
+                uint256 suppliedShares = v.deposit(suppliedAssets, address(this));
+                cfgBalance[id] = uint112(supplyShares + suppliedShares);
+                totalSupplied += suppliedAssets;
+            }
+        }
+        if (totalWithdrawn != totalSupplied) revert InconsistentReallocation();
+        reallocCount++;
+    }
+
+    function submittedCapsLength() external view returns (uint256) {
+        return submittedCaps.length;
+    }
+
+    function lastReallocLength() external view returns (uint256) {
+        return lastReallocIds.length;
+    }
+}
+
+/// @notice A harness that deliberately mis-wires the router so the (W3) WireMismatch invariant is reachable.
+///         Overrides `_assertWired` to feed the WRONG lien token, proving the check would catch a cross-wire.
+contract MisWiringAdapter is EulerVenueAdapter {
+    address public immutable wrongLien;
+
+    constructor(
+        address controller_,
+        address evc_,
+        address eulerEarn_,
+        address eVaultFactory_,
+        address oracleRegistry_,
+        address gatingHook_,
+        address irm_,
+        address usdc_,
+        address erebor_,
+        address usdcReservoir_,
+        address wrongLien_
+    )
+        EulerVenueAdapter(
+            controller_,
+            evc_,
+            eulerEarn_,
+            eVaultFactory_,
+            oracleRegistry_,
+            gatingHook_,
+            irm_,
+            usdc_,
+            erebor_,
+            usdcReservoir_
+        )
+    {
+        wrongLien = wrongLien_;
+    }
+
+    function _assertWired(address router, address collat, address) internal view override {
+        // Pass the WRONG expected lien -> the real resolve (correct lien) must trip WireMismatch.
+        super._assertWired(router, collat, wrongLien);
+    }
+}
+
+/// @notice SEC-08: a minimal EE factory whose perspective REJECTS the line vault — proves the deploy-time probe bites
+///         (models a future external `setPerspective` swap to a config-inspecting perspective).
+contract MockRejectingEarnFactory {
+    function isStrategyAllowed(address) external pure returns (bool) {
+        return false;
+    }
+}
+
+contract EulerVenueAdapterTest is ForkConfig {
+    // -- live Base deployments --
+    IEVC internal evc;
+    GenericFactory internal factory;
+    address internal usdc;
+
+    // -- fresh deploys --
+    ZipcodeOracleRegistry internal registry;
+    CREGatingHook internal hook;
+    ZeroIRM internal irm;
+    MockEulerEarn internal ee;
+    EulerVenueAdapter internal adapter;
+    address internal usdcReservoir;
+
+    LienCollateralToken internal LIEN_A;
+    LienCollateralToken internal LIEN_B;
+
+    bytes32 internal constant LIEN_ID_A = bytes32(uint256(0xA11CE));
+    bytes32 internal constant LIEN_ID_B = bytes32(uint256(0xB0B));
+
+    address internal controller; // the mock controller = this test contract
+    address internal erebor = makeAddr("erebor");
+    address internal forwarder = makeAddr("forwarder");
+
+    uint256 internal constant PRICE_A = 300_000e6; // $300k
+    uint256 internal constant PRICE_B = 500_000e6; // $500k
+
+    function setUp() public {
+        _selectBaseFork();
+
+        evc = IEVC(BaseAddresses.EVC);
+        factory = GenericFactory(BaseAddresses.EVAULT_FACTORY);
+        usdc = BaseAddresses.USDC;
+
+        controller = address(this);
+
+        // Registry (this test is the owner; controller wired to seed prices).
+        registry = new ZipcodeOracleRegistry(forwarder, usdc, 365 days);
+        registry.setController(controller);
+
+        // Lien tokens minted to the controller (this test).
+        LIEN_A = new LienCollateralToken(controller);
+        LIEN_B = new LienCollateralToken(controller);
+
+        irm = new ZeroIRM();
+        ee = new MockEulerEarn(usdc);
+
+        // A live base USDC market (no-borrow holding vault) that fund() withdraws from.
+        usdcReservoir =
+            factory.createProxy(address(0), false, abi.encodePacked(usdc, address(0), address(0)));
+        IEVault(usdcReservoir).setHookConfig(address(0), 0);
+        IEVault(usdcReservoir).setGovernorAdmin(address(0));
+
+        // The adapter must be deployed BEFORE the hook so the hook's borrowDriver == the adapter. The adapter
+        // address is independent of the hook, so deploy adapter with a placeholder? No — adapter ctor needs the
+        // hook. Resolve the cycle: predict the adapter address via CREATE nonce, OR deploy hook with the adapter.
+        // Simplest: deploy the adapter, then the hook wired to it, then a SECOND adapter that uses the real hook.
+        // Instead: precompute adapter address (this test's next CREATE) and wire the hook to it.
+        address predictedAdapter = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        hook = new CREGatingHook(address(factory), address(evc), predictedAdapter);
+
+        adapter = new EulerVenueAdapter(
+            controller,
+            address(evc),
+            address(ee),
+            address(factory),
+            address(registry),
+            address(hook),
+            address(irm),
+            usdc,
+            erebor,
+            usdcReservoir
+        );
+        assertEq(address(adapter), predictedAdapter, "adapter address prediction must hold");
+
+        // Seed the EE supply queue with the base market (M1 head).
+        IOZERC4626[] memory q = new IOZERC4626[](1);
+        q[0] = IOZERC4626(usdcReservoir);
+        ee.setSupplyQueue(q);
+
+        // Controller approves the adapter to pull the lien (origination-batch obligation 1c).
+        LIEN_A.approve(address(adapter), type(uint256).max);
+        LIEN_B.approve(address(adapter), type(uint256).max);
+    }
+
+    // ---------- helpers ----------
+
+    function _seedRegistry(address lien, uint256 price) internal {
+        vm.prank(controller);
+        registry.seedPrice(lien, price);
+    }
+
+    function _openA() internal returns (address lineRef, address oracleKey) {
+        return adapter.openLine(LIEN_ID_A, address(LIEN_A), 1e18);
+    }
+
+    function _openB() internal returns (address lineRef, address oracleKey) {
+        return adapter.openLine(LIEN_ID_B, address(LIEN_B), 1e18);
+    }
+
+    /// @dev Fund the EE mock's position in the base market so fund()'s absolute-target math has a base balance.
+    ///      Deposit as the EE, then record the minted shares as EE-tracked config.balance (security L9/SEC-11): a
+    ///      legitimate supply IS tracked (unlike a donation). Seeding the ACTUAL shares minted (not usdcAmount)
+    ///      keeps cfgBalance == balanceOf(EE) so the no-donation path nets exactly.
+    function _fundBaseMarket(uint256 usdcAmount) internal {
+        deal(usdc, address(this), usdcAmount);
+        IERC20(usdc).approve(usdcReservoir, usdcAmount);
+        uint256 shares = IEVault(usdcReservoir).deposit(usdcAmount, address(ee));
+        ee.seedConfig(usdcReservoir, shares);
+    }
+
+    /// @dev Supply USDC cash into a line's borrow vault so a draw has liquidity (mirrors what fund() does on a
+    ///      live EE). The EE mock cannot move real assets, so we deposit directly as the EE and record the minted
+    ///      shares as EE-tracked config.balance (security L9/SEC-11), keeping cfgBalance == balanceOf(EE).
+    function _supplyToLine(address lineRef, uint256 usdcAmount) internal {
+        deal(usdc, address(this), usdcAmount);
+        IERC20(usdc).approve(lineRef, usdcAmount);
+        uint256 shares = IEVault(lineRef).deposit(usdcAmount, address(ee));
+        ee.seedConfig(lineRef, shares);
+    }
+
+    // ============================================================
+    // (A) AmountCap round-trip + ZeroCap (mock-level / pure)
+    // ============================================================
+
+    function test_AmountCap_RoundTrip_And_ZeroReverts() public {
+        _seedRegistry(address(LIEN_A), PRICE_A); // setLTV resolves the collateral price
+        (address lineRef,) = _openA();
+        // cap == 0 must revert ZeroCap (via setLineLimits -> _toAmountCap).
+        vm.expectRevert(EulerVenueAdapter.ZeroCap.selector);
+        adapter.setLineLimits(lineRef, 0.8e4, 0.9e4, 0);
+
+        // A representative set: the realized cap (setCaps stored, then read back) must be >= requested.
+        uint256[5] memory amts = [uint256(1), 1023, 100_000e6, 1e18, 250_000e6];
+        for (uint256 i; i < amts.length; ++i) {
+            adapter.setLineLimits(lineRef, 0.8e4, 0.9e4, amts[i]);
+            // setCaps stores AmountCap; read it back via the vault's caps() and decode.
+            (, uint16 borrowCapRaw) = IEVault(lineRef).caps();
+            uint256 resolved = _resolveCap(borrowCapRaw);
+            assertGe(resolved, amts[i], "realized cap must be >= requested (round UP)");
+            assertTrue(borrowCapRaw != 0, "non-zero raw cap (never unlimited)");
+        }
+    }
+
+    function _resolveCap(uint16 raw) internal pure returns (uint256) {
+        if (raw == 0) return type(uint256).max;
+        return 10 ** (raw & 63) * (raw >> 6) / 100;
+    }
+
+    // ============================================================
+    // (B) collateralAmount != 1e18 guard
+    // ============================================================
+
+    function test_OpenLine_InvalidCollateralAmount_Zero() public {
+        vm.expectRevert(EulerVenueAdapter.InvalidCollateralAmount.selector);
+        adapter.openLine(LIEN_ID_A, address(LIEN_A), 0);
+    }
+
+    function test_OpenLine_InvalidCollateralAmount_Partial() public {
+        vm.expectRevert(EulerVenueAdapter.InvalidCollateralAmount.selector);
+        adapter.openLine(LIEN_ID_A, address(LIEN_A), 0.3e18);
+    }
+
+    function test_OpenLine_FullAmount_Succeeds() public {
+        (address lineRef, address oracleKey) = _openA();
+        assertEq(oracleKey, address(LIEN_A), "oracleKey == lien token");
+        EulerVenueAdapter.Line memory L = adapter.getLine(lineRef);
+        assertTrue(L.open, "line open");
+        assertEq(L.lienToken, address(LIEN_A));
+        assertEq(IEVault(L.collateralVault).asset(), address(LIEN_A), "escrow asset == lien");
+    }
+
+    // ============================================================
+    // (C) Market wiring (live fork)
+    // ============================================================
+
+    function test_MarketWiring() public {
+        (address lineRef,) = _openA();
+        EulerVenueAdapter.Line memory L = adapter.getLine(lineRef);
+
+        assertEq(IEVault(lineRef).governorAdmin(), address(adapter), "adapter is borrow vault governor");
+        (address hookTarget, uint32 hookedOps) = IEVault(lineRef).hookConfig();
+        assertEq(hookTarget, address(hook), "gating hook installed");
+        assertEq(hookedOps, uint32((1 << 6) | (1 << 11)), "OP_BORROW | OP_LIQUIDATE, no OP_REPAY");
+        assertEq(IEVault(lineRef).oracle(), L.router, "borrow vault oracle == per-line router");
+
+        // The escrow is a bare 1:1 holding box.
+        assertEq(IEVault(L.collateralVault).convertToAssets(1e18), 1e18, "escrow 1:1");
+        assertEq(IEVault(L.collateralVault).governorAdmin(), address(0), "escrow governance renounced");
+
+        // Router frozen.
+        assertEq(EulerRouter(L.router).governor(), address(0), "router governance frozen");
+        vm.expectRevert();
+        EulerRouter(L.router).govSetConfig(address(LIEN_A), usdc, address(registry));
+    }
+
+    function test_SetLineLimits_RegistersCollateral() public {
+        _seedRegistry(address(LIEN_A), PRICE_A); // setLTV resolves the collateral price
+        (address lineRef,) = _openA();
+        EulerVenueAdapter.Line memory L = adapter.getLine(lineRef);
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 250_000e6);
+        assertEq(IEVault(lineRef).LTVBorrow(L.collateralVault), 0.7e4, "borrowLTV set (discharges WOOF-01)");
+        assertEq(IEVault(lineRef).LTVLiquidation(L.collateralVault), 0.8e4, "liqLTV set");
+    }
+
+    // ============================================================
+    // (D) LineAccount mechanics + operator grant (live fork)
+    // ============================================================
+
+    function test_LineAccount_Mechanics() public {
+        (address lineRef,) = _openA();
+        EulerVenueAdapter.Line memory L = adapter.getLine(lineRef);
+
+        assertEq(evc.getAccountOwner(L.borrowAccount), L.lineAccount, "LineAccount is the prefix owner");
+        assertEq(L.borrowAccount, address(uint160(L.lineAccount) ^ 1), "borrowAccount == lineAccount ^ 1");
+        assertEq(L.borrowAccount.code.length, 0, "borrowAccount is code-free");
+        // The adapter (the EVC.call caller) is the granted operator — before any draw.
+        assertTrue(
+            evc.isAccountOperatorAuthorized(L.borrowAccount, address(adapter)),
+            "adapter is the granted operator"
+        );
+        // A foreign account did NOT authorize the adapter.
+        address foreign = makeAddr("foreignEOA");
+        assertFalse(evc.isAccountOperatorAuthorized(foreign, address(adapter)), "foreign not authorized");
+    }
+
+    // ============================================================
+    // (E) Two-line distinct-prefix isolation + BOTH draw (the load-bearing live test)
+    // ============================================================
+
+    function test_TwoLine_DistinctPrefix_BothDraw_Isolation() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        _seedRegistry(address(LIEN_B), PRICE_B);
+
+        (address lineA,) = _openA();
+        (address lineB,) = _openB();
+        EulerVenueAdapter.Line memory LA = adapter.getLine(lineA);
+        EulerVenueAdapter.Line memory LB = adapter.getLine(lineB);
+
+        // Structural distinctness.
+        assertTrue(lineA != lineB, "distinct borrow vaults");
+        assertTrue(LA.router != LB.router, "distinct routers");
+        assertTrue(LA.collateralVault != LB.collateralVault, "distinct escrow vaults");
+        assertTrue(LA.lineAccount != LB.lineAccount, "distinct LineAccounts");
+        assertTrue(LA.borrowAccount != LB.borrowAccount, "distinct borrow accounts");
+        assertTrue(
+            evc.getAddressPrefix(LA.borrowAccount) != evc.getAddressPrefix(LB.borrowAccount),
+            "distinct owner prefixes"
+        );
+        assertTrue(IEVault(lineA).oracle() != IEVault(lineB).oracle(), "distinct oracles");
+
+        // Each router resolves to its OWN lien -> registry.
+        (, address baseA,, address oracleA) = EulerRouter(LA.router).resolveOracle(1e18, LA.collateralVault, usdc);
+        assertEq(baseA, address(LIEN_A), "A resolves to LIEN_A");
+        assertEq(oracleA, address(registry), "A resolves to registry");
+        (, address baseB,, address oracleB) = EulerRouter(LB.router).resolveOracle(1e18, LB.collateralVault, usdc);
+        assertEq(baseB, address(LIEN_B), "B resolves to LIEN_B");
+        assertEq(oracleB, address(registry), "B resolves to registry");
+
+        // Cross-resolve negative: A's router cannot resolve B's collateral to a registry price.
+        vm.expectRevert();
+        EulerRouter(LA.router).resolveOracle(1e18, LB.collateralVault, usdc);
+
+        // Set limits + supply cash, then BOTH draw.
+        adapter.setLineLimits(lineA, 0.7e4, 0.8e4, 1_000_000e6);
+        adapter.setLineLimits(lineB, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(lineA, 1_000_000e6);
+        _supplyToLine(lineB, 1_000_000e6);
+
+        uint256 drawA = 100_000e6; // well under 0.7 * $300k
+        uint256 drawB = 150_000e6; // well under 0.7 * $500k
+
+        uint256 erBefore = IERC20(usdc).balanceOf(erebor);
+        adapter.draw(lineA, drawA, erebor);
+        adapter.draw(lineB, drawB, erebor);
+
+        assertEq(IEVault(lineA).debtOf(LA.borrowAccount), drawA, "A debt");
+        assertEq(IEVault(lineB).debtOf(LB.borrowAccount), drawB, "B debt unaffected by A");
+        assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, drawA + drawB, "erebor received both draws");
+
+        // Revaluation independence: re-mark B; A's quote unchanged.
+        uint256 quoteA_before = registry.getQuote(1e18, address(LIEN_A), usdc);
+        // SEC-01: the re-mark needs a strictly-newer ts (monotonic guard); a separate CRE report lands in a later block.
+        vm.warp(block.timestamp + 1);
+        _seedRegistry(address(LIEN_B), 999_999e6);
+        uint256 quoteA_after = registry.getQuote(1e18, address(LIEN_A), usdc);
+        assertEq(quoteA_after, quoteA_before, "A quote byte-for-byte unchanged after B reval");
+        assertEq(IEVault(lineA).debtOf(LA.borrowAccount), drawA, "A debt unchanged");
+    }
+
+    // ============================================================
+    // (F) Foreign-account hook rejection (live fork)
+    // ============================================================
+
+    function test_ForeignAccount_HookRejects() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineA,) = _openA();
+        adapter.setLineLimits(lineA, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(lineA, 1_000_000e6);
+
+        // Open B to get a foreign (authorized-for-its-own-line-only) borrow account.
+        _seedRegistry(address(LIEN_B), PRICE_B);
+        (address lineB,) = _openB();
+        EulerVenueAdapter.Line memory LB = adapter.getLine(lineB);
+
+        // Attempt to borrow on lineA's vault on behalf of B's borrow account (a foreign account for line A).
+        // B's account did not authorize anyone as operator over line A's vault context, AND the adapter is not
+        // B's operator-for-line-A in a way the hook accepts unless B granted it... B DID grant the adapter over
+        // borrowAccount_B, but the hook gate is isAccountOperatorAuthorized(appendedAccount, adapter). For a truly
+        // foreign account (an arbitrary EOA owner that never granted), the hook reverts. Build that directly:
+        address foreignEOA = makeAddr("foreignBorrower");
+        IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);
+        items[0] = IEVC.BatchItem({
+            targetContract: address(evc),
+            onBehalfOfAccount: address(0),
+            value: 0,
+            data: abi.encodeCall(IEVC.enableController, (foreignEOA, lineA))
+        });
+        items[1] = IEVC.BatchItem({
+            targetContract: address(evc),
+            onBehalfOfAccount: address(0),
+            value: 0,
+            data: abi.encodeCall(IEVC.enableCollateral, (foreignEOA, LB.collateralVault))
+        });
+        items[2] = IEVC.BatchItem({
+            targetContract: lineA,
+            onBehalfOfAccount: foreignEOA,
+            value: 0,
+            data: abi.encodeCall(IBorrowing.borrow, (1e6, erebor))
+        });
+        // The adapter is not foreignEOA's operator -> EVC authentication for the borrow item fails (EVC rejects
+        // before the hook). Either way the borrow does NOT succeed.
+        vm.prank(foreignEOA);
+        vm.expectRevert();
+        evc.batch(items);
+
+        // And: directly prove the hook would reject an un-granted account if it reached the vault. Use a foreign
+        // account that the adapter operates but appended to line A's borrow context where it has no controller.
+        // (Covered by the EVC-level rejection above; the hook unit-rejection is proven in CREGatingHook.t.sol.)
+    }
+
+    // ============================================================
+    // (G) Authority (onlyController) + stubs
+    // ============================================================
+
+    function test_Authority_NonController_Reverts() public {
+        (address lineRef,) = _openA();
+        address bad = makeAddr("bad");
+
+        vm.prank(bad);
+        vm.expectRevert(EulerVenueAdapter.NotController.selector);
+        adapter.openLine(LIEN_ID_B, address(LIEN_B), 1e18);
+
+        vm.prank(bad);
+        vm.expectRevert(EulerVenueAdapter.NotController.selector);
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 100e6);
+
+        vm.prank(bad);
+        vm.expectRevert(EulerVenueAdapter.NotController.selector);
+        adapter.fund(lineRef, 1e6);
+
+        vm.prank(bad);
+        vm.expectRevert(EulerVenueAdapter.NotController.selector);
+        adapter.draw(lineRef, 1e6, erebor);
+
+        vm.prank(bad);
+        vm.expectRevert(EulerVenueAdapter.NotController.selector);
+        adapter.closeLine(lineRef);
+
+        vm.prank(bad);
+        vm.expectRevert(EulerVenueAdapter.NotController.selector);
+        adapter.liquidate(lineRef);
+    }
+
+    function test_Liquidate_NotImplemented() public {
+        (address lineRef,) = _openA();
+        vm.expectRevert(EulerVenueAdapter.NotImplemented.selector);
+        adapter.liquidate(lineRef);
+    }
+
+    function test_UnknownLine_Reverts() public {
+        address ghost = makeAddr("ghost");
+        vm.expectRevert(abi.encodeWithSelector(EulerVenueAdapter.UnknownLine.selector, ghost));
+        adapter.setLineLimits(ghost, 0.7e4, 0.8e4, 100e6);
+        vm.expectRevert(abi.encodeWithSelector(EulerVenueAdapter.UnknownLine.selector, ghost));
+        adapter.fund(ghost, 1e6);
+        vm.expectRevert(abi.encodeWithSelector(EulerVenueAdapter.UnknownLine.selector, ghost));
+        adapter.draw(ghost, 1e6, erebor);
+        vm.expectRevert(abi.encodeWithSelector(EulerVenueAdapter.UnknownLine.selector, ghost));
+        adapter.closeLine(ghost);
+    }
+
+    function test_Draw_BadReceiver_Reverts() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(lineRef, 1_000_000e6);
+        vm.expectRevert(EulerVenueAdapter.BadReceiver.selector);
+        adapter.draw(lineRef, 1e6, makeAddr("notErebor"));
+    }
+
+    // ============================================================
+    // (H) fund records the two-item ABSOLUTE allocation (mock-level)
+    // ============================================================
+
+    function test_Fund_RecordsTwoItemAbsoluteAllocation() public {
+        (address lineRef,) = _openA();
+        // Give the EE a base position so baseBalance - amount does not underflow.
+        _fundBaseMarket(1_000_000e6);
+
+        uint256 baseBal =
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee)));
+        uint256 lineBal = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee)));
+        uint256 amount = 200_000e6;
+
+        adapter.fund(lineRef, amount);
+
+        assertEq(ee.reallocCount(), 1, "reallocate called once");
+        assertEq(ee.lastReallocLength(), 2, "two-item allocation");
+        assertEq(ee.lastReallocIds(0), usdcReservoir, "item0 = usdcReservoir (withdraw)");
+        assertEq(ee.lastReallocAssets(0), baseBal - amount, "item0 absolute target = base - amount");
+        assertEq(ee.lastReallocIds(1), lineRef, "item1 = lineRef (supply)");
+        assertEq(ee.lastReallocAssets(1), lineBal + amount, "item1 absolute target = line + amount");
+    }
+
+    // ============================================================
+    // (H2) SEC-11 (L9) — fund/defund sized off the EE-TRACKED position (previewRedeem(config.balance)),
+    //       donation-immune. Pre-fix (convertToAssets(balanceOf)) a share donation skews the targets so the
+    //       reallocate deltas no longer net and funding bricks.
+    // ============================================================
+
+    /// @dev Donate `usdcAmount` worth of `market`'s EVK shares directly into the EE pool: mint to this test
+    ///      contract, then raw-transfer the shares to the pool. This inflates the pool's LIVE `balanceOf(EE)`
+    ///      WITHOUT touching the EE-tracked `cfgBalance` (the L9 skew — a raw transfer never calls reallocate /
+    ///      seedConfig). Returns the donated share count.
+    function _donateBaseShares(address market, uint256 usdcAmount) internal returns (uint256 shares) {
+        deal(usdc, address(this), usdcAmount);
+        IERC20(usdc).approve(market, usdcAmount);
+        shares = IEVault(market).deposit(usdcAmount, address(this));
+        IEVault(market).transfer(address(ee), shares);
+    }
+
+    /// @dev Post-fix: `fund` sizes both legs off `previewRedeem(config.balance)`, so a base-market share donation
+    ///      is invisible to the sizing — the reallocate deltas net exactly and funding succeeds (the line is then
+    ///      drawable on the funded liquidity). The pre-fix `convertToAssets(balanceOf)` sizing reverts on the same
+    ///      donation — see `test_SEC11_PreFixSizing_Reverts_OnDonation`.
+    function test_SEC11_Fund_DonationImmune() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _fundBaseMarket(1_000_000e6);
+
+        // Donate 1 USDC of base-market shares into the pool: live balance now EXCEEDS the EE-tracked balance.
+        uint256 donated = _donateBaseShares(usdcReservoir, 1e6);
+        assertGt(donated, 0, "donation minted base-market shares");
+        assertGt(
+            IEVault(usdcReservoir).balanceOf(address(ee)),
+            ee.cfgBalance(usdcReservoir),
+            "live balanceOf(EE) > EE-tracked cfgBalance after donation (the L9 skew)"
+        );
+
+        uint256 amount = 200_000e6;
+        uint256 baseTrackedBefore = IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir));
+        uint256 lineTrackedBefore = IEVault(lineRef).previewRedeem(ee.cfgBalance(lineRef));
+
+        adapter.fund(lineRef, amount); // post-fix: succeeds despite the donation
+
+        // EE-TRACKED supplied assets moved by exactly `amount`: base fell, line rose.
+        assertEq(
+            IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir)),
+            baseTrackedBefore - amount,
+            "base EE-tracked supplied assets fell by amount"
+        );
+        assertEq(
+            IEVault(lineRef).previewRedeem(ee.cfgBalance(lineRef)),
+            lineTrackedBefore + amount,
+            "line EE-tracked supplied assets rose by amount"
+        );
+
+        // The line is drawable on the funded liquidity (50k < 0.7 * $300k collateral, < 200k funded).
+        uint256 erBefore = IERC20(usdc).balanceOf(erebor);
+        adapter.draw(lineRef, 50_000e6, erebor);
+        assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, 50_000e6, "erebor received the draw");
+        assertEq(IEVault(lineRef).debtOf(adapter.getLine(lineRef).borrowAccount), 50_000e6, "line debt == draw");
+    }
+
+    /// @dev Proves the bug the fix closes: reconstructs the PRE-FIX sizing verbatim
+    ///      (`convertToAssets(balanceOf(EE))`) on a donated pool and drives `reallocate` directly — it reverts
+    ///      (the donation-skewed targets withdraw `amount - donation` from base but try to supply `amount` to the
+    ///      line, so the deltas cannot net). The post-fix `fund` does NOT revert — see
+    ///      `test_SEC11_Fund_DonationImmune`. (Bare `expectRevert`: the concrete revert is the supply leg failing
+    ///      to cover the over-supply from the under-withdrawn cash — i.e. EE's `InconsistentReallocation`
+    ///      invariant whenever idle cash covers the deposit, else the deposit-side shortfall — both brick funding.)
+    function test_SEC11_PreFixSizing_Reverts_OnDonation() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        _fundBaseMarket(1_000_000e6);
+        _donateBaseShares(usdcReservoir, 1e6);
+
+        uint256 amount = 200_000e6;
+        // PRE-FIX sizing verbatim (the formula SEC-11 replaced): live balance, donation-skewed.
+        uint256 baseBalancePreFix =
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee)));
+        uint256 lineBalancePreFix = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee)));
+
+        MarketAllocation[] memory allocs = new MarketAllocation[](2);
+        allocs[0] = MarketAllocation({id: IOZERC4626(usdcReservoir), assets: baseBalancePreFix - amount});
+        allocs[1] = MarketAllocation({id: IOZERC4626(lineRef), assets: lineBalancePreFix + amount});
+
+        vm.expectRevert();
+        ee.reallocate(allocs);
+    }
+
+    /// @dev The happy path is unchanged: with no donation (live balance == EE-tracked balance) `fund` still moves
+    ///      exactly `amount` from base to the line.
+    function test_SEC11_Fund_NoDonation_StillMoves() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _fundBaseMarket(1_000_000e6);
+
+        uint256 amount = 200_000e6;
+        uint256 baseTrackedBefore = IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir));
+        // No donation: the live and tracked balances agree.
+        assertEq(
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee))),
+            baseTrackedBefore,
+            "no skew absent a donation"
+        );
+
+        adapter.fund(lineRef, amount);
+
+        assertEq(
+            IEVault(usdcReservoir).previewRedeem(ee.cfgBalance(usdcReservoir)),
+            baseTrackedBefore - amount,
+            "base fell by amount"
+        );
+        assertEq(
+            IEVault(lineRef).previewRedeem(ee.cfgBalance(lineRef)),
+            amount,
+            "line rose from zero to amount"
+        );
+    }
+
+    // ============================================================
+    // (I) onboarding bounded to the freshly-minted EVAULT only (security F3)
+    // ============================================================
+
+    function test_OpenLine_SubmitsCapOnlyForOwnVault() public {
+        (address lineRef,) = _openA();
+        assertEq(ee.submittedCapsLength(), 1, "exactly one submitCap");
+        assertEq(ee.submittedCaps(0), lineRef, "submitCap ONLY for the freshly-minted EVAULT");
+        // The supply queue was rebuilt preserving the base head + appending the line.
+        assertEq(ee.supplyQueueLength(), 2, "queue = [base, line]");
+        assertEq(address(ee.supplyQueue(0)), usdcReservoir, "head preserved");
+        assertEq(address(ee.supplyQueue(1)), lineRef, "line appended");
+    }
+
+    // ============================================================
+    // (J) close / reclaim (live fork)
+    // ============================================================
+
+    function test_CloseLine_LineNotRepaid_WhileDebt() public {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (address lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(lineRef, 1_000_000e6);
+        adapter.draw(lineRef, 50_000e6, erebor);
+
+        vm.expectRevert(EulerVenueAdapter.LineNotRepaid.selector);
+        adapter.closeLine(lineRef);
+    }
+
+    function test_CloseLine_NoDebt_ReclaimsLien() public {
+        (address lineRef,) = _openA();
+        EulerVenueAdapter.Line memory L = adapter.getLine(lineRef);
+
+        // The escrow shares are held by borrowAccount; the controller holds none of the lien now.
+        assertEq(LIEN_A.balanceOf(controller), 0, "controller deposited the full lien");
+        assertEq(IEVault(L.collateralVault).balanceOf(L.borrowAccount), 1e18, "borrowAccount holds escrow shares");
+        assertEq(adapter.observeDebt(lineRef), 0, "no debt");
+
+        adapter.closeLine(lineRef);
+
+        // The lien is reclaimed to the controller (operator-routed EVC.call redeem).
+        assertEq(LIEN_A.balanceOf(controller), 1e18, "lien reclaimed to controller");
+        EulerVenueAdapter.Line memory L2 = adapter.getLine(lineRef);
+        assertFalse(L2.open, "line closed");
+        // observeDebt readable AFTER close.
+        assertEq(adapter.observeDebt(lineRef), 0, "observeDebt readable post-close == 0");
+    }
+
+    // ============================================================
+    // (K) double openLine same lienId -> CREATE2 collision reverts
+    // ============================================================
+
+    function test_DoubleOpenLine_SameLienId_Reverts() public {
+        _openA();
+        // Re-open same lienId -> CREATE2 redeploy of LineAccount at the same salt collides -> revert.
+        vm.expectRevert();
+        adapter.openLine(LIEN_ID_A, address(LIEN_A), 1e18);
+    }
+
+    // ============================================================
+    // (L) WireMismatch is reachable via a deliberately-mis-wiring harness
+    // ============================================================
+
+    function test_WireMismatch_ReachableViaMisWiringHarness() public {
+        // A mis-wiring adapter whose _assertWired checks against the WRONG lien -> the correct resolve trips it.
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        CREGatingHook mwHook = new CREGatingHook(address(factory), address(evc), predicted);
+        MisWiringAdapter mw = new MisWiringAdapter(
+            controller,
+            address(evc),
+            address(ee),
+            address(factory),
+            address(registry),
+            address(mwHook),
+            address(irm),
+            usdc,
+            erebor,
+            usdcReservoir,
+            address(LIEN_B) // wrong expected lien
+        );
+        assertEq(address(mw), predicted, "prediction holds");
+
+        LIEN_A.approve(address(mw), type(uint256).max);
+        IOZERC4626[] memory q = new IOZERC4626[](1);
+        q[0] = IOZERC4626(usdcReservoir);
+        // mw uses the SAME ee mock; ensure its queue is fine (already set in setUp). Open must trip WireMismatch.
+        vm.expectRevert(EulerVenueAdapter.WireMismatch.selector);
+        mw.openLine(LIEN_ID_A, address(LIEN_A), 1e18);
+    }
+
+    // ============================================================
+    // (M) Interface neutrality (compile-time) + completeness
+    // ============================================================
+
+    function test_InterfaceImplemented() public view {
+        // EulerVenueAdapter is IZipcodeVenue — assignable to the interface type (compile-time proof).
+        IZipcodeVenue v = IZipcodeVenue(address(adapter));
+        assertEq(address(v), address(adapter));
+    }
+
+    // ============================================================
+    // (N) SEC-06 — closeLine prunes the closed line from the EE supply queue (H2)
+    // ============================================================
+
+    /// @dev Prune happens: a closed line's borrow vault is removed from the supply queue (length drops by 1).
+    function test_SEC06_CloseLine_PrunesSupplyQueue() public {
+        (address lineRef,) = _openA();
+        assertEq(ee.supplyQueueLength(), 2, "queue = [base, line] after open");
+        assertTrue(ee.queueContains(lineRef), "line present in queue after open");
+
+        adapter.closeLine(lineRef);
+
+        // Pre-fix this stays 2 (no prune) and the vault remains in the queue.
+        assertEq(ee.supplyQueueLength(), 1, "queue dropped to [base] after close");
+        assertFalse(ee.queueContains(lineRef), "closed line pruned from queue");
+        assertTrue(ee.queueContains(usdcReservoir), "base market preserved");
+    }
+
+    /// @dev Other open lines untouched: closing one line leaves the other in the queue and still fundable.
+    function test_SEC06_CloseLine_LeavesOtherOpenLineFundable() public {
+        _fundBaseMarket(1_000_000e6);
+        (address lineA,) = _openA();
+        (address lineB,) = _openB();
+        assertEq(ee.supplyQueueLength(), 3, "queue = [base, A, B] after two opens");
+
+        adapter.closeLine(lineA);
+
+        assertEq(ee.supplyQueueLength(), 2, "queue = [base, B] after closing A");
+        assertFalse(ee.queueContains(lineA), "A pruned");
+        assertTrue(ee.queueContains(lineB), "B retained");
+        assertTrue(ee.queueContains(usdcReservoir), "base retained");
+
+        // B is still routable: fund() reallocates into it without reverting.
+        adapter.fund(lineB, 100_000e6);
+        assertEq(ee.reallocCount(), 1, "B still fundable after A closed");
+    }
+
+    /// @dev No brick across churn: run open->close more than MAX_QUEUE_LENGTH (30) total originations, closing each
+    ///      before the next. Post-fix the queue stays bounded at [base, line] and every open succeeds. Pre-fix the
+    ///      queue grows by 1 per open and never shrinks, so the ~30th open's setSupplyQueue reverts
+    ///      MaxQueueLengthExceeded. The single 1e18 LIEN_A is recycled — each close redeems it back to the controller.
+    function test_SEC06_NoBrickAcrossChurnPastQueueCap() public {
+        uint256 n = 33; // comfortably past MAX_QUEUE_LENGTH (30)
+        for (uint256 i; i < n; ++i) {
+            bytes32 lienId = keccak256(abi.encode("SEC06", i));
+            (address lineRef,) = adapter.openLine(lienId, address(LIEN_A), 1e18);
+            assertEq(ee.supplyQueueLength(), 2, "queue bounded at [base, line] every cycle");
+            adapter.closeLine(lineRef);
+            assertEq(ee.supplyQueueLength(), 1, "queue back to [base] after each close");
+            assertEq(LIEN_A.balanceOf(controller), 1e18, "lien recycled to controller after close");
+        }
+    }
+
+    // ============================================================
+    // (O) SEC-07 — closeLine defunds the line's USDC back to base (L8)
+    // ============================================================
+
+    /// @dev No strand: open->fund->close returns the line's supplied USDC to the base market. The faithful EE
+    ///      mock actually moves funds, so pre-fix (no defund) the base EE balance stays depressed at base-amount
+    ///      and the line vault keeps the stranded USDC; post-fix base is restored and the line is emptied.
+    function test_SEC07_CloseLine_DefundsUsdcToBase() public {
+        _fundBaseMarket(1_000_000e6);
+        uint256 baseStart = IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee)));
+        assertEq(baseStart, 1_000_000e6, "base seeded with 1M");
+
+        (address lineRef,) = _openA();
+        adapter.fund(lineRef, 300_000e6); // moves 300k base -> line (faithful reallocate)
+
+        // After fund: base depressed, line holds the stranded USDC.
+        assertApproxEqAbs(
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee))),
+            700_000e6,
+            2,
+            "base drawn down by the fund"
+        );
+        assertApproxEqAbs(
+            IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee))),
+            300_000e6,
+            2,
+            "line holds the funded USDC"
+        );
+
+        adapter.closeLine(lineRef); // no draw -> debt 0; defund must reclaim the 300k
+
+        // Post-fix: base restored, line emptied (assets:0 -> redeem all shares).
+        assertApproxEqAbs(
+            IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee))),
+            1_000_000e6,
+            2,
+            "base balance restored by the defund"
+        );
+        assertEq(IEVault(lineRef).balanceOf(address(ee)), 0, "line EE position fully redeemed");
+    }
+
+    /// @dev No later-fund underflow: after an open->fund->close cycle that defunds back to base, a NEW line can be
+    ///      funded for an amount near the FULL base balance. Pre-fix the strand leaves base depressed and the new
+    ///      fund's `baseBalance - amount` (:290) underflows and reverts.
+    function test_SEC07_NoLaterFundUnderflow() public {
+        _fundBaseMarket(1_000_000e6);
+
+        (address lineA,) = _openA();
+        adapter.fund(lineA, 900_000e6); // strand 900k pre-fix
+        adapter.closeLine(lineA); // defund returns it to base
+
+        // Base is whole again; a NEW line funds for 950k (> the pre-fix residual 100k) without underflowing.
+        (address lineB,) = _openB();
+        adapter.fund(lineB, 950_000e6);
+
+        assertApproxEqAbs(
+            IEVault(lineB).convertToAssets(IEVault(lineB).balanceOf(address(ee))),
+            950_000e6,
+            2,
+            "new line funded near the full base balance (pre-fix this reverts on the :290 underflow)"
+        );
+    }
+
+    /// @dev Never-funded line: open then immediately close (lineBalance == 0). The no-op guard SKIPS the defund —
+    ///      no reallocate is emitted (reallocCount unchanged), and the close completes without reverting.
+    function test_SEC07_NeverFundedLine_NoDefund() public {
+        (address lineRef,) = _openA();
+        uint256 reallocBefore = ee.reallocCount();
+
+        adapter.closeLine(lineRef); // lineBalance == 0 -> guard skips the defund
+
+        assertEq(ee.reallocCount(), reallocBefore, "no defund reallocate on a never-funded line");
+        assertFalse(adapter.getLine(lineRef).open, "line closed");
+    }
+
+    // ============================================================
+    // (P) SEC-08 — openLine timelock precheck + deploy-time perspective probe (M6)
+    // ============================================================
+
+    /// @dev Timelock precheck fails LOUD + EARLY: with the EE pool's timelock raised (> 0) by its external owner,
+    ///      openLine reverts the legible `EulerEarnTimelockNonZero` and builds NO line proxies. Pre-fix (precheck
+    ///      removed) it builds the LineAccount + escrow + router + borrow vault, THEN reverts opaquely inside the
+    ///      faithful mock's `acceptCap` (`TimelockNotElapsed`) — orphaning the proxies (the factory list grows).
+    function test_SEC08_TimelockPrecheck_RevertsEarly_NoOrphan() public {
+        ee.setTimelock(1 days); // external EE owner raises the timelock post-deploy
+
+        uint256 proxiesBefore = factory.getProxyListLength();
+        vm.expectRevert(EulerVenueAdapter.EulerEarnTimelockNonZero.selector);
+        adapter.openLine(LIEN_ID_A, address(LIEN_A), 1e18);
+        assertEq(factory.getProxyListLength(), proxiesBefore, "no line proxies built on the timelock brick");
+        assertFalse(adapter.getLine(address(0)).open, "no line recorded");
+    }
+
+    /// @dev Happy path intact: with timelock == 0 (default) openLine still succeeds end-to-end.
+    function test_SEC08_TimelockZero_HappyPath() public {
+        assertEq(ee.timelock(), 0, "default timelock is 0");
+        (address lineRef,) = _openA();
+        assertTrue(lineRef != address(0), "line opened");
+        assertTrue(adapter.getLine(lineRef).open, "line is open");
+    }
+
+    /// @dev Deploy probe passes LIVE: a vault built with `openLine`'s exact shape passes the live EE factory's
+    ///      configured (provenance-only) perspective via the full `SzipPerspectiveProbe` path (reaching the real
+    ///      factory through `creator()`). No revert == accepted.
+    function test_SEC08_DeployProbe_PassesLive() public {
+        ee.setCreator(BaseAddresses.EULER_EARN_FACTORY);
+        address probe = new SzipPerspectiveProbe().assertLineVaultAllowed(
+            factory, address(ee), address(evc), usdc, address(registry), address(irm), address(hook), address(LIEN_A)
+        );
+        assertTrue(probe != address(0), "probe vault built");
+        assertTrue(factory.isProxy(probe), "probe is an EVK-factory proxy (what the live perspective verifies)");
+    }
+
+    /// @dev Deploy probe BITES: point `creator()` at a factory whose perspective rejects the line vault — the probe
+    ///      reverts `LineVaultPerspectiveRejected` (models a future `setPerspective` swap that bricks origination).
+    function test_SEC08_DeployProbe_Bites() public {
+        MockRejectingEarnFactory bad = new MockRejectingEarnFactory();
+        ee.setCreator(address(bad));
+        SzipPerspectiveProbe probe = new SzipPerspectiveProbe();
+        // The probe vault address is created inside the call (so its revert ARGS are unpredictable); catch and match
+        // the selector only.
+        bool reverted;
+        try probe.assertLineVaultAllowed(
+            factory, address(ee), address(evc), usdc, address(registry), address(irm), address(hook), address(LIEN_A)
+        ) returns (address) {} catch (bytes memory reason) {
+            reverted = true;
+            assertEq(
+                bytes4(reason), SzipPerspectiveProbe.LineVaultPerspectiveRejected.selector, "wrong revert selector"
+            );
+        }
+        assertTrue(reverted, "probe must revert when the EE perspective rejects the line vault");
+    }
+
+    // ============================================================
+    // (Q) CTR-04 — closeLine reclaims the BINDING withdraw-queue slot
+    // ============================================================
+
+    /// @dev openLine consumes a withdraw-queue slot (submitCap max + acceptCap -> first-enable push), and closeLine
+    ///      reclaims it: the line's market is added to the withdraw queue on open and removed on close (length back
+    ///      to its pre-open value). This is the BINDING queue (the supply-queue analog is SEC-06).
+    function test_CTR04_CloseLine_ReclaimsWithdrawQueueSlot() public {
+        uint256 wqBefore = ee.withdrawQueueLength();
+        (address lineRef,) = _openA();
+        assertEq(ee.withdrawQueueLength(), wqBefore + 1, "withdraw queue grew by 1 on open");
+        assertTrue(ee.withdrawQueueContains(lineRef), "line in withdraw queue after open");
+
+        adapter.closeLine(lineRef);
+
+        assertEq(ee.withdrawQueueLength(), wqBefore, "withdraw-queue slot reclaimed on close");
+        assertFalse(ee.withdrawQueueContains(lineRef), "closed line removed from withdraw queue");
+    }
+
+    /// @dev Removal guards respected (reference EulerEarn.sol:362-371): the removed line had its cap zeroed
+    ///      (submitCap 0) and carried zero EE balance (the defund emptied it) — so updateWithdrawQueue's cap-zero and
+    ///      empty-market guards both pass and the slot frees in the same tx, no timelock.
+    function test_CTR04_CloseLine_RemovedMarketCapZeroAndEmpty() public {
+        _fundBaseMarket(1_000_000e6);
+        (address lineRef,) = _openA();
+        adapter.fund(lineRef, 300_000e6); // give the line a real EE position to be defunded
+
+        // Before close: the line's cap is the max openLine left, and it holds a tracked balance.
+        (uint112 balBefore, uint136 capBefore,,) = ee.config(IOZERC4626(lineRef));
+        assertEq(capBefore, type(uint136).max, "line cap is max while open");
+        assertGt(balBefore, 0, "line holds an EE balance while funded");
+
+        adapter.closeLine(lineRef);
+
+        // After close: cap zeroed + balance emptied (the removal-guard preconditions), config cleared.
+        (uint112 balAfter, uint136 capAfter, bool enabledAfter,) = ee.config(IOZERC4626(lineRef));
+        assertEq(capAfter, 0, "line cap zeroed (submitCap 0) before removal");
+        assertEq(balAfter, 0, "line EE balance defunded to zero before removal");
+        assertFalse(enabledAfter, "line market config cleared on withdraw-queue removal");
+        assertEq(ee.expectedSupplyAssets(IOZERC4626(lineRef)), 0, "removed market is empty");
+    }
+
+    /// @dev Closing one of several open lines reclaims ONLY that line's withdraw slot; the base market and the other
+    ///      open line stay in the withdraw queue (matched by ADDRESS, not position).
+    function test_CTR04_CloseLine_LeavesOtherWithdrawSlots() public {
+        _fundBaseMarket(1_000_000e6); // enables base -> base takes a withdraw slot
+        (address lineA,) = _openA();
+        (address lineB,) = _openB();
+        assertEq(ee.withdrawQueueLength(), 3, "withdraw queue = [base, A, B]");
+
+        adapter.closeLine(lineA);
+
+        assertEq(ee.withdrawQueueLength(), 2, "withdraw queue = [base, B] after closing A");
+        assertFalse(ee.withdrawQueueContains(lineA), "A's withdraw slot reclaimed");
+        assertTrue(ee.withdrawQueueContains(lineB), "B's withdraw slot retained");
+        assertTrue(ee.withdrawQueueContains(usdcReservoir), "base withdraw slot retained");
+    }
+
+    /// @dev Brick-WITHOUT-reclaim is real: the withdraw queue grows by one per open and is hard-capped at
+    ///      MAX_QUEUE_LENGTH (30) inside acceptCap's first-enable push (reference _setCap :785). Fill it to the cap
+    ///      with open (never-closed) lines and the 31st open reverts MaxQueueLengthExceeded — the exact brick CTR-04's
+    ///      reclaim prevents. To isolate the WITHDRAW queue as the binding limiter we clear the base from the SUPPLY
+    ///      queue first (otherwise the independent supply-queue cap, SEC-06, would tie at the same count); both queues
+    ///      then grow in lockstep, but the regression that matters — that closing reclaims the slot — is proven by the
+    ///      churn test below, where supply IS pruned each cycle yet (pre-CTR-04) the withdraw queue still grew unbounded.
+    function test_CTR04_WithdrawQueueBricks_WithoutClose() public {
+        // Clear base from the supply queue so the supply-queue cap does not pre-occupy a slot / confound the count.
+        IOZERC4626[] memory empty = new IOZERC4626[](0);
+        ee.setSupplyQueue(empty);
+
+        // Fill the withdraw queue exactly to the cap with open (never-closed) lines.
+        for (uint256 i; i < 30; ++i) {
+            bytes32 lienId = keccak256(abi.encode("CTR04-brick", i));
+            // Each concurrent (never-closed) open custodies its own 1e18 lien; top the controller's balance back up
+            // so the next open has a lien to deposit (the standing setUp approval covers the pull).
+            deal(address(LIEN_A), controller, 1e18);
+            adapter.openLine(lienId, address(LIEN_A), 1e18);
+        }
+        assertEq(ee.withdrawQueueLength(), 30, "withdraw queue filled to MAX_QUEUE_LENGTH with un-closed lines");
+
+        // The 31st open's acceptCap first-enable push exceeds the cap -> MaxQueueLengthExceeded (the brick).
+        deal(address(LIEN_A), controller, 1e18);
+        vm.expectRevert(MockEulerEarn.MaxQueueLengthExceeded.selector);
+        adapter.openLine(keccak256(abi.encode("CTR04-brick", uint256(30))), address(LIEN_A), 1e18);
+    }
+
+    /// @dev No brick across churn (the regression proving the reclaim): recycle the single 1e18 LIEN_A through more
+    ///      than MAX_QUEUE_LENGTH (30) open->close cycles. With the withdraw-slot reclaim the queue stays bounded at
+    ///      one slot per open and never reaches the cap; pre-CTR-04 it would brick on the ~31st open's acceptCap. The
+    ///      withdraw-queue analog of test_SEC06_NoBrickAcrossChurnPastQueueCap.
+    function test_CTR04_NoBrickAcrossChurnPastWithdrawQueueCap() public {
+        uint256 n = 33; // comfortably past MAX_QUEUE_LENGTH (30)
+        for (uint256 i; i < n; ++i) {
+            bytes32 lienId = keccak256(abi.encode("CTR04-churn", i));
+            (address lineRef,) = adapter.openLine(lienId, address(LIEN_A), 1e18);
+            assertEq(ee.withdrawQueueLength(), 1, "withdraw queue bounded at one slot per concurrent open");
+            adapter.closeLine(lineRef);
+            assertEq(ee.withdrawQueueLength(), 0, "withdraw slot reclaimed every close");
+            assertEq(LIEN_A.balanceOf(controller), 1e18, "lien recycled to controller after close");
+        }
+    }
+
+    /// @dev Concurrent reuse: fill the withdraw queue with open lines up to the cap, close one to free a slot, then a
+    ///      fresh open succeeds where it would otherwise revert MaxQueueLengthExceeded — proving the reclaim restores
+    ///      true 28-concurrent (here cap-bounded) reuse per pool, not merely 28-lifetime.
+    function test_CTR04_ConcurrentReuse_CloseFreesSlotForNewOpen() public {
+        // Clear base from the supply queue so the supply-queue cap (SEC-06) does not pre-occupy a slot; this isolates
+        // the withdraw-queue cap as the binding limiter the reclaim must relieve.
+        IOZERC4626[] memory empty = new IOZERC4626[](0);
+        ee.setSupplyQueue(empty);
+
+        address[] memory open = new address[](30);
+        for (uint256 i; i < 30; ++i) {
+            bytes32 lienId = keccak256(abi.encode("CTR04-reuse", i));
+            deal(address(LIEN_A), controller, 1e18); // replenish the lien for the next concurrent open
+            (address lineRef,) = adapter.openLine(lienId, address(LIEN_A), 1e18);
+            open[i] = lineRef;
+        }
+        assertEq(ee.withdrawQueueLength(), 30, "withdraw queue at the cap with 30 concurrent lines");
+
+        // At the cap, a new open would brick (proven by test_CTR04_WithdrawQueueBricks_WithoutClose). Close one first.
+        adapter.closeLine(open[0]);
+        assertEq(ee.withdrawQueueLength(), 29, "one withdraw slot freed by the close");
+
+        // The freed slot admits a fresh open that would have reverted at the cap.
+        deal(address(LIEN_A), controller, 1e18);
+        (address fresh,) = adapter.openLine(keccak256(abi.encode("CTR04-reuse-fresh")), address(LIEN_A), 1e18);
+        assertEq(ee.withdrawQueueLength(), 30, "fresh open re-fills the freed slot (no brick)");
+        assertTrue(ee.withdrawQueueContains(fresh), "fresh line occupies the reclaimed slot");
+    }
+
+    // ============================================================
+    // (R) CTR-09 — the 0.1%-per-revolution protocol draw fee
+    // ============================================================
+    // The fee defaults OFF (`adminSafe == address(0)`), so every PRE-EXISTING draw test above asserts
+    // `debtOf == drawAmount` unchanged. These tests wire `adminSafe` LOCALLY (never in setUp) to exercise the
+    // fee-on path. The adapter's owner is this test contract (Ownable(msg.sender) at deploy), so it calls the
+    // onlyOwner setters directly.
+
+    event FeeLevied(address indexed lineRef, uint256 fee);
+    event FeeSet(uint16 feeBps);
+    event WiringSet(bytes32 indexed slot, address value);
+
+    address internal feeSink = makeAddr("feeSink");
+
+    /// @dev Open A, set limits, supply cash. Returns the line + its borrow account. Shared by the fee tests.
+    function _openAndFundA() internal returns (address lineRef, address borrowAccount) {
+        _seedRegistry(address(LIEN_A), PRICE_A);
+        (lineRef,) = _openA();
+        adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(lineRef, 1_000_000e6);
+        borrowAccount = adapter.getLine(lineRef).borrowAccount;
+    }
+
+    /// @dev fee-on: wire the recipient, draw `amount`, assert financed-fee semantics — debt is `amount + fee`,
+    ///      `adminSafe` got `fee` USDC, `erebor` got exactly `amount`, and `FeeLevied(lineRef, fee)` emitted.
+    function test_CTR09_FeeOn_FinancesAndRoutesFee() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        assertEq(adapter.feeBps(), 50, "default feeBps is the CTR-09 calibration (50 bps)");
+        adapter.setAdminSafe(feeSink); // fee fires at the non-zero default feeBps
+
+        uint256 amount = 100_000e6; // 0.7 * $300k headroom easily covers amount + fee
+        uint256 fee = amount * adapter.feeBps() / 10_000; // default-robust (50 bps => 500e6)
+        assertGt(fee, 0, "fee non-dust at this size");
+
+        uint256 erBefore = IERC20(usdc).balanceOf(erebor);
+        uint256 sinkBefore = IERC20(usdc).balanceOf(feeSink);
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit FeeLevied(lineRef, fee);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount + fee, "line debt = amount + fee (financed)");
+        assertEq(IERC20(usdc).balanceOf(feeSink) - sinkBefore, fee, "adminSafe received the fee");
+        assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, amount, "erebor received exactly the principal (F2)");
+    }
+
+    /// @dev per-revolution: a second draw on the SAME line levies AGAIN — debt grows by `amount2 + fee2` (a revolving
+    ///      line that draws N times pays N×, not once per line).
+    function test_CTR09_FeeIsPerRevolution() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        adapter.setAdminSafe(feeSink);
+
+        uint256 amount1 = 100_000e6;
+        uint256 fee1 = amount1 * adapter.feeBps() / 10_000;
+        adapter.draw(lineRef, amount1, erebor);
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount1 + fee1, "first revolution debt");
+
+        uint256 sinkAfter1 = IERC20(usdc).balanceOf(feeSink);
+
+        uint256 amount2 = 50_000e6;
+        uint256 fee2 = amount2 * adapter.feeBps() / 10_000;
+        adapter.draw(lineRef, amount2, erebor);
+
+        assertEq(
+            IEVault(lineRef).debtOf(borrowAccount),
+            amount1 + fee1 + amount2 + fee2,
+            "second revolution adds amount2 + fee2 (per-revolution, not per-line)"
+        );
+        assertEq(IERC20(usdc).balanceOf(feeSink) - sinkAfter1, fee2, "second fee levied again");
+    }
+
+    /// @dev no-op via recipient: with `adminSafe == address(0)` (the default disable sentinel) NO fee leg is
+    ///      appended — debt == amount, and no FeeLevied is emitted.
+    function test_CTR09_NoOp_WhenRecipientUnset() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        // adminSafe unset (address(0)); feeBps is the non-zero default.
+        assertEq(adapter.adminSafe(), address(0), "recipient unset by default");
+
+        uint256 amount = 100_000e6;
+        uint256 erBefore = IERC20(usdc).balanceOf(erebor);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount, "debt == amount, no fee leg");
+        assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, amount, "erebor received exactly amount");
+    }
+
+    /// @dev no-op via bps: recipient wired but `feeBps == 0` => fee == 0 => no leg, debt == amount.
+    function test_CTR09_NoOp_WhenFeeBpsZero() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        adapter.setAdminSafe(feeSink);
+        adapter.setFeeBps(0);
+
+        uint256 amount = 100_000e6;
+        uint256 sinkBefore = IERC20(usdc).balanceOf(feeSink);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount, "debt == amount when feeBps == 0");
+        assertEq(IERC20(usdc).balanceOf(feeSink), sinkBefore, "no fee routed when feeBps == 0");
+    }
+
+    /// @dev dust: a draw small enough that `amount * feeBps / 10_000 == 0` (round-down) appends no fee leg.
+    ///      The dust threshold is computed from the live feeBps (default-robust): any amount < 10_000/feeBps rounds to 0.
+    function test_CTR09_DustDraw_NoFeeLeg() public {
+        (address lineRef, address borrowAccount) = _openAndFundA();
+        adapter.setAdminSafe(feeSink);
+
+        uint256 amount = 10_000 / adapter.feeBps() - 1; // largest draw whose fee rounds to 0 (199 wei at 50 bps)
+        assertEq(amount * adapter.feeBps() / 10_000, 0, "fee rounds down to zero (dust)");
+
+        uint256 sinkBefore = IERC20(usdc).balanceOf(feeSink);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), amount, "debt == amount on dust draw, no fee leg");
+        assertEq(IERC20(usdc).balanceOf(feeSink), sinkBefore, "no fee routed on dust draw");
+    }
+
+    /// @dev setters gating + cap + events: onlyOwner enforcement, the MAX_FEE_BPS cap, the disable sentinel, and event
+    ///      emission for both setters.
+    function test_CTR09_Setters_GatingCapAndEvents() public {
+        address bad = makeAddr("notOwner");
+
+        // onlyOwner: a non-owner cannot call either setter (Ownable reverts OwnableUnauthorizedAccount).
+        vm.prank(bad);
+        vm.expectRevert();
+        adapter.setAdminSafe(feeSink);
+        vm.prank(bad);
+        vm.expectRevert();
+        adapter.setFeeBps(20);
+
+        // setFeeBps cap: MAX_FEE_BPS is 500; 501 reverts FeeTooHigh.
+        vm.expectRevert(EulerVenueAdapter.FeeTooHigh.selector);
+        adapter.setFeeBps(501);
+
+        // setFeeBps at the cap succeeds + emits FeeSet.
+        vm.expectEmit(false, false, false, true, address(adapter));
+        emit FeeSet(500);
+        adapter.setFeeBps(500);
+        assertEq(adapter.feeBps(), 500, "feeBps set to the cap");
+
+        // setAdminSafe succeeds + emits WiringSet("adminSafe", ..).
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("adminSafe", feeSink);
+        adapter.setAdminSafe(feeSink);
+        assertEq(adapter.adminSafe(), feeSink, "recipient set");
+
+        // setAdminSafe(address(0)) succeeds (the disable sentinel — NO ZeroAddress guard).
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("adminSafe", address(0));
+        adapter.setAdminSafe(address(0));
+        assertEq(adapter.adminSafe(), address(0), "recipient disabled back to address(0)");
+    }
+
+    // ============================================================
+    // (I-16) Build-phase infra wiring setters — onlyOwner + ZeroAddress + effect/event
+    // ============================================================
+    // The 11 ZeroAddress-guarded infra re-points (controller/evc/eulerEarn/eVaultFactory/oracleRegistry/gatingHook/
+    // irm/usdc/erebor/usdcReservoir/farmUtilityAllocator). The CTR-09/CTR-13 setters (feeBps/adminSafe/curatorSafe)
+    // and setFarmUtilityVault's CTR-07 hook guard are covered elsewhere; these are pure store-and-emit setters with
+    // no external call, so re-pointing to a fresh address is safe.
+
+    /// @notice Every infra setter is `onlyOwner` — a non-owner reverts `OwnableUnauthorizedAccount`.
+    function test_I16_InfraSetters_RejectNonOwner() public {
+        address bad = makeAddr("notOwner");
+        vm.startPrank(bad);
+        vm.expectRevert();
+        adapter.setController(bad);
+        vm.expectRevert();
+        adapter.setEvc(bad);
+        vm.expectRevert();
+        adapter.setEulerEarn(bad);
+        vm.expectRevert();
+        adapter.setEVaultFactory(bad);
+        vm.expectRevert();
+        adapter.setOracleRegistry(bad);
+        vm.expectRevert();
+        adapter.setGatingHook(bad);
+        vm.expectRevert();
+        adapter.setIrm(bad);
+        vm.expectRevert();
+        adapter.setUsdc(bad);
+        vm.expectRevert();
+        adapter.setErebor(bad);
+        vm.expectRevert();
+        adapter.setUsdcReservoir(bad);
+        vm.expectRevert();
+        adapter.setFarmUtilityAllocator(bad);
+        vm.stopPrank();
+    }
+
+    /// @notice Every infra setter zero-guards: `address(0)` reverts `ZeroAddress` (as the owner).
+    function test_I16_InfraSetters_RejectZeroAddress() public {
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setController(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setEvc(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setEulerEarn(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setEVaultFactory(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setOracleRegistry(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setGatingHook(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setIrm(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setUsdc(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setErebor(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setUsdcReservoir(address(0));
+        vm.expectRevert(EulerVenueAdapter.ZeroAddress.selector);
+        adapter.setFarmUtilityAllocator(address(0));
+    }
+
+    /// @notice Each infra setter re-points its slot and emits `WiringSet(slot, value)` (as the owner).
+    function test_I16_InfraSetters_OwnerRepointsAndEmits() public {
+        address x = makeAddr("rewire");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("controller", x);
+        adapter.setController(x);
+        assertEq(adapter.controller(), x, "controller re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("evc", x);
+        adapter.setEvc(x);
+        assertEq(address(adapter.evc()), x, "evc re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("eulerEarn", x);
+        adapter.setEulerEarn(x);
+        assertEq(address(adapter.eulerEarn()), x, "eulerEarn re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("eVaultFactory", x);
+        adapter.setEVaultFactory(x);
+        assertEq(address(adapter.eVaultFactory()), x, "eVaultFactory re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("oracleRegistry", x);
+        adapter.setOracleRegistry(x);
+        assertEq(adapter.oracleRegistry(), x, "oracleRegistry re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("gatingHook", x);
+        adapter.setGatingHook(x);
+        assertEq(adapter.gatingHook(), x, "gatingHook re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("irm", x);
+        adapter.setIrm(x);
+        assertEq(adapter.irm(), x, "irm re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("usdc", x);
+        adapter.setUsdc(x);
+        assertEq(adapter.usdc(), x, "usdc re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("erebor", x);
+        adapter.setErebor(x);
+        assertEq(adapter.erebor(), x, "erebor re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("usdcReservoir", x);
+        adapter.setUsdcReservoir(x);
+        assertEq(adapter.usdcReservoir(), x, "usdcReservoir re-pointed");
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("farmUtilityAllocator", x);
+        adapter.setFarmUtilityAllocator(x);
+        assertEq(adapter.farmUtilityAllocator(), x, "farmUtilityAllocator re-pointed");
+    }
+
+    /// @notice The CTR-10b venue-agnostic senior surface: `seniorPool()` returns the EulerEarn pool (4626 satisfies
+    ///         `ISeniorPool` directly), the address the `SiloRegistry` admission gate asserts against.
+    function test_seniorPool_ReturnsEulerEarn() public view {
+        assertEq(adapter.seniorPool(), address(ee), "seniorPool == the EulerEarn pool");
+    }
+
+    /// @dev F2 intact: even with the fee live, the PRINCIPAL leg still sends `amount` to `erebor`, and a draw with
+    ///      `receiver != erebor` still reverts BadReceiver (the fee leg's distinct receiver does not relax the pin).
+    function test_CTR09_F2_PinIntactWithFeeOn() public {
+        (address lineRef,) = _openAndFundA();
+        adapter.setAdminSafe(feeSink);
+
+        // Principal still goes to erebor (asserted in test_CTR09_FeeOn_FinancesAndRoutesFee); here prove the pin still
+        // rejects a non-erebor receiver while the fee is live.
+        vm.expectRevert(EulerVenueAdapter.BadReceiver.selector);
+        adapter.draw(lineRef, 100_000e6, makeAddr("notErebor"));
+    }
+
+    // ============================================================
+    // (Q) CTR-13 — real line APR (~7.5%) via the adapter `irm` slot; farm utility / pre-existing lines stay 0%
+    // ============================================================
+
+    /// @dev Units proof (no on-chain call): `BASE_RATE` is the per-second RAY rate; nominal APR = rate * SPY / 1e27.
+    ///      750 bps == 7.50%. This is the "no load-bearing guess" gate — the rate is derived from EVK's own
+    ///      SECONDS_PER_YEAR / 1e27 convention, not a transcribed magic number.
+    function test_CTR13_LineIrm_BaseRate_Is_7_5pct_APR_Nominal() public pure {
+        // bps = (BASE_RATE * SPY / 1e27) * 1e4 = BASE_RATE * SPY / 1e23
+        uint256 nominalBps = LineIrm.BASE_RATE * LineIrm.SECONDS_PER_YEAR / 1e23;
+        assertApproxEqAbs(nominalBps, 750, 1, "nominal line APR ~= 7.50%");
+    }
+
+    /// @dev (a)+(b)+(c)+roll-off in one fork test on the live EVK factory:
+    ///      (c) `setIrm(realIRM)` re-points the slot and a FRESH `openLine` installs the real IRM on its borrow vault;
+    ///      (a) that line's `debtOf` accretes by EVK's exact per-second compounding factor at BASE_RATE over a year;
+    ///      (b)/roll-off a line opened BEFORE the rate was turned on stays on `ZeroIRM` and accrues ZERO over the SAME
+    ///          span — the same `ZeroIRM` the farm utility borrow vault runs (internal POL), so this is the structural
+    ///          equivalent of "the farm utility borrow accrues 0", and confirms the default roll-off (no forced re-price).
+    function test_CTR13_RealLineAccrues7_5pct_While_ZeroIrmLineAccruesZero() public {
+        // A pre-existing line on the setUp default ZeroIRM (models the farm utility / a pre-CTR-13 live line).
+        _seedRegistry(address(LIEN_B), PRICE_B);
+        (address zeroLine,) = _openB();
+        address zeroAcct = adapter.getLine(zeroLine).borrowAccount;
+        adapter.setLineLimits(zeroLine, 0.7e4, 0.8e4, 1_000_000e6);
+        _supplyToLine(zeroLine, 1_000_000e6);
+        uint256 zeroDraw = 100_000e6;
+        adapter.draw(zeroLine, zeroDraw, erebor);
+
+        // (c) Turn the rate on for NEW lines (the Timelock owns this slot in prod; here the test is the owner).
+        address realIrm = LineIrm.deploy();
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("irm", realIrm);
+        adapter.setIrm(realIrm);
+        assertEq(adapter.irm(), realIrm, "adapter irm re-pointed");
+
+        // A fresh line installs the real IRM; the pre-existing line is untouched (roll-off, not re-price).
+        (address realLine, address realAcct) = _openAndFundA();
+        assertEq(IEVault(realLine).interestRateModel(), realIrm, "fresh line installs the real IRM");
+        assertEq(IEVault(zeroLine).interestRateModel(), address(irm), "pre-existing line still on ZeroIRM");
+
+        uint256 realDraw = 100_000e6;
+        adapter.draw(realLine, realDraw, erebor);
+
+        // (a) Warp exactly one Gregorian year and realize accrual on both vaults.
+        uint256 t = LineIrm.SECONDS_PER_YEAR;
+        vm.warp(block.timestamp + t);
+        IEVault(zeroLine).touch();
+        IEVault(realLine).touch();
+
+        uint256 zeroDebt = IEVault(zeroLine).debtOf(zeroAcct);
+        uint256 realDebt = IEVault(realLine).debtOf(realAcct);
+
+        // (b) zero-IRM (farm utility-equivalent) line: ZERO accrual over the year.
+        assertEq(zeroDebt, zeroDraw, "ZeroIRM line accrues nothing over a year");
+
+        // (a) real line: debt == draw * EVK's per-second compounding multiplier at BASE_RATE (the exact accrual math).
+        (uint256 mult, bool overflow) = RPow.rpow(LineIrm.BASE_RATE + 1e27, t, 1e27);
+        assertFalse(overflow, "rpow no overflow");
+        uint256 expected = realDraw * mult / 1e27;
+        assertApproxEqRel(realDebt, expected, 1e15, "real line debt == draw * compounding factor (0.1% tol)");
+
+        // Human-legible APY band: per-second compounding lifts 7.5% nominal to ~7.788% (= e^0.075 - 1), strictly
+        // inside (7.5%, 8.5%) and far above 0 — the APR-vs-APY nuance.
+        assertGt(realDebt, realDraw * 1075 / 1000, "realized APY above the 7.5% nominal (compounding)");
+        assertLt(realDebt, realDraw * 1085 / 1000, "realized APY below 8.5%");
+    }
+
+    /// @dev CTR-13 curator fee: `setCuratorSafe` makes every fresh `openLine` install the curator vault as the line's
+    ///      EVK `feeReceiver`, so the line's interest-fee governor share (Euler capped at 50%) accrues to the curator
+    ///      instead of being forfeited 100% to Euler. Proves: (1) the fresh line's `feeReceiver == curatorSafe`;
+    ///      (2) after a year of interest, `convertFees()` pays the curator line-vault shares; (3) the curator's
+    ///      governor share is ≥ Euler's protocol share (governor keeps ≥50%, since Euler is capped at 50%).
+    function test_CTR13_CuratorFee_RoutesGovernorShareToCuratorVault() public {
+        address curatorSafe = makeAddr("curatorSafe");
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit WiringSet("curatorSafe", curatorSafe);
+        adapter.setCuratorSafe(curatorSafe);
+
+        // A real-rate line so the EVK interestFee (default 10%) has interest to skim.
+        adapter.setIrm(LineIrm.deploy());
+        (address line, address acct) = _openAndFundA();
+        assertEq(IEVault(line).feeReceiver(), curatorSafe, "fresh line feeReceiver == curatorSafe");
+
+        adapter.draw(line, 100_000e6, erebor);
+        vm.warp(block.timestamp + LineIrm.SECONDS_PER_YEAR);
+        IEVault(line).touch(); // realize interest → accumulatedFees (the 10% EVK interestFee)
+
+        address euler = IEVault(line).protocolFeeReceiver();
+        uint256 curBefore = IEVault(line).balanceOf(curatorSafe);
+        uint256 eulBefore = IEVault(line).balanceOf(euler);
+        IEVault(line).convertFees(); // mints accumulated fee-shares: governor share → curatorSafe, rest → Euler
+        uint256 curGain = IEVault(line).balanceOf(curatorSafe) - curBefore;
+        uint256 eulGain = IEVault(line).balanceOf(euler) - eulBefore;
+
+        assertGt(curGain, 0, "curatorSafe received the curator fee (line-vault shares)");
+        assertGe(curGain, eulGain, "governor (curator) share >= Euler protocol share (Euler capped at 50%)");
+        assertEq(acct, adapter.getLine(line).borrowAccount, "borrowAccount sanity");
+    }
+
+}

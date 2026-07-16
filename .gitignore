@@ -1,0 +1,48 @@
+# Cloned upstream repos kept as read-only reference (~5 GB, each has its own .git) — ignored,
+# but the upstream-URL + pinned-commit manifest IS tracked so the refs are reproducible.
+reference/*
+!reference/MANIFEST.md
+# rubicon is NOT a cloned repo — it's small, curated, explorer-fetched verified source the
+# 8x-01 docs depend on (provenance in its README + file headers). Tracked as an exception.
+!reference/rubicon/
+
+# The Zipcode UI lives in its own repo (resi-labs-ai/zipcode-finance-euler); this monorepo's
+# frontend/ is a local dev scratch dir only, not part of the public repo.
+frontend/
+
+# subgraph/ is empty scaffolding, not yet real — kept local until there's something to publish.
+subgraph/
+
+# docs-site/ duplicates published docs living elsewhere — not part of this repo.
+docs-site/
+
+# Security work-in-progress: raw auditor reports, adversarial-review prompts/tooling, and
+# generated build artifacts/tickets. Local only until findings are resolved and published
+# via the external audit process.
+audit/
+adversarial-review/
+build/
+
+# Foundry build artifacts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Local env / secrets (the .example template stays tracked)
+.env
+*.env
+!.env.example
+!*.env.example
+contracts/.env
+
+# NEVER-PUBLISH (this repo is PUBLIC).
+# Raw auditor reports: unremediated findings + exploit scenarios + the fix diffs = an attack
+# roadmap while the findings are still open. Triage/response lives in the audit workflow, not here.
+resi-labs-ai-zipcode-euler-*-analysis.md
+*-analysis.md
+
+# Internal planning + strategy that is not protocol documentation. Matched by name at any
+# depth — carry-risk names the still-open soft spots and points into the private crank trees,
+# so it must not land in this repo no matter which directory it is dropped in.
+fable.md
+carry-risk.md

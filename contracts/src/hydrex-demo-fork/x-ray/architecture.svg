@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1331" height="490" viewBox="0 0 533 196" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 8 6" refX="8" refY="3"
+      markerWidth="4" markerHeight="3" orient="auto">
+      <path d="M0.5,0.5 L7,3 L0.5,5.5" fill="none" stroke="#94A3B8"
+        stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+    </marker>
+    <filter id="shadow" x="-6%" y="-8%" width="112%" height="128%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="0.8"
+        flood-color="#000" flood-opacity="0.05"/>
+    </filter>
+  </defs>
+  <rect width="533" height="196" fill="#F8F9FB" rx="3"/>
+  <text x="266" y="11" text-anchor="middle" font-size="6" font-weight="700" fill="#1E293B">Hydrex Demo (vAMM) Architecture</text>
+  <rect x="191" y="16" width="150" height="10" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="196" y="18.5" width="5" height="5" rx="2.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <text x="204" y="22.5" font-size="3.5" fill="#1E293B">Actor</text>
+  <rect x="236" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="237" y="19.5" width="0.8" height="3" rx="0.4" fill="#3B82F6"/>
+  <text x="244" y="22.5" font-size="3.5" fill="#1E293B">Protocol</text>
+  <rect x="284" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="285" y="19.5" width="0.8" height="3" rx="0.4" fill="#F59E0B"/>
+  <text x="292" y="22.5" font-size="3.5" fill="#1E293B">External</text>
+  <path d="M71.4,46.0 C71.4,70.0 97.6,70.0 97.6,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M152.4,46.0 C152.4,70.0 97.6,70.0 97.6,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M235.2,46.0 C235.2,70.0 253.9,70.0 253.9,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M342.0,46.0 C342.0,70.0 253.9,70.0 253.9,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M152.4,46.0 C152.4,70.0 253.9,70.0 253.9,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M97.6,114.0 C97.6,135.0 148.8,135.0 148.8,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M193.0,174.0 C199.6,188.0 208.4,188.0 215.0,176.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M253.9,114.0 C253.9,135.0 148.8,135.0 148.8,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M253.9,114.0 C253.9,135.0 255.6,135.0 255.6,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M253.9,114.0 C253.9,135.0 357.0,135.0 357.0,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M253.9,114.0 C253.9,135.0 460.2,135.0 460.2,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <g filter="url(#shadow)">
+    <rect x="41.6" y="32.0" width="59.6" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="71.4" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Operator</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="203.6" y="32.0" width="63.2" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="235.2" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Forwarder</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="288.8" y="32.0" width="106.4" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="342.0" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">DefaultCoordinator</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="123.2" y="32.0" width="58.4" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="152.4" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Timelock</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="30.0" y="94.0" width="135.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="33.0" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="97.6" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">LpStrategyModuleDemoVAMM</text>
+    <text x="97.6" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">Zodiac module</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="193.5" y="94.0" width="120.8" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="196.5" y="97.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="253.9" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">SzipNavOracleDemoVAMM</text>
+    <text x="253.9" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">NAV oracle</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="104.6" y="156.0" width="88.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="107.6" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="148.8" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Engine Safe</text>
+    <text x="148.8" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">juniorTrancheEngine</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="215.0" y="156.0" width="81.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="218.0" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="255.6" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">LP Position</text>
+    <text x="255.6" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">vAMM Pair / Gauge</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="318.2" y="156.0" width="77.6" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="321.2" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="357.0" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Junior Safes</text>
+    <text x="357.0" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">main / sidecar</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="417.8" y="156.0" width="84.8" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="420.8" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="460.2" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Price Sources</text>
+    <text x="460.2" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">xAlphaRate / oHYDX</text>
+  </g>
+  <rect x="75.3" y="65.0" width="18.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="84.5" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">LP ops</text>
+  <rect x="109.8" y="65.0" width="30.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="125.0" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">wire module</text>
+  <rect x="231.8" y="65.0" width="25.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="244.6" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">push legs</text>
+  <rect x="279.2" y="65.0" width="37.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="298.0" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">writeProvision</text>
+  <rect x="188.0" y="65.0" width="30.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="203.2" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">wire oracle</text>
+  <rect x="110.4" y="130.0" width="25.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="123.2" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">Safe exec</text>
+  <rect x="187.6" y="187.0" width="32.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="204.0" y="192.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">mint / stake</text>
+  <rect x="180.1" y="130.0" width="42.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="201.3" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">supply ex-engine</text>
+  <rect x="232.3" y="130.0" width="44.8" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="254.7" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">getReserves / bal</text>
+  <rect x="292.6" y="130.0" width="25.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="305.4" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">balanceOf</text>
+  <rect x="337.0" y="130.0" width="40.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="357.0" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">rate / discount</text>
+</svg>

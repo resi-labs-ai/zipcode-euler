@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1121" height="645" viewBox="0 0 449 258" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 8 6" refX="8" refY="3"
+      markerWidth="4" markerHeight="3" orient="auto">
+      <path d="M0.5,0.5 L7,3 L0.5,5.5" fill="none" stroke="#94A3B8"
+        stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+    </marker>
+    <filter id="shadow" x="-6%" y="-8%" width="112%" height="128%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="0.8"
+        flood-color="#000" flood-opacity="0.05"/>
+    </filter>
+  </defs>
+  <rect width="449" height="258" fill="#F8F9FB" rx="3"/>
+  <text x="224" y="11" text-anchor="middle" font-size="6" font-weight="700" fill="#1E293B">IchiAlgebraFairReserves Architecture</text>
+  <rect x="149" y="16" width="150" height="10" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="154" y="18.5" width="5" height="5" rx="2.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <text x="162" y="22.5" font-size="3.5" fill="#1E293B">Consumer</text>
+  <rect x="194" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="195" y="19.5" width="0.8" height="3" rx="0.4" fill="#3B82F6"/>
+  <text x="202" y="22.5" font-size="3.5" fill="#1E293B">Library</text>
+  <rect x="242" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="243" y="19.5" width="0.8" height="3" rx="0.4" fill="#F59E0B"/>
+  <text x="250" y="22.5" font-size="3.5" fill="#1E293B">External</text>
+
+  <!-- arrows -->
+  <path d="M224.0,46.0 C224.0,68.0 224.0,68.0 224.0,90.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M186.0,110.0 C120.0,134.0 100.0,134.0 84.0,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M224.0,110.0 C224.0,134.0 224.0,134.0 224.0,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M262.0,110.0 C328.0,134.0 348.0,134.0 364.0,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+
+  <!-- consumer -->
+  <g filter="url(#shadow)">
+    <rect x="166.0" y="32.0" width="116.0" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="224.0" y="38.6" text-anchor="middle" font-size="4.4" font-weight="600" fill="#1E293B">Fair-LP / NAV Oracle</text>
+    <text x="224.0" y="43.4" text-anchor="middle" font-size="3.2" fill="#64748B">AlgebraIchiFairLpOracle · SzipNavOracle</text>
+  </g>
+
+  <!-- library (center) -->
+  <g filter="url(#shadow)">
+    <rect x="158.0" y="90.0" width="132.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="161.0" y="93.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="224.0" y="99.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">IchiAlgebraFairReserves</text>
+    <text x="224.0" y="104.5" text-anchor="middle" font-size="3.5" fill="#64748B">value L @ TWAP tick (swap-immune)</text>
+  </g>
+
+  <!-- externals -->
+  <g filter="url(#shadow)">
+    <rect x="30.0" y="156.0" width="108.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="33.0" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="84.0" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Algebra Plugin</text>
+    <text x="84.0" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">TWAP source</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="170.0" y="156.0" width="108.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="173.0" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="224.0" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">ICHI Vault</text>
+    <text x="224.0" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">positions L + idle</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="310.0" y="156.0" width="108.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="313.0" y="159.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="364.0" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">ConcentratedLiquidity</text>
+    <text x="364.0" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">vendored UniV3 math</text>
+  </g>
+
+  <!-- edge labels -->
+  <rect x="195.0" y="65.0" width="58.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="224.0" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">fairReserves(vault, window)</text>
+  <rect x="96.0" y="131.0" width="48.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="120.0" y="136.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">getTimepoints (TWAP)</text>
+  <rect x="200.0" y="131.0" width="48.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="224.0" y="136.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">positions + idle</text>
+  <rect x="304.0" y="131.0" width="56.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="332.0" y="136.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">L → amounts @ sqrtP</text>
+
+  <!-- output note -->
+  <rect x="166.0" y="200.0" width="116.0" height="14" rx="3" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="0.4"/>
+  <text x="224.0" y="206.4" text-anchor="middle" font-size="4" font-weight="600" fill="#1E40AF">returns (amount0, amount1, meanTick)</text>
+  <text x="224.0" y="211.2" text-anchor="middle" font-size="3.2" fill="#3B5BA5">in-block manipulation invariant</text>
+  <path d="M224.0,176.0 C224.0,188.0 224.0,188.0 224.0,200.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <text x="224.0" y="186.5" text-anchor="middle" font-size="3" fill="#94A3B8">(from ICHI Vault leg)</text>
+</svg>

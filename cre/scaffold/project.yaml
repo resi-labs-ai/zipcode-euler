@@ -1,0 +1,24 @@
+# ==========================================================================
+# CRE PROJECT SETTINGS FILE (scaffold template — illustrative, not gate-checked)
+# ==========================================================================
+# Project-specific settings for CRE CLI targets. Each target defines cre-cli,
+# account, and rpcs groups. Clone this file into your own workflow module and
+# fill in the RPC URLs + owner address for your environment.
+# ==========================================================================
+
+local-simulation:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: <YOUR RPC URL>
+
+# ==========================================================================
+staging:
+  cre-cli:
+    don-family: "zone-a"
+  account:
+    workflow-owner-address: "(optional) Multi-signature contract address"
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: https://sepolia.infura.io/v3/YOUR_API_KEY
+    - chain-name: ethereum-testnet-sepolia-base-1
+      url: <select your own rpc url>
