@@ -1,6 +1,6 @@
 # Zipcode — documentation index
 
-The auditor's front door. Zipcode is a credit protocol on Base (chain 8453, Solidity 0.8.24): a shared senior dollar (zipUSD) backed by isolated credit lines on a lending venue, with a junior first-loss vault (szipUSD) that auto-compounds options yield and absorbs losses before the senior is ever touched.
+The auditor's front door. Zipcode is a Private Credit Protocol: a shared senior dollar (zipUSD) backed by isolated credit lines on a lending venue, with a junior first-loss vault (szipUSD) that auto-compounds options yield and absorbs losses before the senior is ever touched.
 
 This page links every contract to its plain-English summary. Start with the three system-wide maps, then drill by subsystem.
 
