@@ -38,6 +38,8 @@ type slReader struct {
 	oHydx    common.Address
 	hydx     common.Address
 	vault    common.Address
+	gauge       common.Address // harvest.gauge() (F13 drift check)
+	gaugeReward common.Address // gauge.rewardToken(); zero ⇒ mirrors oHydx (healthy)
 	oHydxBal *big.Int // oHYDX.balanceOf(safe)
 	hydxBal  *big.Int // hydx.balanceOf(safe)
 	pending  *big.Int // harvest.pendingReward()
@@ -69,6 +71,15 @@ func (s *slReader) CallContract(ctx context.Context, call ethereum.CallMsg, _ *b
 	case sel("juniorTrancheEngine()"):
 		return slEncAddr(s.safe), nil
 	case sel("oHYDX()"):
+		return slEncAddr(s.oHydx), nil
+	case sel("gauge()"):
+		return slEncAddr(s.gauge), nil
+	case sel("rewardToken()"):
+		// the gauge's answer — defaults to the module's oHydx (healthy); tests set
+		// gaugeReward to model drift (audit F13).
+		if s.gaugeReward != (common.Address{}) {
+			return slEncAddr(s.gaugeReward), nil
+		}
 		return slEncAddr(s.oHydx), nil
 	case sel("hydx()"):
 		return slEncAddr(s.hydx), nil
@@ -412,6 +423,22 @@ func TestStrikeLoop_NoOp_ZeroTotalOHydx(t *testing.T) {
 	r.pending = big.NewInt(0)
 	r.oHydxBal = big.NewInt(0)
 	assertEmpty(t, newSLJob(q), r)
+}
+
+// TestStrikeLoop_DriftAlarm_Errors (audit F13): when the module's stored oHYDX disagrees with
+// gauge.rewardToken(), Evaluate must return an ERROR (the Runner logs it every tick — a loud
+// alarm), never the silent zero-balance no-op the stale token would otherwise produce.
+func TestStrikeLoop_DriftAlarm_Errors(t *testing.T) {
+	q := &fakeQuoter{priceUsdc: big.NewInt(20000), usdcPerHydx: bigStr("1000000"), shares: big.NewInt(1)}
+	r := baseReader()
+	r.gaugeReward = common.HexToAddress("0x000000000000000000000000000000000000dEaD") // gauge moved on
+	plan, err := newSLJob(q).Evaluate(context.Background(), r)
+	if err == nil {
+		t.Fatal("drift between module oHYDX and gauge.rewardToken() must error loudly")
+	}
+	if len(plan.Actions) != 0 {
+		t.Fatalf("no plan may be emitted under drift, got %d actions", len(plan.Actions))
+	}
 }
 
 func TestStrikeLoop_NoOp_PriceBelowHalt(t *testing.T) {

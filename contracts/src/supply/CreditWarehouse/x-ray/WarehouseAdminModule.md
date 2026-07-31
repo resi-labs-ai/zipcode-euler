@@ -2,16 +2,18 @@
 
 > WarehouseAdminModule | 110 nSLOC | 8b7c67c (`main`, working tree) | Foundry | 20/06/26 | **Verdict: HARDENED** *(modulo the pre-prod immutable re-freeze + no external audit)*
 
-> **Update:** the X-2 residual (avatar-parity unverified on-chain) is
-> **checked in code at the `setWarehouseSafe` entry point**, not just by runbook. `setWarehouseSafe` reverts
-> `AvatarMismatch` unless the Roles modifier's `avatar()` already equals the new safe — a one-sided re-point
-> *through this setter* can no longer be saved (the silent-brick is caught at set-time). **This check is
-> entry-point-local, NOT a maintained standing invariant:** `setRoles` (no parity re-check) and an external
-> `Roles.setAvatar` can still re-desync the pair — both **fail-closed** at the scope's live `EqualToAvatar` receiver
-> pin (the stale receiver is rejected; the pin can only ever resolve to the actual current avatar, never an
-> attacker), so HARDENED holds on the *scope*, not on the setter guard. The paired re-point through this setter is
-> order-dependent (`Roles.setAvatar` first, then `setWarehouseSafe`); the Zodiac setup + this invariant are
-> documented in `docs/roles.md`. `IRoles` gained `avatar()`/`setAvatar()`. 28/28 fork tests green. Verdict: HARDENED.
+> **Update:** the X-2 residual (avatar-parity unverified on-chain) is closed as a **maintained invariant** —
+> checked at ALL THREE adapter pairing sites (the constructor, `setRoles`, `setWarehouseSafe` each revert
+> `AvatarMismatch` unless `roles.avatar() == warehouseSafe`) AND re-asserted at USE time (`_processReport`
+> reverts before dispatching any op on a mismatch, covering the external-`Roles.setAvatar` desync the wiring
+> sites can't see). The guards matter because SUPPLY/REDEEM fail closed under a mismatch at the scope's live
+> `EqualToAvatar` receiver pin, but **REPAY has no "from" parameter to scope** — a Roles instance attached to a
+> different Safe would have kept REPAY live against THAT Safe, draining it into the redemption queue (no sweep;
+> `settleEpoch` consumes any free balance). Any desync is now a liveness jam until re-paired, never an execution.
+> Re-points are order-dependent — pair the modifier to the Safe first; documented in `docs/roles.md`. `IRoles`
+> gained `avatar()`/`setAvatar()`. 32/32 fork tests green (incl. `test_Ctor_RevertsOnAvatarMismatch`,
+> `test_Parity_SetRoles_WrongAvatar_Reverts`, `test_Parity_SetRoles_MatchingAvatar_Succeeds`,
+> `test_Parity_UseTime_ExternalSetAvatar_BlocksAllOps`). Verdict: HARDENED.
 
 Dedicated single-contract X-Ray for `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol`, the sole
 contract in the senior-side warehouse-admin scope (the `bridge/x-ray/x-ray.md`-style bundled `x-ray.md` is the scope
@@ -44,7 +46,7 @@ scope-pinned `EqualTo(redemptionBox)`.
 | Function | Access | Notes |
 |---|---|---|
 | `_processReport` (via `onReport`) | Forwarder-gated (CRE) | decodes `(opType, payload)` → SUPPLY/APPROVE/REDEEM/REPAY → `execTransactionWithRole`; `else revert UnsupportedOpType` |
-| `setRoles(roles_)` | `onlyOwner` (Timelock) | re-point the Roles modifier; non-zero; re-pointable (§17) |
+| `setRoles(roles_)` | `onlyOwner` (Timelock) | re-point the Roles modifier; non-zero; **avatar-parity-guarded** (`AvatarMismatch` unless `roles_.avatar() == warehouseSafe`); re-pointable (§17) |
 | `setRoleKey(roleKey_)` | `onlyOwner` | re-set the assigned key; must stay non-zero (zero = `NoMembership`) |
 | `setWarehouseSafe(safe_)` | `onlyOwner` | re-point avatar/custodian; **reverts `AvatarMismatch` unless `roles.avatar() == safe_`** — pair `Roles.setAvatar` FIRST (X-2, checked here; entry-point-local — `setRoles`/external `setAvatar` re-desync fail-closed) |
 | `setEePool(eePool_)` | `onlyOwner` | re-point the EulerEarn pool |

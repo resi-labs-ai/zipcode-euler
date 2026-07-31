@@ -53,12 +53,15 @@ No mutator beyond the two wiring setters; no funds, no custody.
 | I-9 | **per-silo getters: unknown silo → 0** (never calls into `address(0)`) | Yes | **`test_perSilo_unknown_zero`** |
 | I-10 | **CTR-10b venue-agnostic** — a non-Euler venue's `ISeniorPool` surface plugs in | Yes | **`test_ctr10b_nonEuler_venue_plugs_in`** |
 | I-11 | **wiring setters** — `onlyOwner` + `ZeroAddress` + effect/`WiringSet`; ctor accepts zero for both | Yes | **`test_setRegistry_happy`/`_zero_reverts`/`_onlyOwner`**, **`test_setZipUsd_*`** (3), **`test_ctor_acceptsZeroForBoth`** |
+| I-12 | **F10 pair-dedup** — a physical `(eePool, warehouseSafe)` pair admitted under multiple siloIds counts ONCE in all three Σ views (`SiloRegistry` allows the duplicate on purpose — an adapter re-point over the same pool is a separate `addSilo`, and the retired twin stays in `allSiloIds()` forever; pre-fix that documented flow permanently overstated backing — the direction that makes a breaker fail to trip). `active` filters BEFORE dedup so a retired duplicate never suppresses its live twin; the key is the PAIR, so same-pool-different-Safe silos (distinct balances) both count | Yes | **`test_F10_duplicate_pair_counts_once_in_all_aggregates`**, **`test_F10_retired_duplicate_still_counts_once_not_zero`**, **`test_F10_same_pool_different_safe_both_count`** |
+| I-13 | **per-silo failure isolation** — one broken pool (reverting views) cannot brick the Σ: its pair counts ZERO (understated backing = a breaker that trips early, the safe direction) and the skip is reported by `unreadablePairs()`, never silent. Added ahead of the Morpho/Aave venue expansion: EulerEarn views answer from storage and cannot revert, but a future third-party pool is upgradeable by its own governance and silos can never leave `allSiloIds()` — without isolation one post-retirement upgrade blinds the solvency views forever. The strict per-silo getters keep the loud revert for diagnosis | Yes | **`test_broken_pool_skipped_and_reported_not_bricking`** (skip + report + conservative ratio + self-heal), **`test_broken_pool_strict_getter_still_reverts`** |
 
 ## 4. Guards — coverage
 
 | Guard | Site | Test |
 |---|---|---|
-| `RegistryUnset` (aggregate reads) | `:75,:86,:96,:124,:133` | `test_registryUnset_reverts` |
+| `RegistryUnset` (aggregate reads) | `_aggregate` (the shared Σ loop all three views call) + the two per-silo getters | `test_registryUnset_reverts` |
+| pair-dedup skip (F10) | `_aggregate` — `keccak256(eePool, warehouseSafe)` seen-scan, `activeOnly` filtered first | `test_F10_*` (3) |
 | `ZipUsdUnset` (live ratio) | `systemCollateralization:115` | `test_systemCollateralization_zipUsdUnset_reverts` |
 | `sa == 0 → 0` / `free >= sa → 0` (per-silo) | `_seniorValue:55`, `_illiquidValue:64,66` | `test_drained_silo_zero`, `test_illiquid_matches_formula` |
 | `supply == 0 → max` | `collateralization:108` | `test_collateralization_math` |

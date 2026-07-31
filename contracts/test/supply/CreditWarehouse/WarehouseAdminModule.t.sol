@@ -29,6 +29,16 @@ contract MockMember {
     }
 }
 
+/// @notice A minimal `avatar()`-only Roles stand-in: the ctor/`setRoles` parity guard reads ONLY `avatar()`,
+///         so this is all a re-point target needs to expose to exercise both sides of the guard.
+contract MockAvatarRoles {
+    address public avatar;
+
+    constructor(address avatar_) {
+        avatar = avatar_;
+    }
+}
+
 /// @notice A re-entry attacker: from a callback it tries to re-enter `onReport` as a NON-Forwarder; the
 ///         immutable-Forwarder gate must reject it (mirrors ZipcodeController.t.sol's MaliciousVenue/F-10).
 contract ReentrantAttacker {
@@ -236,6 +246,14 @@ contract WarehouseAdminModuleTest is ForkConfig {
     function test_Ctor_RevertsOnZeroRoleKey() public {
         vm.expectRevert(WarehouseAdminModule.ZeroRoleKey.selector);
         new WarehouseAdminModule(forwarder, roles, bytes32(0), safe, address(ee), usdc, redemptionBox);
+    }
+
+    /// @dev Ctor avatar parity: constructing against a Roles attached to a DIFFERENT Safe reverts AvatarMismatch
+    ///      (the wrong-Safe REPAY drain / SUPPLY-REDEEM brick can never be born miswired).
+    function test_Ctor_RevertsOnAvatarMismatch() public {
+        address wrongSafe = makeAddr("wrongSafe");
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.AvatarMismatch.selector, wrongSafe, safe));
+        new WarehouseAdminModule(forwarder, roles, rk, wrongSafe, address(ee), usdc, redemptionBox);
     }
 
     // ============================================================
@@ -602,6 +620,41 @@ contract WarehouseAdminModuleTest is ForkConfig {
         assertEq(IRoles(roles).avatar(), adapter.warehouseSafe(), "parity restored: avatar == warehouseSafe");
     }
 
+    /// @dev setRoles avatar parity (the REPAY wrong-Safe drain guard): re-pointing `roles` to an instance attached
+    ///      to a DIFFERENT Safe reverts AvatarMismatch. SUPPLY/REDEEM would have failed closed under the mismatch,
+    ///      but REPAY (no "from" to scope) would have drained the wrong Safe into the redemption queue.
+    function test_Parity_SetRoles_WrongAvatar_Reverts() public {
+        address wrongSafe = makeAddr("wrongSafe");
+        MockAvatarRoles wrongRoles = new MockAvatarRoles(wrongSafe);
+        vm.prank(adapter.owner());
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.AvatarMismatch.selector, safe, wrongSafe));
+        adapter.setRoles(address(wrongRoles));
+        assertEq(address(adapter.roles()), roles, "roles unchanged after the rejected mis-paired re-point");
+    }
+
+    /// @dev setRoles happy path: a new Roles instance already attached to the wired `warehouseSafe` is accepted.
+    function test_Parity_SetRoles_MatchingAvatar_Succeeds() public {
+        MockAvatarRoles newRoles = new MockAvatarRoles(safe);
+        vm.prank(adapter.owner());
+        adapter.setRoles(address(newRoles));
+        assertEq(address(adapter.roles()), address(newRoles), "roles re-pointed (avatar-paired)");
+    }
+
+    /// @dev The use-time re-check (third guard leg): an EXTERNAL `Roles.setAvatar` — the one desync the wiring
+    ///      guards can't see — makes EVERY subsequent report revert `AvatarMismatch` before any op (REPAY
+    ///      included) can execute against the wrong Safe. Re-pairing the avatar un-wedges.
+    function test_Parity_UseTime_ExternalSetAvatar_BlocksAllOps() public {
+        address other = makeAddr("otherSafe");
+        IRoles(roles).setAvatar(other); // external desync, directly on the modifier (test == Roles owner)
+
+        bytes memory report = abi.encode(REPAY, abi.encode(redemptionBox, uint256(1e6)));
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.AvatarMismatch.selector, safe, other));
+        adapter.onReport("", report);
+
+        IRoles(roles).setAvatar(safe); // re-pair → ops resume (proven by every happy-path test in this suite)
+    }
+
     // ============================================================
     // (17) Timelock setters — access control + effect + zero guards
     // ============================================================
@@ -628,17 +681,18 @@ contract WarehouseAdminModuleTest is ForkConfig {
         bytes32 nk = keccak256("newRoleKey");
         address o = adapter.owner();
 
-        // setWarehouseSafe is now avatar-parity-guarded, so prove its happy path FIRST (while `roles` is still the
-        // real modifier): pair the modifier's avatar, then the adapter accepts the re-point. Done before re-pointing
-        // `roles` to a non-modifier address below (after which `roles.avatar()` would no longer be callable).
+        // setWarehouseSafe is avatar-parity-guarded, so prove its happy path FIRST (while `roles` is still the
+        // real modifier): pair the modifier's avatar, then the adapter accepts the re-point. setRoles is ALSO
+        // parity-guarded, so its re-point target must be a contract whose avatar() == the (new) warehouseSafe.
         IRoles(roles).setAvatar(x); // test == Roles owner (godOwner)
         vm.prank(o);
         adapter.setWarehouseSafe(x);
         assertEq(adapter.warehouseSafe(), x, "warehouseSafe re-pointed (avatar-paired)");
 
+        address pairedRoles = address(new MockAvatarRoles(x));
         vm.startPrank(o);
-        adapter.setRoles(x);
-        assertEq(address(adapter.roles()), x, "roles re-pointed");
+        adapter.setRoles(pairedRoles);
+        assertEq(address(adapter.roles()), pairedRoles, "roles re-pointed (avatar-paired)");
         adapter.setRoleKey(nk);
         assertEq(adapter.roleKey(), nk, "roleKey re-set");
         adapter.setEePool(x);

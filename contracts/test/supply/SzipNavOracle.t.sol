@@ -3,6 +3,7 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {SzipNavOracle} from "../../src/supply/SzipNavOracle.sol";
+import {IchiAlgebraFairReserves} from "../../src/supply/lib/IchiAlgebraFairReserves.sol";
 import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplate.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IICHIVault} from "../../src/interfaces/ichi/IICHIVault.sol";
@@ -128,9 +129,28 @@ contract MockAlgebraPool {
 ///      ready-pool case reads through `fairReserves` without reverting in TickMath.
 contract MockAlgebraPlugin {
     bool public isInitialized;
+    uint32 public oldestTs; // slot-0 timestamp — drives the history-depth gate (default 0 ⇒ history since genesis)
 
     function setInitialized(bool v) external {
         isInitialized = v;
+    }
+
+    function setOldestTs(uint32 v) external {
+        oldestTs = v;
+    }
+
+    // Pre-wrap ring shape: head = 1, slot head+1 uninitialized ⇒ the gate reads slot 0 as the oldest.
+    function timepointIndex() external pure returns (uint16) {
+        return 1;
+    }
+
+    function timepoints(uint256 index)
+        external
+        view
+        returns (bool initialized, uint32 blockTimestamp, int56, uint88, int24, int24, uint16)
+    {
+        if (index == 0) return (true, oldestTs, 0, 0, 0, 0, 0);
+        return (false, 0, 0, 0, 0, 0, 0);
     }
 
     function getTimepoints(uint32[] calldata)
@@ -166,12 +186,53 @@ contract MockEscrowVault {
     }
 }
 
-/// @dev The farm utility USDC borrow vault — only `debtOf` is read (USDC 6-dp).
+/// @dev The farm utility USDC borrow vault — only `debtOf` is read (USDC 6-dp). `setReverting(true)` simulates an
+///      integration regression (the view reverting) for the recovery-lever test.
 contract MockBorrowVault {
-    mapping(address => uint256) public debtOf;
+    mapping(address => uint256) internal debt;
+    bool public reverting;
 
     function setDebt(address a, uint256 v) external {
-        debtOf[a] = v;
+        debt[a] = v;
+    }
+
+    function setReverting(bool v) external {
+        reverting = v;
+    }
+
+    function debtOf(address a) external view returns (uint256) {
+        require(!reverting, "borrow vault view regressed");
+        return debt[a];
+    }
+}
+
+/// @dev A `ZipRedemptionQueue` receivables stand-in (SEC/M-2): trivial storage getters for pending zipUSD (18-dp) and
+///      claimable USDC (6-dp), plus a `settle` that atomically moves pending→claimable at par (mirrors settleEpoch's
+///      burn-and-bank) so the NAV-continuity test can drive the real request→settle→claim lifecycle.
+contract MockRedemptionQueue {
+    mapping(address => uint256) public pending; // 18-dp zipUSD escrowed
+    mapping(address => uint256) public claimable; // 6-dp USDC filled, unclaimed
+
+    function setPending(address r, uint256 v) external {
+        pending[r] = v;
+    }
+
+    function setClaimable(address r, uint256 v) external {
+        claimable[r] = v;
+    }
+
+    /// @dev Fill `assets` USDC (6-dp) of `r`'s pending at par: burn `assets * 1e12` pending zipUSD, bank `assets` USDC.
+    function settle(address r, uint256 assets) external {
+        pending[r] -= assets * 1e12;
+        claimable[r] += assets;
+    }
+
+    function pendingRedeemRequest(uint256, address r) external view returns (uint256) {
+        return pending[r];
+    }
+
+    function maxWithdraw(address r) external view returns (uint256) {
+        return claimable[r];
     }
 }
 
@@ -201,6 +262,7 @@ contract SzipNavOracleTest is Test {
     event LegPriceUpdated(uint8 indexed leg, uint256 price, uint48 ts);
     event ProvisionWritten(uint256 provision);
     event Poked(uint32 ts, uint256 cumNav);
+    event RedemptionQueueSet(address indexed redemptionQueue);
 
     function setUp() public {
         vm.warp(1_000_000); // a non-zero base time
@@ -414,6 +476,27 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.oldestRequiredLegTs(), t0, "newer rate ts does not raise the anchor");
     }
 
+    /// @notice The rate leg's fence honors the rate oracle's OWN `maxStaleness` when tighter than `maxAge`: the
+    ///         folded timestamp is shifted back by `maxAge − maxStaleness`, so the module's `anchor + maxAge`
+    ///         ceiling lands at `lastUpdate + maxStaleness`. A bid can never outlive the rate that priced it.
+    function test_oldestRequiredLegTs_rate_window_tighter_than_maxAge() public {
+        MockRateOracle rateOracle = new MockRateOracle();
+        rateOracle.setRate(1e18);
+        rateOracle.setFresh(true);
+        oracle.setXAlphaRateOracle(address(rateOracle));
+
+        uint48 t0 = uint48(block.timestamp);
+        _pushBoth(1e18, 5e17); // both legs at t0
+        uint256 ms = MAX_AGE / 4; // the rate's own bound, tighter than maxAge
+        rateOracle.setMaxStaleness(ms);
+        rateOracle.setLastUpdate(t0); // rate as fresh as the legs
+        // shifted rate ts = t0 - (maxAge - ms) becomes the min ⇒ fence = t0 + ms, not t0 + maxAge
+        assertEq(uint256(oracle.oldestRequiredLegTs()) + MAX_AGE, uint256(t0) + ms, "fence = lastUpdate + maxStaleness");
+        // ms >= maxAge ⇒ no shift, plain fold
+        rateOracle.setMaxStaleness(MAX_AGE * 2);
+        assertEq(oracle.oldestRequiredLegTs(), t0, "wider rate bound leaves the maxAge fence");
+    }
+
     // ----------------------------------------------------------------- push path (reportType 7)
     function test_push_updates_cache_and_emits() public {
         vm.expectEmit(true, false, false, true);
@@ -576,24 +659,35 @@ contract SzipNavOracleTest is Test {
         usdc.setBalance(juniorTrancheSafe, 1000e6); // -> 1000e18
         xa.setBalance(juniorTrancheSafe, 10e18);
         xa.setExchangeRate(12e17); // 1.2
-        hydx.setBalance(juniorTrancheSafe, 5e18);
-        ohydx.setBalance(juniorTrancheSafe, 4e18); // discount 30
+        hydx.setBalance(juniorTrancheSafe, 5e18); // marked $0 in NAV by design (sale inventory)
+        ohydx.setBalance(juniorTrancheSafe, 4e18); // marked $0 in NAV by design
         _pushBoth(2e18, 5e17); // alphaUSD=2, hydxUSD=0.5
     }
 
     function test_nav_composition_handcomputed() public {
         _wireFullBasket();
-        // gross = 150 (zip) + 1000 (usdc) + 24 (xa:10*1.2*2) + 2.5 (hydx:5*0.5) + 1.4 (ohydx:4*0.5*0.7) = 1177.9e18
-        assertEq(oracle.grossBasketValue(), 11779e17);
-        // spot = 1177.9e18 / 1000 = 1.1779e18
-        assertEq(oracle.spotNavPerShare(), 11779e14);
+        // gross = 150 (zip) + 1000 (usdc) + 24 (xa:10*1.2*2) + 0 (hydx/ohydx: marked $0) = 1174e18
+        assertEq(oracle.grossBasketValue(), 1174e18);
+        // spot = 1174e18 / 1000 = 1.174e18
+        assertEq(oracle.spotNavPerShare(), 1174e15);
+    }
+
+    function test_nav_hydx_and_ohydx_marked_zero_and_discount_never_read() public {
+        _wireFullBasket();
+        uint256 base = oracle.grossBasketValue();
+        hydx.setBalance(juniorTrancheSafe, 1_000_000e18); // sale inventory: any size, still $0 in NAV
+        ohydx.setBalance(juniorTrancheSafe, 1_000_000e18); // any size: still $0 in NAV
+        assertEq(oracle.grossBasketValue(), base);
+        ohydx.setDiscount(150); // even a broken discount() can't touch NAV — it is never read
+        assertEq(oracle.grossBasketValue(), base);
+        assertEq(oracle.spotNavPerShare(), base * 1e18 / 1000e18);
     }
 
     function test_nav_xalpha_exchangeRate_accrual() public {
         _wireFullBasket();
         uint256 before = oracle.spotNavPerShare();
         xa.setExchangeRate(13e17); // LST APR accrues -> xa leg up by 10e18*0.1*2 = 2e18 gross
-        assertEq(oracle.grossBasketValue(), 11779e17 + 2e18);
+        assertEq(oracle.grossBasketValue(), 1174e18 + 2e18);
         assertGt(oracle.spotNavPerShare(), before);
     }
 
@@ -620,6 +714,98 @@ contract SzipNavOracleTest is Test {
         usdc.setBalance(juniorTrancheSafe, 1e6); // exactly 1 USDC -> $1
         _pushBoth(1e18, 1e18);
         assertEq(oracle.grossBasketValue(), 1e18);
+    }
+
+    // ----------------------------------------------------------------- SEC/M-2: off-ramp redemption-queue receivables
+    function _wireQueue() internal returns (MockRedemptionQueue q) {
+        q = new MockRedemptionQueue();
+        oracle.setRedemptionQueue(address(q));
+    }
+
+    /// @dev Setter: onlyOwner, re-pointable, zero-allowed (unset), emits.
+    function test_setRedemptionQueue_onlyOwner_and_zeroAllowed() public {
+        vm.prank(makeAddr("rando"));
+        vm.expectRevert();
+        oracle.setRedemptionQueue(address(0xBEEF));
+
+        vm.expectEmit(true, false, false, false);
+        emit RedemptionQueueSet(address(0xBEEF));
+        oracle.setRedemptionQueue(address(0xBEEF));
+        assertEq(oracle.redemptionQueue(), address(0xBEEF));
+
+        oracle.setRedemptionQueue(address(0)); // unset is valid
+        assertEq(oracle.redemptionQueue(), address(0));
+    }
+
+    /// @dev Unwired (v0) and wired-but-empty both contribute exactly 0 — no spurious NAV movement.
+    function test_queue_unwired_and_empty_contribute_zero() public {
+        _wireFullBasket();
+        uint256 base = oracle.grossBasketValue();
+        MockRedemptionQueue q = _wireQueue(); // wired, all zero
+        assertEq(oracle.grossBasketValue(), base, "empty queue adds nothing");
+        q.setPending(juniorTrancheSafe, 0);
+        q.setClaimable(juniorTrancheSafe, 0);
+        assertEq(oracle.grossBasketValue(), base, "explicit zeros add nothing");
+    }
+
+    /// @dev Pending zipUSD is counted at $1 (18-dp); claimable USDC at $1 (6-dp ×1e12).
+    function test_queue_pending_and_claimable_counted() public {
+        _wireFullBasket();
+        uint256 base = oracle.grossBasketValue();
+        MockRedemptionQueue q = _wireQueue();
+
+        q.setPending(juniorTrancheSafe, 40e18); // 40 zipUSD escrowed
+        assertEq(oracle.grossBasketValue(), base + 40e18, "pending zipUSD counted at par");
+
+        q.setClaimable(juniorTrancheSafe, 25e6); // 25 USDC filled, unclaimed
+        assertEq(oracle.grossBasketValue(), base + 40e18 + 25e18, "claimable USDC scaled 6->18");
+    }
+
+    /// @dev Only `juniorTrancheSafe` (the rq Safe) is attributed — receivables booked to any other address are ignored,
+    ///      so a mis-wired requester can never inflate NAV.
+    function test_queue_only_juniorTrancheSafe_attributed() public {
+        _wireFullBasket();
+        uint256 base = oracle.grossBasketValue();
+        MockRedemptionQueue q = _wireQueue();
+        q.setPending(juniorTrancheSidecar, 1_000e18);
+        q.setClaimable(makeAddr("stranger"), 1_000e6);
+        assertEq(oracle.grossBasketValue(), base, "non-rq-Safe receivables not counted");
+    }
+
+    /// @dev Additivity preserved: the receivables are FREE (main-Safe) equity, so `committedValue + freeValue ==
+    ///      grossBasketValue` still holds exactly, and `committedValue` (sidecar) is unaffected.
+    function test_queue_additivity_committed_plus_free() public {
+        _wireFullBasket();
+        MockRedemptionQueue q = _wireQueue();
+        q.setPending(juniorTrancheSafe, 40e18);
+        q.setClaimable(juniorTrancheSafe, 25e6);
+
+        uint256 committedBefore = oracle.committedValue();
+        assertEq(oracle.committedValue() + oracle.freeValue(), oracle.grossBasketValue(), "additivity holds");
+        // sidecar (committed) is untouched by the off-ramp receivables
+        assertEq(oracle.committedValue(), committedBefore, "committedValue unaffected");
+    }
+
+    /// @dev THE core property (the fix's whole point): NAV is continuous across the full request→settle→claim
+    ///      off-ramp lifecycle, so a deposit made mid-flight mints at the true navEntry, not a depressed one.
+    function test_queue_nav_continuous_across_offramp_lifecycle() public {
+        _wireFullBasket(); // juniorTrancheSafe holds 100 zipUSD + 1000 USDC (6-dp)
+        MockRedemptionQueue q = _wireQueue();
+        uint256 G = oracle.grossBasketValue();
+
+        // (1) requestRedeem: 40 zipUSD leaves the Safe into the queue as pending.
+        zip.setBalance(juniorTrancheSafe, 60e18);
+        q.setPending(juniorTrancheSafe, 40e18);
+        assertEq(oracle.grossBasketValue(), G, "continuous across requestRedeem");
+
+        // (2) settleEpoch: burn the pending zipUSD, bank 40 USDC (6-dp) claimable at par.
+        q.settle(juniorTrancheSafe, 40e6);
+        assertEq(oracle.grossBasketValue(), G, "continuous across settleEpoch");
+
+        // (3) claim: USDC lands back on the Safe; queue drains to empty.
+        q.setClaimable(juniorTrancheSafe, 0);
+        usdc.setBalance(juniorTrancheSafe, 1040e6);
+        assertEq(oracle.grossBasketValue(), G, "continuous across claim");
     }
 
     // ----------------------------------------------------------------- ICHI LP marked-through
@@ -732,6 +918,45 @@ contract SzipNavOracleTest is Test {
         // escrowVault/borrowVault unset -> pathLockedLpEquity is just the LP, no debt; gross unchanged.
         assertEq(oracle.grossBasketValue(), 220e18);
         assertEq(oracle.pathLockedLpEquity(), 220e18);
+    }
+
+    /// @notice The (0,0) atomic unset is the RECOVERY LEVER for a regressed farm-utility view: a reverting
+    ///         `debtOf`/`convertToAssets` freezes `_accumulate()` (poke, leg pushes, provision writes) fail-closed;
+    ///         unsetting the leg restores liveness with the loop legs (escrow LP + debt) out of the basket.
+    function test_farmUtility_unset_recovers_from_reverting_view() public {
+        _wireLp(); // wires shareToken + 1000e18 supply
+        (MockEscrowVault e, MockBorrowVault b) = _wireFarmUtility();
+        e.setBalance(juniorTrancheSafe, 500e18); // mid-loop: 500 LP escrowed
+        b.setDebt(juniorTrancheSafe, 30e6);
+        assertEq(oracle.grossBasketValue(), 220e18 - 30e18, "pre-regression baseline");
+        b.setReverting(true); // integration regression: debtOf() now reverts
+        vm.warp(block.timestamp + 1);
+        vm.expectRevert(); // fail-closed: the accumulator walk hits the broken view
+        oracle.poke();
+        oracle.setFarmUtilityLeg(address(0), address(0)); // the emergency lever
+        vm.warp(block.timestamp + 1); // fresh dt so poke() genuinely walks the basket and books
+        oracle.poke(); // liveness restored
+        // eyes-open cost: BOTH loop legs leave the basket (escrow LP no longer counted, debt no longer
+        // subtracted) -> gross understates by the loop equity until re-wired.
+        assertEq(oracle.grossBasketValue(), 0, "loop legs out of the basket while unset");
+    }
+
+    /// @notice NAV-input setters checkpoint BEST-EFFORT before mutating: the elapsed gap is booked at the OLD
+    ///         configuration's spot, so a re-point can't retroactively re-weight TWAP history at the new spot.
+    ///         (The failure branch — a reverting basket walk skips the checkpoint instead of bricking the setter —
+    ///         is exercised by test_farmUtility_unset_recovers_from_reverting_view.)
+    function test_setters_checkpoint_before_repoint() public {
+        _wireFullBasket(); // rateSrc = xa (1.2), spot = 1.174e18
+        uint256 oldSpot = oracle.spotNavPerShare();
+        uint256 cumBefore = oracle.cumNav();
+        vm.warp(block.timestamp + 100); // stale accumulator gap
+        MockXAlpha newRateSrc = new MockXAlpha();
+        newRateSrc.setExchangeRate(24e17); // re-point DOUBLES the xALPHA leg's rate
+        oracle.setXAlphaRateOracle(address(newRateSrc));
+        // the 100s gap must be booked at the OLD spot (pre-re-point), not retroactively at the new one
+        assertEq(oracle.lastUpdate(), uint32(block.timestamp), "checkpointed at setter time");
+        assertEq(oracle.cumNav(), cumBefore + oldSpot * 100, "gap booked at OLD spot");
+        assertGt(oracle.spotNavPerShare(), oldSpot, "new config live after the checkpoint");
     }
 
     function test_lpShareValue_pro_rata() public {
@@ -1040,7 +1265,7 @@ contract SzipNavOracleTest is Test {
     ///         to `test_nav_composition_handcomputed` + `test_valueOf_xAlpha_two_layer_mark`).
     function test_SEC04_seeded_rate_prices_correctly() public {
         _wireFullBasket(); // exchangeRate 1.2e18, alphaUSD 2e18, 10 xALPHA -> xa leg = 10*1.2*2 = 24e18
-        assertEq(oracle.grossBasketValue(), 11779e17);
+        assertEq(oracle.grossBasketValue(), 1174e18);
         assertEq(oracle.valueOf(address(xa), 5e18), 12e18); // 5 * (1.2*2)
         oracle.navExit(); // no revert
     }
@@ -1137,6 +1362,56 @@ contract SzipNavOracleTest is Test {
         assertEq(freshOracle.lpTwapWindow(), 0);
     }
 
+    // ----------------------------------------------------------------- F8: LP-TWAP history halt gate + status probe
+    /// @notice a plugin whose history is shorter than the armed window HALTS every LP-containing NAV read
+    ///         with the typed `LpTwapHistoryTooShort(plugin, readyAt)` (not an opaque plugin revert), and the same
+    ///         read passes UNAIDED once `block.timestamp` reaches `readyAt` — the self-healing, no-unpause shape.
+    function test_F8_historyGate_halts_navReads_then_selfHeals() public {
+        (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();
+        pool.setPlugin(address(plugin));
+        plugin.setInitialized(true);
+        oracle.setLpTwapWindow(3600);
+
+        // simulate a plugin swap: history restarts 30min ago ⇒ 1h window under-covered.
+        uint32 oldest = uint32(block.timestamp) - 1800;
+        plugin.setOldestTs(oldest);
+        uint256 readyAt = uint256(oldest) + 3600;
+        vm.expectRevert(
+            abi.encodeWithSelector(IchiAlgebraFairReserves.LpTwapHistoryTooShort.selector, address(plugin), readyAt)
+        );
+        oracle.grossBasketValue();
+
+        // ...and self-heals: at readyAt the identical read succeeds with no setter/unpause touched.
+        vm.warp(readyAt);
+        assertGt(oracle.grossBasketValue(), 0, "read resumes unaided at readyAt");
+    }
+
+    /// @notice `lpTwapStatus()` — the non-reverting probe CRE polls: ready when the TWAP is not in play
+    ///         (window 0), (false, plugin, readyAt) while halted, ready again once history covers.
+    function test_F8_lpTwapStatus_probe() public {
+        // TWAP not in play: fresh wiring, window 0.
+        (bool ready, address p, uint256 readyAt) = oracle.lpTwapStatus();
+        assertTrue(ready, "window 0 => TWAP not in play => ready");
+        assertEq(p, address(0));
+        assertEq(readyAt, 0);
+
+        (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();
+        pool.setPlugin(address(plugin));
+        plugin.setInitialized(true);
+        oracle.setLpTwapWindow(3600);
+
+        uint32 oldest = uint32(block.timestamp) - 600; // 10min of history ⇒ halted
+        plugin.setOldestTs(oldest);
+        (ready, p, readyAt) = oracle.lpTwapStatus();
+        assertFalse(ready, "under-covered => not ready");
+        assertEq(p, address(plugin), "status names the plugin");
+        assertEq(readyAt, uint256(oldest) + 3600, "readyAt = oldest + window");
+
+        vm.warp(readyAt);
+        (ready,, ) = oracle.lpTwapStatus();
+        assertTrue(ready, "covered again at readyAt");
+    }
+
     /// @notice with a non-zero LP-TWAP window already live, re-pointing `setLpPosition` to a vault
     ///         whose pool exposes NO plugin must revert `LpTwapPluginNotReady` — NOT silently leave the live window
     ///         over a pluginless pool (which bricks every LP-containing NAV read, irrecoverable post-renounce).
@@ -1204,10 +1479,17 @@ contract SzipNavOracleTest is Test {
         vm.stopPrank();
 
         // --- zero-guards (owner = this) ---
+        // setFarmUtilityLeg: MIXED zero/non-zero is rejected (a half-wired leg counts escrow LP without its
+        // debt, or vice versa); (0,0) is the valid ATOMIC UNSET — the recovery lever for a regressed
+        // escrow/borrow-vault view that would otherwise freeze _accumulate() unrecoverably.
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
-        oracle.setFarmUtilityLeg(address(0), a2); // zero escrow
+        oracle.setFarmUtilityLeg(address(0), a2); // zero escrow only
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
-        oracle.setFarmUtilityLeg(a1, address(0)); // zero borrow
+        oracle.setFarmUtilityLeg(a1, address(0)); // zero borrow only
+        oracle.setFarmUtilityLeg(a1, a2);
+        oracle.setFarmUtilityLeg(address(0), address(0)); // atomic unset — must NOT revert
+        assertEq(oracle.escrowVault(), address(0));
+        assertEq(oracle.borrowVault(), address(0));
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         oracle.setJuniorTrancheEngine(address(0));
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
@@ -1255,15 +1537,21 @@ contract SzipNavOracleTest is Test {
     }
 }
 
-/// @notice Minimal stand-in for `SzAlphaRateOracle` — exposes `exchangeRate()` + `fresh()` for the gate test and
-///         `lastUpdate()` for the SEC-13 `oldestRequiredLegTs()` rate-leg fold.
+/// @notice Minimal stand-in for `SzAlphaRateOracle` — exposes `exchangeRate()` + `fresh()` for the gate test,
+///         `lastUpdate()` for the SEC-13 `oldestRequiredLegTs()` rate-leg fold, and `maxStaleness()` for the
+///         rate-window fence shift (defaults to unbounded so shift-free tests keep their plain-fold expectations).
 contract MockRateOracle {
     uint256 public r;
     bool public f;
     uint48 public lu;
+    uint256 public maxStaleness = type(uint256).max;
 
     function setRate(uint256 x) external {
         r = x;
+    }
+
+    function setMaxStaleness(uint256 x) external {
+        maxStaleness = x;
     }
 
     function setFresh(bool x) external {

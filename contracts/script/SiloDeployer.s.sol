@@ -29,9 +29,9 @@ import {IEVault} from "evk/EVault/IEVault.sol";
 ///      `internal` helpers so `deploy` stays under the 16-local stack limit.
 ///
 /// @dev THE D2 HUB-GRANT RUNBOOK (NOT script code — Timelock-owned post-deploy). Before `deploy(...)` (one-time, per
-///      silo): build a `SzipFarmUtilityLpOracle` for the silo + push its first `LP_MARK` (a CRE/forwarder push the
-///      deployer cannot make — `FarmUtilityMarketDeployer`'s `setLTV` `getQuote` reverts without a resolvable mark) →
-///      pass as `p.lpOracle`. After `deploy(...)`, the Timelock MUST:
+///      silo): build an `AlgebraIchiFairLpOracle` for the silo's ICHI vault (no seed push — it reads the pool's
+///      Algebra TWAP live; the plugin needs ≥ window of history or `FarmUtilityMarketDeployer`'s `setLTV` `getQuote`
+///      reverts) → pass as `p.lpOracle`. After `deploy(...)`, the Timelock MUST:
 ///        1. `zipUSD.setCapacity(silo.depositModule, type(uint128).max)` — grant the new deposit module mint authority
 ///           on the shared zipUSD (Timelock-owned).
 ///        2. `siloRegistry.addSilo(siloId, SiloConfig{from the returned handle})` — admission (passes the topology
@@ -79,7 +79,7 @@ contract SiloDeployer is Script {
         // shared POL (D1) + the pre-seeded farm utility LP oracle
         address polIchiVault;
         address polGauge;
-        address lpOracle; // built-and-SEEDED INPUT (initial LP_MARK already pushed)
+        address lpOracle; // built INPUT (an AlgebraIchiFairLpOracle over polIchiVault's pool — reads live, no seed)
         // tokens (injectable so the D3 test feeds mocks; prod passes BaseAddresses)
         address usdc;
         address xAlphaMirror;

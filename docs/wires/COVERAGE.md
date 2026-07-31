@@ -42,7 +42,6 @@ forgotten.
 | `src/supply/ZipDepositModule.sol` | `WOOF-06.md` |
 | `src/supply/ZipRedemptionQueue.sol` | `9-ZipRedemptionQueue.md` |
 | `src/supply/SzipNavOracle.sol` | `8-B4-SzipNavOracle.md` |
-| `src/supply/SzipFarmUtilityLpOracle.sol` | `8-B5-FarmUtilityLoop.md` |
 | `src/supply/CreditWarehouse/WarehouseAdminModule.sol` | `8-Bw-CreditWarehouse.md` |
 | `src/supply/szipUSD/DurationFreezeModule.sol` | `DurationFreezeModule.md` |
 | `src/supply/szipUSD/ExerciseModule.sol` | `8-B8-ExerciseModule.md` |

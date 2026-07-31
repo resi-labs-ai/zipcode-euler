@@ -58,21 +58,21 @@ auto-ABI is not trusted).
    - `paymentToken() view returns (address)` — the strike ERC20 (sel `0x3013ce29`; live == USDC `0x8335…2913`). Read LIVE in a module's `setUp` so the strike-approval target can never drift.
    - `getDiscountedPrice(uint256 amount) view returns (uint256)` — discounted strike for `amount` (sel `0x339ccade`).
    - `getMinPaymentAmount() view returns (uint256)` — **no-arg** flat strike floor (sel `0x2abb945c`; live `10000` = $0.01 6-dp). Charged strike = `max(getDiscountedPrice(amount), getMinPaymentAmount())`.
-   - `discount() view returns (uint256)` — whole-percent discount (sel `0x6b6f4a9d`; live `30` == 30%). NAV intrinsic per token = `HYDX × (100 - discount)/100`.
-3. **Consumed by.** `ExerciseModule.sol` (exercise path), `HarvestVoteModule.sol` (harvest), `SzipNavOracle.sol`
-   (oHYDX intrinsic mark via `discount`/`getDiscountedPrice`), and the demo fork
-   `hydrex-demo-fork/SzipNavOracleDemoVAMM.sol` (same intrinsic mark).
+   - `discount() view returns (uint256)` — whole-percent discount (sel `0x6b6f4a9d`; live `30` == 30%). NOT a NAV input: oHYDX is marked $0 in the NAV oracles (the intrinsic formula can't track the `getMinPaymentAmount` floor or sale slippage); kept for exercise-profitability tooling.
+3. **Consumed by.** `ExerciseModule.sol` (exercise path) and `HarvestVoteModule.sol` (harvest). The NAV oracles
+   (`SzipNavOracle.sol`, demo fork `SzipNavOracleDemoVAMM.sol`) no longer read this interface — oHYDX is marked $0.
 4. **Gotchas.** Two distinct exercise overloads with **different arity** — cash exercise is 4-arg, ve-exercise
    is 2-arg; the earlier 4-arg ve guess and per-amount `getMinPaymentAmount` guess were both wrong and
-   corrected. `paymentToken()`/`discount()` must be read live at mark/approval time so neither caches a stale
-   value.
+   corrected. `paymentToken()` must be read live at approval time so it never caches a stale value. The strike
+   actually charged is `max(getDiscountedPrice(amount), getMinPaymentAmount())` — at low HYDX prices the $0.01
+   floor binds, so `discount()` alone overstates exercise value.
 
 ## IRewardsDistributor.sol — `IRewardsDistributor`
 1. **What it shims.** The Hydrex RewardsDistributor `0x6FCa…eD42` — the per-veNFT anti-dilution rebase.
    Discovered via `Minter._rewards_distributor()` (sel `0x4b1cd5da`), read live.
 2. **Declared surface.**
    - `claim(uint256 tokenId) returns (uint256)` — singular per-veNFT rebase claim (sel `0x379607f5`). Included for completeness; **unused** by the module.
-   - `claim_many(uint256[] tokenIds) returns (bool)` — the batch the module calls (sel `0x1f1db043`). The bool is IGNORED (rebase credits each veNFT's own lock and cannot be redirected, so an imperfect operator array is harmless).
+   - `claim_many(uint256[] tokenIds) returns (bool)` — the batch the module calls (sel `0x1f1db043`). The bool is IGNORED (rebase credits each veNFT's own lock and cannot be redirected, so an imperfect operator array is harmless) — and vestigial always-true: probed live 2026-07-28, returns true even for a nonexistent tokenId. Rebases END at Hydrex schedule week 52 (2026-09-10; hard-coded 0 in `RevisedPhasedEmissionSchedule` `0x5aAa…2727`), after which `claimRebase` is a harmless permanent no-op the keeper can drop from rotation.
    - `claimable(uint256 tokenId) view returns (uint256)` — per-veNFT claimable view (sel `0xd1d58b25`).
 3. **Consumed by.** `HarvestVoteModule.sol` only.
 4. **Gotchas.** The module calls only `claim_many` (mutate) + `claimable` (view). The distributor address =

@@ -6,6 +6,7 @@ import {AlgebraIchiFairLpOracle} from "../../src/supply/AlgebraIchiFairLpOracle.
 import {IchiAlgebraFairReserves} from "../../src/supply/lib/IchiAlgebraFairReserves.sol";
 import {IICHIVault} from "../../src/interfaces/ichi/IICHIVault.sol";
 import {IAlgebraPool} from "../../src/interfaces/algebra/IAlgebraPool.sol";
+import {IAlgebraOraclePlugin} from "../../src/interfaces/algebra/IAlgebraOraclePlugin.sol";
 import {TickMath, FullMath} from "../../src/libraries/ConcentratedLiquidity.sol";
 import {Errors} from "euler-price-oracle/adapter/BaseAdapter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -113,7 +114,7 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
 
     // ----------------------------------------------------------------- 4. plugs into Euler as collateral
     /// @notice The LP token resolves as EVK collateral through a real `EulerRouter` configured with this oracle —
-    ///         the trustless drop-in for `SzipFarmUtilityLpOracle` on the farm utility borrow market. Proves the
+    ///         THE farm-utility LP oracle (the CRE-push twin was deleted). Proves the
     ///         router→lpToken→oracle resolution the `FarmUtilityMarketDeployer` wire-check depends on.
     function test_fork_resolves_through_euler_router() public {
         EulerRouter router = new EulerRouter(BaseAddresses.EVC, address(this)); // this = governor
@@ -198,17 +199,103 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
         caller.call(vault, WINDOW);
     }
 
-    /// @notice settled empirically: the DEPLOYED Algebra Integral plugin fails CLOSED on
-    ///         window UNDER-COVERAGE. A window longer than the plugin's accumulated history (10y ≫ Base's age)
-    ///         makes `getTimepoints` request a timepoint older than the oldest stored one, which reverts rather
-    ///         than extrapolating a fake `cum[0]`. This is the fail-open-vs-closed uncertainty the synthesis
-    ///         flagged — pinned here for the live plugin version (cardinality is not on-chain-queryable, so this
-    ///         is the binding proof, not an in-contract span assertion).
+    /// @notice window UNDER-COVERAGE fails CLOSED with the TYPED, self-describing halt (audit F8): the
+    ///         history-depth gate reads the live plugin's oldest ring slot and reverts
+    ///         `LpTwapHistoryTooShort(plugin, oldest + window)` BEFORE `getTimepoints` — the legible status
+    ///         ("plugin X still accumulating; resumes at readyAt") replacing the old opaque plugin revert. Also
+    ///         pins, live, that the deployed plugin exposes the ring-buffer surface the gate stands on
+    ///         (`timepointIndex()` / `timepoints(i)`).
     function test_fork_underCoverageWindow_failsClosed() public {
         uint32 tenYears = 315_360_000; // ≫ the plugin's history on Base ⇒ guaranteed under-coverage
-        FairReservesCaller caller = new FairReservesCaller(); // external boundary so expectRevert sees the lib/plugin revert
-        vm.expectRevert(); // any revert from the plugin's getTimepoints — NOT a well-formed near-spot quote
+        address plugin = IAlgebraPool(IICHIVault(VAULT).pool()).plugin();
+        // Recompute the gate's readyAt from the live ring buffer (pre-wrap ⇒ oldest is slot 0; assert that).
+        uint16 head = IAlgebraOraclePlugin(plugin).timepointIndex();
+        (bool nextInit,,,,,,) = IAlgebraOraclePlugin(plugin).timepoints(uint256(head) + 1);
+        assertFalse(nextInit, "live ring unexpectedly wrapped -- recompute oldest via head+1");
+        (bool init0, uint32 oldest,,,,,) = IAlgebraOraclePlugin(plugin).timepoints(0);
+        assertTrue(init0, "live slot 0 must be initialized");
+        FairReservesCaller caller = new FairReservesCaller(); // external boundary so expectRevert sees the lib revert
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IchiAlgebraFairReserves.LpTwapHistoryTooShort.selector, plugin, uint256(oldest) + tenYears
+            )
+        );
         caller.call(VAULT, tenYears);
+    }
+
+    /// @notice fork: the status probe agrees with the gate on the live plugin — ready at the production 1h
+    ///         window (readyAt long past), NOT ready at a 10y window, same `readyAt` arithmetic both sides.
+    function test_fork_twapStatus_matches_gate() public {
+        (bool ready, address plugin, uint256 readyAt) = oracle.twapStatus();
+        assertTrue(ready, "1h window must be covered on the live plugin");
+        assertEq(plugin, IAlgebraPool(IICHIVault(VAULT).pool()).plugin(), "status names the live plugin");
+        assertLe(readyAt, block.timestamp, "covered => readyAt in the past");
+
+        HistoryStatusCaller status = new HistoryStatusCaller();
+        (bool ready10y,, uint256 readyAt10y) = status.call(VAULT, 315_360_000);
+        assertFalse(ready10y, "10y window cannot be covered");
+        assertGt(readyAt10y, block.timestamp, "not ready => readyAt in the future");
+    }
+
+    /// @notice unit: short history (pre-wrap ring) reverts the TYPED halt with the exact (plugin, readyAt)
+    ///         payload — oldest slot 30min ago against a 1h window ⇒ readyAt = oldest + window.
+    function test_fairReserves_revert_historyTooShort() public {
+        MockHistoryPlugin plugin = new MockHistoryPlugin();
+        address mockPool = address(new MockPoolWithPlugin(address(plugin)));
+        address vault = address(new MockVaultNoPlugin(mockPool));
+        uint32 oldest = uint32(block.timestamp) - 1800; // 30min of history, 1h window ⇒ halted
+        plugin.configure(1, false, oldest);
+        FairReservesCaller caller = new FairReservesCaller();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IchiAlgebraFairReserves.LpTwapHistoryTooShort.selector, address(plugin), uint256(oldest) + WINDOW
+            )
+        );
+        caller.call(vault, WINDOW);
+    }
+
+    /// @notice unit: on a WRAPPED ring the gate reads the oldest from slot head+1 (not slot 0) — the readyAt in
+    ///         the typed revert derives from that slot's timestamp.
+    function test_fairReserves_historyGate_wrappedRing() public {
+        MockHistoryPlugin plugin = new MockHistoryPlugin();
+        address mockPool = address(new MockPoolWithPlugin(address(plugin)));
+        address vault = address(new MockVaultNoPlugin(mockPool));
+        uint32 oldest = uint32(block.timestamp) - 900; // 15min of history in slot head+1
+        plugin.configure(7, true, oldest);
+        FairReservesCaller caller = new FairReservesCaller();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IchiAlgebraFairReserves.LpTwapHistoryTooShort.selector, address(plugin), uint256(oldest) + WINDOW
+            )
+        );
+        caller.call(vault, WINDOW);
+    }
+
+    /// @notice unit: the status probe's three shapes — covered ⇒ ready; short ⇒ (false, plugin, readyAt);
+    ///         no plugin at all ⇒ (false, 0, 0) (no ETA).
+    function test_historyStatus_shapes() public {
+        MockHistoryPlugin plugin = new MockHistoryPlugin();
+        address mockPool = address(new MockPoolWithPlugin(address(plugin)));
+        address vault = address(new MockVaultNoPlugin(mockPool));
+        HistoryStatusCaller status = new HistoryStatusCaller();
+
+        plugin.configure(1, false, uint32(block.timestamp) - WINDOW); // exactly covered
+        (bool ready, address p, uint256 readyAt) = status.call(vault, WINDOW);
+        assertTrue(ready, "exact coverage is ready (>=)");
+        assertEq(p, address(plugin));
+        assertEq(readyAt, block.timestamp);
+
+        uint32 oldest = uint32(block.timestamp) - 60; // 1min of history
+        plugin.configure(1, false, oldest);
+        (ready, p, readyAt) = status.call(vault, WINDOW);
+        assertFalse(ready, "1min of history is not 1h");
+        assertEq(readyAt, uint256(oldest) + WINDOW);
+
+        address pluginlessVault = address(new MockVaultNoPlugin(address(new MockPoolNoPlugin())));
+        (ready, p, readyAt) = status.call(pluginlessVault, WINDOW);
+        assertFalse(ready, "no plugin => not ready");
+        assertEq(p, address(0));
+        assertEq(readyAt, 0, "no plugin => no ETA");
     }
 
     /// @notice the `BadTimepoints` defense-in-depth shape guard in `_meanTick`. An INITIALIZED plugin
@@ -374,8 +461,70 @@ contract MockBadTimepointsPlugin {
         return true;
     }
 
+    // History surface: oldest slot at ts 0 ⇒ the depth gate passes for any fork-era block.timestamp, so the
+    // malformed-set path below is still reachable.
+    function timepointIndex() external pure returns (uint16) {
+        return 1;
+    }
+
+    function timepoints(uint256 index)
+        external
+        pure
+        returns (bool initialized, uint32, int56, uint88, int24, int24, uint16)
+    {
+        return (index == 0, 0, 0, 0, 0, 0, 0);
+    }
+
     function getTimepoints(uint32[] calldata) external pure returns (int56[] memory cum, uint88[] memory vol) {
         cum = new int56[](1); // wrong length (≠ 2) ⇒ BadTimepoints
         vol = new uint88[](1);
+    }
+}
+
+/// @notice An INITIALIZED plugin stub with a configurable ring buffer — drives the history-depth gate
+///         (`LpTwapHistoryTooShort`) through both ring shapes: pre-wrap (oldest = slot 0) and wrapped
+///         (oldest = slot head+1).
+contract MockHistoryPlugin {
+    uint16 public timepointIndex;
+    bool internal wrapped;
+    uint32 internal oldestTs;
+
+    function configure(uint16 head_, bool wrapped_, uint32 oldestTs_) external {
+        timepointIndex = head_;
+        wrapped = wrapped_;
+        oldestTs = oldestTs_;
+    }
+
+    function isInitialized() external pure returns (bool) {
+        return true;
+    }
+
+    function timepoints(uint256 index)
+        external
+        view
+        returns (bool initialized, uint32 blockTimestamp, int56, uint88, int24, int24, uint16)
+    {
+        uint16 next;
+        unchecked {
+            next = timepointIndex + 1;
+        }
+        if (wrapped && index == next) return (true, oldestTs, 0, 0, 0, 0, 0);
+        if (!wrapped && index == 0) return (true, oldestTs, 0, 0, 0, 0, 0);
+        return (false, 0, 0, 0, 0, 0, 0);
+    }
+
+    function getTimepoints(uint32[] calldata) external pure returns (int56[] memory cum, uint88[] memory vol) {
+        // The real HYDX/USDC cumulatives (IAlgebraOraclePlugin.sol NatSpec) so a gate-passing read survives TickMath.
+        cum = new int56[](2);
+        cum[0] = -1380399043048;
+        cum[1] = -1381518031724;
+        vol = new uint88[](2);
+    }
+}
+
+/// @notice External boundary for the non-reverting status probe (mirrors `FairReservesCaller`).
+contract HistoryStatusCaller {
+    function call(address vault, uint32 window) external view returns (bool, address, uint256) {
+        return IchiAlgebraFairReserves.historyStatus(vault, window);
     }
 }

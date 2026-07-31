@@ -127,6 +127,13 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     bytes public currentUid;
     /// @notice The USDC `sellAmount` (= outstanding VaultRelayer allowance) of the live bid.
     uint256 public currentSellAmount;
+    /// @notice The szipUSD `buyAmount` of the live bid (0 ⇒ no live bid). Together with `currentSellAmount` this
+    ///         exposes the POSTED implied price (`sellAmount·1e18/buyAmount`, 6-dp USDC per 1e18 share) so the CRE
+    ///         bid loop (`cre/buyburn-bid`) can detect price drift vs the current `quoteMaxPrice()` and
+    ///         cancel-and-repost — a resting bid must never keep quoting a mark the oracle has since re-priced
+    ///         (SEC/L-7). The stateless CRE workflow cannot recover this from the `BidPosted` event (no log-query
+    ///         read, no cross-tick state), so the module carries it as one slot.
+    uint256 public currentBuyAmount;
 
     // --------------------------------------------------------------------- operator-supplied order (3 fields only)
     /// @notice The ONLY operator-supplied order fields. Every other GPv2 field is a module-fixed constant (the §4
@@ -154,6 +161,9 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     error BuyAmountTooLarge();
     /// @notice `postBid` blocked: coverage is below the liability floor (the path-lock outflow gate).
     error Undercovered();
+    /// @notice A Safe exec returned `false` with no revert data (the Safe swallows inner reverts) — fail LOUD, never
+    ///         record a bid/cancel whose approve/presign did not actually land (the sibling-module `_exec` idiom).
+    error ExecFailed();
 
     // --------------------------------------------------------------------- events
     event BidPosted(
@@ -249,10 +259,19 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         emit WiringSet("operator", operator_);
     }
 
-    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `juniorTrancheEngine` (build phase, §17). onlyOwner (Timelock). Keeps `avatar`/`target` in
+    ///         lockstep (avatar == target == juniorTrancheEngine, the setUp invariant + the syncing-sibling idiom:
+    ///         Recycle/Sell/Exercise/LpStrategy/FarmUtilityLoop/HarvestVote) — the uid packs `juniorTrancheEngine` as
+    ///         the GPv2 `owner`, and `setPreSignature` requires `owner == msg.sender` (= the exec'ing Safe), so a
+    ///         one-sided re-point would make every post/cancel revert at the presign. Refused under a live bid: the
+    ///         resting order's `receiver`/`owner` is the OLD Safe, so a re-point would strand its fills (szipUSD
+    ///         delivered to the old Safe) and orphan its presign/allowance. Cancel first, then re-point.
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        if (currentUid.length != 0) revert BidAlreadyLive();
         juniorTrancheEngine = juniorTrancheEngine_;
+        avatar = juniorTrancheEngine_;
+        target = juniorTrancheEngine_;
         emit WiringSet("juniorTrancheEngine", juniorTrancheEngine_);
     }
 
@@ -283,16 +302,25 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
     /// @notice Re-point `settlement` (build phase, §17). onlyOwner (Timelock). Refused under a live bid: `_cancelBid`
     ///         flips the presignature on the CURRENT `settlement`, so re-pointing while a bid rests would strand the
     ///         old-settlement presign LIVE (the bid stays fillable, believed-cancelled). Cancel first, then re-point.
+    ///         Re-reads `vaultRelayer` + `domainSeparator` LIVE off the new settlement (the same two reads `setUp`
+    ///         runs): both are `immutable` on a deployed `GPv2Settlement` — the domain even hashes the settlement's
+    ///         own address — so a re-point ALWAYS invalidates the cached pair, and a stale domain makes every new
+    ///         uid unfillable (solvers derive uids from the settlement's OWN domain at fill time).
     function setSettlement(address settlement_) external onlyOwner {
         if (settlement_ == address(0)) revert ZeroAddress();
         if (currentUid.length != 0) revert BidAlreadyLive();
         settlement = settlement_;
+        vaultRelayer = IGPv2Settlement(settlement_).vaultRelayer();
+        domainSeparator = IGPv2Settlement(settlement_).domainSeparator();
         emit WiringSet("settlement", settlement_);
+        emit WiringSet("vaultRelayer", vaultRelayer);
     }
 
     /// @notice Re-point `vaultRelayer` (build phase, §17). onlyOwner (Timelock). Refused under a live bid: `_cancelBid`
     ///         zeroes the allowance on the CURRENT `vaultRelayer`, so re-pointing while a bid rests would strand the
     ///         old-relayer allowance (the bid stays fillable, believed-cancelled). Cancel first, then re-point.
+    ///         NOTE: `setSettlement` now auto-derives the relayer from the settlement (its only legitimate source —
+    ///         it is `immutable` there); this setter remains as the owner-gated manual override only.
     function setVaultRelayer(address vaultRelayer_) external onlyOwner {
         if (vaultRelayer_ == address(0)) revert ZeroAddress();
         if (currentUid.length != 0) revert BidAlreadyLive();
@@ -383,19 +411,16 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
 
         bytes memory uid = _orderUid(order);
 
-        // Two `exec`s in one tx → atomic: a revert of the 2nd (setPreSignature) rolls back the approve.
-        exec(
-            usdc, 0, abi.encodeWithSelector(IERC20Approve.approve.selector, vaultRelayer, order.sellAmount), Operation.Call
-        );
-        exec(
-            settlement,
-            0,
-            abi.encodeWithSelector(IGPv2Settlement.setPreSignature.selector, uid, true),
-            Operation.Call
-        );
+        // Two `_exec`s in one tx → atomic: `_exec` HARD-REVERTS on a failed Safe exec (the Safe returns `false`
+        // rather than bubbling — an unchecked `exec` would record a phantom bid whose presign never landed), so a
+        // failed 2nd (setPreSignature) rolls back the approve, and CoW's own owner check ("GPv2: cannot presign
+        // order", i.e. uid.owner != the exec'ing Safe) surfaces verbatim instead of silently passing.
+        _exec(usdc, abi.encodeWithSelector(IERC20Approve.approve.selector, vaultRelayer, order.sellAmount));
+        _exec(settlement, abi.encodeWithSelector(IGPv2Settlement.setPreSignature.selector, uid, true));
 
         currentUid = uid;
         currentSellAmount = order.sellAmount;
+        currentBuyAmount = order.buyAmount;
 
         emit BidPosted(uid, order.sellAmount, order.buyAmount, order.validTo, navExit18, dBps);
     }
@@ -413,18 +438,33 @@ contract SzipBuyBurnModule is MastercopyInitLock, CloneReportReceiver {
         bytes memory uid = currentUid;
         if (uid.length == 0) return; // idempotent no-op
 
-        exec(
-            settlement,
-            0,
-            abi.encodeWithSelector(IGPv2Settlement.setPreSignature.selector, uid, false),
-            Operation.Call
-        );
-        exec(usdc, 0, abi.encodeWithSelector(IERC20Approve.approve.selector, vaultRelayer, uint256(0)), Operation.Call);
+        // Checked on purpose: a failed presign-flip must REVERT, not silently wipe the module's state while the
+        // order stays live and fillable on the settlement (a believed-cancelled resting bid — the worst shape).
+        _exec(settlement, abi.encodeWithSelector(IGPv2Settlement.setPreSignature.selector, uid, false));
+        _exec(usdc, abi.encodeWithSelector(IERC20Approve.approve.selector, vaultRelayer, uint256(0)));
 
         delete currentUid;
         currentSellAmount = 0;
+        currentBuyAmount = 0;
 
         emit BidCancelled(uid);
+    }
+
+    /// @dev Drive the Safe via the inherited `execAndReturnData` (Operation.Call, value 0) and HARD-REVERT if it
+    ///      returns false — BUBBLING the inner revert data so the original error surfaces (e.g. CoW's
+    ///      "GPv2: cannot presign order", a token's approve revert). The Gnosis Safe `execTransactionFromModule`
+    ///      catches inner reverts and returns `false` rather than bubbling, so an unchecked `exec` would silently
+    ///      swallow a failed approve/presign and record a phantom bid (or a believed-cancelled live one). If the
+    ///      Safe returns no revert data, fall back to `ExecFailed`. (The fleet-wide sibling idiom — this module
+    ///      was the only one still on the unchecked `exec`.)
+    function _exec(address to, bytes memory data) private {
+        (bool ok, bytes memory ret) = execAndReturnData(to, 0, data, Operation.Call);
+        if (!ok) {
+            if (ret.length == 0) revert ExecFailed();
+            assembly {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
     }
 
     // --------------------------------------------------------------------- order hashing (Call-only, in-contract)

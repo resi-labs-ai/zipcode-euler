@@ -66,8 +66,11 @@ rejected for X-2 consistency; the immutable lock-down freezes all wiring slots t
 - **RECOVERY** writes **up only by realized receipts**: `reduction = min(provision, recoveryProceeds)`; `provision -=
   reduction`, `totalProvision -= reduction`, push (`:249-260`). Floors at 0 — can never write NAV **above** the
   un-impaired basket. Status **stays** `Defaulted` (partial heal).
-- **RESOLVE** heals the provision to 0: `totalProvision -= provision; provision = 0; status = Resolved`, push
-  (`:267-275`).
+- **RESOLVE** heals the provision to 0: `totalProvision -= provision; provision = 0; status = Resolved`, push.
+  Both RESOLVE and WRITEOFF first run the wrong-escrow detector: a zero-capital report against an escrow showing
+  `bondAmount(lienId) == 0` reverts `NoBondInEscrow` — a Defaulted lien always holds a live bond in ITS escrow,
+  so zero here can only mean `setEscrow` re-pointed mid-lifecycle (previously the one silent finalize path: lien
+  terminal, premium stranded in the old escrow).
 - **WRITEOFF** settles **permanently**: leaves `provision` (and so `totalProvision`) **unchanged** — the residual IS
   the realized loss — and does **NOT** call `writeProvision` (no change) (`:288-298`).
 - **Sole-writer invariant:** every `totalProvision +=`/`-=` is paired with the identical per-lien `provision` change,

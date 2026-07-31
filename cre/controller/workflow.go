@@ -58,12 +58,16 @@ type Application struct {
 	ProofRef   string `json:"proofRef"`   // 0x… 32-byte hex (origination, draw)
 	SiloID     string `json:"siloId"`     // 0x… 32-byte hex (origination ONLY — CTR-03)
 	EquityMark string `json:"equityMark"` // base-10 string, 18-dp mark (origination, draw)
-	DrawAmount string `json:"drawAmount"` // base-10 string (origination, draw)
-	Cap        string `json:"cap"`        // base-10 string (origination)
-	BorrowLTV  uint16 `json:"borrowLtv"`  // 1e4-scale (origination)
-	LiqLTV     uint16 `json:"liqLtv"`     // 1e4-scale (origination)
-	Status     uint8  `json:"status"`     // (default, liquidation)
-	Gates      Gates  `json:"gates"`      // §8.9/§8.10 Proof booleans (origination, draw)
+	// SEC/L-3: the equityMark's APPRAISAL as-of time (unix seconds, base-10). Seeded on-chain as the registry mark's
+	// ts (NOT block.timestamp) so a stale out-of-order write reverts StaleReport. MUST be the appraisal time carried
+	// on the event — do NOT substitute runtime.Now() at emit (that would re-open the stale-mark overwrite).
+	EquityMarkTs string `json:"equityMarkTs"` // base-10 unix seconds (origination, draw)
+	DrawAmount   string `json:"drawAmount"`   // base-10 string (origination, draw)
+	Cap          string `json:"cap"`          // base-10 string (origination)
+	BorrowLTV    uint16 `json:"borrowLtv"`    // 1e4-scale (origination)
+	LiqLTV       uint16 `json:"liqLtv"`       // 1e4-scale (origination)
+	Status       uint8  `json:"status"`       // (default, liquidation)
+	Gates        Gates  `json:"gates"`        // §8.9/§8.10 Proof booleans (origination, draw)
 }
 
 // Gates are the §8.9/§8.10 Proof booleans — each is an off-chain truth resolved to a boolean gate. For the
@@ -189,6 +193,10 @@ func buildOrigination(app Application, logger *slog.Logger) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("origination: equityMark: %w", err)
 	}
+	sourceTs, err := parseUint48Ts(app.EquityMarkTs) // SEC/L-3: required, > 0, uint48-bounded (seedPrice ts)
+	if err != nil {
+		return nil, fmt.Errorf("origination: equityMarkTs: %w", err)
+	}
 	drawAmount, err := parseNonNegBig(app.DrawAmount) // required, present, may be 0
 	if err != nil {
 		return nil, fmt.Errorf("origination: drawAmount: %w", err)
@@ -205,7 +213,7 @@ func buildOrigination(app Application, logger *slog.Logger) ([]byte, error) {
 		return nil, nil
 	}
 
-	return zipreport.Origination(lienID, proofRef, equityMark, app.BorrowLTV, app.LiqLTV, drawAmount, cap, siloID)
+	return zipreport.Origination(lienID, proofRef, equityMark, app.BorrowLTV, app.LiqLTV, drawAmount, cap, siloID, sourceTs)
 }
 
 // buildDraw validates the rt2 required fields, enforces the §8.9 Proof gate, and encodes zipreport.Draw. NO
@@ -223,6 +231,10 @@ func buildDraw(app Application, logger *slog.Logger) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("draw: equityMark: %w", err)
 	}
+	sourceTs, err := parseUint48Ts(app.EquityMarkTs) // SEC/L-3: required, > 0, uint48-bounded (re-anchor seed ts)
+	if err != nil {
+		return nil, fmt.Errorf("draw: equityMarkTs: %w", err)
+	}
 	drawAmount, err := parseNonNegBig(app.DrawAmount) // required, present, may be 0
 	if err != nil {
 		return nil, fmt.Errorf("draw: drawAmount: %w", err)
@@ -234,7 +246,7 @@ func buildDraw(app Application, logger *slog.Logger) ([]byte, error) {
 		return nil, nil
 	}
 
-	return zipreport.Draw(lienID, proofRef, equityMark, drawAmount)
+	return zipreport.Draw(lienID, proofRef, equityMark, drawAmount, sourceTs)
 }
 
 // buildClose validates the rt4 required field (lienId only; all other carrier fields are ignored) and encodes
@@ -307,6 +319,24 @@ func parseNonNegBig(s string) (*big.Int, error) {
 	}
 	if v.Sign() < 0 {
 		return nil, fmt.Errorf("must be >= 0, got %s", v.String())
+	}
+	return v, nil
+}
+
+// parseUint48Ts parses the SEC/L-3 appraisal source timestamp: a base-10 unix-seconds string, required, > 0, and
+// bounded to the on-chain uint48 (the registry cache timestamp width; a value wider than 48 bits would overflow the
+// seedPrice ts arg). A 0/negative ts is rejected — the registry's strictly-newer guard would revert it anyway, so
+// fail fast on the producer side with a clear error.
+func parseUint48Ts(s string) (*big.Int, error) {
+	v, ok := new(big.Int).SetString(strings.TrimSpace(s), 10)
+	if !ok {
+		return nil, fmt.Errorf("not a base-10 integer: %q", s)
+	}
+	if v.Sign() <= 0 {
+		return nil, fmt.Errorf("must be > 0, got %s", v.String())
+	}
+	if v.BitLen() > 48 {
+		return nil, fmt.Errorf("exceeds uint48, got %s", v.String())
 	}
 	return v, nil
 }

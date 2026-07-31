@@ -2,7 +2,7 @@
 
 > CreditWarehouse Admin | 10 guards | 6 inferred | 2 not enforced on-chain (X-1 scope, X-3 re-freeze)
 
-> The defining feature of this scope: the load-bearing invariants are **cross-contract** — the primary enforcement (param-pinning, Call-only) lives in the Zodiac Roles scope, not this bytecode (X-1, On-chain=No). The avatar-parity invariant (X-2) was On-chain=No; it is now **checked on-chain at the `setWarehouseSafe` entry point** (`AvatarMismatch`) — but this is entry-point-local, NOT a maintained standing invariant: `setRoles` and an external `Roles.setAvatar` can re-desync the pair afterward (both **fail-closed** at the scope's live `EqualToAvatar` receiver pin — no leak; see X-2). The single-contract guards below are the "belt" to the scope's "suspenders".
+> The defining feature of this scope: the load-bearing invariants are **cross-contract** — the primary enforcement (param-pinning, Call-only) lives in the Zodiac Roles scope, not this bytecode (X-1, On-chain=No). The avatar-parity invariant (X-2) is now a **maintained on-chain invariant**: checked at ALL THREE adapter pairing sites (constructor, `setRoles`, `setWarehouseSafe`) AND re-asserted at USE time (`_processReport` reverts before dispatching any op on a mismatch — covering the external-`Roles.setAvatar` desync the wiring sites can't see). The guards exist precisely because REPAY has no "from" to scope — a wrong-Safe modifier would otherwise keep REPAY live against that Safe. The single-contract guards below are the "belt" to the scope's "suspenders".
 
 ---
 
@@ -36,7 +36,7 @@
 `if (dest != redemptionBox) revert WrongRedemptionBox(dest)` · `WarehouseAdminModule.sol:189` · REPAY self-enforces the sink even before the Roles scope checks it.
 
 #### G-10
-`if (roles.avatar() != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av)` · `WarehouseAdminModule.sol:148` · `setWarehouseSafe` checks avatar parity on-chain (X-2 / I-4): a one-sided re-point **through this setter** cannot be saved (the paired re-point is `Roles.setAvatar` first). NOTE: this is entry-point-local — `setRoles` and an external `Roles.setAvatar` can still desync the pair (fail-closed at the scope).
+`if (roles.avatar() != warehouseSafe) revert AvatarMismatch(...)` · ctor + `setRoles` + `setWarehouseSafe` · avatar parity checked on-chain at every adapter pairing site (X-2 / I-4): a one-sided re-point of EITHER slot through the adapter cannot be saved (pair first: `Roles.setAvatar` before `setWarehouseSafe`; a new modifier must already be attached to `warehouseSafe` before `setRoles`). Only an external `Roles.setAvatar` can still desync (see the header note).
 
 *Plus the `UnsupportedOpType` revert and the unreachable `RoleExecFailed` (defense-in-depth — the modifier already reverts with `shouldRevert=true`).*
 
@@ -94,13 +94,13 @@ On-chain: **No** (enforcement is in the external Roles scope)
 
 On-chain: **entry-point-local** (checked in `setWarehouseSafe`; NOT a maintained invariant — other re-point paths fail-closed)
 
-> `warehouseSafe` (this contract's injected deposit/redeem owner) MUST equal the Roles modifier's `avatar` (which the scope checks `receiver == avatar` against). They are independent slots. `setWarehouseSafe` **reads and asserts `roles.avatar()`**: it reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`. **This check is entry-point-local, not a standing invariant** — two ratified Timelock paths re-desync the pair without tripping it: `setRoles(newModifier)` (no parity re-check) and an external `Roles.setAvatar(other)` on the modifier.
+> `warehouseSafe` (this contract's injected deposit/redeem owner) MUST equal the Roles modifier's `avatar` (which the scope checks `receiver == avatar` against). They are independent slots. **All three adapter pairing sites read and assert `roles.avatar()`** — the constructor, `setRoles`, and `setWarehouseSafe` each revert `AvatarMismatch` on a mismatch — **and `_processReport` re-asserts it at use time**, so even an external `Roles.setAvatar(other)` on the modifier only jams ops (fail-closed) until re-paired; nothing can execute against the wrong Safe.
 
-**Caller side** — `setWarehouseSafe` (`AvatarMismatch` guard) / the SUPPLY+REDEEM injection; the UNGUARDED re-desync paths are `setRoles` and external `Roles.setAvatar`.
+**Caller side** — ctor + `setRoles` + `setWarehouseSafe` (`AvatarMismatch` guards) + the `_processReport` use-time re-assert; no desync path executes an op (an external `Roles.setAvatar` jams every report until re-paired).
 
 **Callee side** — the modifier's `avatar` slot, set via its own `setAvatar`. The paired re-point through this setter is order-dependent: `Roles.setAvatar(new)` FIRST, then `setWarehouseSafe(new)` (else the setter reverts). Documented in `docs/roles.md`.
 
-**If violated** — a `setWarehouseSafe` one-sided re-point reverts; but a `setRoles` re-point or an external `setAvatar` CAN desync the pair. In every desync case SUPPLY/REDEEM **fail-closed**: the scope's receiver/owner pin is `OP_EQUAL_TO_AVATAR` (resolved live), so the stale injected `warehouseSafe` is rejected (`ParameterNotAllowed`) — bricked par-redemption liveness, never a leak (the pin can only resolve to the actual current avatar). Proven by `test_Parity_OneSidedRepoint_RevertsAtSetter` + `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds` (setter path) and `test_Scope_PinsParams_DepositReceiver` (the scope fail-closed backstop).
+**If violated** — a one-sided `setWarehouseSafe` OR mis-paired `setRoles` (or miswired ctor) reverts; an external `setAvatar` can desync the pair but the `_processReport` use-time re-assert then jams EVERY report (`AvatarMismatch`) before any op dispatches — REPAY (no "from" to scope, the one op the Roles scope can't fail-close) included. A desync is therefore always a liveness jam until re-paired, never an execution against the wrong Safe. The scope's live `OP_EQUAL_TO_AVATAR` receiver pin remains the SUPPLY/REDEEM backstop beneath the adapter guards. Proven by `test_Parity_OneSidedRepoint_RevertsAtSetter` + `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds` (warehouseSafe path), `test_Ctor_RevertsOnAvatarMismatch` + `test_Parity_SetRoles_WrongAvatar_Reverts` + `test_Parity_SetRoles_MatchingAvatar_Succeeds` (ctor/roles path), `test_Parity_UseTime_ExternalSetAvatar_BlocksAllOps` (use-time leg), and `test_Scope_PinsParams_DepositReceiver` (the scope fail-closed backstop).
 
 #### X-3
 

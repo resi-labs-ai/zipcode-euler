@@ -47,7 +47,7 @@ Scope: `WarehouseAdminModule`. View/pure excluded. No permissionless entry point
 
 | Function | Parameters | State Modified | Notes |
 |----------|-----------|----------------|-------|
-| `setRoles()` | roles_ | `roles` | re-point the Roles modifier instance |
+| `setRoles()` | roles_ | `roles` | re-point the Roles modifier instance — **reverts `AvatarMismatch` unless `roles_.avatar() == warehouseSafe`** (REPAY has no "from" to scope, so a wrong-Safe modifier must be unreachable; `docs/roles.md`) |
 | `setRoleKey()` | roleKey_ (`!= 0`) | `roleKey` | must match the modifier's `assignRoles` |
 | `setWarehouseSafe()` | warehouseSafe_ | `warehouseSafe` | **reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`** — pair `Roles.setAvatar(new)` FIRST, then this (parity enforced on-chain; `docs/roles.md`) |
 | `setEePool()` | eePool_ | `eePool` | re-point the EulerEarn pool |

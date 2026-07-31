@@ -8,7 +8,6 @@ import {ISafe} from "../../../src/interfaces/safe/ISafe.sol";
 import {IBaal} from "../../../src/interfaces/baal/IBaal.sol";
 
 import {FarmUtilityLoopModule} from "../../../src/supply/szipUSD/FarmUtilityLoopModule.sol";
-import {SzipFarmUtilityLpOracle} from "../../../src/supply/SzipFarmUtilityLpOracle.sol";
 import {FarmUtilityBorrowGuard} from "../../../src/supply/szipUSD/FarmUtilityBorrowGuard.sol";
 import {FarmUtilityMarketDeployer} from "../../../script/FarmUtilityMarketDeployer.sol";
 
@@ -130,6 +129,44 @@ contract MockLpToken {
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         return true;
+    }
+}
+
+/// @notice A settable LP-mark price adapter over the mock LP (the market tests' oracle stand-in for the production
+///         `AlgebraIchiFairLpOracle`, whose fork surface is exercised in `AlgebraIchiFairLpOracle.t.sol`). Mirrors
+///         the adapter fail-closed faces the router bubbles: key mismatch / unset mark ⇒ `PriceOracle_NotSupported`;
+///         a forced-stale mode ⇒ `PriceOracle_TooStale` (the fair oracle's analogue is the TWAP-history halt).
+contract MockLpOracle {
+    address public immutable lpToken;
+    address public immutable quoteToken;
+    uint256 public mark; // 6-dp USD per 1e18 LP share; 0 ⇒ unset (fail closed)
+    uint256 public staleBy; // nonzero ⇒ every read reverts TooStale(staleBy, staleWindow)
+    uint256 public staleWindow;
+
+    constructor(address lpToken_, address quoteToken_) {
+        lpToken = lpToken_;
+        quoteToken = quoteToken_;
+    }
+
+    function setMark(uint256 mark_) external {
+        mark = mark_;
+    }
+
+    function setStale(uint256 staleBy_, uint256 staleWindow_) external {
+        staleBy = staleBy_;
+        staleWindow = staleWindow_;
+    }
+
+    function getQuote(uint256 inAmount, address base, address quote) public view returns (uint256) {
+        if (base != lpToken || quote != quoteToken) revert PriceErrors.PriceOracle_NotSupported(base, quote);
+        if (staleBy != 0) revert PriceErrors.PriceOracle_TooStale(staleBy, staleWindow);
+        if (mark == 0) revert PriceErrors.PriceOracle_NotSupported(base, quote);
+        return inAmount * mark / 1e18; // floors, against the borrower — same rounding as the production adapters
+    }
+
+    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        uint256 out = getQuote(inAmount, base, quote);
+        return (out, out);
     }
 }
 
@@ -498,17 +535,14 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
         );
     }
 
-    /// @dev Deploy a fresh LP oracle (renounced, as production) wired to `lpToken_`.
-    function _deployOracle(address lpToken_) internal returns (SzipFarmUtilityLpOracle o) {
-        o = new SzipFarmUtilityLpOracle(FORWARDER, USDC, VALIDITY, lpToken_);
-        o.renounceOwnership();
+    /// @dev Deploy a fresh settable LP oracle stand-in wired to `lpToken_` (see `MockLpOracle`).
+    function _deployOracle(address lpToken_) internal returns (MockLpOracle o) {
+        o = new MockLpOracle(lpToken_, USDC);
     }
 
-    /// @dev Push an LP mark via the CRE Forwarder (the only writer).
-    function _pushMark(SzipFarmUtilityLpOracle o, uint256 mark) internal {
-        bytes memory report = abi.encode(o.LP_MARK(), abi.encode(mark, uint32(block.timestamp)));
-        vm.prank(FORWARDER);
-        o.onReport("", report);
+    /// @dev Set the LP mark (6-dp USD per 1e18 LP share).
+    function _pushMark(MockLpOracle o, uint256 mark) internal {
+        o.setMark(mark);
     }
 
     /// @dev Stand up the farm utility market through the deployer for `juniorTrancheEngine_`/`oracle`.
@@ -891,87 +925,6 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(IERC20(USDC).allowance(address(safe), address(stub)), 0, "approve rolled back");
     }
 
-    // =================================================================== LP oracle (unit)
-
-    function test_oracle_push_and_quote_roundtrip() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        _pushMark(o, 1e6); // $1.00 per 1e18 LP share
-        assertEq(o.getQuote(1e18, address(lp), USDC), 1e6, "full share == $1");
-        assertEq(o.getQuote(5e17, address(lp), USDC), 5e5, "half share == $0.50");
-    }
-
-    function test_oracle_non_divisible_floors_against_borrower() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        // mark = 3 (6-dp); inAmount = 1 wei LP share -> 1 * 1e6 * 3 / 1e24 floors to 0 (against the borrower).
-        _pushMark(o, 3);
-        assertEq(o.getQuote(1, address(lp), USDC), 0, "floors against borrower");
-        // a mark*inAmount not divisible by feedScale -> floor. mark=1e6, inAmount=333333333333333333 (1/3 share).
-        // SEC-01: the second mark needs a strictly-newer ts (monotonic guard); a re-push lands in a later block.
-        vm.warp(block.timestamp + 1);
-        _pushMark(o, 1e6);
-        uint256 inAmt = 333_333_333_333_333_333;
-        assertEq(o.getQuote(inAmt, address(lp), USDC), inAmt / 1e12, "floor of 1/3 share value");
-        assertTrue((inAmt * 1e6) % 1e24 != 0, "must be non-divisible");
-    }
-
-    function test_oracle_only_forwarder_can_push() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        bytes memory report = abi.encode(o.LP_MARK(), abi.encode(uint256(1e6), uint32(block.timestamp)));
-        vm.prank(rando);
-        vm.expectRevert();
-        o.onReport("", report);
-    }
-
-    function test_oracle_wrong_reportType_reverts() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        bytes memory report = abi.encode(uint8(3), abi.encode(uint256(1e6), uint32(block.timestamp)));
-        vm.prank(FORWARDER);
-        vm.expectRevert(abi.encodeWithSelector(SzipFarmUtilityLpOracle.InvalidReportType.selector, uint8(3)));
-        o.onReport("", report);
-    }
-
-    function test_oracle_base_or_quote_mismatch_reverts() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        _pushMark(o, 1e6);
-        vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_NotSupported.selector, address(0xAAAA), USDC));
-        o.getQuote(1e18, address(0xAAAA), USDC); // base != lpToken
-        vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_NotSupported.selector, address(lp), address(0xBBBB)));
-        o.getQuote(1e18, address(lp), address(0xBBBB)); // quote != USDC
-    }
-
-    function test_oracle_failclosed_zero_mark_and_future_ts() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        bytes memory zeroMark = abi.encode(o.LP_MARK(), abi.encode(uint256(0), uint32(block.timestamp)));
-        vm.prank(FORWARDER);
-        vm.expectRevert(PriceErrors.PriceOracle_InvalidAnswer.selector);
-        o.onReport("", zeroMark);
-
-        bytes memory futureTs = abi.encode(o.LP_MARK(), abi.encode(uint256(1e6), uint32(block.timestamp + 1)));
-        vm.prank(FORWARDER);
-        vm.expectRevert(SzipFarmUtilityLpOracle.FutureTimestamp.selector);
-        o.onReport("", futureTs);
-    }
-
-    function test_oracle_never_pushed_reverts_notsupported() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_NotSupported.selector, address(lp), USDC));
-        o.getQuote(1e18, address(lp), USDC);
-    }
-
-    function test_oracle_stale_reverts_toostale() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        _pushMark(o, 1e6);
-        vm.warp(block.timestamp + VALIDITY + 1);
-        vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_TooStale.selector, VALIDITY + 1, VALIDITY));
-        o.getQuote(1e18, address(lp), USDC);
-    }
-
-    function test_oracle_lp_mark_is_not_three() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
-        assertEq(o.LP_MARK(), 7);
-        assertTrue(o.LP_MARK() != 3, "LP_MARK must not be the registry REVALUATION=3");
-    }
-
     // =================================================================== guard (unit + fork-ish)
 
     function test_guard_isHookTarget_only_for_factory_proxy() public {
@@ -1028,7 +981,7 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
     // =================================================================== deployer wiring (fork)
 
     function test_deployer_governor_RETAINED() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
+        MockLpOracle o = _deployOracle(address(lp));
         _pushMark(o, 1e6); // the deployer's setLTV reads getQuote
         (address ev, address bv, address router) = _deployMarket(address(0xBEEF), address(o), 0.7e4, 0.8e4);
 
@@ -1051,13 +1004,13 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
         assertEq(FarmUtilityBorrowGuard(hookTarget).juniorTrancheEngine(), address(0xBEEF), "guard pins the engine Safe");
 
         // The retained governor can still re-point the router (re-pointable).
-        SzipFarmUtilityLpOracle o2 = _deployOracle(address(lp));
+        MockLpOracle o2 = _deployOracle(address(lp));
         vm.prank(owner);
         EulerRouter(router).govSetConfig(address(lp), USDC, address(o2));
     }
 
     function test_deployer_wiremismatch_reachable() public {
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
+        MockLpOracle o = _deployOracle(address(lp));
         _pushMark(o, 1e6); // the deployer's setLTV reads getQuote (runs before the wire-check)
         MockLpToken wrongLp = new MockLpToken();
         MisWiringDeployer dep = new MisWiringDeployer(address(wrongLp));
@@ -1082,7 +1035,7 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
 
     function test_full_loop_revolves_twice() public {
         FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
+        MockLpOracle o = _deployOracle(address(lp));
         address juniorTrancheEngine = _summonAndEnable(m);
 
         // push a fresh LP mark ($1/share) before the deployer's setLTV (which reads getQuote).
@@ -1193,7 +1146,7 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
     function test_stale_and_never_pushed_mark_fail_borrow_closed() public {
         // Stand up with a live mark (the deployer's setLTV needs one); then test the two fail-closed borrow paths.
         FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
+        MockLpOracle o = _deployOracle(address(lp));
         address juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6);
         (address ev, address bv, address router) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
@@ -1204,15 +1157,16 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
         vm.prank(operator);
         m.postCollateral(100e18);
 
-        // (1) PATH A — STALE: warp past the validity window -> borrow reverts TooStale (bubbled from the router).
-        vm.warp(block.timestamp + VALIDITY + 1);
+        // (1) PATH A — DEAD ORACLE: the adapter reverts (here TooStale; the fair oracle's live analogue is the
+        //     TWAP-history halt) -> the borrow fails CLOSED, bubbled from the router through the EVK health check.
+        o.setStale(VALIDITY + 1, VALIDITY);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(PriceErrors.PriceOracle_TooStale.selector, VALIDITY + 1, VALIDITY));
         m.borrow(10e6);
 
-        // (2) PATH B — NEVER-PUSHED: the (retained) governor re-points the router to a fresh, never-pushed oracle ->
-        //     borrow reverts NotSupported (bubbled from the router; the cache timestamp == 0).
-        SzipFarmUtilityLpOracle bare = _deployOracle(address(lp));
+        // (2) PATH B — UNRESOLVABLE: the (retained) governor re-points the router to a fresh, unset oracle ->
+        //     borrow reverts NotSupported (bubbled from the router).
+        MockLpOracle bare = _deployOracle(address(lp));
         vm.prank(owner);
         EulerRouter(router).govSetConfig(address(lp), USDC, address(bare));
         vm.prank(operator);
@@ -1261,7 +1215,7 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
     function test_third_party_borrow_blocked_by_guard() public {
         // The engine Safe's loop passes the guard; a third party that posts the escrow on its OWN account is blocked.
         FarmUtilityLoopModule m = _cloneFarmUtilityLoopModule();
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
+        MockLpOracle o = _deployOracle(address(lp));
         address juniorTrancheEngine = _summonAndEnable(m);
         _pushMark(o, 1e6);
         (address ev, address bv,) = _deployMarket(juniorTrancheEngine, address(o), 0.7e4, 0.8e4);
@@ -1296,7 +1250,7 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
         returns (FarmUtilityLoopModule m, address juniorTrancheEngine, address ev, address bv)
     {
         m = _cloneFarmUtilityLoopModule();
-        SzipFarmUtilityLpOracle o = _deployOracle(address(lp));
+        MockLpOracle o = _deployOracle(address(lp));
         juniorTrancheEngine = _summonAndEnable(m);
         // The mark must exist before the deployer's `setLTV` (which reads `getQuote` to validate the collateral
         // price at config time) — in production CRE pushes the mark at/before deploy.
@@ -1338,7 +1292,7 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
     ///      holds ≈0 at rest), and wire the farm utility vault + allocator (allocatorKey ≠ operator).
     function _ee07Setup(uint256 baseUsdc)
         internal
-        returns (FarmUtilityLoopModule m, address juniorTrancheEngine, address ev, address bv, SzipFarmUtilityLpOracle o)
+        returns (FarmUtilityLoopModule m, address juniorTrancheEngine, address ev, address bv, MockLpOracle o)
     {
         m = _cloneFarmUtilityLoopModule();
         o = _deployOracle(address(lp));
@@ -1389,7 +1343,7 @@ contract FarmUtilityLoopModuleTest is ForkConfig, SummonSubstrate {
     }
 
     function test_ctr07_roundtrip_restores_resting() public {
-        (FarmUtilityLoopModule m, address juniorTrancheEngine, , address bv, SzipFarmUtilityLpOracle o) = _ee07Setup(1_000_000e6);
+        (FarmUtilityLoopModule m, address juniorTrancheEngine, , address bv, MockLpOracle o) = _ee07Setup(1_000_000e6);
         uint256 X = 100e6; // $100 funded into the farm utility
         uint256 baseBefore = ee.expectedSupplyAssets(IOZERC4626(usdcReservoir));
 

@@ -10,7 +10,7 @@ pragma solidity 0.8.24;
 ///       (0x62994c05) is ABSENT. The real exerciseVe takes only (amount, recipient).
 ///   getDiscountedPrice(uint256)               -> 0x339ccade (FOUND); staticcall(1e18) returned 12083.
 ///   discount()                                -> 0x6b6f4a9d (FOUND); staticcall returned 30 (verified
-///       on-chain 2026-06-07 for the SzipNavOracle oHYDX intrinsic mark = HYDX x (100 - discount)/100).
+///       on-chain 2026-06-07).
 interface IOptionToken {
     function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient, uint256 deadline)
         external
@@ -32,7 +32,9 @@ interface IOptionToken {
     ///   surface (an earlier per-amount guess was wrong).
     function getMinPaymentAmount() external view returns (uint256);
 
-    /// @notice The option exercise discount as a whole-number percent (30 == 30%). Read at mark time so the
-    ///         NAV oracle never caches a stale discount; oHYDX intrinsic per token = HYDX x (100 - discount)/100.
+    /// @notice The option exercise discount as a whole-number percent (30 == 30%). NOT a NAV input: oHYDX is
+    ///         marked $0 in `SzipNavOracle` (the intrinsic formula can't track the `getMinPaymentAmount` floor or
+    ///         sale slippage). Kept for exercise-profitability tooling; the strike actually charged is
+    ///         max(getDiscountedPrice(amount), getMinPaymentAmount()).
     function discount() external view returns (uint256);
 }

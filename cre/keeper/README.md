@@ -36,7 +36,6 @@ See [`.env.example`](.env.example). Summary:
 | `KEEPER_GAS_BUFFER_BPS` | gas-LIMIT buffer in bps (3000 ⇒ ×1.30) | `3000` |
 | `KEEPER_FEE_CAP_MULTIPLIER` | base-fee headroom (`maxFee = baseFee*MULT + tip`) | `2` |
 | `KEEPER_CONFIRM_TIMEOUT` | receipt-wait timeout | `60s` |
-| `KEEPER_MIN_BURN_AMOUNT` | BurnJob floor (base-10; 0 = any fill) | `0` |
 | `KEEPER_CUSHION_BPS` | StrikeLoop slippage/min-floor cushion, bps | `200` |
 | `KEEPER_AMBER_FRACTION_BPS` | StrikeLoop amber-band taper fraction, bps | `5000` |
 | `KEEPER_RECYCLE_FRACTION_BPS` | StrikeLoop fraction of floor surplus to recycle, bps | `10000` |
@@ -52,6 +51,18 @@ See [`.env.example`](.env.example). Summary:
 | `KEEPER_ADDR_<NAME>` | address book entry (re-pointable, §17) | — |
 | `KEEPER_CONFIG_FILE` | optional JSON overlay (env wins) | — |
 
+The **BurnJob** (KEEPER-01a) is the torch of the buy-burn round (`cre/BUYBURN-ROUND.md`):
+it retires the szipUSD a CoW fill lands on the Safe via `ExitGate.burnFor`. It is
+**fill-triggered** (2026-07-28): the burn fires only on `GPv2Settlement.filledAmount(uid)`
+evidence for the bid module's live/last uid — a mapping a szipUSD donor cannot touch —
+and then sweeps the **full** balance (loot + any donated dust rides along). A stranger
+dust-donating szipUSD never costs the keeper a tx; the donation sits, already excluded
+from the NAV denominator, until the next real fill. No floor, no knob (the old
+`KEEPER_MIN_BURN_AMOUNT` is gone): within a fill-evidenced burn there is no "keep some
+ghost shares" mode. Small in-memory latch (uid + acted-on fill, latched only when the
+balance reads empty) — restart-safe, failed-submit-retrying; needs
+`KEEPER_ADDR_SzipBuyBurnModule`.
+
 The **StrikeLoopJob** (KEEPER-01b) is the auto-compounder harvest loop: one
 ordered `chain.Plan` (claim → borrow → exercise → sell → repay → credit →
 [recycle → addLiquidity → stake]) driving the six engine modules
@@ -62,6 +73,16 @@ injectable `Quoter` seam (`internal/quote`) that binds to the Algebra HYDX/USDC
 pool `globalState()` and the ICHI vault deposit math. `KEEPER_ADDR_*` for the six
 modules + `KEEPER_ADDR_HydxUsdcPool` are required; the LP pool is read off the
 vault.
+
+**Drift alarm (audit F13):** each tick the loop compares the module's stored
+`oHYDX()` against the gauge's live `rewardToken()`. The gauge is the source of
+truth for what it pays, and Hydrex can change that answer in place (its gauge has
+an `onlyOwner updateRewardToken()`). On disagreement the job returns an error
+every tick — a loud, repeating log line — instead of the old failure shape, where
+a stale token read a zero balance and the harvest idled silently forever.
+Recovery is one Timelock call (`setGauge` re-derives, or `setOHYDX` overrides).
+FOLLOW-UP (open): keeper errors are only log lines today; a real notification
+channel (pager/webhook on repeated job errors) is agreed but not built.
 
 The **WindDownLpJob** (KEEPER-02) is the exception-only LP-dissolution driver —
 the global-wind-down `unstake` → `removeLiquidity` feeder on `LpStrategyModule`,

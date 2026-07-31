@@ -30,7 +30,6 @@ import {ExitGate} from "../src/supply/szipUSD/ExitGate.sol";
 import {SzipUSD} from "../src/supply/szipUSD/SzipUSD.sol";
 import {ZipDepositModule} from "../src/supply/ZipDepositModule.sol";
 import {ZipRedemptionQueue} from "../src/supply/ZipRedemptionQueue.sol";
-import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 import {AlgebraIchiFairLpOracle} from "../src/supply/AlgebraIchiFairLpOracle.sol";
 
 // --- engine modules (Zodiac mastercopies; cloned via ModuleProxyFactory) ---
@@ -86,8 +85,11 @@ contract DeployZipcode is SummonSubstrate {
     error SeamOneBank();
     error SeamSharedLp();
     error SeamEngineSafe();
+    /// @notice The buy-burn module's Zodiac exec pointers diverge from its engine (`avatar`/`target` != `juniorTrancheEngine`).
+    error SeamEngineAvatar();
     error SeamEscrowCoordinator();
     error SeamNavShareTokenUnset();
+    error LpTwapWindowZero();
     error SeamCoverageGate();
     error SeamSiloRegistry();
     error SeamSiloRouting();
@@ -117,17 +119,18 @@ contract DeployZipcode is SummonSubstrate {
         string workflowNameController; // WORKFLOW_NAME_CONTROLLER — ZipcodeController (controller daemon, rt1/2/4/5/6)
         string workflowNameRevaluation; // WORKFLOW_NAME_REVALUATION — ZipcodeOracleRegistry (revaluation daemon, rt3)
         string workflowNameCoordinator; // WORKFLOW_NAME_COORDINATOR — DefaultCoordinator (coordinator daemon, rt8)
-        string workflowNameSharefeeds; // WORKFLOW_NAME_SHAREFEEDS — SzipNavOracle + SzipFarmUtilityLpOracle (rt7)
+        string workflowNameSharefeeds; // WORKFLOW_NAME_SHAREFEEDS — SzipNavOracle (rt7)
         string workflowNameWarehouse; // WORKFLOW_NAME_WAREHOUSE — WarehouseAdminModule (warehouse daemon, CRE-04/02b/02c)
         string workflowNameRate; // WORKFLOW_NAME_RATE — SzAlphaRateOracle (szalpha-rate daemon, 8x-02)
         // EE-factory ABI avoidance (pre-step env inputs; see contract NatSpec):
         address eePool; // EE_POOL — the created USDC EulerEarn pool
         address usdcReservoir; // USDC_RESERVOIR — the no-borrow USDC EVault at the EE supply-queue head
         // numeric knobs
-        uint256 validityWindow; // registry + lpOracle read-staleness window
-        uint32 lpTwapWindow; // 0 = CRE-push lpOracle + spot NAV LP leg (M1 default); >0 = trustless fair-LP
-            // (AlgebraIchiFairLpOracle) for the farm utility collateral AND the NAV LP leg. Opt-in once the
-            // zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin.
+        uint256 validityWindow; // registry read-staleness window
+        uint32 lpTwapWindow; // LP_TWAP_WINDOW (required non-zero, default 3600) — the trustless fair-LP TWAP window
+            // (AlgebraIchiFairLpOracle) for the farm utility collateral AND the NAV LP leg. The CRE-push twin
+            // (SzipFarmUtilityLpOracle) was DELETED: on a visible plugin swap the TWAP halts closed and the farm
+            // loop pauses ~1 window (the ratified halt-over-degrade posture) — no trusted spot-mark fallback.
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV pushed-leg staleness
         uint256 maxDeviationBps; // NAV per-push deviation circuit-break
@@ -167,7 +170,7 @@ contract DeployZipcode is SummonSubstrate {
         // P4 warehouse
         CreditWarehouseDeployer.Warehouse warehouse;
         // P5 farm utility market + LP oracle
-        SzipFarmUtilityLpOracle lpOracle;
+        AlgebraIchiFairLpOracle lpOracle;
         address escrowVault;
         address borrowVault;
         address router;
@@ -365,23 +368,12 @@ contract DeployZipcode is SummonSubstrate {
     }
 
     // ================================================================= P5 — farm utility market + LP oracle
-    /// @dev `virtual` so a local/fork harness can interleave an initial `LP_MARK` push between the oracle creation and
-    ///      the market build: EVK `setLTV` (step 24) calls `getQuote` on the `SzipFarmUtilityLpOracle`, which reverts
-    ///      `PriceOracle_NotSupported` until a fresh mark exists. In production the CRE `LP_MARK` push seeds it here.
-    function _phaseP5() internal virtual {
-        // 23. LP oracle. Trustless fair-LP (Algebra TWAP) when `lpTwapWindow` is set — it reads
-        //     the price live on-chain, so it needs NO CRE seed before the step-24 `setLTV` getQuote (it resolves
-        //     immediately on a live Algebra pool). Else the CRE-pushed mark (`SzipFarmUtilityLpOracle`), which this
-        //     phase is `virtual` to let a local/fork harness seed before `setLTV`.
-        address lpOracleAddr;
-        if (i.lpTwapWindow != 0) {
-            lpOracleAddr = address(new AlgebraIchiFairLpOracle(i.polIchiVault, i.lpTwapWindow));
-        } else {
-            d.lpOracle = new SzipFarmUtilityLpOracle(
-                BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
-            );
-            lpOracleAddr = address(d.lpOracle);
-        }
+    function _phaseP5() internal {
+        // 23. LP oracle — the trustless fair-LP (Algebra TWAP) oracle, always. It reads the price live on-chain, so
+        //     it needs NO seed before the step-24 `setLTV` getQuote (it resolves immediately on a live Algebra pool
+        //     whose plugin has ≥ `lpTwapWindow` of history — a deploy-sequencing precondition, see the x-ray).
+        d.lpOracle = new AlgebraIchiFairLpOracle(i.polIchiVault, i.lpTwapWindow);
+        address lpOracleAddr = address(d.lpOracle);
 
         // 24. farm utility market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
         (d.escrowVault, d.borrowVault, d.router) = new FarmUtilityMarketDeployer().deploy(
@@ -443,6 +435,10 @@ contract DeployZipcode is SummonSubstrate {
             SzipBuyBurnModule(d.buyBurn).juniorTrancheEngine() != d.gate.juniorTrancheEngine()
                 || d.gate.juniorTrancheEngine() != d.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
+        if (
+            SzipBuyBurnModule(d.buyBurn).avatar() != juniorTrancheEngine
+                || SzipBuyBurnModule(d.buyBurn).target() != juniorTrancheEngine
+        ) revert SeamEngineAvatar();
 
         // -- FarmUtilityLoopModule (juniorTrancheEngine) --
         d.farmUtilityLoop = _cloneModule(
@@ -542,9 +538,9 @@ contract DeployZipcode is SummonSubstrate {
         // farm utility escrow + borrow vaults (P5) -> NAV closes the mid-loop blind spot (counts escrow-collateralized
         // LP + subtracts strike debt). Both exist by P5 (step 24).
         d.navOracle.setFarmUtilityLeg(d.escrowVault, d.borrowVault);
-        // Fair-LP NAV LP leg: when set, the NAV LP leg reconstructs reserves
-        // at the Algebra TWAP tick instead of spot getTotalAmounts. Same window the farm utility collateral oracle uses.
-        if (i.lpTwapWindow != 0) d.navOracle.setLpTwapWindow(i.lpTwapWindow);
+        // Fair-LP NAV LP leg: the NAV LP leg reconstructs reserves at the Algebra TWAP tick instead of spot
+        // getTotalAmounts. Same (required non-zero) window the farm utility collateral oracle uses.
+        d.navOracle.setLpTwapWindow(i.lpTwapWindow);
         d.navOracle.setXAlphaRateOracle(address(d.rateOracle));
         if (d.navOracle.shareToken() == address(0)) revert SeamNavShareTokenUnset();
 
@@ -592,22 +588,18 @@ contract DeployZipcode is SummonSubstrate {
         _sealIdentity(address(d.coord), i.workflowNameCoordinator);
         _sealIdentity(address(d.navOracle), i.workflowNameSharefeeds);
         _sealIdentity(address(d.rateOracle), i.workflowNameRate);
-        // The CRE-push lpOracle is a `ReceiverTemplate` too (sharefeeds daemon — same producer as the NAV leg). The
-        // fair-LP branch leaves `d.lpOracle == address(0)` (an ownerless `AlgebraIchiFairLpOracle`, no identity).
-        if (address(d.lpOracle) != address(0)) _sealIdentity(address(d.lpOracle), i.workflowNameSharefeeds);
+        // The fair-LP oracle is NOT a `ReceiverTemplate` (ownerless view adapter, no CRE writer) — no identity seal.
 
         // 31. the fail-closed pre-gate — assert EACH sealed receiver individually (author + workflowName both set,
         //     CTR-16) plus the registry's set-once controller seed. A missing/empty per-receiver name (e.g. an unset
         //     env var) now fails closed; the old representative-id inference would have missed it.
-        uint256 n = address(d.lpOracle) != address(0) ? 7 : 6;
-        address[] memory receivers = new address[](n);
+        address[] memory receivers = new address[](6);
         receivers[0] = address(d.controller);
         receivers[1] = address(d.registry);
         receivers[2] = d.warehouse.adapter;
         receivers[3] = address(d.coord);
         receivers[4] = address(d.navOracle);
         receivers[5] = address(d.rateOracle);
-        if (address(d.lpOracle) != address(0)) receivers[6] = address(d.lpOracle);
         ZipcodeDeployAsserts.requireIdentityWired(receivers, address(d.registry));
 
         // 32. transferOwnership(timelock) on every owned contract — NOT renounce (build-phase §17).
@@ -617,8 +609,7 @@ contract DeployZipcode is SummonSubstrate {
         d.hook.transferOwnership(tl); // manual-owner hook (not OZ Ownable)
         d.adapter.transferOwnership(tl);
         d.navOracle.transferOwnership(tl);
-        // The CRE-push lpOracle is OZ-Ownable; the fair-LP oracle is ownerless (immutable params) ⇒ unset here.
-        if (address(d.lpOracle) != address(0)) d.lpOracle.transferOwnership(tl);
+        // The fair-LP lpOracle is ownerless (immutable params) — nothing to transfer.
         d.rateOracle.transferOwnership(tl);
         d.gate.transferOwnership(tl);
         d.szip.transferOwnership(tl);
@@ -732,6 +723,10 @@ contract DeployZipcode is SummonSubstrate {
         i.usdcReservoir = vm.envAddress("USDC_RESERVOIR");
 
         i.validityWindow = vm.envUint("VALIDITY_WINDOW");
+        // The fair-LP TWAP window (default 1h). Zero is REJECTED: zero meant "CRE-push lpOracle + spot NAV LP leg",
+        // and both of those paths were deleted — spot composition is the manipulable surface the TWAP prices out.
+        i.lpTwapWindow = uint32(vm.envOr("LP_TWAP_WINDOW", uint256(3600)));
+        if (i.lpTwapWindow == 0) revert LpTwapWindowZero();
         i.W = uint32(vm.envUint("NAV_W"));
         i.maxAge = vm.envUint("NAV_MAX_AGE");
         i.maxDeviationBps = vm.envUint("NAV_MAX_DEVIATION_BPS");

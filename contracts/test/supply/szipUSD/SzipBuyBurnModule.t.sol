@@ -19,9 +19,12 @@ function _cloneSzipBuyBurnModule() returns (SzipBuyBurnModule) {
 
 // =========================================================================== mocks
 
-/// @notice A recording mock Safe: implements the Zodiac avatar surface (`execTransactionFromModule`), records every
-///         `(to, value, data, operation)` it is handed, and (when `live`) actually performs the call so the live
-///         settlement/USDC fork assertions see real state. Can be forced to fail the 2nd exec (atomicity test).
+/// @notice A recording mock Safe: implements the Zodiac avatar surface (`execTransactionFromModuleReturnData`, the
+///         checked-`_exec` read path, + the legacy bool variant), records every `(to, value, data, operation)` it is
+///         handed, and (when `live`) actually performs the call so the live settlement/USDC fork assertions see real
+///         state. Two failure modes: `failOnCallIndex` REVERTS (the atomicity test) and `returnFalseOnCallIndex`
+///         silently returns `(false, "")` — modeling the real Gnosis Safe, which catches inner reverts and returns
+///         false rather than bubbling (the `ExecFailed` path).
 contract RecordingSafe {
     struct Recorded {
         address to;
@@ -33,6 +36,7 @@ contract RecordingSafe {
     Recorded[] public calls;
     bool public live; // when true, forwards as a real call
     uint256 public failOnCallIndex = type(uint256).max; // revert when calls.length == this index (pre-record)
+    uint256 public returnFalseOnCallIndex = type(uint256).max; // silent (false, "") when calls.length == this index
 
     function setLive(bool v) external {
         live = v;
@@ -40,6 +44,10 @@ contract RecordingSafe {
 
     function setFailOnCallIndex(uint256 i) external {
         failOnCallIndex = i;
+    }
+
+    function setReturnFalseOnCallIndex(uint256 i) external {
+        returnFalseOnCallIndex = i;
     }
 
     function callCount() external view returns (uint256) {
@@ -53,22 +61,50 @@ contract RecordingSafe {
 
     function execTransactionFromModule(address to, uint256 value, bytes calldata data, uint8 operation)
         external
-        returns (bool)
+        returns (bool ok)
+    {
+        (ok,) = _record(to, value, data, operation);
+    }
+
+    function execTransactionFromModuleReturnData(address to, uint256 value, bytes calldata data, uint8 operation)
+        external
+        returns (bool, bytes memory)
+    {
+        return _record(to, value, data, operation);
+    }
+
+    function _record(address to, uint256 value, bytes calldata data, uint8 operation)
+        internal
+        returns (bool, bytes memory)
     {
         if (calls.length == failOnCallIndex) revert("forced-fail");
+        if (calls.length == returnFalseOnCallIndex) return (false, ""); // the real Safe's silent-swallow shape
         calls.push(Recorded({to: to, value: value, data: data, operation: operation}));
         if (live) {
+            // Model the real Safe: catch the inner revert and RETURN (false, revertData), do NOT bubble —
+            // the module's checked `_exec` is what re-raises it.
             (bool ok, bytes memory ret) = to.call{value: value}(data);
-            if (!ok) {
-                assembly {
-                    revert(add(ret, 0x20), mload(ret))
-                }
-            }
+            return (ok, ret);
         }
-        return true;
+        return (true, "");
     }
 
     receive() external payable {}
+}
+
+/// @notice A minimal GPv2Settlement stand-in with a DISTINCT domain separator + relayer — drives the
+///         `setSettlement` cache-refresh test (on the real contract both values are `immutable` and the domain
+///         hashes the settlement's own address, so a re-point ALWAYS changes both).
+contract MockSettlement {
+    bytes32 public domainSeparator;
+    address public vaultRelayer;
+
+    constructor(bytes32 domainSeparator_, address vaultRelayer_) {
+        domainSeparator = domainSeparator_;
+        vaultRelayer = vaultRelayer_;
+    }
+
+    function setPreSignature(bytes calldata, bool) external {}
 }
 
 /// @notice A fully-controllable NAV oracle stand-in: settable `navExit()`/`fresh()` for the price-bound, cap, and
@@ -358,10 +394,12 @@ contract SzipBuyBurnModuleTest is ForkConfig {
     /// @dev The six build-phase wiring setters (besides `setOperator`/`setCoverageGate`/the governed params, covered
     ///      elsewhere): each is `onlyOwner`, non-zero-guarded, and takes effect. Several re-point what is priced/
     ///      signed/spent (`navOracle`/`szipUSD`/`usdc`/`settlement`), so the wiring matters on the value-out module.
-    ///      (`setJuniorTrancheEngine` does NOT sync avatar/target here — unlike the swap/LP/exercise modules — so
-    ///      there is no sync to assert.)
+    ///      `setJuniorTrancheEngine` now syncs avatar/target in lockstep (the syncing-sibling idiom) — asserted.
+    ///      `setSettlement` now refreshes the cached `vaultRelayer` + `domainSeparator` off the new settlement
+    ///      (both immutable there) — asserted against a mock with distinct values.
     function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
         address x = makeAddr("rewire");
+        MockSettlement settlement2 = new MockSettlement(bytes32(uint256(0xBEEF)), makeAddr("relayer2"));
 
         // non-owner rejected on every setter
         vm.startPrank(rando);
@@ -384,16 +422,22 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.startPrank(owner);
         module.setJuniorTrancheEngine(x);
         assertEq(module.juniorTrancheEngine(), x, "juniorTrancheEngine re-pointed");
+        assertEq(module.avatar(), x, "avatar synced in lockstep");
+        assertEq(module.target(), x, "target synced in lockstep");
         module.setNavOracle(x);
         assertEq(module.navOracle(), x, "navOracle re-pointed (the pricing primitive)");
         module.setSzipUSD(x);
         assertEq(module.szipUSD(), x, "szipUSD re-pointed (the buyToken)");
         module.setUsdc(x);
         assertEq(module.usdc(), x, "usdc re-pointed (the sellToken)");
-        module.setSettlement(x);
-        assertEq(module.settlement(), x, "settlement re-pointed (the presign target)");
+        module.setSettlement(address(settlement2));
+        assertEq(module.settlement(), address(settlement2), "settlement re-pointed (the presign target)");
+        assertEq(module.vaultRelayer(), settlement2.vaultRelayer(), "cached relayer refreshed off the new settlement");
+        assertEq(
+            module.domainSeparator(), settlement2.domainSeparator(), "cached domain refreshed off the new settlement"
+        );
         module.setVaultRelayer(x);
-        assertEq(module.vaultRelayer(), x, "vaultRelayer re-pointed (the approve spender)");
+        assertEq(module.vaultRelayer(), x, "vaultRelayer manual override still works (the approve spender)");
 
         // zero rejected on every setter
         vm.expectRevert(SzipBuyBurnModule.ZeroAddress.selector);
@@ -411,25 +455,29 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         vm.stopPrank();
     }
 
-    /// @dev the three value-load-bearing wiring setters `_cancelBid` dereferences (`settlement`/
-    ///      `vaultRelayer`/`usdc`) must refuse a re-point while a bid is live. Otherwise a re-point between post and
-    ///      cancel would make `_cancelBid` flip the presign / zero the allowance on the NEW wiring, stranding the OLD
-    ///      presign + allowance LIVE (a fillable bid the owner believes was cancelled). Cancel-before-rewire is forced.
+    /// @dev the four wiring setters a live bid dereferences or names (`settlement`/`vaultRelayer`/`usdc` in
+    ///      `_cancelBid`, `juniorTrancheEngine` as the resting order's `receiver`/uid `owner`) must refuse a re-point
+    ///      while a bid is live. Otherwise a re-point between post and cancel would flip the presign / zero the
+    ///      allowance on the NEW wiring — stranding the OLD presign + allowance LIVE (a fillable bid the owner
+    ///      believes was cancelled) — or strand the resting order's fills on the old Safe. Cancel-before-rewire.
     function test_SUPPLYADV05_wiring_setters_reject_rewire_under_live_bid() public {
         address x = makeAddr("rewireLive");
+        MockSettlement settlement2 = new MockSettlement(bytes32(uint256(0xBEEF)), makeAddr("relayer2"));
         // post a live bid (deep discount, passes)
         vm.prank(operator);
         module.postBid(_order(5e5, 1e18, _validTo()));
         assertTrue(module.currentUid().length != 0, "bid is live");
 
-        // each value-load-bearing setter now reverts BidAlreadyLive (the new guard), even for the owner
+        // each guarded setter now reverts BidAlreadyLive, even for the owner
         vm.startPrank(owner);
         vm.expectRevert(SzipBuyBurnModule.BidAlreadyLive.selector);
-        module.setSettlement(x);
+        module.setSettlement(address(settlement2));
         vm.expectRevert(SzipBuyBurnModule.BidAlreadyLive.selector);
         module.setVaultRelayer(x);
         vm.expectRevert(SzipBuyBurnModule.BidAlreadyLive.selector);
         module.setUsdc(x);
+        vm.expectRevert(SzipBuyBurnModule.BidAlreadyLive.selector);
+        module.setJuniorTrancheEngine(x);
         vm.stopPrank();
 
         // cancel clears the live bid; the same re-points then succeed (no stranding possible)
@@ -437,12 +485,14 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         module.cancelBid();
         assertEq(module.currentUid().length, 0, "bid cleared");
         vm.startPrank(owner);
-        module.setSettlement(x);
-        assertEq(module.settlement(), x, "settlement re-points once no bid is live");
+        module.setSettlement(address(settlement2));
+        assertEq(module.settlement(), address(settlement2), "settlement re-points once no bid is live");
         module.setVaultRelayer(x);
         assertEq(module.vaultRelayer(), x, "vaultRelayer re-points once no bid is live");
         module.setUsdc(x);
         assertEq(module.usdc(), x, "usdc re-points once no bid is live");
+        module.setJuniorTrancheEngine(x);
+        assertEq(module.juniorTrancheEngine(), x, "engine re-points once no bid is live");
         vm.stopPrank();
     }
 
@@ -555,6 +605,22 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         module.postBid(_order(5e5, 1e18, vt));
         // outstanding allowance always <= buybackCap (the sellAmount is)
         assertLe(module.currentSellAmount(), module.buybackCap());
+    }
+
+    /// @notice SEC/L-7: the live bid's `buyAmount` is exposed on-chain (`currentBuyAmount`) so the stateless CRE
+    ///         bid loop can derive the POSTED implied price and cancel-and-repost on price drift. Set on post,
+    ///         zeroed on cancel — mirrors `currentSellAmount`'s lifecycle exactly.
+    function test_SEC_L7_currentBuyAmount_tracks_live_bid() public {
+        assertEq(module.currentBuyAmount(), 0, "no live bid at genesis");
+        vm.prank(operator);
+        module.postBid(_order(5e5, 1e18, _validTo()));
+        assertEq(module.currentBuyAmount(), 1e18, "posted buyAmount exposed");
+        // posted implied price = sell*1e18/buy = 5e5 (6-dp USDC per 1e18 share) — the CRE loop's drift base
+        assertEq(module.currentSellAmount() * 1e18 / module.currentBuyAmount(), 5e5);
+        vm.prank(operator);
+        module.cancelBid();
+        assertEq(module.currentBuyAmount(), 0, "zeroed on cancel");
+        assertEq(module.currentSellAmount(), 0, "sell zeroed on cancel (lifecycle mirror)");
     }
 
     // ----------------------------------------------------------------- price bound (exact integer form)
@@ -854,6 +920,48 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         (bytes memory uid, uint256 sell) = m.currentBid();
         assertEq(uid.length, 0);
         assertEq(sell, 0);
+    }
+
+    // ----------------------------------------------------------------- F9: silent exec-false is LOUD (ExecFailed)
+    /// @notice the real Gnosis Safe CATCHES inner reverts and returns `false` (it does not bubble) — the old
+    ///         unchecked `exec` would have recorded a PHANTOM bid whose approve/presign never landed. The checked
+    ///         `_exec` reverts `ExecFailed` on the silent-false and no bid state is written. Both call sites.
+    function test_F9_postBid_silentExecFalse_reverts_no_phantom_bid() public {
+        // 1st exec (the approve) silently returns false
+        safe.setReturnFalseOnCallIndex(0);
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ExecFailed.selector);
+        module.postBid(_order(5e5, 1e18, _validTo()));
+        assertEq(module.currentUid().length, 0, "no phantom bid recorded");
+
+        // 2nd exec (the presign) silently returns false — the approve rolls back with the revert
+        safe.setReturnFalseOnCallIndex(1);
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ExecFailed.selector);
+        module.postBid(_order(5e5, 1e18, _validTo()));
+        assertEq(module.currentUid().length, 0, "no phantom bid recorded (presign leg)");
+    }
+
+    /// @notice a silently-failed CANCEL must revert `ExecFailed` and KEEP the bid state — the old unchecked `exec`
+    ///         wiped `currentUid` while the presign stayed LIVE on the settlement: a believed-cancelled resting
+    ///         order, the worst shape this module can produce. After the failure clears, the same cancel succeeds.
+    function test_F9_cancelBid_silentExecFalse_reverts_keeps_state() public {
+        vm.prank(operator);
+        module.postBid(_order(5e5, 1e18, _validTo()));
+        assertTrue(module.currentUid().length != 0, "bid live");
+
+        // cancel's 1st exec (the presign flip, call index 2) silently returns false
+        safe.setReturnFalseOnCallIndex(2);
+        vm.prank(operator);
+        vm.expectRevert(SzipBuyBurnModule.ExecFailed.selector);
+        module.cancelBid();
+        assertTrue(module.currentUid().length != 0, "state kept: the order is still live on the settlement");
+
+        // failure mode cleared -> the same cancel lands and the state clears with it
+        safe.setReturnFalseOnCallIndex(type(uint256).max);
+        vm.prank(operator);
+        module.cancelBid();
+        assertEq(module.currentUid().length, 0, "cancel clears once the presign flip actually lands");
     }
 
     // ----------------------------------------------------------------- uid vector (non-circular) + TYPE_HASH

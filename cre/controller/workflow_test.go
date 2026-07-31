@@ -116,19 +116,20 @@ func mustType(t *testing.T, s string) abi.Type {
 
 // TestSimOriginationHandshake drives the full handler for an origination event and asserts the captured bytes
 // decode to (uint8 1, bytes) → the EXACT _origination tuple
-// (bytes32,bytes32,uint256,uint16,uint16,uint256,uint256,bytes32), including the trailing siloId.
+// (bytes32,bytes32,uint256,uint16,uint16,uint256,uint256,bytes32,uint48), including the trailing siloId + sourceTs.
 func TestSimOriginationHandshake(t *testing.T) {
 	app := Application{
-		Action:     "origination",
-		LienID:     hash32(0x01),
-		ProofRef:   hash32(0x02),
-		SiloID:     hash32(0x03),
-		EquityMark: "1500000000000000000",
-		DrawAmount: "1000000000000000000",
-		Cap:        "5000000000000000000",
-		BorrowLTV:  7500,
-		LiqLTV:     8500,
-		Gates:      allTrueGates(),
+		Action:       "origination",
+		LienID:       hash32(0x01),
+		ProofRef:     hash32(0x02),
+		SiloID:       hash32(0x03),
+		EquityMark:   "1500000000000000000",
+		EquityMarkTs: "1700000000", // SEC/L-3: appraisal as-of time
+		DrawAmount:   "1000000000000000000",
+		Cap:          "5000000000000000000",
+		BorrowLTV:    7500,
+		LiqLTV:       8500,
+		Gates:        allTrueGates(),
 	}
 	out, err := runHandler(t, testConfig(), eventJSON(t, app))
 	if err != nil {
@@ -147,13 +148,13 @@ func TestSimOriginationHandshake(t *testing.T) {
 	dec, err := abi.Arguments{
 		{Type: mustType(t, "bytes32")}, {Type: mustType(t, "bytes32")}, {Type: mustType(t, "uint256")},
 		{Type: mustType(t, "uint16")}, {Type: mustType(t, "uint16")}, {Type: mustType(t, "uint256")},
-		{Type: mustType(t, "uint256")}, {Type: mustType(t, "bytes32")},
+		{Type: mustType(t, "uint256")}, {Type: mustType(t, "bytes32")}, {Type: mustType(t, "uint48")},
 	}.Unpack(payload)
 	if err != nil {
 		t.Fatalf("decode origination payload: %v", err)
 	}
-	if len(dec) != 8 {
-		t.Fatalf("origination tuple: got %d fields want 8", len(dec))
+	if len(dec) != 9 {
+		t.Fatalf("origination tuple: got %d fields want 9", len(dec))
 	}
 	gotLien := dec[0].([32]byte)
 	if common.Hash(gotLien) != common.HexToHash(app.LienID) {
@@ -183,19 +184,24 @@ func TestSimOriginationHandshake(t *testing.T) {
 	if common.Hash(gotSilo) != common.HexToHash(app.SiloID) {
 		t.Fatalf("siloId: got %s want %s", common.Hash(gotSilo).Hex(), app.SiloID)
 	}
+	// SEC/L-3: the trailing uint48 is the appraisal source ts the on-chain seed stamps.
+	if dec[8].(*big.Int).String() != app.EquityMarkTs {
+		t.Fatalf("sourceTs: got %s want %s", dec[8].(*big.Int), app.EquityMarkTs)
+	}
 }
 
-// TestSimDrawHandshake asserts the draw payload decodes to (bytes32,bytes32,uint256,uint256) rt2 — a 4-element
-// tuple with NO siloId.
+// TestSimDrawHandshake asserts the draw payload decodes to (bytes32,bytes32,uint256,uint256,uint48) rt2 — a
+// 5-element tuple with NO siloId (but WITH the trailing sourceTs).
 func TestSimDrawHandshake(t *testing.T) {
 	app := Application{
-		Action:     "draw",
-		LienID:     hash32(0x11),
-		ProofRef:   hash32(0x12),
-		EquityMark: "2000000000000000000",
-		DrawAmount: "750000000000000000",
-		SiloID:     hash32(0x99), // present on the wire but MUST NOT be sent (re-resolved on-chain)
-		Gates:      allTrueGates(),
+		Action:       "draw",
+		LienID:       hash32(0x11),
+		ProofRef:     hash32(0x12),
+		EquityMark:   "2000000000000000000",
+		EquityMarkTs: "1700000500", // SEC/L-3: appraisal as-of time
+		DrawAmount:   "750000000000000000",
+		SiloID:       hash32(0x99), // present on the wire but MUST NOT be sent (re-resolved on-chain)
+		Gates:        allTrueGates(),
 	}
 	out, err := runHandler(t, testConfig(), eventJSON(t, app))
 	if err != nil {
@@ -213,13 +219,13 @@ func TestSimDrawHandshake(t *testing.T) {
 	}
 	dec, err := abi.Arguments{
 		{Type: mustType(t, "bytes32")}, {Type: mustType(t, "bytes32")},
-		{Type: mustType(t, "uint256")}, {Type: mustType(t, "uint256")},
+		{Type: mustType(t, "uint256")}, {Type: mustType(t, "uint256")}, {Type: mustType(t, "uint48")},
 	}.Unpack(payload)
 	if err != nil {
 		t.Fatalf("decode draw payload: %v", err)
 	}
-	if len(dec) != 4 {
-		t.Fatalf("draw tuple: got %d fields want 4 (NO siloId)", len(dec))
+	if len(dec) != 5 {
+		t.Fatalf("draw tuple: got %d fields want 5 (NO siloId, WITH sourceTs)", len(dec))
 	}
 	gotLien := dec[0].([32]byte)
 	if common.Hash(gotLien) != common.HexToHash(app.LienID) {
@@ -230,6 +236,10 @@ func TestSimDrawHandshake(t *testing.T) {
 	}
 	if dec[3].(*big.Int).String() != app.DrawAmount {
 		t.Fatalf("drawAmount: got %s want %s", dec[3].(*big.Int), app.DrawAmount)
+	}
+	// SEC/L-3: the trailing uint48 is the appraisal source ts.
+	if dec[4].(*big.Int).String() != app.EquityMarkTs {
+		t.Fatalf("sourceTs: got %s want %s", dec[4].(*big.Int), app.EquityMarkTs)
 	}
 }
 
@@ -325,7 +335,7 @@ func TestSimLiquidationHandshake(t *testing.T) {
 func TestSimOriginationGatePass(t *testing.T) {
 	app := Application{
 		Action: "origination", LienID: hash32(0x01), ProofRef: hash32(0x02), SiloID: hash32(0x03),
-		EquityMark: "1500000000000000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
+		EquityMark: "1500000000000000000", EquityMarkTs: "1700000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
 		Gates: allTrueGates(),
 	}
 	out, err := runHandler(t, testConfig(), eventJSON(t, app))
@@ -343,7 +353,7 @@ func TestSimOriginationGateFailLienPerfected(t *testing.T) {
 	g.LienPerfected = false
 	app := Application{
 		Action: "origination", LienID: hash32(0x01), ProofRef: hash32(0x02), SiloID: hash32(0x03),
-		EquityMark: "1500000000000000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500, Gates: g,
+		EquityMark: "1500000000000000000", EquityMarkTs: "1700000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500, Gates: g,
 	}
 	out, err := runHandler(t, testConfig(), eventJSON(t, app))
 	if err != nil {
@@ -361,7 +371,7 @@ func TestSimDrawGateFailInsured(t *testing.T) {
 	g.Insured = false
 	app := Application{
 		Action: "draw", LienID: hash32(0x11), ProofRef: hash32(0x12),
-		EquityMark: "2000000000000000000", DrawAmount: "5", Gates: g,
+		EquityMark: "2000000000000000000", EquityMarkTs: "1700000000", DrawAmount: "5", Gates: g,
 	}
 	out, err := runHandler(t, testConfig(), eventJSON(t, app))
 	if err != nil {
@@ -378,7 +388,7 @@ func TestSimValidationErrorsNoWrite(t *testing.T) {
 	good := func() Application {
 		return Application{
 			Action: "origination", LienID: hash32(0x01), ProofRef: hash32(0x02), SiloID: hash32(0x03),
-			EquityMark: "1500000000000000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
+			EquityMark: "1500000000000000000", EquityMarkTs: "1700000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
 			Gates: allTrueGates(),
 		}
 	}
@@ -393,6 +403,11 @@ func TestSimValidationErrorsNoWrite(t *testing.T) {
 		{"non-base-10 equityMark", func(a *Application) { a.EquityMark = "not-a-number" }},
 		{"zero equityMark", func(a *Application) { a.EquityMark = "0" }},
 		{"missing equityMark", func(a *Application) { a.EquityMark = "" }},
+		{"missing equityMarkTs", func(a *Application) { a.EquityMarkTs = "" }},                         // SEC/L-3
+		{"zero equityMarkTs", func(a *Application) { a.EquityMarkTs = "0" }},                           // SEC/L-3
+		{"non-base-10 equityMarkTs", func(a *Application) { a.EquityMarkTs = "not-a-ts" }},             // SEC/L-3
+		{"overflow equityMarkTs", func(a *Application) { a.EquityMarkTs = "281474976710656" }},         // SEC/L-3: 2^48
+		{"draw missing equityMarkTs", func(a *Application) { a.Action = "draw"; a.EquityMarkTs = "" }}, // SEC/L-3
 		{"zero siloId", func(a *Application) { a.SiloID = zeroHash }},
 		{"missing drawAmount", func(a *Application) { a.DrawAmount = "" }},
 		{"draw zero equityMark", func(a *Application) { a.Action = "draw"; a.EquityMark = "0" }},
@@ -417,7 +432,7 @@ func TestSimValidationErrorsNoWrite(t *testing.T) {
 func TestSimZeroProofRefAccepted(t *testing.T) {
 	app := Application{
 		Action: "origination", LienID: hash32(0x01), ProofRef: zeroHash, SiloID: hash32(0x03),
-		EquityMark: "1500000000000000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
+		EquityMark: "1500000000000000000", EquityMarkTs: "1700000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
 		Gates: allTrueGates(),
 	}
 	out, err := runHandler(t, testConfig(), eventJSON(t, app))
@@ -431,7 +446,7 @@ func TestSimZeroProofRefAccepted(t *testing.T) {
 	dec, err := abi.Arguments{
 		{Type: mustType(t, "bytes32")}, {Type: mustType(t, "bytes32")}, {Type: mustType(t, "uint256")},
 		{Type: mustType(t, "uint16")}, {Type: mustType(t, "uint16")}, {Type: mustType(t, "uint256")},
-		{Type: mustType(t, "uint256")}, {Type: mustType(t, "bytes32")},
+		{Type: mustType(t, "uint256")}, {Type: mustType(t, "bytes32")}, {Type: mustType(t, "uint48")},
 	}.Unpack(payload)
 	if err != nil {
 		t.Fatalf("decode payload: %v", err)
@@ -448,7 +463,7 @@ func TestSimNoOpControllerUnset(t *testing.T) {
 	cfg.Controller = ""
 	app := Application{
 		Action: "origination", LienID: hash32(0x01), ProofRef: hash32(0x02), SiloID: hash32(0x03),
-		EquityMark: "1500000000000000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
+		EquityMark: "1500000000000000000", EquityMarkTs: "1700000000", DrawAmount: "1", Cap: "0", BorrowLTV: 7500, LiqLTV: 8500,
 		Gates: allTrueGates(),
 	}
 	out, err := runHandler(t, cfg, eventJSON(t, app))
@@ -475,11 +490,11 @@ func TestParseBytes32(t *testing.T) {
 		t.Fatalf("zero with !allowZero should fail")
 	}
 	bad := []string{
-		"",                 // empty
-		"DEADBEEF",         // no 0x
-		"0xDEAD",           // too short
-		good[:len(good)-1], // 63 hex chars (too short by 1)
-		good + "0",         // 65 hex chars (too long by 1)
+		"",                    // empty
+		"DEADBEEF",            // no 0x
+		"0xDEAD",              // too short
+		good[:len(good)-1],    // 63 hex chars (too short by 1)
+		good + "0",            // 65 hex chars (too long by 1)
 		"0x" + "g" + good[3:], // non-hex char
 	}
 	for _, s := range bad {

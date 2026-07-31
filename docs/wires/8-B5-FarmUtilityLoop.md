@@ -3,15 +3,17 @@
 > **X-Ray (security verdict):** `FarmUtilityLoopModule` rated **ADEQUATE** — the only module that borrows shared
 > depositor USDC; three independent bounds (aggregate cap + kill-switch, EVK health, borrow-guard account pin)
 > all proven on the real Euler market. `FarmUtilityBorrowGuard` rated **ADEQUATE** — the account-identity borrow
-> gate, proven on the live market. `SzipFarmUtilityLpOracle` (the CRE push-cache LP-collateral oracle, the
-> deploy default; `contracts/src/supply/x-ray/SzipFarmUtilityLpOracle.md`) rated **ADEQUATE** — fail-closed on a
-> stale/missing mark (the liveness contract); its trustless alternative is `AlgebraIchiFairLpOracle` (see
-> `FairLpOracle.md`). Reports under `contracts/src/supply/szipUSD/x-ray/` + `contracts/src/supply/x-ray/`
+> gate, proven on the live market. The LP-collateral oracle is `AlgebraIchiFairLpOracle` (trustless Algebra-TWAP
+> fair reserves; see `FairLpOracle.md`) — its CRE push-cache twin `SzipFarmUtilityLpOracle` was **DELETED**: even
+> with a trusted pusher, the mark was composed from spot `getTotalAmounts` (the manipulable surface the TWAP
+> prices out), and the loop's sole borrower is the protocol's own engine, so the TWAP's halt-on-plugin-swap
+> failure mode strands no user funds (pause harvests ≈1 window; ratified halt-over-degrade).
+> Reports under `contracts/src/supply/szipUSD/x-ray/` + `contracts/src/supply/x-ray/`
 > (scope: `portfolio-map.md`). ELI20: `docs/supply/szipUSD/FarmUtilityLoopModule.md`,
-> `…/FarmUtilityBorrowGuard.md`, `docs/supply/SzipFarmUtilityLpOracle.md`. This doc is the code-truth wiring map.
+> `…/FarmUtilityBorrowGuard.md`, `docs/supply/AlgebraIchiFairLpOracle.md`. This doc is the code-truth wiring map.
 
 > Source of truth = the kept code: `contracts/src/supply/szipUSD/FarmUtilityLoopModule.sol`,
-> `contracts/src/supply/SzipFarmUtilityLpOracle.sol`, `contracts/src/supply/szipUSD/FarmUtilityBorrowGuard.sol`,
+> `contracts/src/supply/AlgebraIchiFairLpOracle.sol`, `contracts/src/supply/szipUSD/FarmUtilityBorrowGuard.sol`,
 > `contracts/script/FarmUtilityMarketDeployer.sol`. Ticket `tickets/sodo/8-B5-farm utility-loop.md` + report
 > `reports/8-B5-report.md` + `claude-zipcode.md §4.5.1` are intent — **code wins where they differ**. This doc
 > reads the code as the final form. (Test `contracts/test/FarmUtilityLoopModule.t.sol`.)
@@ -33,7 +35,7 @@ depositor funds.
 | Contract | What it is |
 |---|---|
 | `FarmUtilityLoopModule` (`is Module`) | The **2nd engine Zodiac Module** (after 8-B14 buy-and-burn), enabled on the engine Safe (`avatar == target == juniorTrancheEngine`), CRE-`onlyOperator`. Four loop entrypoints `postCollateral`/`borrow`/`repay`/`withdrawCollateral`, each a sequence of `exec(Call, value 0)` with every `receiver`/`owner`/`onBehalfOfAccount` hard-pinned to `juniorTrancheEngine`. No generic call/exec passthrough, no delegatecall. Operator supplies ONLY scalars; the module builds all calldata to set-once-wired targets. |
-| `SzipFarmUtilityLpOracle` (`is ReceiverTemplate, BaseAdapter`) | CRE-fed **push-cache** LP-collateral oracle. Single fixed key (`lpToken`, quote USDC); the EVK read-adapter the farm utility router resolves the LP collateral through (`IPriceOracle`/`BaseAdapter` face) AND the CRE receiver the Forwarder pushes the per-LP-share USD mark to (`reportType LP_MARK = 7`). Stale/missing mark **fails the borrow closed**. |
+| `AlgebraIchiFairLpOracle` (`is BaseAdapter`) | Trustless **on-chain fair-value** LP-collateral oracle: the EVK read-adapter the farm utility router resolves the LP collateral through. Reconstructs the vault's reserves at the pool's Algebra **TWAP tick** (`IchiAlgebraFairReserves`) and pro-rates by LP share, rounded down. No CRE writer, ownerless immutables. Missing plugin / short TWAP history **fails the borrow closed** (`LpTwapHistoryTooShort` self-heals at `readyAt`). See `FairLpOracle.md`. |
 | `FarmUtilityBorrowGuard` (`is IHookTarget`) | EVK hook target installed on the USDC borrow vault at `OP_BORROW` (security F8a). Pins the borrow to the engine Safe: the EVK-appended on-behalf account must `== juniorTrancheEngine`, else revert `NotEngineSafe`. Account-identity gate (NOT operator-authorization). |
 | `FarmUtilityMarketDeployer` (script) | One-time stand-up of the per-strategy borrow market: the LP escrow collateral vault, a dedicated `EulerRouter` wired `escrow → lpToken → lpOracle`, the borrow guard, and the USDC borrow vault (oracle = that router). Governor **RETAINED** at the Timelock on both router and borrow vault. Returns `(escrowVault, borrowVault, router)`. |
 
@@ -91,31 +93,20 @@ CRE operator into one key — preserving the init-time (`setUp`) role separation
 `avatar`/`target` in **lockstep** with `juniorTrancheEngine` so the borrower-of-record + every receiver/owner invariant
 holds. Build-phase flexibility (§17), lock pre-prod. The CRE operator hot key cannot call any of these.
 
-### SzipFarmUtilityLpOracle — ctor / push / read
-- **Ctor** `(forwarder, quote_, validityWindow_, lpToken_)` → `ReceiverTemplate(forwarder)` (reverts on zero
-  forwarder — the only writer). Sets `quote = USDC`, `lpToken` (the single 18-dp key — **strict-read and required
-  to be exactly 18 decimals, `InvalidLpDecimals` otherwise**), `validityWindow` (the
-  generous engine-cadence read-staleness window), and derives `scale = ScaleUtils.calcScale(LP_DECIMALS=18,
-  quoteDecimals, quoteDecimals)`.
-- **Push** `_processReport(report)` (override; only the Forwarder reaches it via `ReceiverTemplate`): decodes the
-  shared §4.4 envelope `(uint8 reportType, bytes payload)`, requires `reportType == LP_MARK (7)` (else
-  `InvalidReportType`), decodes `(uint256 mark, uint32 ts)`, and `_writePrice(mark, ts)` →
-  fail-closed write guards `mark != 0` (`PriceOracle_InvalidAnswer`), `mark <= uint208.max`
-  (`PriceOracle_Overflow`), `ts <= block.timestamp` (`FutureTimestamp`), **`ts <= cache.timestamp` (`StaleReport`) —
-  strictly-newer monotonic guard (SEC-01); blocks a stale-but-still-fresh higher mark over-crediting farm utility
-  collateral, first write `timestamp==0` passes**; caches `Cache{uint208 price, uint48
-  timestamp}`. There is **no controller-seed path** — the Forwarder push is the only writer (the difference from
-  the lien `ZipcodeOracleRegistry`).
-- **Read** `_getQuote(inAmount, base, quoteAsset)` (override): requires `quoteAsset == quote && base == lpToken`
-  (else `PriceOracle_NotSupported`); `cache.timestamp == 0` (unset) reverts `PriceOracle_NotSupported`; if
-  `block.timestamp - cache.timestamp > validityWindow` reverts `PriceOracle_TooStale` — **the stale path fails
-  the borrow CLOSED** (router read reverts → EVC account-status check reverts), never opening an unsafe
-  position. Returns `ScaleUtils.calcOutAmount(inAmount, price, scale, false)` — **rounds DOWN, against the
-  borrower**.
-- **§17 wiring:** `setQuote` (re-derives `scale`), `setLpToken` (**strict-18-dp guarded, `InvalidLpDecimals`** — the
-  shared `scale` bakes in base=18 and is NOT re-derived on a key re-point, so a non-18-dp key would silently
-  mis-scale), `setValidityWindow` — all `onlyOwner` (the OZ-5 `Ownable` owner = the Timelock).
-  Re-pointing is the router governor's job, not an oracle-local owner.
+### AlgebraIchiFairLpOracle — ctor / read (no writer)
+- **Ctor** `(lpToken_, twapWindow_)` — everything else is derived and **immutable**: `quote = pool.token1` (the
+  stable leg), the pool from the ICHI vault. Ownerless — a cheap, replaceable clone; re-pointing is the router
+  governor's job. Full wire map: `FairLpOracle.md`.
+- **Read** `_getQuote(inAmount, base, quoteAsset)`: requires the single `(lpToken, quote)` pair (else
+  `PriceOracle_NotSupported`); reconstructs the vault's `(amount0, amount1)` at the pool's `twapWindow`-second
+  TWAP mean tick (`IchiAlgebraFairReserves.fairReserves` — the manipulation-resistant read), values token0 in
+  token1 at that same tick, pro-rates by the caller's LP-share fraction, **rounds DOWN, against the borrower**.
+- **Fail-closed surface:** no plugin → `NoPlugin`; uninitialized plugin → `PluginNotReady`; a replaced/reset
+  plugin still re-accumulating history → `LpTwapHistoryTooShort(plugin, readyAt)` (**self-healing** — the same
+  read passes at `readyAt`; `twapStatus()` is the non-reverting probe). Every one of these **fails the borrow
+  CLOSED** (router read reverts → EVC account-status check reverts) and pauses the loop rather than degrading to
+  a manipulable price. The deleted CRE push-cache twin's stale-mark liveness contract is gone with it — there is
+  no mark to go stale.
 
 ### FarmUtilityBorrowGuard — the borrow pin
 - **Ctor** `(eVaultFactory_, juniorTrancheEngine_)` — sets `eVaultFactory` (the EVK GenericFactory), `juniorTrancheEngine` (the
@@ -166,7 +157,7 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
   module's `borrowVault` slot points at this same JIT-funded vault.
 - **`lpToken` = the SHARED ICHI vault address (the load-bearing identity invariant).** The single production POL
   ICHI vault share token MUST be the SAME address wired into ALL of: the 8-B5 escrow collateral-vault `asset()`
-  (`FarmUtilityMarketDeployer.lpToken`), the module's `lpToken`, the `SzipFarmUtilityLpOracle` `LP_MARK` key, the
+  (`FarmUtilityMarketDeployer.lpToken`), the module's `lpToken`, the `AlgebraIchiFairLpOracle` `lpToken` key, the
   8-B6 `LpStrategyModule.ichiVault` (`setUp`), and the `SzipNavOracle` basket-LP leg (PROGRESS row 338). 8-B6
   unstakes that LP to the Safe (loop step 1) and 8-B5 `postCollateral` deposits the SAME token into the escrow —
   wire two different LP addresses and the harvest loop silently fractures (the unstaked LP cannot be posted).
@@ -175,7 +166,7 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
   frozen per-line lien routers (§4.7).
 - **CRE operator.** The module's `operator` is the single immutable CRE operator identity (§8.7) that runs the
   loop (8-B11 sequences `postCollateral`→`borrow`→exercise(8-B8)→sell(8-B9)→`repay`→`withdrawCollateral`). The
-  oracle's writer is the Chainlink Forwarder (`CRE_KEYSTONE_FORWARDER`), pushing the LP mark each epoch.
+  oracle has **no writer** — it reads the pool's Algebra TWAP live at every quote.
 
 ## Item-10 deploy facts (PROGRESS rows 333 / 335 / 336 / 338)
 - **Deploy the farm utility market** via `FarmUtilityMarketDeployer.deploy(Params)` (GenericFactory escrow + router +
@@ -187,11 +178,10 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
   supply queue at it (an EulerEarn curator/allocator config, NOT a `WarehouseAdminModule` op — row 333).
 - **Wire LP-token identity** across 8-B5 / 8-B6 / oracle / NAV (row 338): deploy MUST assert
   `LpStrategyModule.ichiVault() == farm utility escrow vault asset() == lpOracle key`.
-- **Wire the CRE operator** into the module (`operator`) and the **LP-oracle Forwarder** (`CRE_KEYSTONE_FORWARDER`
-  passed to the `SzipFarmUtilityLpOracle` ctor); the 8-B11 CRE workflow computes the per-LP-share mark off-chain
-  (`(reserve_xALPHA × priceXAlpha + reserve_zipUSD × priceZipUSD) / ICHI_LP_totalSupply` — the same reserve×price
-  math `SzipNavOracle` runs for the basket LP leg) and pushes it each epoch within `validityWindow` (CRE-03 /
-  §8.6).
+- **Wire the CRE operator** into the module (`operator`). The LP oracle needs no CRE wiring — it is ownerless and
+  writerless; the deploy precondition is instead **TWAP readiness**: the pool's Algebra plugin must hold ≥
+  `lpTwapWindow` of history before P5's `setLTV` `getQuote` resolves (a live pool satisfies this; a
+  freshly-swapped plugin does not until `readyAt`).
 - **Audit sweep (row 335, OPEN):** author the loop into `audit/2.md` Phase L (an L-step post→borrow→repay→withdraw
   debt 0→strike→0; N-steps over-LTV / stale-mark / over-cap / non-operator / third-party-direct-borrow each
   revert) + the `audit/3-results.md` authority rows (operator-only entrypoints; owner-only `borrowCap`;
@@ -205,10 +195,6 @@ resolving the router/borrow-vault ordering cycle (router built BEFORE the borrow
   wrongly report success. `_exec` uses `execAndReturnData` and, on `ok == false`, **assembly-reverts the inner
   return data** (surfacing `E_AccountLiquidity` / `PriceOracle_TooStale` / `E_RepayTooMuch` / …); falls back to
   `ExecFailed` if the Safe returns no revert data.
-- **`LP_MARK = 7` is per-receiver-scoped — never collides with `NavOracle NAV_LEG = 7`.** Both are the same
-  numeral `7` on **different receivers**; each `WriteReport` names exactly one receiver, so there is no
-  collision (§8.0 / §8.6 ratification; distinct from the lien registry's `REVALUATION = 3`). `LP_MARK = 7` is
-  pinned at `SzipFarmUtilityLpOracle.sol:27`.
 - **`borrowCap` is AGGREGATE outstanding, not per-call.** `borrow` checks `debtOf(juniorTrancheEngine) + amount >
   borrowCap`; `borrowCap == 0` is the kill-switch (every borrow reverts). `onlyOwner` (Timelock), never operator.
 - **`repay` has no cap and rejects over-repay.** EVK `repay` reverts `E_RepayTooMuch` for a literal amount >

@@ -462,6 +462,17 @@ contract EulerVenueAdapter is IZipcodeVenue, Ownable {
         uint256 fee = amount * feeBps / 10_000;
         bool levyFee = adminSafe != address(0) && fee != 0;
 
+        // JIT-fund the fee leg (CTR-09): the controller funds exactly the principal (`fund(lineRef, drawAmount)`)
+        // then draws the same amount, so the fee's cash must arrive WITH the fee — without this, every fee-on draw
+        // through the controller reverts on the fee borrow (the vault holds `amount`, the batch pays out
+        // `amount + fee`). Same donation-immune absolute-target reallocate as `fund` (and the same reservoir-balance
+        // requirement). Deliberately NOT a controller-side gross-up: the fee is a venue-internal concern and the
+        // `IZipcodeVenue` seam stays venue-neutral.
+        if (levyFee) {
+            _eeMove(usdcReservoir, lineRef, fee);
+            emit LineFunded(lineRef, fee);
+        }
+
         IEVC.BatchItem[] memory items = new IEVC.BatchItem[](levyFee ? 4 : 3);
         // (1) enable controller — EVC self-call (account in calldata, onBehalfOf == 0, value == 0).
         items[0] = IEVC.BatchItem({

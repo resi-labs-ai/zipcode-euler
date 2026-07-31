@@ -27,7 +27,7 @@ import {Errors as PriceErrors} from "euler-price-oracle/lib/Errors.sol";
 
 /// @notice The seedPrice face, for vm.mockCall selector use in the reentrancy isolation test.
 interface IZipcodeOracleRegistrySeed {
-    function seedPrice(address lien, uint256 price) external;
+    function seedPrice(address lien, uint256 price, uint48 ts) external;
 }
 
 /// @notice A zero-rate IRM so the close-path repay(debt) is exact (no interest accrual).
@@ -352,7 +352,7 @@ contract ZipcodeControllerTest is ForkConfig {
 
     // ----- registry/factory events (for expectEmit, declared locally) -----
     event LienCreated(bytes32 indexed lienId, address indexed lien);
-    event RegistryPriceSeed(address indexed lien, uint256 price);
+    event RegistryPriceSeed(address indexed lien, uint256 price, uint48 timestamp);
     event LienOriginated(
         bytes32 indexed lienId,
         address indexed lien,
@@ -468,12 +468,13 @@ contract ZipcodeControllerTest is ForkConfig {
         uint16 liqLTV,
         uint256 drawAmount,
         uint256 cap
-    ) internal pure returns (bytes memory) {
+    ) internal view returns (bytes memory) {
         // CTR-03: route the default fleet of pre-existing tests through SILO_0 (the N=1 identity silo).
         return _origReportSilo(lienId, equityMark, borrowLTV, liqLTV, drawAmount, cap, SILO_0);
     }
 
-    /// @dev CTR-03: the RT_ORIGINATION payload gains a TRAILING `bytes32 siloId`.
+    /// @dev CTR-03: the RT_ORIGINATION payload gains a TRAILING `bytes32 siloId`. SEC/L-3: and a TRAILING `uint48
+    ///      sourceTs` (the appraisal ts the seed is stamped with). `view` (not `pure`) to read the live block time.
     function _origReportSilo(
         bytes32 lienId,
         uint256 equityMark,
@@ -482,18 +483,28 @@ contract ZipcodeControllerTest is ForkConfig {
         uint256 drawAmount,
         uint256 cap,
         bytes32 siloId
-    ) internal pure returns (bytes memory) {
+    ) internal view returns (bytes memory) {
         return abi.encode(
-            uint8(1), abi.encode(lienId, PROOF_REF, equityMark, borrowLTV, liqLTV, drawAmount, cap, siloId)
+            uint8(1),
+            abi.encode(lienId, PROOF_REF, equityMark, borrowLTV, liqLTV, drawAmount, cap, siloId, uint48(block.timestamp))
         );
     }
 
     function _drawReport(bytes32 lienId, uint256 equityMark, uint256 drawAmount)
         internal
+        view
+        returns (bytes memory)
+    {
+        return _drawReportTs(lienId, equityMark, drawAmount, uint48(block.timestamp));
+    }
+
+    /// @dev SEC/L-3: an explicit-sourceTs draw builder (the appraisal ts) for the stale-ordering tests.
+    function _drawReportTs(bytes32 lienId, uint256 equityMark, uint256 drawAmount, uint48 sourceTs)
+        internal
         pure
         returns (bytes memory)
     {
-        return abi.encode(uint8(2), abi.encode(lienId, PROOF_REF, equityMark, drawAmount));
+        return abi.encode(uint8(2), abi.encode(lienId, PROOF_REF, equityMark, drawAmount, sourceTs));
     }
 
     function _closeReport(bytes32 lienId) internal pure returns (bytes memory) {
@@ -574,7 +585,7 @@ contract ZipcodeControllerTest is ForkConfig {
         vm.expectEmit(true, true, false, false, address(lienFactory));
         emit LienCreated(LIEN_ID, predictedLien);
         vm.expectEmit(true, false, false, true, address(registry));
-        emit RegistryPriceSeed(predictedLien, EQUITY_MARK);
+        emit RegistryPriceSeed(predictedLien, EQUITY_MARK, uint48(block.timestamp)); // SEC/L-3: seed now carries the source ts
         // lineRef unknown ahead of time -> check topics (lienId, lien) + don't match all data.
         vm.expectEmit(true, true, false, false, address(controller));
         emit LienOriginated(LIEN_ID, predictedLien, address(0), PROOF_REF, EQUITY_MARK, DRAW_AMOUNT, SILO_0);
@@ -674,6 +685,26 @@ contract ZipcodeControllerTest is ForkConfig {
 
         assertEq(registry.getQuote(1e18, LIEN_i, usdc), priorQuote, "re-anchor rolled back (prior mark intact)");
         assertEq(IEVault(lineRef).debtOf(borrowAccount), priorDebt, "debt unchanged");
+    }
+
+    /// @dev SEC/L-3: an out-of-order draw whose APPRAISAL ts predates the lien's current cached mark reverts
+    ///      StaleReport and rolls back the whole atomic branch — it can no longer re-anchor an older, higher mark and
+    ///      borrow against it. (Before the fix the seed stamped block.timestamp and always won the monotonic guard.)
+    function test_Draw_StaleSourceTs_RollsBack() public {
+        _originate(LIEN_ID); // seeds cache.ts = block.timestamp (call it T0)
+        address borrowAccount = _borrowAccountOf(LIEN_ID);
+        address lineRef = controller.getLien(LIEN_ID).lineRef;
+        address LIEN_i = controller.getLien(LIEN_ID).lien;
+        uint256 priorQuote = registry.getQuote(1e18, LIEN_i, usdc);
+        uint256 priorDebt = IEVault(lineRef).debtOf(borrowAccount);
+
+        // A draw appraised BEFORE the cached mark (sourceTs = T0 - 1) must be rejected.
+        vm.prank(FORWARDER);
+        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
+        controller.onReport("", _drawReportTs(LIEN_ID, 999_999e6, 1e6, uint48(block.timestamp - 1)));
+
+        assertEq(registry.getQuote(1e18, LIEN_i, usdc), priorQuote, "stale draw did not re-anchor the mark");
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), priorDebt, "no borrow occurred");
     }
 
     function test_Draw_UnknownLien_Reverts() public {
@@ -853,6 +884,34 @@ contract ZipcodeControllerTest is ForkConfig {
 
         assertTrue(controller.getLien(LIEN_ID).open, "open unchanged");
         assertEq(IEVault(r.lineRef).debtOf(borrowAccount), debtBefore, "debt unchanged");
+        // SEC/L-4: the status marker ALSO sets the one-way defaulted flag (no other state change).
+        assertTrue(controller.getLien(LIEN_ID).defaulted, "defaulted flag set by the marker");
+    }
+
+    // SEC/L-4: once defaulted, a draw on that line fails closed on-chain (LienDefaulted) — the trusted-CRE
+    // no-post-default-draw assumption is now enforced by the chain, not just by policy.
+    function test_Draw_AfterDefault_Reverts() public {
+        _originate(LIEN_ID);
+        vm.prank(FORWARDER);
+        controller.onReport("", abi.encode(uint8(5), abi.encode(LIEN_ID, uint8(2)))); // RT_DEFAULT
+        assertTrue(controller.getLien(LIEN_ID).defaulted, "flagged defaulted");
+
+        vm.warp(block.timestamp + 1); // strictly-newer ts so the revert is the flag, not StaleReport
+        vm.prank(FORWARDER);
+        vm.expectRevert(abi.encodeWithSelector(ZipcodeController.LienDefaulted.selector, LIEN_ID));
+        controller.onReport("", _drawReport(LIEN_ID, EQUITY_MARK, 1e6));
+    }
+
+    // SEC/L-4: the flag fences ONLY the draw path — repay (permissionless) and close still work, so a defaulted
+    // line is torn down normally once its debt is worked out and repaid. Capacity is freed on close as usual.
+    function test_DefaultedLine_StillRepayAndCloses() public {
+        _originate(LIEN_ID);
+        vm.prank(FORWARDER);
+        controller.onReport("", abi.encode(uint8(6), abi.encode(LIEN_ID, uint8(3)))); // RT_LIQUIDATION
+        assertTrue(controller.getLien(LIEN_ID).defaulted, "flagged defaulted");
+
+        _repayAndClose(LIEN_ID); // permissionless repay + close — NOT blocked by the flag
+        assertFalse(controller.getLien(LIEN_ID).open, "closed despite defaulted flag");
     }
 
     // ============================================================

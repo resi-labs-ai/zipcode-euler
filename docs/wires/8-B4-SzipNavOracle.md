@@ -63,8 +63,8 @@ is NOT renounce-frozen here, §17).
 1. `zipUSD` — 18-dp, valued $1 (added as raw balance).
 2. `usdc` — 6-dp, scaled `× 1e12` to 18-dp $1.
 3. `xAlpha` — `balanceOf × _xAlphaUSD() / 1e18`, where `_xAlphaUSD = IXAlphaRate(rateSrc).exchangeRate() × legCache[LEG_ALPHA_USD].price / 1e18` (the two-layer mark; `rateSrc` resolved below). **Fail-closed on an UNSEEDED rate (SEC-04 / H5):** `_xAlphaUSD()` captures `rate = exchangeRate()` and reverts `RateUnseeded()` if `rate == 0` — the never-pushed genesis zero can no longer be silently served (which underpriced every consumer: `navExit`, `grossBasketValue`, freeze `coverageValue`, `ExitGate` tvlCap, all of which route through this shared internal). This is distinct from STALENESS: a stale-but-nonzero rate is NOT gated here (exit keeps pricing off the last good mark — the §7 max-entry/min-exit asymmetry; freshness is gated only at issuance, `navEntry`/`fresh`).
-4. `hydx` — `balanceOf × legCache[LEG_HYDX_USD].price / 1e18` (pushed leg).
-5. `oHydx` — `balanceOf × _oHydxUSD() / 1e18`, intrinsic `= HYDX/USD × (100 − IOptionToken(oHydx).discount())/100` (discount read on-chain).
+4. `hydx` — **marked $0 by design.** HYDX is pure sale inventory (harvest → exercise → dump); a spot mark overstates realizable value by the dump slippage (which scales with size on a thin market). The `LEG_HYDX_USD` feed is deliberately KEPT — pushes, deviation band, and the staleness gates (`navEntry`/`fresh`/`oldestRequiredLegTs`) still cover it — because the live HYDX mark is the input for deciding whether exercising oHYDX is profitable. Feed = decision input; never a NAV input.
+5. `oHydx` — **marked $0 by design** (and veHYDX is never read at all). The former intrinsic mark (`HYDX/USD × (100 − discount)/100`) could not track Hydrex's actual strike — `max(getDiscountedPrice, getMinPaymentAmount)`, a $0.01/HYDX floor that binds at current prices — nor sale slippage on the thin HYDX market, and `exerciseVe` absorbs value into permalocked voting power that never returns to the basket. NAV recognizes emission value only when realized proceeds (stables) land in a Safe; exercise-profitability accounting is a separate system, not a NAV input.
 6. **LP leg** (only if `ichiVault != 0`): held shares = loose ICHI share + gauge-staked + **escrow-collateralized**
    across BOTH Safes — `_lpShares(safe) = IICHIVault.balanceOf(safe) + IGauge(gauge).balanceOf(safe) +
    escrowVault.convertToAssets(escrowVault.balanceOf(safe))` (the escrow leg added only once `escrowVault != 0`).
@@ -110,12 +110,22 @@ asserts a price (§3.4/§7).
 lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wired it is the zero address ⇒
 `writeProvision` reverts for everyone (fail-closed).
 
-**The wiring setters** (`onlyOwner`, Timelock; each emits an event; all zero-guarded):
+**The wiring setters** (`onlyOwner`, Timelock; each emits an event; all zero-guarded). Every NAV-input setter
+first runs a **best-effort TWAP checkpoint** (`try this.poke() {} catch {}`): elapsed history is booked at the OLD
+configuration's spot so a re-point can't retroactively re-weight the TWAP window. Best-effort, never mandatory —
+during an outage the basket walk reverts and a hard checkpoint would brick the recovery levers
+(`setFarmUtilityLeg(0,0)`, `setLpTwapWindow(0)`, rate re-points); the skip's residue is bounded by the
+`navEntry`/`navExit` brackets.
 - `setShareToken(szipUSD_)` → `shareToken` (the supply denominator).
 - `setLpPosition(ichiVault_, gauge_)` → `ichiVault` + `gauge` (the LP reserves + staked-LP source). Re-pointable;
   if a non-zero `lpTwapWindow` is live, re-asserts SEC-10 readiness against the new vault.
 - `setFarmUtilityLeg(escrowVault_, borrowVault_)` → `escrowVault` + `borrowVault` (the 8-B5 farm utility leg: escrow-
-  collateralized LP counted + strike debt subtracted; both set together, both zero-guarded).
+  collateralized LP counted + strike debt subtracted; both set together). `(0, 0)` is a valid **atomic unset** — the
+  emergency lever for a regressed escrow/borrow-vault view (a reverting `convertToAssets`/`debtOf` freezes
+  `_accumulate()` and every NAV consumer fail-closed, with no other recovery). Mixed zero/non-zero is rejected
+  (`ZeroAddress`) — a half-wired leg would count escrow LP without its debt or vice versa. Eyes open: mid-loop the
+  unset drops BOTH loop legs from the basket (understates NAV by the loop equity — an entry-side arb while
+  engaged); pause issuance first, re-wire once the dependency is healthy.
 - `setJuniorTrancheEngine(juniorTrancheEngine_)` → `juniorTrancheEngine` (the 8-B14 buy-and-burn Safe, denominator-excluded).
 - `setDefaultCoordinator(dc_)` → `defaultCoordinator` (the sole `writeProvision` caller).
 - `setLpTwapWindow(window_)` → `lpTwapWindow` (`0` = the valid "use spot `getTotalAmounts()`" default, always

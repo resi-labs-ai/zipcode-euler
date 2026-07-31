@@ -33,7 +33,7 @@ contract ZipcodeOracleRegistryTest is Test {
 
     // Mirror of the registry's events for vm.expectEmit.
     event ControllerSet(address indexed controller);
-    event RegistryPriceSeed(address indexed lien, uint256 price);
+    event RegistryPriceSeed(address indexed lien, uint256 price, uint48 timestamp);
     event RegistryPriceUpdated(address indexed lien, uint256 price, uint48 timestamp);
     event WiringSet(bytes32 indexed slot, address value);
     event ValidityWindowSet(uint256 window);
@@ -57,7 +57,7 @@ contract ZipcodeOracleRegistryTest is Test {
 
     function _seed(address lien, uint256 price) internal {
         vm.prank(CTRL);
-        reg.seedPrice(lien, price);
+        reg.seedPrice(lien, price, uint48(block.timestamp)); // SEC/L-3: seed stamps the (here: current) source ts
     }
 
     function _revalReport(address[] memory liens, uint256[] memory prices, uint32 ts)
@@ -126,12 +126,12 @@ contract ZipcodeOracleRegistryTest is Test {
         _wireController();
         vm.expectRevert(ZipcodeOracleRegistry.NotController.selector);
         vm.prank(address(0xBAD));
-        reg.seedPrice(address(LIEN), 300_000e6);
+        reg.seedPrice(address(LIEN), 300_000e6, uint48(block.timestamp));
 
         vm.expectEmit(true, false, false, true);
-        emit RegistryPriceSeed(address(LIEN), 300_000e6);
+        emit RegistryPriceSeed(address(LIEN), 300_000e6, uint48(block.timestamp));
         vm.prank(CTRL);
-        reg.seedPrice(address(LIEN), 300_000e6);
+        reg.seedPrice(address(LIEN), 300_000e6, uint48(block.timestamp));
 
         (, uint48 ts) = reg.cache(address(LIEN));
         assertEq(ts, uint48(block.timestamp));
@@ -305,7 +305,7 @@ contract ZipcodeOracleRegistryTest is Test {
         _wireController();
         vm.expectRevert(Errors.PriceOracle_InvalidAnswer.selector);
         vm.prank(CTRL);
-        reg.seedPrice(address(LIEN), 0);
+        reg.seedPrice(address(LIEN), 0, uint48(block.timestamp));
     }
 
     function test_WriteGuard_ZeroPrice_Reval() public {
@@ -337,7 +337,7 @@ contract ZipcodeOracleRegistryTest is Test {
         uint256 over = uint256(type(uint208).max) + 1;
         vm.expectRevert(Errors.PriceOracle_Overflow.selector);
         vm.prank(CTRL);
-        reg.seedPrice(address(LIEN), over);
+        reg.seedPrice(address(LIEN), over, uint48(block.timestamp));
     }
 
     function test_WriteGuard_Overflow_Reval() public {
@@ -349,7 +349,7 @@ contract ZipcodeOracleRegistryTest is Test {
     }
 
     function test_WriteGuard_FutureTimestamp_Reval() public {
-        // seed path cannot reach FutureTimestamp (uses block.timestamp); only revaluation can.
+        // the reval path's future-ts rejection (the seed path's is covered by test_SEC_L3_seed_future_sourceTs_reverts).
         uint32 future = uint32(block.timestamp + 1);
         bytes memory report = _revalReport(_one(address(LIEN)), _one(uint256(1e6)), future);
         vm.expectRevert(ZipcodeOracleRegistry.FutureTimestamp.selector);
@@ -366,7 +366,7 @@ contract ZipcodeOracleRegistryTest is Test {
             abi.encodeWithSelector(ZipcodeOracleRegistry.InvalidLienDecimals.selector, sixDp)
         );
         vm.prank(CTRL);
-        reg.seedPrice(sixDp, 1e6);
+        reg.seedPrice(sixDp, 1e6, uint48(block.timestamp));
     }
 
     function test_StrictDecimals_6dp_Rejected_Reval() public {
@@ -386,7 +386,7 @@ contract ZipcodeOracleRegistryTest is Test {
             abi.encodeWithSelector(ZipcodeOracleRegistry.InvalidLienDecimals.selector, eoa)
         );
         vm.prank(CTRL);
-        reg.seedPrice(eoa, 1e6);
+        reg.seedPrice(eoa, 1e6, uint48(block.timestamp));
     }
 
     function test_StrictDecimals_EOA_Rejected_Reval() public {
@@ -519,7 +519,7 @@ contract ZipcodeOracleRegistryTest is Test {
         assertEq(reg.controller(), address(0));
         vm.expectRevert(ZipcodeOracleRegistry.NotController.selector);
         vm.prank(address(this));
-        reg.seedPrice(address(LIEN), 300_000e6);
+        reg.seedPrice(address(LIEN), 300_000e6, uint48(block.timestamp));
     }
 
     // --- Forwarder immutability: constructor-set forwarder is identity ---
@@ -534,13 +534,41 @@ contract ZipcodeOracleRegistryTest is Test {
     // BOTH write paths (the controller `seedPrice` clobber and the Forwarder rt-3 batch). First write (timestamp==0)
     // always passes. Mirrors `SzAlphaRateOracle:86`.
 
-    // seedPrice path: a same-block re-seed (equal `block.timestamp`) is a replay → StaleReport.
+    // seedPrice path: a same-ts re-seed (equal source ts) is a replay → StaleReport.
     function test_SEC01_seedPrice_equalTs_reverts() public {
         _wireController();
-        _seed(address(LIEN), 100_000e6); // first write, cache.timestamp = block.timestamp
+        _seed(address(LIEN), 100_000e6); // first write, cache.timestamp = source ts (here block.timestamp)
         vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
         vm.prank(CTRL);
-        reg.seedPrice(address(LIEN), 200_000e6); // same block → ts == cache.timestamp
+        reg.seedPrice(address(LIEN), 200_000e6, uint48(block.timestamp)); // same ts == cache.timestamp
+    }
+
+    // SEC/L-3: a controller seed carrying an APPRAISAL ts older than a newer cached mark reverts StaleReport — this is
+    // the fix's core property (an out-of-order stale draw can no longer clobber a fresher revaluation and borrow
+    // against the older, higher mark). Before the fix the seed stamped block.timestamp and ALWAYS won this race.
+    function test_SEC_L3_seed_with_stale_sourceTs_reverts() public {
+        _wireController();
+        uint32 tNew = uint32(block.timestamp);
+        // A fresher revaluation lands first (stamped with its source ts tNew).
+        vm.prank(FORWARDER);
+        reg.onReport("", _revalReport(_one(address(LIEN)), _one(uint256(80_000e6)), tNew));
+        // An out-of-order draw appraised EARLIER (tNew - 1) with a higher, stale mark must be rejected.
+        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
+        vm.prank(CTRL);
+        reg.seedPrice(address(LIEN), 100_000e6, uint48(tNew - 1));
+        // the fresh revaluation mark is intact.
+        (uint208 price, uint48 ts) = reg.cache(address(LIEN));
+        assertEq(price, 80_000e6, "stale seed did not clobber");
+        assertEq(ts, tNew, "cache ts unchanged");
+    }
+
+    // SEC/L-3: with the source ts now producer-supplied, the seed path CAN reach the FutureTimestamp guard (it no
+    // longer hard-codes block.timestamp). A future-dated appraisal is rejected fail-closed.
+    function test_SEC_L3_seed_future_sourceTs_reverts() public {
+        _wireController();
+        vm.expectRevert(ZipcodeOracleRegistry.FutureTimestamp.selector);
+        vm.prank(CTRL);
+        reg.seedPrice(address(LIEN), 100_000e6, uint48(block.timestamp + 1));
     }
 
     // rt-3 batch path: a backdated revaluation over a fresher mark → StaleReport (shields-a-bad-loan replay).
@@ -616,7 +644,7 @@ contract ZipcodeOracleRegistryTest is Test {
         reg.getQuote(1e18, address(LIEN), usdc);
     }
 
-    /// @notice The ctor zero-guards `quote_` (parity with `setQuote` + `SzipFarmUtilityLpOracle.constructor`): a
+    /// @notice The ctor zero-guards `quote_` (parity with `setQuote`): a
     ///         zero quote at deploy reverts `ZeroAddress` instead of silently deploying inert.
     function test_Ctor_ZeroQuote_Reverts() public {
         vm.expectRevert(ZipcodeOracleRegistry.ZeroAddress.selector);

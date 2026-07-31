@@ -79,12 +79,12 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 
 - **The Algebra TWAP (off-chain/pool config)** — `_meanTick:79` trusts `getTimepoints`; no cardinality/staleness check here. The integrity of the average is a pool property.
 - **The vendored tick math** — `getAmountsForLiquidity` / `getSqrtRatioAtTick` are frozen UniV3 (`ConcentratedLiquidity`); correctness is upstream Uniswap's.
-- **Fail-closed reverts** — `NoPlugin` (`:45`), `PluginNotReady` (`:53`, the ADV-02 `isInitialized()` read-time gate), and `BadTimepoints` (`:92`) reject a missing/uninitialized/malformed TWAP source rather than returning a manipulable spot value.
+- **Fail-closed reverts** — `NoPlugin`, `PluginNotReady` (the ADV-02 `isInitialized()` read-time gate), `LpTwapHistoryTooShort(plugin, readyAt)` (the audit-F8 history-depth gate: a replaced/reset plugin whose ring buffer covers less than `window` halts with a typed, self-healing error naming the plugin and the resume time — the populated span IS on-chain-queryable via `timepointIndex()`/`timepoints(i)`, oldest = slot 0 pre-wrap / slot head+1 wrapped), and `BadTimepoints` reject a missing/uninitialized/under-covered/malformed TWAP source rather than returning a manipulable spot value. `historyStatus(vault, window)` is the non-reverting probe of the same gate (surfaced as `SzipNavOracle.lpTwapStatus()` / `AlgebraIchiFairLpOracle.twapStatus()` for CRE + front-ends).
 
 ### Key Attack Surfaces
 
 - **Manipulation invariance is the design goal — and it's proven** &nbsp;[[I-1](invariants.md#i-1)] — `test_fork_manipulation_invariance` lands a 300k-USDC swap on the live pool and shows the fair quote moves <1% while the spot split moves >2%. The decisive control is demonstrated against a real pool.
-- **Residual TWAP trust** &nbsp;[[X-2](invariants.md#x-2)] — readiness is now gated on-chain (`PluginNotReady`, ADV-02) and window under-coverage fails closed on the live plugin (fork-proven); the remaining residual is observation-cardinality economics, not on-chain-queryable — only as strong as the deployed pool's TWAP. Worth confirming cardinality + window are economically safe.
+- **Residual TWAP trust** &nbsp;[[X-2](invariants.md#x-2)] — readiness is gated on-chain (`PluginNotReady`, ADV-02) and window under-coverage now fails closed with the TYPED `LpTwapHistoryTooShort` (audit F8 — the populated history span is read from the plugin's ring buffer, fork-pinned live). Halt-over-degrade is deliberate: a Hydrex plugin swap is a public transaction, and shortening the average (or falling to spot) in the window after it is exactly the manipulation opening the 1h TWAP prices out; the outage self-heals in ≤ `window` as the fresh plugin re-accumulates. The remaining residual is the economics of a *sustained* in-window manipulation — only as strong as the deployed pool's depth vs. what is extractable.
 - **Fail-closed paths now tested** &nbsp;[[I-3](invariants.md#i-3)] — `NoPlugin`, `PluginNotReady`, and `BadTimepoints` all have mock-plugin unit tests (ADV-02 + ADV-03). Gap closed.
 
 ### Upgrade Architecture Concerns
@@ -158,16 +158,16 @@ See [entry-points.md](entry-points.md) — no permissionless or stateful entry p
 
 | Category | Count | Contracts Covered |
 |----------|-------|-------------------|
-| Fork integration | 5 | IchiAlgebraFairReserves (via `AlgebraIchiFairLpOracle`) |
-| Mock-plugin fail-closed unit | 4 | `NoPlugin`, `PluginNotReady` (ctor + read), `BadTimepoints` |
-| Fork under-coverage | 1 | window ≫ history → fail-closed revert (X-2 empirical settlement) |
+| Fork integration | 6 | IchiAlgebraFairReserves (via `AlgebraIchiFairLpOracle`), incl. `twapStatus` gate/probe agreement |
+| Mock-plugin fail-closed unit | 7 | `NoPlugin`, `PluginNotReady` (ctor + read), `BadTimepoints`, `LpTwapHistoryTooShort` (pre-wrap + wrapped ring), `historyStatus` shapes |
+| Fork under-coverage | 1 | window ≫ history → typed `LpTwapHistoryTooShort(plugin, oldest+window)` recomputed from the live ring buffer |
 | Stateless Fuzz | 0 | none (vendored math) |
 | Stateful Fuzz / Formal | 0 | none |
 
 ### Gaps
 
 - ~~`NoPlugin` / `BadTimepoints` fail-closed paths untested~~ — **CLOSED** (ADV-02 + ADV-03): all three reverts (`NoPlugin`, `PluginNotReady`, `BadTimepoints`) now have mock-plugin unit tests.
-- **No TWAP cardinality/staleness assertion** — the library trusts the plugin's average; worth a consumer-side or library-side check that the deployed pool's observation cardinality supports the chosen window.
+- ~~No TWAP cardinality/staleness assertion~~ — **CLOSED** (audit F8): the history-depth gate reads the plugin's ring buffer at read-time and reverts `LpTwapHistoryTooShort(plugin, readyAt)` when the populated span is shorter than `window`; `historyStatus` is the non-reverting probe. What remains genuinely un-assertable on-chain is the *economics* of the pool's depth vs. the window, not the span.
 - **Single-vault fork coverage** — exercised only against HYDX/USDC `0xfF8B…73f7`. Sound for the deployed market; a second vault (different decimals / two-sided) would broaden assurance.
 - **No fuzz/invariant** — correctly omitted: the math is vendored UniV3 `TickMath`/`LiquidityAmounts` (audited/formally-verified upstream; faithfulness diff done). Fuzzing re-proves Uniswap's work.
 

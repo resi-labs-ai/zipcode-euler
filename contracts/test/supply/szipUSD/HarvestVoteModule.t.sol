@@ -320,10 +320,16 @@ contract HarvestVoteModuleUnitTest is Test {
         // avatar == target == juniorTrancheEngine survives a re-point (juniorTrancheEngine is the exerciseVe recipient).
         assertEq(m.avatar(), x, "avatar synced to juniorTrancheEngine");
         assertEq(m.target(), x, "target synced to juniorTrancheEngine");
-        m.setGauge(x);
-        assertEq(m.gauge(), x, "gauge re-pointed");
-        m.setVoter(x);
-        assertEq(m.voter(), x, "voter re-pointed");
+        // setGauge/setVoter re-derive their dependents LIVE off the new target (audit F13), so the
+        // re-point target must ANSWER rewardToken()/ve() — an EOA re-point now fails closed.
+        MockGauge gauge2 = new MockGauge(makeAddr("oHYDX2"));
+        m.setGauge(address(gauge2));
+        assertEq(m.gauge(), address(gauge2), "gauge re-pointed");
+        assertEq(m.oHYDX(), makeAddr("oHYDX2"), "oHYDX re-derived off the new gauge in the same call");
+        MockVoter voter2 = new MockVoter(makeAddr("ve2"));
+        m.setVoter(address(voter2));
+        assertEq(m.voter(), address(voter2), "voter re-pointed");
+        assertEq(m.ve(), makeAddr("ve2"), "ve re-derived off the new voter in the same call");
         m.setRewardsDistributor(x);
         assertEq(m.rewardsDistributor(), x, "rewardsDistributor re-pointed");
         m.setOHYDX(x);
@@ -345,6 +351,31 @@ contract HarvestVoteModuleUnitTest is Test {
         vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
         m.setVe(address(0));
         vm.stopPrank();
+    }
+
+    // ----------------------------------------------------------------- F13: re-point re-derivation fails closed
+    /// @notice `setGauge`/`setVoter` re-derive `oHYDX`/`ve` LIVE off the new target and fail closed on a zero
+    ///         answer — mirroring the `setUp` gate, so a post-setUp re-point can no longer leave a stale dependent
+    ///         (the old shape: `setGauge` stored blindly and `oHYDX` kept the previous gauge's token).
+    function test_F13_setGauge_zero_rewardToken_fails_closed() public {
+        MockGauge badGauge = new MockGauge(address(0));
+        vm.prank(owner);
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setGauge(address(badGauge));
+        // and an EOA target (no rewardToken() to call) reverts rather than storing blind
+        vm.prank(owner);
+        vm.expectRevert();
+        m.setGauge(makeAddr("eoa-gauge"));
+    }
+
+    function test_F13_setVoter_zero_ve_fails_closed() public {
+        MockVoter badVoter = new MockVoter(address(0));
+        vm.prank(owner);
+        vm.expectRevert(HarvestVoteModule.ZeroAddress.selector);
+        m.setVoter(address(badVoter));
+        vm.prank(owner);
+        vm.expectRevert();
+        m.setVoter(makeAddr("eoa-voter"));
     }
 
     function test_setUp_rejects_owner_equals_operator() public {

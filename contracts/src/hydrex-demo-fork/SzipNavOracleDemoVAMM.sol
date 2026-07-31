@@ -5,7 +5,6 @@ import {ReceiverTemplate} from "x402-cre-price-alerts/interfaces/ReceiverTemplat
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IVammPair} from "../interfaces/hydrex/IVammPair.sol";
 import {IGauge} from "../interfaces/hydrex/IGauge.sol";
-import {IOptionToken} from "../interfaces/hydrex/IOptionToken.sol";
 import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
 
 /// @notice The freshness face of `SzAlphaRateOracle` — issuance gates on this for the CRE-pushed cross-chain rate.
@@ -69,8 +68,8 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     address public immutable zipUSD; // 18-dp, $1
     address public immutable usdc; // 6-dp, $1
     address public immutable xAlpha; // 18-dp, two-layer mark
-    address public immutable hydx; // 18-dp, pushed
-    address public immutable oHydx; // 18-dp, intrinsic
+    address public immutable hydx; // 18-dp; raw balance marked $0 in NAV — the pushed mark still prices LP reserves
+    address public immutable oHydx; // 18-dp; marked $0 in NAV (see grossBasketValue) — kept for freeze-module wiring
     address public immutable juniorTrancheSafe; // free equity (Baal avatar)
     address public immutable juniorTrancheSidecar; // committed equity (non-RQ)
     /// @notice The TWAP window (governed, set at deploy via `NAV_W`; default 1h / `W=3600`).
@@ -197,9 +196,18 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase)
     // NOTE (§17): re-pointable by the Timelock, NOT set-once — build-phase flexibility so a redeployed
     // share token / LP / engine Safe / coordinator is a one-call re-point, not a redeploy cascade. Lock down pre-prod.
+
+    /// @dev Best-effort TWAP checkpoint before a NAV-input re-point (see SzipNavOracle._checkpointBestEffort):
+    ///      books elapsed history at the OLD spot; silently skips when the basket walk reverts so setters keep
+    ///      working as recovery levers during an outage.
+    function _checkpointBestEffort() internal {
+        try this.poke() {} catch {}
+    }
+
     /// @notice Wire/re-point the szipUSD share token (the supply denominator). `onlyOwner` (Timelock).
     function setShareToken(address szipUSD_) external onlyOwner {
         if (szipUSD_ == address(0)) revert ZeroAddress();
+        _checkpointBestEffort();
         shareToken = szipUSD_;
         emit ShareTokenSet(szipUSD_);
     }
@@ -207,6 +215,7 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     /// @notice Wire/re-point the ICHI vault + its Hydrex gauge (the LP position). `onlyOwner` (Timelock).
     function setLpPosition(address ichiVault_, address gauge_) external onlyOwner {
         if (ichiVault_ == address(0) || gauge_ == address(0)) revert ZeroAddress();
+        _checkpointBestEffort();
         ichiVault = ichiVault_;
         gauge = gauge_;
         emit LpPositionSet(ichiVault_, gauge_);
@@ -215,6 +224,7 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     /// @notice Wire/re-point the engine Safe (its transient pre-burn szipUSD is excluded). `onlyOwner` (Timelock).
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        _checkpointBestEffort();
         juniorTrancheEngine = juniorTrancheEngine_;
         emit EngineSafeSet(juniorTrancheEngine_);
     }
@@ -230,6 +240,7 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     ///         reads the rate from it and issuance gates on its `fresh()`. Zero ⇒ fall back to `IXAlphaRate(xAlpha)`.
     ///         `onlyOwner` (Timelock). Re-pointable, not set-once (§17 build-phase wiring).
     function setXAlphaRateOracle(address rateOracle_) external onlyOwner {
+        _checkpointBestEffort();
         xAlphaRateOracle = rateOracle_; // address(0) is a valid "unset / use fallback" value
         emit XAlphaRateOracleSet(rateOracle_);
     }
@@ -303,8 +314,10 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         value += _bal(zipUSD); // 18-dp $1
         value += _bal(usdc) * 1e12; // 6-dp -> 18-dp $1
         value += _bal(xAlpha) * _xAlphaUSD() / 1e18;
-        value += _bal(hydx) * legCache[LEG_HYDX_USD].price / 1e18;
-        value += _bal(oHydx) * _oHydxUSD() / 1e18;
+        // HYDX, oHYDX, and veHYDX raw balances are all marked $0 by design (see SzipNavOracle.grossBasketValue:
+        // sale inventory / unpriceable option / permalocked ve — NAV recognizes emission value only on realized
+        // proceeds). The LEG_HYDX_USD feed is KEPT: it still prices the HYDX side of the demo LP reserves below
+        // and is the exercise-profitability input.
         if (ichiVault != address(0)) {
             // DEMO: `ichiVault` holds a Solidly vAMM pair (the pair IS the LP token). Reserves via `getReserves()`
             // (not ICHI `getTotalAmounts()`); reserve tokens priced by `_legPriceOfToken` (HYDX + USDC, 6→18dp inside).
@@ -325,9 +338,10 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
 
     /// @notice The committed (juniorTrancheSidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
     ///         DurationFreezeModule bounds `release` against. ADDITIVE: `grossBasketValue()` is unchanged; this is
-    ///         an INDEPENDENT per-Safe re-computation. For the five plain legs `committedValue() + freeValue()`
+    ///         an INDEPENDENT per-Safe re-computation. For the three valued plain legs `committedValue() + freeValue()`
     ///         equals `grossBasketValue()` EXACTLY; for a split LP it is within ≤2 wei (the per-Safe pro-rata floors
-    ///         twice vs once). The module only ever moves the five plain legs, so gross is exactly rotation-invariant.
+    ///         twice vs once). The module only ever moves plain legs (incl. $0-marked HYDX/oHYDX), so gross is
+    ///         exactly rotation-invariant.
     function committedValue() external view returns (uint256) {
         return _grossValueOf(juniorTrancheSidecar);
     }
@@ -344,8 +358,7 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         value += IERC20(zipUSD).balanceOf(safe); // 18-dp $1
         value += IERC20(usdc).balanceOf(safe) * 1e12; // 6-dp -> 18-dp $1
         value += IERC20(xAlpha).balanceOf(safe) * _xAlphaUSD() / 1e18;
-        value += IERC20(hydx).balanceOf(safe) * legCache[LEG_HYDX_USD].price / 1e18;
-        value += IERC20(oHydx).balanceOf(safe) * _oHydxUSD() / 1e18;
+        // HYDX + oHYDX marked $0 — see grossBasketValue; per-Safe additivity holds trivially for $0 legs.
         if (ichiVault != address(0)) {
             // DEMO: vAMM pair reserves (see grossBasketValue note).
             uint256 heldShares = IVammPair(ichiVault).balanceOf(safe) + IGauge(gauge).balanceOf(safe);
@@ -442,11 +455,6 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         uint256 rate = IXAlphaRate(rateSrc).exchangeRate();
         if (rate == 0) revert RateUnseeded(); // fail closed, not silent-$0
         return rate * legCache[LEG_ALPHA_USD].price / 1e18;
-    }
-
-    /// @dev USD per 1.0 oHYDX (18-dp): intrinsic = HYDX/USD × (100 - discount)/100, discount read on-chain.
-    function _oHydxUSD() internal view returns (uint256) {
-        return legCache[LEG_HYDX_USD].price * (100 - IOptionToken(oHydx).discount()) / 100;
     }
 
     /// @dev The per-token USD mark for a valid LP reserve token, scaled so `_tokenValue = amt * price / 1e18` yields

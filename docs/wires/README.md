@@ -45,7 +45,7 @@ contracts + 6 scripts + 30 interface shims + 28 test/helper files) mapped to its
 | Supply | Senior par exit | `9-ZipRedemptionQueue.md` | `ZipRedemptionQueue` |
 | Supply | CoW off-ramp | `OffRampModule.md` | `OffRampModule` |
 | Engine | Buy-and-burn | `8-B14-SzipBuyBurnModule.md` | `SzipBuyBurnModule` |
-| Engine | Farm utility borrow loop | `8-B5-FarmUtilityLoop.md` | `FarmUtilityLoopModule`, `SzipFarmUtilityLpOracle`, `FarmUtilityBorrowGuard`, `FarmUtilityMarketDeployer` |
+| Engine | Farm utility borrow loop | `8-B5-FarmUtilityLoop.md` | `FarmUtilityLoopModule`, `AlgebraIchiFairLpOracle`, `FarmUtilityBorrowGuard`, `FarmUtilityMarketDeployer` |
 | Engine | LP strategy | `8-B6-LpStrategyModule.md` | `LpStrategyModule` |
 | Engine | Harvest/vote | `8-B7-HarvestVoteModule.md` | `HarvestVoteModule` |
 | Engine | oHYDX exercise | `8-B8-ExerciseModule.md` | `ExerciseModule` |
@@ -151,7 +151,7 @@ These recur across many components and are where the item-10 deploy script lives
 
 4. **The shared-LP-address invariant.** One ICHI vault share address must be identical across:
    `LpStrategyModule.ichiVault` (8-B6) == the 8-B5 farm utility escrow collateral `asset()` ==
-   `SzipFarmUtilityLpOracle` LP_MARK key == `SzipNavOracle` basket-LP leg. If any diverge, the unstake→post-
+   `AlgebraIchiFairLpOracle` `lpToken` key == `SzipNavOracle` basket-LP leg. If any diverge, the unstake→post-
    collateral harvest loop silently fractures. Deploy MUST assert equality. (`8-B5`, `8-B6`, PROGRESS 338.)
 
 5. **The one-bank invariant (loss/supply join).** `RecycleModule.warehouse == ZipDepositModule`'s warehouse

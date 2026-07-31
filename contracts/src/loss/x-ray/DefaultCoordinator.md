@@ -27,7 +27,7 @@ bond via a hostile originator) but cannot steal to an arbitrary address or infla
 | Function | Access | Notes |
 |---|---|---|
 | `_processReport` (via `onReport`) | Forwarder-gated (CRE) | reportType-8 dispatcher → `_lock`/`_release`/`_default`/`_recovery`/`_resolve`/`_writeOff` |
-| `setEscrow(escrow_)` | `onlyOwner` (Timelock) | wires escrow; NO standing allowance (JIT in `_lock`); re-pointable (§17) |
+| `setEscrow(escrow_)` | `onlyOwner` (Timelock) | wires escrow; NO standing allowance (JIT in `_lock`); re-pointable (§17); a mid-lifecycle re-point fail-closes every lien op (`NoBond`/`ExceedsBond`/`NoBondInEscrow`) |
 | `setNavOracle(navOracle_)` | `onlyOwner` | re-point the provision sink |
 | `setXAlpha(xAlpha_)` | `onlyOwner` | re-point bond asset (+ re-approve escrow) |
 | `setRecoveryFloor(newFloor)` | `onlyOwner` | bound `<1e18`; future defaults only |
@@ -78,7 +78,13 @@ No permissionless entry points. Internal handlers (`_lock`…`_writeOff`) are re
   formerly granted a standing MAX xALPHA allowance, which made re-pointing the escrow a *drain* of the launch
   reserve (an ERC-20 allowance lets the spender pick the destination — the escrow's non-sweepability is
   irrelevant). Now `_lock` grants only the exact bond `amount` JIT and resets to 0, so re-pointing the escrow is
-  grief/redirect like every other slot — no standing allowance to drain.
+  grief/redirect like every other slot — no standing allowance to drain. A mid-lifecycle re-point is additionally
+  **fail-closed on every lien op**: release/nonzero-capital-slash already reverted in the escrow (`NoBond`/
+  `ExceedsBond`), and the one silent path — a ZERO-capital RESOLVE/WRITEOFF finalizing against the fresh escrow
+  while the bond stays stranded in the old one — now reverts `NoBondInEscrow` (a Defaulted lien always holds a
+  live bond in ITS escrow, so `bondAmount == 0` on the current escrow ⇔ wrong escrow). Pinned by
+  `test_resolve_zeroCapital_after_escrow_repoint_reverts_noBond` (incl. the re-pair un-wedge) +
+  `test_writeoff_zeroCapital_after_escrow_repoint_reverts_noBond`.
 - **`_writeOff` leaves residual provision in place** — intentional (the realized loss). `test_writeoff_partial_keeps_provision_no_coemit` confirms it does NOT call `writeProvision`. Worth confirming NAV consumers expect a permanent floor for written-off liens.
 
 ## 6. Test analysis

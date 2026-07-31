@@ -67,7 +67,6 @@ The oracles both sides read. NAV is a live price the protocol acts on, not a dis
 
 - SzipNavOracle — the junior vault's NAV-per-share engine (issuance + exit), the economic keystone. [supply/SzipNavOracle.md]
 - AlgebraIchiFairLpOracle — the trustless, fully on-chain LP-collateral price. [supply/AlgebraIchiFairLpOracle.md]
-- SzipFarmUtilityLpOracle — the keeper-pushed LP-collateral price (deploy default), fail-closed on staleness. [supply/SzipFarmUtilityLpOracle.md]
 - IchiAlgebraFairReserves — the manipulation-resistant reserve reconstruction the fair oracle delegates to. [supply/lib/IchiAlgebraFairReserves.md]
 - ConcentratedLiquidity — the vendored Uniswap-V3 tick math underneath it all. [libraries/concentrated-liquidity.md]
 

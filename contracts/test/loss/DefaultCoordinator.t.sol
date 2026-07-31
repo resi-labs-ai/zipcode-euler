@@ -715,6 +715,55 @@ contract DefaultCoordinatorTest is CoordBase {
         assertEq(uint256(_status(LIEN_A)), uint256(DefaultCoordinator.LienStatus.Defaulted), "status unchanged");
     }
 
+    /// @dev The wrong-escrow detector: `setEscrow` re-points away from the lien's escrow, then a ZERO-capital
+    ///      resolve — the one previously-silent finalize path — must revert `NoBondInEscrow` (a Defaulted lien
+    ///      always holds a live bond in ITS escrow, so bondAmount==0 on the current escrow ⇔ wrong escrow).
+    ///      Nothing is finalized: status stays Defaulted, provision + oracle untouched.
+    function test_resolve_zeroCapital_after_escrow_repoint_reverts_noBond() public {
+        _fund(100e18);
+        _lock(LIEN_A, originator, 100e18);
+        _defaultReport(LIEN_A, 1000e18);
+        uint256 pBefore = _provision(LIEN_A);
+        uint256 totBefore = coordinator.totalProvision();
+        uint256 oracleBefore = oracle.provision();
+
+        // re-point to a fresh escrow (no entry for LIEN_A) without migrating the bond.
+        LienXAlphaEscrow fresh = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
+        coordinator.setEscrow(address(fresh));
+
+        bytes memory report = _report(4, abi.encode(LIEN_A, uint256(0)));
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(DefaultCoordinator.NoBondInEscrow.selector, LIEN_A));
+        coordinator.onReport("", report);
+
+        assertEq(uint256(_status(LIEN_A)), uint256(DefaultCoordinator.LienStatus.Defaulted), "not finalized");
+        assertEq(_provision(LIEN_A), pBefore, "provision unchanged");
+        assertEq(coordinator.totalProvision(), totBefore, "totalProvision unchanged");
+        assertEq(oracle.provision(), oracleBefore, "oracle provision unchanged");
+
+        // re-pointing BACK to the lien's escrow un-wedges: the same zero-capital resolve now routes the premium.
+        coordinator.setEscrow(address(escrow));
+        _resolveReport(LIEN_A, 0);
+        assertEq(uint256(_status(LIEN_A)), uint256(DefaultCoordinator.LienStatus.Resolved), "resolved after re-pair");
+        assertEq(escrow.bondAmount(LIEN_A), 0, "premium routed to cohort");
+    }
+
+    /// @dev Same detector on the WRITEOFF leg.
+    function test_writeoff_zeroCapital_after_escrow_repoint_reverts_noBond() public {
+        _fund(100e18);
+        _lock(LIEN_A, originator, 100e18);
+        _defaultReport(LIEN_A, 1000e18);
+
+        LienXAlphaEscrow fresh = new LienXAlphaEscrow(address(xalpha), address(coordinator), adminSafe, juniorTrancheSidecar);
+        coordinator.setEscrow(address(fresh));
+
+        bytes memory report = _report(5, abi.encode(LIEN_A, uint256(0)));
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(DefaultCoordinator.NoBondInEscrow.selector, LIEN_A));
+        coordinator.onReport("", report);
+        assertEq(uint256(_status(LIEN_A)), uint256(DefaultCoordinator.LienStatus.Defaulted), "not finalized");
+    }
+
     // ---------------------------------------------------------------- WRITEOFF (settle permanently + slash)
     function test_writeoff_partial_keeps_provision_no_coemit() public {
         uint256 B = 100e18;

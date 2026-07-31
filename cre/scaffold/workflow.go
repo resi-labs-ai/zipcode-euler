@@ -10,8 +10,8 @@
 //   - the §8.0 GenerateReport -> WriteReport write path, encoding via the shared cre/zipreport library.
 //
 // ───────────────────────────────────────────────────────────────────────────────────────────────────────
-// THIS IS A SKELETON. The worked example pushes an illustrative LpMark — it implements NONE of the
-// CRE-01/03/04 business logic (no underwriting, no NAV/LP math, no revaluation sharding, no Proof gating).
+// THIS IS A SKELETON. The worked example pushes an illustrative Rate — it implements NONE of the
+// CRE-01/03/04 business logic (no underwriting, no NAV math, no revaluation sharding, no Proof gating).
 // The observed `mark` is a hard-coded constant, NOT a data feed. Replace the marked seams with your own.
 // ───────────────────────────────────────────────────────────────────────────────────────────────────────
 package main
@@ -85,9 +85,9 @@ func onCron(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, error)
 	}
 
 	// (iii) DON-side: stamp the time (the runtime.Now() idiom) and encode the report. TEMPLATE: replace
-	// this zipreport.LpMarkReport call with your ticket's zipreport.Xxx call (Origination, Draw, NavLeg…).
-	ts := uint32(runtime.Now().Unix())
-	envelope, err := zipreport.LpMarkReport(new(big.Int).SetUint64(mark), ts)
+	// this zipreport.Rate call with your ticket's zipreport.Xxx call (Origination, Draw, NavLeg…).
+	ts := runtime.Now().Unix()
+	envelope, err := zipreport.Rate(new(big.Int).SetUint64(mark), big.NewInt(ts))
 	if err != nil {
 		return struct{}{}, err
 	}

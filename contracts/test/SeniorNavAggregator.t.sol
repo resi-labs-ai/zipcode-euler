@@ -63,19 +63,19 @@ contract MockEulerEarn {
         freeOf[account] = free_;
     }
 
-    function balanceOf(address account) external view returns (uint256) {
+    function balanceOf(address account) external view notBricked returns (uint256) {
         return sharesOf[account];
     }
 
     /// @dev shares==0 -> 0; else resolve the account whose share balance equals `shares` and return its backing.
     ///      In these tests warehouseSafe share balances are distinct, so the lookup is unambiguous.
-    function convertToAssets(uint256 shares) external view returns (uint256) {
+    function convertToAssets(uint256 shares) external view notBricked returns (uint256) {
         if (shares == 0) return 0;
         // The aggregator calls convertToAssets(balanceOf(warehouseSafe)); map shares back to the configured backing.
         return _backingForShares(shares);
     }
 
-    function maxWithdraw(address account) external view returns (uint256) {
+    function maxWithdraw(address account) external view notBricked returns (uint256) {
         return freeOf[account];
     }
 
@@ -99,6 +99,18 @@ contract MockEulerEarn {
     ///      Mirrors `DurationFreezeModule.t.sol:455-461` — the warehouseSafe's convertToAssets/maxWithdraw are unchanged.
     function donateShares(address to, uint256 shares) external {
         sharesOf[to] += shares;
+    }
+
+    // --- venue-fault switch: a bricked pool reverts on every view (the upgradeable-third-party-venue shape) ---
+    bool public bricked;
+
+    function setBricked(bool v) external {
+        bricked = v;
+    }
+
+    modifier notBricked() {
+        require(!bricked, "venue view regressed");
+        _;
     }
 }
 
@@ -178,6 +190,116 @@ contract SeniorNavAggregatorTest is Test {
         uint256 expected = (1_000e6 + 250e6) * 1e12;
         assertEq(agg.seniorBacking(), expected, "two-silo sum");
         assertEq(agg.activeSeniorBacking(), expected, "two-silo active sum");
+    }
+
+    // ============================================================== F10: duplicate (eePool, warehouseSafe) dedup
+    /// @dev Admit a SECOND siloId over an EXISTING silo's pool + Safe (fresh adapter/freeze stubs so the real
+    ///      6-clause topology assert passes) — the documented adapter-re-point flow `SiloRegistry.addSilo` allows on
+    ///      purpose (per-physical-pool uniqueness is an intentional non-goal).
+    function _addDuplicateSilo(string memory label, Silo memory base) internal returns (bytes32 id) {
+        address navOracle = makeAddr(string.concat(label, "-oracle"));
+        address coordinator_ = address(new MockCoordinator(navOracle));
+        address escrow_ = address(new MockEscrow(coordinator_));
+        address freeze_ = address(new MockFreeze(address(base.ee), base.warehouseSafe, navOracle));
+        address adapter_ = address(new MockAdapter(address(base.ee)));
+
+        SiloRegistry.SiloConfig memory cfg = SiloRegistry.SiloConfig({
+            adapter: adapter_,
+            warehouseSafe: base.warehouseSafe,
+            eePool: address(base.ee),
+            juniorBasket: makeAddr(string.concat(label, "-junior")),
+            escrow: escrow_,
+            defaultCoordinator: coordinator_,
+            navOracle: navOracle,
+            freeze: freeze_,
+            curator: makeAddr(string.concat(label, "-curator"))
+        });
+        id = keccak256(bytes(label));
+        reg.addSilo(id, cfg);
+    }
+
+    /// @notice a physical `(eePool, warehouseSafe)` pair admitted under TWO siloIds counts ONCE in every
+    ///         aggregate — the balance lives on the pair, not the siloId. Pre-fix all three Σ views doubled it
+    ///         (overstated backing = a breaker that fails to trip, the dangerous direction).
+    // ----- per-silo failure isolation (added ahead of Morpho/Aave venues; see _aggregate NatSpec) -----
+
+    /// @notice One broken pool (views reverting) must not brick the Σ: it counts as zero backing, the healthy
+    ///         silo still sums, and `unreadablePairs()` reports the skip so the zero is never silent.
+    function test_broken_pool_skipped_and_reported_not_bricking() public {
+        Silo memory a = _addSilo("A");
+        Silo memory b = _addSilo("B");
+        a.ee.setPosition(a.warehouseSafe, 1, 1_000e6, 300e6); // 700 lent out
+        b.ee.setPosition(b.warehouseSafe, 2, 250e6, 250e6);
+        assertEq(agg.unreadablePairs(), 0, "all readable while healthy");
+
+        a.ee.setBricked(true); // the venue's views regress (upgrade/outage)
+        assertEq(agg.seniorBacking(), 250e6 * 1e12, "broken pair counts zero; healthy silo still sums");
+        assertEq(agg.activeSeniorBacking(), 250e6 * 1e12, "active view isolated the same way");
+        assertEq(agg.illiquidSeniorValue(), 0, "broken pair's lent-out dollars read zero");
+        assertEq(agg.unreadablePairs(), 1, "the skip is reported, never silent");
+
+        // the solvency ratio stays readable and errs LOW (understated backing trips a breaker early)
+        zip.setSupply(1_000e18);
+        assertEq(agg.systemCollateralization(), 250e6 * 1e12 * 1e18 / 1_000e18, "ratio readable, conservative");
+
+        a.ee.setBricked(false); // venue recovers -> full totals return, no state to clean up
+        assertEq(agg.seniorBacking(), (1_000e6 + 250e6) * 1e12, "self-heals on recovery");
+        assertEq(agg.unreadablePairs(), 0, "no skips after recovery");
+    }
+
+    /// @notice The strict per-silo getters keep the loud revert for diagnosis: isolation lives ONLY in the Σ loop.
+    function test_broken_pool_strict_getter_still_reverts() public {
+        Silo memory a = _addSilo("A");
+        a.ee.setPosition(a.warehouseSafe, 1, 1_000e6, 300e6);
+        a.ee.setBricked(true);
+        vm.expectRevert("venue view regressed");
+        agg.seniorBackingOf(a.id);
+        vm.expectRevert("venue view regressed");
+        agg.illiquidSeniorValueOf(a.id);
+    }
+
+    function test_F10_duplicate_pair_counts_once_in_all_aggregates() public {
+        Silo memory a = _addSilo("A");
+        _addDuplicateSilo("A-repoint", a); // same pool + Safe, new siloId (the adapter-re-point flow)
+        Silo memory b = _addSilo("B"); // an unrelated silo still sums normally
+        a.ee.setPosition(a.warehouseSafe, 1, 1_000e6, 300e6); // 700 lent out
+        b.ee.setPosition(b.warehouseSafe, 2, 250e6, 250e6); // fully free
+
+        assertEq(agg.seniorBacking(), (1_000e6 + 250e6) * 1e12, "pair counted once in seniorBacking");
+        assertEq(agg.activeSeniorBacking(), (1_000e6 + 250e6) * 1e12, "pair counted once in activeSeniorBacking");
+        assertEq(agg.illiquidSeniorValue(), 700e6 * 1e12, "pair counted once in illiquidSeniorValue");
+    }
+
+    /// @notice the permanent shape: the OLD entry is retired after a re-point but stays in `allSiloIds()` forever —
+    ///         the all-silo views still count the pair once, and the retired twin never suppresses the live one in
+    ///         the active view (the `active` filter runs BEFORE dedup).
+    function test_F10_retired_duplicate_still_counts_once_not_zero() public {
+        Silo memory a = _addSilo("A");
+        bytes32 repointed = _addDuplicateSilo("A-repoint", a);
+        a.ee.setPosition(a.warehouseSafe, 1, 1_000e6, 300e6);
+
+        reg.retireSilo(a.id); // the old entry retires; the re-pointed twin (same pair) stays active
+        assertEq(agg.seniorBacking(), 1_000e6 * 1e12, "all-silo view: once, not zero, not double");
+        assertEq(agg.activeSeniorBacking(), 1_000e6 * 1e12, "active view: the live twin counts");
+        assertEq(agg.illiquidSeniorValue(), 700e6 * 1e12, "illiquid view: once");
+
+        reg.retireSilo(repointed); // both retired: still backing outstanding zipUSD, still once
+        assertEq(agg.seniorBacking(), 1_000e6 * 1e12, "both retired: retired silos keep backing, once");
+        assertEq(agg.activeSeniorBacking(), 0, "no active entries: routable capacity is zero");
+    }
+
+    /// @notice NOT a duplicate: two silos sharing an `eePool` under DIFFERENT Safes hold genuinely distinct share
+    ///         balances — both must count (the dedup key is the pair, not the pool).
+    function test_F10_same_pool_different_safe_both_count() public {
+        Silo memory a = _addSilo("A");
+        // a second silo on the SAME pool but its own Safe (fresh stubs wired to (a.ee, safe2))
+        address safe2 = makeAddr("A2-warehouseSafe");
+        Silo memory a2 = Silo({id: bytes32(0), ee: a.ee, warehouseSafe: safe2});
+        a2.id = _addDuplicateSilo("A2", a2);
+
+        a.ee.setPosition(a.warehouseSafe, 1, 1_000e6, 1_000e6);
+        a.ee.setPosition(safe2, 2, 250e6, 250e6);
+        assertEq(agg.seniorBacking(), (1_000e6 + 250e6) * 1e12, "distinct Safes on one pool both count");
     }
 
     // ============================================================== donation no-op (the whole point)

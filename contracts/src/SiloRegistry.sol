@@ -51,12 +51,15 @@ interface ISeniorVenue {
 ///
 /// @dev SLOT ACCOUNTING (Key req 1) — `lineCount` is a CONCURRENT-line counter. The controller (CTR-03) calls
 ///      `incrementLineCount` as the LAST write after a successful `openLine` so a reverted origination leaks no
-///      phantom count, and `decrementLineCount` on close. The cap is `MAX_LINES_PER_SILO = 28` (see constant). NOTE
-///      (cross-ticket capacity dependency, PROGRESS finding 1 / CTR-04): the as-built `EulerVenueAdapter.closeLine`
-///      frees only the SUPPLY queue, NOT the binding WITHDRAW-queue slot, so a pool bricks at ~28 *lifetime* opens
-///      inside `acceptCap` BEFORE this registry's `SiloFull` would ever trip. `decrementLineCount` is correct
-///      *registry* accounting and builds standalone, but the concurrent-capacity model is only fully sound once CTR-03
-///      wires increment/decrement AND CTR-04 makes `closeLine` reclaim the withdraw-queue slot.
+///      phantom count, and `decrementLineCount` on close. The cap is `MAX_LINES_PER_SILO = 28` (see constant).
+///      CAPACITY (CTR-03 + CTR-04, both LANDED): `EulerVenueAdapter.closeLine` reclaims BOTH EE queue slots — the
+///      SUPPLY queue (SEC-06) AND the binding WITHDRAW-queue slot (CTR-04, `submitCap 0` -> `updateWithdrawQueue`),
+///      so a fully-repaid line's slot is freed on close. The `28` cap is therefore genuinely CONCURRENT (not
+///      lifetime): this registry's `SiloFull` at 28 binds just under the adapter's ~29-line hard cap
+///      (`MAX_QUEUE_LENGTH = 30` minus the base market), and closed lines are reusable. CAVEAT unchanged by CTR-04:
+///      a DEFAULTED line with outstanding debt cannot close (`observeDebt != 0`), so it holds its concurrent slot
+///      until the debt is worked out off-chain and repaid (permissionless) — defaults consume concurrent capacity,
+///      they do not leak lifetime capacity.
 ///
 /// @dev VENUE-AGNOSTIC ADMISSION (CTR-10b — the federation plug-in seam). The admission gate dereferences NO
 ///      Euler-specific surface: the adapter clause asserts the venue-neutral `ISeniorVenue.seniorPool()` and the

@@ -48,7 +48,8 @@ use). `DeployLocal` = anvil fork only. `DeployMainnet` = THIS, the live-network 
 `BUYBURN_DBPS=100` `BUYBACK_CAP=1000000e18` `RATE_MAX_STALENESS=21600` `RATE_WINDOW=2592000` `RATE_APR_CAP=50000`
 (the three `RATE_*` knobs are `SzAlphaRateOracle` IMMUTABLES — 6h staleness / 30d APR window / 500% cap, the
 8x-02 doc+test fixtures; do not lower the window or raise the staleness without re-reading 8x-02's gotchas)
-`LP_SEED_MARK=1e6` (6-dp USD per 1e18 LP share — set to the chosen ICHI vault's real per-share value).
+`LP_TWAP_WINDOW=3600` (the fair-LP TWAP window, required non-zero — the LP oracle reads the pool's Algebra
+TWAP live; no seed mark. Pre-flight: the pool's plugin must hold ≥ this much history or P5's `setLTV` reverts).
 
 ## 4. Pre-flight (do NOT skip)
 

@@ -147,18 +147,32 @@ contract HarvestVoteModule is MastercopyInitLock {
         emit WiringSet("operator", operator_);
     }
 
-    /// @notice Re-point `gauge` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `gauge` (build phase, §17). onlyOwner (Timelock). Re-derives `oHYDX` LIVE off the new
+    ///         gauge (`rewardToken()`) in the same call — the same read `setUp` runs — so the exercise target can
+    ///         never silently drift from the gauge actually paying us (audit F13; the `ExerciseModule.setOHYDX`
+    ///         re-derivation idiom). Fails closed on a gauge reporting a zero reward token. `setOHYDX` remains the
+    ///         manual override.
     function setGauge(address gauge_) external onlyOwner {
         if (gauge_ == address(0)) revert ZeroAddress();
+        address oHYDX_ = IGauge(gauge_).rewardToken();
+        if (oHYDX_ == address(0)) revert ZeroAddress();
         gauge = gauge_;
+        oHYDX = oHYDX_;
         emit WiringSet("gauge", gauge_);
+        emit WiringSet("oHYDX", oHYDX_);
     }
 
-    /// @notice Re-point `voter` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `voter` (build phase, §17). onlyOwner (Timelock). Re-derives `ve` LIVE off the new voter
+    ///         (`ve()`) in the same call — the same read `setUp` runs (audit F13). Fails closed on a voter
+    ///         reporting a zero escrow. `setVe` remains the manual override.
     function setVoter(address voter_) external onlyOwner {
         if (voter_ == address(0)) revert ZeroAddress();
+        address ve_ = IVoter(voter_).ve();
+        if (ve_ == address(0)) revert ZeroAddress();
         voter = voter_;
+        ve = ve_;
         emit WiringSet("voter", voter_);
+        emit WiringSet("ve", ve_);
     }
 
     /// @notice Re-point `rewardsDistributor` (build phase, §17). onlyOwner (Timelock).
@@ -233,7 +247,11 @@ contract HarvestVoteModule is MastercopyInitLock {
 
     /// @notice Claim the per-veNFT anti-dilution rebase (the operator enumerates the Safe's veNFTs off-chain). The
     ///         module ignores `claim_many`'s bool return (the rebase credits each veNFT's own lock; it cannot be
-    ///         redirected, so an imperfect operator-curated array is harmless).
+    ///         redirected, so an imperfect operator-curated array is harmless). The bool is also VESTIGIAL: the live
+    ///         distributor returns true even for a nonexistent tokenId (probed 2026-07-28), so `RebaseClaimed` means
+    ///         "claim ATTEMPTED for these ids" — verify actual movement via `rebaseClaimable` (audit F11 won't-fix).
+    ///         Hydrex rebases END at schedule week 52 (2026-09-10, hard-coded 0 in the live emission schedule);
+    ///         after that this function is a harmless permanent no-op the keeper can drop.
     function claimRebase(uint256[] calldata tokenIds) external onlyOperator {
         if (tokenIds.length == 0) revert EmptyArray();
         _exec(rewardsDistributor, abi.encodeCall(IRewardsDistributor.claim_many, (tokenIds)));

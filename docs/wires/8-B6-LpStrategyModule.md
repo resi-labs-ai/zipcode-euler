@@ -100,7 +100,7 @@ wired nor referenced.
 ## Wiring — cross-component (who points at whom)
 - **`ichiVault` = the SHARED LP address (PROGRESS row 338).** The production POL ICHI vault (the LP share token) MUST
   be the **single** address wired into ALL of: this module's `ichiVault` (`setUp`), the 8-B5 farm utility escrow vault's
-  collateral `asset()` (`FarmUtilityMarketDeployer.lpToken`), the `SzipFarmUtilityLpOracle` `LP_MARK` key, and the
+  collateral `asset()` (`FarmUtilityMarketDeployer.lpToken`), the `AlgebraIchiFairLpOracle` `lpToken` key, and the
   `SzipNavOracle` basket-LP leg. 8-B6 `unstake`s that LP to the Safe (harvest-loop step 1) and 8-B5 `postCollateral`
   deposits it into the escrow — if the two are wired to *different* LP addresses the loop silently fractures (the
   unstaked LP can't be posted). The item-10 deploy MUST assert

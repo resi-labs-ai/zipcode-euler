@@ -230,9 +230,11 @@ contract SzipNavOracleDemoVAMMTest is Test {
     // ----------------------------------------------------------------- the CRE leg push
     function test_push_lands_prices() public {
         _pushBoth(1.2e18, 0.5e18);
-        // grossBasketValue reads legCache prices; a tiny hydx balance proves the HYDX leg landed.
-        hydx.setBalance(safe, 2e18);
-        assertEq(oracle.grossBasketValue(), 2e18 * 0.5e18 / 1e18, "hydx leg priced");
+        // raw hydx is marked $0 in NAV, so prove the legs landed by reading legCache directly.
+        (uint256 alphaPx,) = oracle.legCache(0);
+        (uint256 hydxPx,) = oracle.legCache(1);
+        assertEq(alphaPx, 1.2e18, "alpha leg priced");
+        assertEq(hydxPx, 0.5e18, "hydx leg priced");
     }
 
     function test_push_non_forwarder_reverts() public {

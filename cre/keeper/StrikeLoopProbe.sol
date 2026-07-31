@@ -45,8 +45,11 @@ contract StrikeLoopProbe {
 
     // ---- scripted views the Job reads ----
     function juniorTrancheEngine() external view returns (address) { return engineSafe; }
-    // oHYDX()/hydx()/ichiVault() all resolve to THIS probe so balanceOf hits here.
+    // oHYDX()/hydx()/ichiVault()/gauge() all resolve to THIS probe so balanceOf hits here;
+    // rewardToken() mirrors oHYDX() so the F13 drift check reads healthy in the sim.
     function oHYDX() external view returns (address) { return address(this); }
+    function gauge() external view returns (address) { return address(this); }
+    function rewardToken() external view returns (address) { return address(this); }
     function hydx() external view returns (address) { return address(this); }
     function ichiVault() external view returns (address) { return address(this); }
     function balanceOf(address) external view returns (uint256) { return bal; }

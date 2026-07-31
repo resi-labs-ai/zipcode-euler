@@ -4,8 +4,6 @@ pragma solidity 0.8.24;
 import {DeployZipcode} from "./DeployZipcode.s.sol";
 import {ZeroIRM, MockERC20} from "./DeployLocal.s.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
-import {FarmUtilityMarketDeployer} from "./FarmUtilityMarketDeployer.sol";
-import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 import {LineIrm} from "./LineIrm.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
@@ -14,9 +12,9 @@ import {IEVault} from "evk/EVault/IEVault.sol";
 /// @notice The real-network counterpart of `DeployLocal`. It runs the same `DeployZipcode` orchestrator (phases
 ///         P0..P9) but — unlike the bare `DeployZipcode:deploy()` — it also (a) PROVISIONS the two create-time
 ///         contracts whose addresses cannot be known in advance (the EulerEarn USDC pool + the no-borrow USDC EVault
-///         at its supply-queue head), (b) seeds the initial `LP_MARK` so the farm utility `setLTV.getQuote` resolves
-///         before CRE is live (P5 override), and (c) runs the EulerEarn curator config (`_configureEulerEarn`) that
-///         `deploy()` leaves as a fork-only TODO. Everything is one team-broadcast.
+///         at its supply-queue head), and (b) runs the EulerEarn curator config (`_configureEulerEarn`) that
+///         `deploy()` leaves as a fork-only TODO. Everything is one team-broadcast. The fair-LP oracle (P5) reads
+///         the pool's Algebra TWAP live — no seed push; the pool's plugin needs ≥ LP_TWAP_WINDOW of history first.
 ///
 /// @dev Principals come from ENV (real EOAs you control), NOT anvil dev accounts. The broadcaster MUST equal
 ///      `TEAM_MULTISIG` (the Safe pre-validated `v==1` path needs `msg.sender == owner`). Run:
@@ -86,9 +84,10 @@ contract DeployMainnet is DeployZipcode {
 
         // --- numeric knobs (documented defaults; override via env) ---
         i.validityWindow = vm.envOr("VALIDITY_WINDOW", uint256(31_536_000));
-        // 0 = CRE-push LP oracle + spot NAV LP leg (the M1 / pre-LP default). Set (e.g. 3600 = 1h) only once the
-        // zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin ⇒ trustless fair-LP for both.
-        i.lpTwapWindow = uint32(vm.envOr("LP_TWAP_WINDOW", uint256(0)));
+        // The fair-LP TWAP window (1h default; zero rejected by the base loader posture — the CRE-push twin was
+        // deleted). POL_ICHI_VAULT's pool must be a live Algebra pool whose plugin has ≥ this much history.
+        i.lpTwapWindow = uint32(vm.envOr("LP_TWAP_WINDOW", uint256(3600)));
+        if (i.lpTwapWindow == 0) revert LpTwapWindowZero();
         i.W = uint32(vm.envOr("NAV_W", uint256(3600)));
         i.maxAge = vm.envOr("NAV_MAX_AGE", uint256(86_400));
         i.maxDeviationBps = vm.envOr("NAV_MAX_DEVIATION_BPS", uint256(1000));
@@ -180,40 +179,4 @@ contract DeployMainnet is DeployZipcode {
         }
     }
 
-    /// @notice P5 override: seed an initial `LP_MARK` between oracle creation and the market build, so the farm utility
-    ///         `setLTV`'s `getQuote` resolves. In production the CRE `LP_MARK` push overwrites this; the broadcaster
-    ///         (the oracle's owner at birth) seeds it once here. Mark = LP_SEED_MARK (6-dp USD per 1e18 LP share);
-    ///         default $1.00 — override to the chosen ICHI vault's real per-share value.
-    function _phaseP5() internal override {
-        d.lpOracle = new SzipFarmUtilityLpOracle(
-            BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
-        );
-
-        _seedLpMark(vm.envOr("LP_SEED_MARK", uint256(1e6)));
-
-        (d.escrowVault, d.borrowVault, d.router) = new FarmUtilityMarketDeployer().deploy(
-            FarmUtilityMarketDeployer.Params({
-                factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
-                evc: BaseAddresses.EVC,
-                governor: address(d.timelock),
-                lpToken: i.polIchiVault,
-                usdc: BaseAddresses.USDC,
-                lpOracle: address(d.lpOracle),
-                irm: i.irm,
-                juniorTrancheEngine: d.sub.juniorTrancheSafe,
-                borrowLTV: i.borrowLTV,
-                liqLTV: i.liqLTV
-            })
-        );
-
-        if (i.polIchiVault != IEVault(d.escrowVault).asset()) revert SeamSharedLp();
-    }
-
-    /// @dev Push a single `LP_MARK` as the broadcaster: temporarily point the oracle's forwarder at `i.team` (the
-    ///      broadcaster, which owns the just-created oracle), push, then restore the real CRE Forwarder.
-    function _seedLpMark(uint256 mark) internal {
-        d.lpOracle.setForwarderAddress(i.team);
-        d.lpOracle.onReport("", abi.encode(d.lpOracle.LP_MARK(), abi.encode(mark, uint32(block.timestamp))));
-        d.lpOracle.setForwarderAddress(BaseAddresses.CRE_KEYSTONE_FORWARDER);
-    }
 }

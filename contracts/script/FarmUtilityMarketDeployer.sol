@@ -14,7 +14,7 @@ import {FarmUtilityBorrowGuard} from "../src/supply/szipUSD/FarmUtilityBorrowGua
 ///         WOOF-04's per-line routers), and (2) the deployer CREATES the borrow vault (oracle = the router), resolving
 ///         the router/borrow-vault ordering cycle (the router is built BEFORE the borrow vault). It stands up:
 ///         - the LP escrow collateral vault (bare 1:1 holding box),
-///         - a dedicated `EulerRouter` wired `escrow → lpToken → SzipFarmUtilityLpOracle`,
+///         - a dedicated `EulerRouter` wired `escrow → lpToken → AlgebraIchiFairLpOracle`,
 ///         - the `FarmUtilityBorrowGuard` (pins `OP_BORROW` to the engine Safe — security F8a),
 ///         - the USDC borrow vault (oracle = that router; JIT-funded from the resting `usdcReservoir`, ≈0 at rest —
 ///           NOT itself the resting vault), with the guard installed
@@ -33,7 +33,7 @@ contract FarmUtilityMarketDeployer {
     /// @param governor The retained governor (the §17 TimelockController) for the router + borrow vault.
     /// @param lpToken The ICHI LP share collateral token (18-dp).
     /// @param usdc USDC (borrow asset + unit-of-account — prices 1:1, no feed).
-    /// @param lpOracle The `SzipFarmUtilityLpOracle` the router resolves the LP collateral through.
+    /// @param lpOracle The `AlgebraIchiFairLpOracle` the router resolves the LP collateral through.
     /// @param irm The interest rate model installed on the borrow vault.
     /// @param juniorTrancheEngine The szipUSD engine Safe (the guard's sole legal borrower).
     /// @param borrowLTV The borrow LTV (1e4 scale) accepting the escrow as collateral.

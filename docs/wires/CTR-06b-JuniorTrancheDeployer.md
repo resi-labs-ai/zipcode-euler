@@ -99,8 +99,8 @@ It is a faithful EXTRACTION, not a new mechanism: every ctor/setUp tuple is the 
 `contracts/test/JuniorTrancheDeployer.t.sol` — a fork test on `_selectBaseFork()` (live `BaalAndVaultSummoner` + live
 EVK/EVC). Injects mock NAV legs (`zip/usdc/xalpha/hydx/ohydx`) + `MockEulerEarn` (eePool) + `MockLpToken` (polIchiVault,
 with `token0/token1` for `LpStrategyModule.setUp`) + `MockGauge` (`rewardToken` for `HarvestVoteModule.setUp`); builds
-the farm utility escrow/borrow vaults via the REAL `FarmUtilityMarketDeployer` over the live EVK + a CRE-marked
-`SzipFarmUtilityLpOracle`. 4 tests, all green: `test_deploy_seams_hold` (every inline seam passes), `test_ownership_handoff`
+the farm utility escrow/borrow vaults via the REAL `FarmUtilityMarketDeployer` over the live EVK + a fixed-mark
+`MockLpOracle` stand-in (production: `AlgebraIchiFairLpOracle`). 4 tests, all green: `test_deploy_seams_hold` (every inline seam passes), `test_ownership_handoff`
 (OZ→Timelock, 8 modules→Timelock, both Safes→team & NOT the deployer, rate oracle wired-not-owned), 
 `test_addSilo_topology_clauses_1_to_5` (a REAL `SiloRegistry.addSilo` from a pranked Timelock — reverts `SiloMiswired`
 if any clause fails), `test_non_commingling`.

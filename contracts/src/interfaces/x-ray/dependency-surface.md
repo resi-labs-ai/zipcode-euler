@@ -83,8 +83,8 @@ Trust tier = blast radius if the external contract misbehaves or is mis-wired. *
 > **Trust: MEDIUM–HIGH.** The oHYDX yield + vote-emission loop and the demo vAMM LP.
 
 - Exposes: gauge `deposit`/`withdraw`/`balanceOf`/`earned` (IGauge); option `exercise`/`discount` (IOptionToken); voter/ve/rewards (the 8-B5 harvest-vote loop); `getReserves`/`mint`/`token0/1` (IVammPair).
-- Consumed by: `IGauge` → demo forks + `SzipNavOracle.sol`, `HarvestVoteModule.sol`, `LpStrategyModule.sol`; `IOptionToken` → demo oracle + `SzipNavOracle.sol`, `HarvestVoteModule.sol`, `ExerciseModule.sol`; `IVoter`/`IVotingEscrow`/`IRewardsDistributor` → `HarvestVoteModule.sol`; `IVammPair` → the two `hydrex-demo-fork` contracts **only**.
-- Composability note: `IVammPair` is exclusively the demo seam (see the hydrex-demo-fork X-Ray). The option `discount()` feeds oHYDX intrinsic value in NAV.
+- Consumed by: `IGauge` → demo forks + `SzipNavOracle.sol`, `HarvestVoteModule.sol`, `LpStrategyModule.sol`; `IOptionToken` → `HarvestVoteModule.sol`, `ExerciseModule.sol` (the NAV oracles no longer read it — oHYDX is marked $0); `IVoter`/`IVotingEscrow`/`IRewardsDistributor` → `HarvestVoteModule.sol`; `IVammPair` → the two `hydrex-demo-fork` contracts **only**.
+- Composability note: `IVammPair` is exclusively the demo seam (see the hydrex-demo-fork X-Ray). The option `discount()` is NOT a NAV input — oHYDX (and veHYDX) are marked $0 in NAV; value is recognized only when realized exercise proceeds land in a Safe.
 
 ### Euler — `euler/IEulerEarn.sol`
 

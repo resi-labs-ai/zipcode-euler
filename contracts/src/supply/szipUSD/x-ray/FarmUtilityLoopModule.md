@@ -6,8 +6,8 @@ Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/FarmUtilityLoo
 8-B5 strike-financing **leverage loop** (EVK borrow of the warehouse's resting USDC — JIT-funded into the farm
 utility vault from `usdcReservoir`, collateralized by the LP). The highest-consequence
 fleet module after the value-out path: it borrows shared depositor cash. Connected to
-`test/FarmUtilityLoopModule.t.sol` — a 42-test suite that **also** covers adjacent contracts (the `SzipFarmUtilityLpOracle`,
-the already-drilled `FarmUtilityBorrowGuard`, and a farm utility-funding surface, CTR-07). The loop module's own coverage:
+`test/FarmUtilityLoopModule.t.sol` — a suite that **also** covers adjacent contracts (the
+already-drilled `FarmUtilityBorrowGuard`, and a farm utility-funding surface, CTR-07). The loop module's own coverage:
 **~16 unit/fork tests, almost all against the REAL EVK/EVC market.** By integration depth, the second-best-tested
 module after DurationFreezeModule.
 
@@ -78,7 +78,8 @@ No permissionless mutators. No custody.
   important property in the module and it is the best-covered.
 - **Fail-closed on a bad oracle mark (I-4)** — a stale or never-pushed LP mark reverts the borrow (bubbled router
   `TooStale`/`NotSupported`), so the leverage can't open against a price the oracle won't stand behind. Tested both
-  ways. (The oracle itself, `SzipFarmUtilityLpOracle`, has its own cluster in this suite — out of this module's scope.)
+  ways (via the suite's settable `MockLpOracle` stand-in; the production adapter is `AlgebraIchiFairLpOracle`,
+  drilled in its own fork suite).
 - **Repay exactness (I-6)** — EVK's `repay` reverts `E_RepayTooMuch` for a literal over-repay (only `type(uint).max`
   means "all"); the module repays the exact strike and resets the approval. Both the over-repay revert and the
   allowance reset are tested.
@@ -100,9 +101,10 @@ No permissionless mutators. No custody.
 | Base-fork (real EVK/EVC) | full-loop-revolves-twice, over-LTV, no-collateral, stale/never-pushed, withdraw-with-debt, exact-repay/over-repay, third-party-guard | the load-bearing borrow controls, all on the real market |
 | Stateless fuzz / Foundry invariant | 0 | the hard properties are EVK-enforced + cap-checked; a stateful invariant is optional |
 
-The full file is **43 tests, all passing** (`forge test --match-path test/FarmUtilityLoopModule.t.sol`) — incl. the
-adjacent `SzipFarmUtilityLpOracle` cluster, the `FarmUtilityBorrowGuard` tests, and the CTR-07 farm utility-funding tests
-(out of this module's scope). Coverage % uninstrumentable (project-wide stack-too-deep); green run confirmed.
+The full file is green (`forge test --match-path test/FarmUtilityLoopModule.t.sol`) — incl. the
+`FarmUtilityBorrowGuard` tests and the CTR-07 farm utility-funding tests (out of this module's scope; the old
+push-oracle cluster was deleted with its contract). Coverage % uninstrumentable (project-wide stack-too-deep);
+green run confirmed.
 
 ## X-Ray Verdict
 

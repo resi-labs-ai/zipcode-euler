@@ -69,36 +69,94 @@ contract SeniorNavAggregator is Ownable {
 
     // --------------------------------------------------------------------- aggregate reads
 
-    /// @notice Σ senior par-backing over ALL silos (the §12 senior-solvency numerator while no impairment is
-    ///         outstanding; includes retired silos — they still back outstanding zipUSD). 18-dp USD.
-    function seniorBacking() public view returns (uint256 total) {
+    /// @dev The shared Σ loop, deduplicated by PHYSICAL backing (audit F10). The value lives on the
+    ///      `(eePool, warehouseSafe)` pair — `convertToAssets(balanceOf(warehouseSafe))` — while `SiloRegistry`
+    ///      deliberately admits the SAME pair under multiple siloIds (per-physical-pool uniqueness is an intentional
+    ///      non-goal: an adapter re-point over the same pool is a separate `addSilo`, and the retired entry stays in
+    ///      `allSiloIds()` forever). Without dedup that documented flow permanently double-counts the pair — and the
+    ///      error points the DANGEROUS way for this contract's stated purpose (overstated backing = a breaker that
+    ///      fails to trip). Pair-keyed on purpose: two silos sharing an `eePool` under DIFFERENT Safes hold genuinely
+    ///      distinct share balances and must both count. `activeOnly` filters BEFORE dedup, so a retired duplicate
+    ///      never suppresses its live twin. O(n²) seen-scan over the admitted-silo count (tens) — view-path cheap.
+    ///
+    ///      PER-SILO FAILURE ISOLATION (added ahead of the Morpho/Aave venue expansion): each pair's read runs under
+    ///      try/catch, so one broken pool cannot brick the Σ. Today every venue is EulerEarn, whose views answer from
+    ///      its own storage and cannot revert; a future third-party pool is upgradeable by ITS governance, and silos
+    ///      can never be removed from `allSiloIds()` — without isolation, one post-retirement upgrade could blind the
+    ///      solvency views forever. A broken pair counts as ZERO backing, which errs the SAFE way (understated
+    ///      backing = a breaker that trips early), and is never silent: `unreadablePairs()` reports the skip count,
+    ///      and the strict per-silo getters (`seniorBackingOf`) still revert loudly for diagnosis.
+    function _aggregate(bool activeOnly, bool illiquid) private view returns (uint256 total, uint256 skipped) {
         if (address(registry) == address(0)) revert RegistryUnset();
         bytes32[] memory ids = registry.allSiloIds();
+        bytes32[] memory seen = new bytes32[](ids.length);
+        uint256 seenCount;
         for (uint256 i = 0; i < ids.length; i++) {
             SiloRegistry.Silo memory s = registry.getSilo(ids[i]);
-            total += _seniorValue(s.eePool, s.warehouseSafe);
+            if (activeOnly && !s.active) continue;
+            bytes32 key = keccak256(abi.encodePacked(s.eePool, s.warehouseSafe));
+            bool dup;
+            for (uint256 j; j < seenCount; j++) {
+                if (seen[j] == key) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) continue;
+            seen[seenCount++] = key;
+            if (illiquid) {
+                try this.pairIlliquidValue(s.eePool, s.warehouseSafe) returns (uint256 v) {
+                    total += v;
+                } catch {
+                    skipped++;
+                }
+            } else {
+                try this.pairSeniorValue(s.eePool, s.warehouseSafe) returns (uint256 v) {
+                    total += v;
+                } catch {
+                    skipped++;
+                }
+            }
         }
+    }
+
+    /// @notice The raw per-pair senior read, external ONLY so the Σ loop can try/catch it. Dashboards should use
+    ///         `seniorBackingOf(siloId)`.
+    function pairSeniorValue(address eePool, address warehouseSafe) external view returns (uint256) {
+        return _seniorValue(eePool, warehouseSafe);
+    }
+
+    /// @notice The raw per-pair illiquid read, external ONLY so the Σ loop can try/catch it. Dashboards should use
+    ///         `illiquidSeniorValueOf(siloId)`.
+    function pairIlliquidValue(address eePool, address warehouseSafe) external view returns (uint256) {
+        return _illiquidValue(eePool, warehouseSafe);
+    }
+
+    /// @notice How many physical `(eePool, warehouseSafe)` pairs the all-silos senior Σ currently CANNOT read (their
+    ///         views revert). Zero means every aggregate above is complete. Non-zero means the totals understate by
+    ///         the broken pairs' backing — pollers must treat the aggregates as a conservative lower bound and probe
+    ///         the strict per-silo getters to find the broken venue.
+    function unreadablePairs() external view returns (uint256 skipped) {
+        (, skipped) = _aggregate(false, false);
+    }
+
+    /// @notice Σ senior par-backing over ALL silos (the §12 senior-solvency numerator while no impairment is
+    ///         outstanding; includes retired silos — they still back outstanding zipUSD). Each physical
+    ///         `(eePool, warehouseSafe)` pair counts ONCE regardless of how many siloIds reference it. 18-dp USD.
+    function seniorBacking() public view returns (uint256 total) {
+        (total,) = _aggregate(false, false);
     }
 
     /// @notice Σ senior par-backing over silos with `active == true` only (the routable-capacity telemetry view).
-    ///         18-dp USD.
+    ///         Pair-deduplicated among the active entries. 18-dp USD.
     function activeSeniorBacking() external view returns (uint256 total) {
-        if (address(registry) == address(0)) revert RegistryUnset();
-        bytes32[] memory ids = registry.allSiloIds();
-        for (uint256 i = 0; i < ids.length; i++) {
-            SiloRegistry.Silo memory s = registry.getSilo(ids[i]);
-            if (s.active) total += _seniorValue(s.eePool, s.warehouseSafe);
-        }
+        (total,) = _aggregate(true, false);
     }
 
-    /// @notice Σ lent-out senior dollars over ALL silos (the §12 utilization/duration-squeeze input). 18-dp USD.
+    /// @notice Σ lent-out senior dollars over ALL silos (the §12 utilization/duration-squeeze input).
+    ///         Pair-deduplicated. 18-dp USD.
     function illiquidSeniorValue() external view returns (uint256 total) {
-        if (address(registry) == address(0)) revert RegistryUnset();
-        bytes32[] memory ids = registry.allSiloIds();
-        for (uint256 i = 0; i < ids.length; i++) {
-            SiloRegistry.Silo memory s = registry.getSilo(ids[i]);
-            total += _illiquidValue(s.eePool, s.warehouseSafe);
-        }
+        (total,) = _aggregate(false, true);
     }
 
     /// @notice `seniorBacking() * 1e18 / zipUsdSupply` (18-dp ratio; `1e18` == exactly 100% backed). The stress-test /

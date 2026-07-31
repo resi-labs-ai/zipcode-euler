@@ -21,7 +21,7 @@ ExitGate, ZipDepositModule, DefaultCoordinator) that read it as the real oracle.
 > bid's freshness anchor (`oldestRequiredLegTs`, SEC-13), the impairment-provision sink (M2), and the Exit Gate's
 > issuance valuation seam (`valueOf`). The defensive core is the **bracket asymmetry** — a sub-window spot move can
 > never be turned into a profitable mint (`max`) or a rich exit (`min`) — backed by a poke-spam-resistant TWAP ring
-> (`obsSpacing`). It shares the `ReceiverTemplate` CRE-receiver DNA with `SzipFarmUtilityLpOracle` but is far larger:
+> (`obsSpacing`). It shares the `ReceiverTemplate` CRE-receiver DNA with `ZipcodeOracleRegistry` but is far larger:
 > a full on-chain basket composition rather than a single pushed mark.
 
 ## 1. What it is
@@ -29,7 +29,7 @@ ExitGate, ZipDepositModule, DefaultCoordinator) that read it as the real oracle.
 A 360-nSLOC `ReceiverTemplate` (CRE receiver; no `BaseAdapter` — this is a NAV primitive, not an EVK adapter). Eight
 immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfaces:
 
-- **Composition (view):** `grossBasketValue` sums seven legs (zipUSD@$1, USDC×1e12, xALPHA two-layer, HYDX, oHYDX intrinsic, ICHI LP in all states, − farm-utility strike debt), saturating at 0; `committedValue`/`freeValue` are the additive per-Safe decomposition; `pathLockedLpEquity` the main-Safe LP net of debt; `spotNavPerShare` / `twapNavPerShare` the share prices; `navEntry`/`navExit`/`fresh`/`oldestRequiredLegTs`/`valueOf`/`lpShareValue` the consumer reads.
+- **Composition (view):** `grossBasketValue` sums five legs (zipUSD@$1, USDC×1e12, xALPHA two-layer, ICHI LP in all states, − farm-utility strike debt), saturating at 0. HYDX, oHYDX, and veHYDX are deliberately marked $0 — HYDX is pure sale inventory (spot-marking overstates realizable value by dump slippage), the oHYDX intrinsic formula can't track Hydrex's exercise payment floor or that slippage, and ve-locked exercise absorbs value into permalocked voting power; NAV recognizes emission value only when realized proceeds (stables) land in a Safe. The `LEG_HYDX_USD` feed (pushes, deviation band, staleness gates) is kept as the exercise-profitability input, not a NAV input. `committedValue`/`freeValue` are the additive per-Safe decomposition; `pathLockedLpEquity` the main-Safe LP net of debt; `spotNavPerShare` / `twapNavPerShare` the share prices; `navEntry`/`navExit`/`fresh`/`oldestRequiredLegTs`/`valueOf`/`lpShareValue` the consumer reads.
 - **Write (CRE only):** `onReport` (forwarder-gated) → `_processReport` (reportType `NAV_LEG=7`, all-or-nothing batch: length-match, future-ts, per-leg deviation band + zero-price + strictly-newer ts) → `legCache`; the accumulator is advanced FIRST so the old spot is booked before new prices apply.
 - **Write (coordinator only):** `writeProvision` (sole writer = `DefaultCoordinator`; unbounded at the oracle by design — the bound lives in M2).
 - **Permissionless:** `poke()` advances the TWAP integral + ring (idempotent within a block; one ring slot per `obsSpacing`).
@@ -43,7 +43,7 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
 | `poke()` | permissionless | advances integral + ring; `dt==0` no-op |
 | `grossBasketValue` / `committedValue` / `freeValue` / `pathLockedLpEquity` / `lpShareValue` / `valueOf` | public view | basket + per-leg valuation |
 | `spotNavPerShare` / `twapNavPerShare` / `navEntry` / `navExit` / `fresh` / `oldestRequiredLegTs` | public view | share-price + freshness consumer surface |
-| `setShareToken`/`setLpPosition`/`setFarmUtilityLeg`/`setLpTwapWindow`/`setJuniorTrancheEngine`/`setDefaultCoordinator`/`setXAlphaRateOracle` | `onlyOwner` (Timelock) | build-phase re-pointable wiring (§17) |
+| `setShareToken`/`setLpPosition`/`setFarmUtilityLeg`/`setLpTwapWindow`/`setJuniorTrancheEngine`/`setDefaultCoordinator`/`setXAlphaRateOracle`/`setRedemptionQueue` | `onlyOwner` (Timelock) | build-phase re-pointable wiring (§17); NAV-input setters best-effort checkpoint (`try this.poke() catch {}`) before mutating so re-points don't retroactively re-weight TWAP history — best-effort so recovery levers still work mid-outage |
 | `constructor(...11 args)` | deploy | zero-guards the 7 identity addrs + `W` + `maxAge`; derives `obsSpacing`, seeds obs[0] |
 
 ## 3. Invariants — with test connection
@@ -64,8 +64,9 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
 | I-12 | **valueOf seam** — zipUSD par, xALPHA two-layer, unsupported asset fails closed | Yes | **`test_valueOf_*`** (3) |
 | I-13 | **forwarder identity + renounce-freeze** — workflow-id gate; renounce freezes setters; correct id still writes | Yes | **`test_forwarder_immutability_and_identity`** |
 | I-14 | **ctor zero-guards + live-face signatures** | Yes | **`test_ctor_rejects_zero`**, `_deploy_immutables`, `_fork_external_signatures` (Base) |
-| I-15 | **setter auth/zero on ALL wiring** — every setter is `onlyOwner` and zero-guards its non-optional args | Yes | **`test_setters_onlyOwner_and_zeroGuards`** — non-owner reverts on `setFarmUtilityLeg`/`setLpTwapWindow`/`setXAlphaRateOracle`/`setJuniorTrancheEngine`/`setDefaultCoordinator`; `ZeroAddress` on both `setFarmUtilityLeg` args + engine + DC; `setXAlphaRateOracle(0)` is a valid owner unset (+ `setShareToken` auth / `setLpPosition` zero, pre-existing) |
+| I-15 | **setter auth/zero on ALL wiring** — every setter is `onlyOwner` and zero-guards its non-optional args | Yes | **`test_setters_onlyOwner_and_zeroGuards`** — non-owner reverts on `setFarmUtilityLeg`/`setLpTwapWindow`/`setXAlphaRateOracle`/`setJuniorTrancheEngine`/`setDefaultCoordinator`; `ZeroAddress` on MIXED `setFarmUtilityLeg` args (`(0,0)` is the valid atomic-unset recovery lever, tested + `test_farmUtility_unset_recovers_from_reverting_view`) + engine + DC; `setXAlphaRateOracle(0)` is a valid owner unset (+ `setShareToken` auth / `setLpPosition` zero, pre-existing) |
 | I-16 | **additive decomposition** — `committedValue() + freeValue() == grossBasketValue()` exactly for the five plain legs (≤2 wei for a split LP); the double-count-free per-Safe split the freeze floor relies on | Yes | **`test_committed_plus_free_equals_gross_plainLegs`** (exact) + **`test_committed_plus_free_equals_gross_splitLp_within_2wei`** (worst-case constructed to land at exactly 2 wei, `sum <= gross`) |
+| I-17 | **F8 LP-TWAP history halt is typed + self-healing** — a replaced/reset plugin whose ring history under-covers the armed window halts every LP-containing NAV read with `LpTwapHistoryTooShort(plugin, readyAt)` (not an opaque plugin revert), and the identical read passes UNAIDED at `readyAt` (no unpause, no setter); `lpTwapStatus()` is the non-reverting probe (ready when window 0 / LP unwired; `(false, plugin, readyAt)` while halted; `readyAt == 0` ⇒ no initialized plugin, no ETA) | Yes | **`test_F8_historyGate_halts_navReads_then_selfHeals`**, **`test_F8_lpTwapStatus_probe`** (+ lib-level pre-wrap/wrapped-ring + fork pins in `AlgebraIchiFairLpOracle.t.sol`) |
 
 ## 4. Guards — coverage
 
@@ -78,6 +79,7 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
 | `StalePrice` / `StaleRate` | `navEntry`/`fresh` | `test_staleness_*`, `_xAlphaRateOracle_gates_*` |
 | `UnknownLpToken` | `_legPriceOfToken:590` | `test_lp_unknown_token_reverts`, `_valueOf_unsupported_asset_reverts` |
 | `LpTwapPluginNotReady` | `_assertLpTwapReady()` — shared by `setLpTwapWindow` (arm) + `setLpPosition` (re-point under live window) | `test_SEC10_*`, `test_SUPPLYADV15_*` |
+| `LpTwapHistoryTooShort` (lib) | `IchiAlgebraFairReserves.fairReserves` history-depth gate, reached via `_lpValue` on every LP-containing NAV read; probed non-revertingly by `lpTwapStatus()` | `test_F8_*` |
 | ctor `ZeroAddress` | `:200` | `test_ctor_rejects_zero` |
 | `setShareToken` onlyOwner | `:227` | `test_setShareToken_setOnce_and_auth` |
 | `setLpPosition` `ZeroAddress` | `:235` | `test_setLpPosition_setOnce` |
@@ -117,9 +119,12 @@ immutable identity/config slots + nine Timelock-re-pointable wiring slots. Surfa
   `poke()`s before `navExit` like the Gate); `writeProvision` unbounded at the oracle (bound in M2); xALPHA `exchangeRate`
   is an M1 stand-in (production Rubicon getter verified at bridge integration); no first-depositor guard (the Gate
   owns genesis). All are NatSpec-documented security-review acceptances.
-- **Inherited residuals.** The `IchiAlgebraFairReserves` TWAP path (when `lpTwapWindow != 0`) carries the lib's X-2
-  (pool TWAP cardinality, off-chain config) — see [lib/x-ray](../lib/x-ray/x-ray.md); the CRE/Forwarder push trust;
-  and build-phase mutable wiring (frozen pre-prod).
+- **Inherited residuals.** The `IchiAlgebraFairReserves` TWAP path (when `lpTwapWindow != 0`) carries the lib's X-2 —
+  now narrowed by the F8 history-depth gate (under-coverage halts typed + self-healing; what remains is sustained
+  in-window manipulation economics, pool depth vs. extractable) — see [lib/x-ray](../lib/x-ray/x-ray.md); the
+  CRE/Forwarder push trust; and build-phase mutable wiring (frozen pre-prod). A Hydrex plugin swap pauses
+  LP-containing NAV reads for ≤ the armed window (1h) and self-heals; `setLpTwapWindow(0)` remains the manual
+  emergency lever but re-exposes counted LP at spot — prefer waiting out `readyAt`.
 
 ## 6. Test analysis
 

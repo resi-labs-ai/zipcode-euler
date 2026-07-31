@@ -17,4 +17,26 @@ interface IAlgebraOraclePlugin {
 
     /// @notice True once the plugin's timepoint array has been initialized (a fresh plugin reverts TWAP reads).
     function isInitialized() external view returns (bool);
+
+    /// @notice The write head of the plugin's 65536-slot timepoint ring buffer (the index of the NEWEST stored
+    ///         timepoint). Verified on-chain 2026-07-28 against the same plugin 0xe33a24…85Ae1: timepointIndex()
+    ///         -> 14799 with timepoints(14800).initialized == false (ring not yet wrapped ⇒ oldest is slot 0).
+    function timepointIndex() external view returns (uint16);
+
+    /// @notice The ring-buffer slot at `index`. Only `initialized` and `blockTimestamp` are consumed here (the
+    ///         history-depth gate); the remaining fields are returned to match the deployed struct layout.
+    ///         Verified on-chain 2026-07-28 against plugin 0xe33a24…85Ae1: timepoints(0) ->
+    ///         (true, 1776960545, 0, 0, -306490, -306490, 0).
+    function timepoints(uint256 index)
+        external
+        view
+        returns (
+            bool initialized,
+            uint32 blockTimestamp,
+            int56 tickCumulative,
+            uint88 volatilityCumulative,
+            int24 tick,
+            int24 averageTick,
+            uint16 windowStartIndex
+        );
 }

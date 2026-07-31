@@ -10,11 +10,15 @@ import {ISzipNavBasket} from "../../interfaces/supply/ISzipNavBasket.sol";
 import {ISeniorPool} from "../../interfaces/supply/ISeniorPool.sol";
 
 /// @title DurationFreezeModule
-/// @notice The §11-B / §6.4 / §8.2 duration-squeeze freeze actuator: the seventh engine Zodiac `Module`, and the
-///         first enabled on BOTH Safes (main + juniorTrancheSidecar), because the freeze moves value across them. It fills the
-///         non-ragequittable juniorTrancheSidecar (`commit`, MAIN→SIDECAR) and drains it (`release`, SIDECAR→MAIN), keeping the
-///         utilization-committed junior equity structurally unreachable by an Exit-Gate window exit. This is the
-///         Duration-Bond trigger B — a LIQUIDITY squeeze: no realized loss, no xALPHA premium/slash, no markdown.
+/// @notice The freeze is a RULE, not a vault: this module publishes `covered()` — is junior coverage
+///         (`committedValue + pathLockedLpEquity`, every number read LIVE off the oracle at check time) still at or
+///         above the outstanding senior debt? The real outflows (`SzipBuyBurnModule.postBid`,
+///         `LpStrategyModule.removeLiquidity`) check that answer before letting value exit; exits stay restricted
+///         until coverage is restored. That gating IS the §11-B / §6.4 / §8.2 duration-squeeze freeze
+///         (Duration-Bond trigger B — a LIQUIDITY squeeze: no realized loss, no xALPHA premium/slash, no markdown).
+///         The physical `commit` (MAIN→SIDECAR) / `release` (SIDECAR→MAIN) lever below is the DORMANT
+///         exception-only path — the sidecar sits empty in normal operation (the LP backs the floor in place; it is
+///         never moved). Enabled on BOTH Safes only so that dormant lever can act when invoked.
 ///
 /// @dev RESIDUAL-TRUST BLOCK (§13): this module **rotates and bounds**; it does NOT decide the liquidity regime.
 ///      The CRE `operator` (single, trusted, the same authority every engine module trusts) is trusted for *which*
@@ -168,10 +172,18 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         emit WiringSet("operator", operator_);
     }
 
-    /// @notice Re-point `navOracle` (build phase, §17). onlyOwner (Timelock).
+    /// @notice Re-point `navOracle` (build phase, §17). onlyOwner (Timelock). Re-derives the five-leg movable
+    ///         whitelist LIVE off the new oracle — the same reads `setUp` runs — so the dormant commit/release
+    ///         lever's whitelist can never silently drift from what the wired oracle actually prices (audit F13).
     function setNavOracle(address navOracle_) external onlyOwner {
         if (navOracle_ == address(0)) revert ZeroAddress();
         navOracle = navOracle_;
+        ISzipNavBasket o = ISzipNavBasket(navOracle_);
+        zipUSD = o.zipUSD();
+        usdc = o.usdc();
+        xAlpha = o.xAlpha();
+        hydx = o.hydx();
+        oHydx = o.oHydx();
         emit WiringSet("navOracle", navOracle_);
     }
 

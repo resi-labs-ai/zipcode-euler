@@ -15,7 +15,6 @@
 //	Status (5/6)                  (bytes32,uint8)                                                   Controller:203
 //	Revaluation (3)               (address[],uint256[],uint32)                                      Registry:132
 //	NavLeg (7)                    (uint8[],uint256[],uint32)                                        NavOracle:304
-//	LpMark (7)                    (uint256,uint32)                                                  LpOracle:109
 //	Coordinator (8)               (uint8 action, bytes data) + per-action tuple                     Coordinator:185
 //	Rate (8)                      (uint256,uint48)                                                  RateOracle:83
 //	Warehouse (1/2/3/4)           per-op                                                            Warehouse:164-176
@@ -86,11 +85,12 @@ func TestOriginationRoundTrip(t *testing.T) {
 	cap, _ := new(big.Int).SetString("123456789012345678901234567890", 10)
 	borrowLTV := uint16(7000)
 	liqLTV := uint16(8500)
+	sourceTs := big.NewInt(1_700_000_000) // SEC/L-3: the equityMark's appraisal as-of time
 
-	env, err := Origination(lienId, proofRef, equityMark, borrowLTV, liqLTV, drawAmount, cap, siloId)
+	env, err := Origination(lienId, proofRef, equityMark, borrowLTV, liqLTV, drawAmount, cap, siloId, sourceTs)
 	payload := mustEnv(t, env, err, ControllerOrigination)
 
-	out, err := args(tBytes32, tBytes32, tUint256, tUint16, tUint16, tUint256, tUint256, tBytes32).Unpack(payload)
+	out, err := args(tBytes32, tBytes32, tUint256, tUint16, tUint16, tUint256, tUint256, tBytes32, tUint48).Unpack(payload)
 	if err != nil {
 		t.Fatalf("decode inner: %v", err)
 	}
@@ -106,6 +106,7 @@ func TestOriginationRoundTrip(t *testing.T) {
 	eqBig(t, "drawAmount", out[5].(*big.Int), drawAmount)
 	eqBig(t, "cap", out[6].(*big.Int), cap)
 	eqB32(t, "siloId", out[7].([32]byte), siloId)
+	eqBig(t, "sourceTs", out[8].(*big.Int), sourceTs)
 }
 
 func TestDrawRoundTrip(t *testing.T) {
@@ -113,11 +114,12 @@ func TestDrawRoundTrip(t *testing.T) {
 	proofRef := b32(20)
 	equityMark := big.NewInt(2_000_000)
 	drawAmount := big.NewInt(500_000)
+	sourceTs := big.NewInt(1_700_000_500) // SEC/L-3: the re-anchored mark's appraisal as-of time
 
-	env, err := Draw(lienId, proofRef, equityMark, drawAmount)
+	env, err := Draw(lienId, proofRef, equityMark, drawAmount, sourceTs)
 	payload := mustEnv(t, env, err, ControllerDraw)
 
-	out, err := args(tBytes32, tBytes32, tUint256, tUint256).Unpack(payload)
+	out, err := args(tBytes32, tBytes32, tUint256, tUint256, tUint48).Unpack(payload)
 	if err != nil {
 		t.Fatalf("decode inner: %v", err)
 	}
@@ -125,6 +127,7 @@ func TestDrawRoundTrip(t *testing.T) {
 	eqB32(t, "proofRef", out[1].([32]byte), proofRef)
 	eqBig(t, "equityMark", out[2].(*big.Int), equityMark)
 	eqBig(t, "drawAmount", out[3].(*big.Int), drawAmount)
+	eqBig(t, "sourceTs", out[4].(*big.Int), sourceTs)
 }
 
 func TestCloseRoundTrip(t *testing.T) {
@@ -243,25 +246,6 @@ func TestNavLegRoundTrip(t *testing.T) {
 func TestNavLegLengthMismatch(t *testing.T) {
 	if _, err := NavLegReport([]uint8{0, 1}, []*big.Int{big.NewInt(1)}, 0); err == nil {
 		t.Fatal("NavLeg with mismatched lengths should error")
-	}
-}
-
-// ──────────────────────────────────────────────────────────────────────── SzipFarmUtilityLpOracle
-
-func TestLpMarkRoundTrip(t *testing.T) {
-	mark, _ := new(big.Int).SetString("999999999999999999999", 10)
-	ts := uint32(1_777_000_000)
-
-	env, err := LpMarkReport(mark, ts)
-	payload := mustEnv(t, env, err, LpMark)
-
-	out, err := args(tUint256, tUint32).Unpack(payload)
-	if err != nil {
-		t.Fatalf("decode inner: %v", err)
-	}
-	eqBig(t, "mark", out[0].(*big.Int), mark)
-	if out[1].(uint32) != ts {
-		t.Fatalf("ts: got %d want %d", out[1].(uint32), ts)
 	}
 }
 

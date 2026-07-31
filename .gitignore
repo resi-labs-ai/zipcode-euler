@@ -23,6 +23,12 @@ audit/
 adversarial-review/
 build/
 
+# Bridge work-in-progress: relocated auditor findings (verbatim exploit scenarios + fix diffs),
+# third-party incident forensics, and the pre-mainnet requirements derived from them. Same
+# never-publish rationale as the analysis reports above — an open-findings roadmap plus a live
+# account of an incumbent's unremediated failure. Local only.
+bridge/
+
 # Foundry build artifacts
 contracts/out/
 contracts/cache/
@@ -39,7 +45,13 @@ contracts/.env
 # Raw auditor reports: unremediated findings + exploit scenarios + the fix diffs = an attack
 # roadmap while the findings are still open. Triage/response lives in the audit workflow, not here.
 resi-labs-ai-zipcode-euler-*-analysis.md
+resi-labs-ai-zipcode-euler-*-analysis*.md
 *-analysis.md
+*-analysis (*).md
+
+# Internal exit-design working notes (two-lane exit, fairness debate) — internal planning, not
+# protocol documentation, and not a filename for a public repo. Lives in cre/ until the CRE review.
+FUCK_UR_MOM.md
 
 # Internal planning + strategy that is not protocol documentation. Matched by name at any
 # depth — carry-risk names the still-open soft spots and points into the private crank trees,

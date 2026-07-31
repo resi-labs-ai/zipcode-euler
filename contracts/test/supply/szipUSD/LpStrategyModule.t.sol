@@ -256,6 +256,32 @@ contract MockCoverageGate {
     }
 }
 
+/// @dev A settable `SzipNavOracle` config stand-in (`INavOracleLpConfig`) for the SEC/H-1 fair-LP funding gate:
+///      exposes `lpTwapWindow`/`ichiVault`/`gauge` so the guard in `addLiquidity` can be driven armed or tripped.
+contract MockNavOracle {
+    uint32 public lpTwapWindow;
+    address public ichiVault;
+    address public gauge;
+
+    constructor(uint32 window_, address ichiVault_, address gauge_) {
+        lpTwapWindow = window_;
+        ichiVault = ichiVault_;
+        gauge = gauge_;
+    }
+
+    function setLpTwapWindow(uint32 w) external {
+        lpTwapWindow = w;
+    }
+
+    function setIchiVault(address v) external {
+        ichiVault = v;
+    }
+
+    function setGauge(address g) external {
+        gauge = g;
+    }
+}
+
 contract LpStrategyModuleUnitTest is Test {
     LpStrategyModule internal m;
     RecordingSafe internal safe;
@@ -263,6 +289,7 @@ contract LpStrategyModuleUnitTest is Test {
     MockGauge internal gauge;
     MockERC20 internal token0;
     MockERC20 internal token1;
+    MockNavOracle internal navOracle;
 
     address internal owner = makeAddr("timelockOwner");
     address internal operator = makeAddr("creOperator");
@@ -276,6 +303,11 @@ contract LpStrategyModuleUnitTest is Test {
         safe = new RecordingSafe();
         m = _cloneLpStrategyModule();
         m.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge), address(0)));
+        // SEC/H-1: wire the fair-LP funding gate ARMED (window != 0, vault/gauge aligned) so the existing
+        // addLiquidity-success suite exercises the funded path; guard-trip cases below un-arm it explicitly.
+        navOracle = new MockNavOracle(3600, address(vault), address(gauge));
+        vm.prank(owner);
+        m.setNavOracle(address(navOracle));
     }
 
     /// @dev SEC-14: the bare mastercopy is init-locked in its ctor; `setUp` on it reverts AlreadyInitialized.
@@ -458,6 +490,81 @@ contract LpStrategyModuleUnitTest is Test {
         vm.prank(operator);
         vm.expectRevert(LpStrategyModule.ZeroMinShares.selector);
         m.addLiquidity(50e18, 0, 0);
+    }
+
+    // ----------------------------------------------------------------- SEC/H-1 fair-LP funding gate
+
+    /// @dev The setNavOracle setter: onlyOwner, non-zero-guarded, takes effect.
+    function test_setNavOracle_onlyOwner_zeroGuard_effect() public {
+        address x = makeAddr("newOracle");
+        vm.prank(rando);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", rando));
+        m.setNavOracle(x);
+
+        vm.startPrank(owner);
+        vm.expectRevert(LpStrategyModule.ZeroAddress.selector);
+        m.setNavOracle(address(0));
+        m.setNavOracle(x);
+        assertEq(m.navOracle(), x, "navOracle re-pointed");
+        vm.stopPrank();
+    }
+
+    /// @dev v0/pre-LP posture: with `navOracle` unwired, funding fails closed — no LP can enter the vault.
+    function test_addLiquidity_reverts_when_navOracle_unset() public {
+        LpStrategyModule x = _cloneLpStrategyModule();
+        x.setUp(abi.encode(owner, address(safe), operator, address(vault), address(gauge), address(0)));
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.NavOracleUnset.selector);
+        x.addLiquidity(50e18, 0, 1);
+    }
+
+    /// @dev The core H-1 gate: LP cannot be funded while the oracle prices it off SPOT (`lpTwapWindow == 0`).
+    function test_addLiquidity_reverts_when_lpTwapWindow_off() public {
+        navOracle.setLpTwapWindow(0);
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.LpTwapWindowOff.selector);
+        m.addLiquidity(50e18, 0, 1);
+    }
+
+    /// @dev The window flag is not enough: the oracle must price the SAME vault this module funds.
+    function test_addLiquidity_reverts_on_vault_mismatch() public {
+        navOracle.setIchiVault(makeAddr("otherVault"));
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.LpVaultMismatch.selector);
+        m.addLiquidity(50e18, 0, 1);
+    }
+
+    /// @dev ...and count the SAME gauge, else staked LP would be invisible to NAV.
+    function test_addLiquidity_reverts_on_gauge_mismatch() public {
+        navOracle.setGauge(makeAddr("otherGauge"));
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.LpGaugeMismatch.selector);
+        m.addLiquidity(50e18, 0, 1);
+    }
+
+    /// @dev The v1 cutover unlocks funding: arming the window (with vault/gauge aligned) flips a reverting call to a
+    ///      succeeding one — the same one-act sequence the deployer NatSpec prescribes.
+    function test_addLiquidity_unlocks_once_window_armed() public {
+        navOracle.setLpTwapWindow(0);
+        safe.setLive(true);
+        token0.mint(address(safe), 100e18);
+
+        vm.prank(operator);
+        vm.expectRevert(LpStrategyModule.LpTwapWindowOff.selector);
+        m.addLiquidity(50e18, 0, 1);
+
+        navOracle.setLpTwapWindow(3600); // the v1 arm
+        vm.prank(operator);
+        uint256 shares = m.addLiquidity(50e18, 0, 1);
+        assertGt(shares, 0, "funding unlocked once the fair-LP TWAP is armed");
     }
 
     // ----------------------------------------------------------------- add: vault-agnostic passthrough, non-1:1 price
@@ -816,6 +923,14 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         ISafe(juniorTrancheSafe).execTransaction(juniorTrancheSafe, 0, enableMod, 0, 0, 0, 0, address(0), payable(address(0)), sig);
     }
 
+    /// @dev SEC/H-1: wire the fair-LP funding gate ARMED (window != 0, vault/gauge aligned) so `addLiquidity` is
+    ///      permitted — the fork tests exercise the funded path, mirroring the v1 cutover state.
+    function _armFundingGate(LpStrategyModule m, address ichiVault_, address gauge_) internal {
+        MockNavOracle navOracle = new MockNavOracle(3600, ichiVault_, gauge_);
+        vm.prank(owner);
+        m.setNavOracle(address(navOracle));
+    }
+
     // ----------------------------------------------------------------- real ICHI vault single-sided deposit
 
     function test_fork_real_vault_single_sided_deposit() public {
@@ -826,6 +941,11 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         // the module read token0/token1 live off the real vault.
         assertEq(m.token0(), WETH, "token0 == WETH (live read)");
         assertEq(m.token1(), BaseAddresses.USDC, "token1 == USDC (live read)");
+
+        // SEC/H-1: wire the fair-LP funding gate armed on the same vault/gauge so funding is permitted.
+        MockNavOracle navOracle = new MockNavOracle(3600, LIVE_ICHI_VAULT, LIVE_GAUGE);
+        vm.prank(owner);
+        m.setNavOracle(address(navOracle));
 
         uint256 amt = 1e18; // 1 WETH, well within deposit0Max (4000 WETH)
         deal(WETH, juniorTrancheEngine, amt);
@@ -842,6 +962,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         LpStrategyModule m = _cloneLpStrategyModule();
         address juniorTrancheEngine = _summonAndEnable(m);
         m.setUp(abi.encode(owner, juniorTrancheEngine, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
+        _armFundingGate(m, LIVE_ICHI_VAULT, LIVE_GAUGE);
 
         uint256 amt = 1e18;
         deal(WETH, juniorTrancheEngine, amt);
@@ -869,6 +990,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         LpStrategyModule m = _cloneLpStrategyModule();
         address juniorTrancheEngine = _summonAndEnable(m);
         m.setUp(abi.encode(owner, juniorTrancheEngine, operator, LIVE_ICHI_VAULT, LIVE_GAUGE, address(0)));
+        _armFundingGate(m, LIVE_ICHI_VAULT, LIVE_GAUGE); // wire the H-1 gate so the revert is the vault bubble, not the gate
 
         deal(BaseAddresses.USDC, juniorTrancheEngine, 1_000e6);
         vm.prank(operator);
@@ -901,6 +1023,7 @@ contract LpStrategyModuleForkTest is ForkConfig, SummonSubstrate {
         LpStrategyModule m = _cloneLpStrategyModule();
         address juniorTrancheEngine = _summonAndEnable(m);
         m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(vault), address(gauge), address(0)));
+        _armFundingGate(m, address(vault), address(gauge));
 
         // fund the Safe with zipUSD (the single-sided deposit leg).
         z.mint(juniorTrancheEngine, 1000e18);

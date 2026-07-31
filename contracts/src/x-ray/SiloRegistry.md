@@ -86,9 +86,11 @@ Every revert path, branch, guard, and the `setActive` effect are now exercised �
 - **`lineCount`/`active` are registry-managed, never caller-supplied (I-3/I-6).** Admission takes addresses only and
   seeds `lineCount=0`/`active=true`; only the controller mutates the count, fail-closed (the LAST write after a
   successful `openLine`). The cap (`SiloFull` at 28) and the `NoLinesToDecrement` zero-guard prevent both over-fill
-  and a double-decrement leak. **Documented cross-ticket caveat:** the as-built `EulerVenueAdapter.closeLine` (post
-  CTR-04) reclaims the withdraw-queue slot, but the registry's NatSpec notes the concurrent-capacity model is only
-  fully sound with CTR-03 wiring increment/decrement + CTR-04's slot reclaim — a wiring dependency, not a flaw here.
+  and a double-decrement leak. **Capacity (CTR-03 + CTR-04, both landed):** `EulerVenueAdapter.closeLine` reclaims
+  BOTH EE queue slots (SEC-06 supply + CTR-04 binding withdraw), so a repaid line's slot is freed and the `28` cap
+  is genuinely CONCURRENT (not lifetime) — `SiloFull` at 28 binds just under the adapter's ~29-line hard cap. The
+  only residual caveat is credit-inherent: a defaulted line with outstanding debt cannot close, so it holds its
+  concurrent slot until repaid (permissionless) — defaults consume concurrent capacity, not lifetime.
 - **Venue-agnostic admission (CTR-10b, I-11).** The gate dereferences only `ISeniorVenue.seniorPool()` and the
   `ISeniorPool` slots, so the registry needs no change for a non-Euler venue — the donation-immunity of a real
   non-Euler senior surface is that venue's own property (cannot be mock-proven here, correctly noted).

@@ -14,6 +14,16 @@ interface ICoverageGate {
     function lpBurnKeepsCovered(uint256 lpShares) external view returns (bool);
 }
 
+/// @notice The `SzipNavOracle` config surface `addLiquidity` reads to enforce the fair-LP funding invariant (SEC/H-1):
+///         LP may enter the counted Safe ONLY when the oracle prices THIS vault off its manipulation-resistant
+///         fair-reserves TWAP (`lpTwapWindow != 0`), never off spot. Reading `ichiVault`/`gauge` here proves the
+///         oracle prices/counts the SAME position this module funds (the window flag alone is only a proxy).
+interface INavOracleLpConfig {
+    function lpTwapWindow() external view returns (uint32);
+    function ichiVault() external view returns (address);
+    function gauge() external view returns (address);
+}
+
 /// @title LpStrategyModule
 /// @notice The on-chain seam of the 8-B6 LP strategy (§4.5.1): the third engine Zodiac Module (after the 8-B14
 ///         buy-and-burn and the 8-B5 farm utility loop), CRE-operator-gated, enabled on the szipUSD engine Safe
@@ -53,6 +63,11 @@ contract LpStrategyModule is MastercopyInitLock {
     ///         (the module is Timelock-owned at `setUp`, and the gate is created after this module) — once set,
     ///         `removeLiquidity` may only liquefy LP that is EXCESS over the coverage floor.
     address public coverageGate;
+    /// @notice The `SzipNavOracle` this module checks before funding LP (SEC/H-1 fair-LP funding gate). Zero ⇒ the
+    ///         gate is UNWIRED and `addLiquidity` fails closed (`NavOracleUnset`) — the correct v0/pre-LP posture:
+    ///         no LP may enter the vault until governance both wires this oracle AND arms its `lpTwapWindow`. Settable
+    ///         by the Timelock (the v1 cutover pairs `setNavOracle` with the oracle's `setLpTwapWindow(W)`).
+    address public navOracle;
 
     // --------------------------------------------------------------------- errors
     error NotOperator();
@@ -73,6 +88,19 @@ contract LpStrategyModule is MastercopyInitLock {
     error Slippage();
     /// @notice An `exec` through the Safe returned `false` (the Safe swallows inner reverts) with no revert data.
     error ExecFailed();
+    /// @notice `addLiquidity` called before `navOracle` is wired — the fair-LP funding gate cannot be evaluated, so
+    ///         funding fails closed (the v0/pre-LP state: no LP may enter until the oracle is wired + the window armed).
+    error NavOracleUnset();
+    /// @notice `addLiquidity` blocked because the oracle prices the LP leg off SPOT (`lpTwapWindow == 0`): funding an
+    ///         LP position while it is spot-priced opens the H-1 in-block-manipulation mint. Arm the fair-reserves
+    ///         TWAP (`SzipNavOracle.setLpTwapWindow(W)`) FIRST — that same act unlocks funding.
+    error LpTwapWindowOff();
+    /// @notice The oracle's `ichiVault` (what it PRICES) differs from this module's `ichiVault` (what it FUNDS): the
+    ///         window guard would attest a pool this module is not depositing into. Re-align the two before funding.
+    error LpVaultMismatch();
+    /// @notice The oracle's `gauge` (what its NAV COUNTS as staked LP) differs from this module's `gauge` (where it
+    ///         stakes): staked LP would be invisible to NAV. Re-align the two before funding.
+    error LpGaugeMismatch();
 
     // --------------------------------------------------------------------- events
     event LiquidityAdded(uint256 deposit0, uint256 deposit1, uint256 shares);
@@ -183,6 +211,15 @@ contract LpStrategyModule is MastercopyInitLock {
         emit WiringSet("coverageGate", coverageGate_);
     }
 
+    /// @notice Wire the `SzipNavOracle` the fair-LP funding gate reads (SEC/H-1). `onlyOwner` (Timelock). Non-zero
+    ///         only — unwiring back to spot-priced funding is never a valid move. The v1 LP cutover is: `setNavOracle`
+    ///         here + `SzipNavOracle.setLpTwapWindow(W)` on the oracle; only then does `addLiquidity` unlock.
+    function setNavOracle(address navOracle_) external onlyOwner {
+        if (navOracle_ == address(0)) revert ZeroAddress();
+        navOracle = navOracle_;
+        emit WiringSet("navOracle", navOracle_);
+    }
+
     // --------------------------------------------------------------------- gates
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator();
@@ -224,6 +261,19 @@ contract LpStrategyModule is MastercopyInitLock {
     {
         if (deposit0 == 0 && deposit1 == 0) revert ZeroAmount();
         if (minShares == 0) revert ZeroMinShares();
+
+        // SEC/H-1 fair-LP funding gate: LP may enter the counted Safe ONLY while the oracle prices THIS vault off its
+        // manipulation-resistant fair-reserves TWAP. This is the enforced form of the NatSpec invariant "do not fund
+        // the LP with lpTwapWindow == 0" — it makes "counted LP > 0 while window == 0" unreachable on-chain, closing
+        // the in-block spot-manipulation mint at the funding boundary (NOT the read path — no navEntry revert surface,
+        // no permissionless-poke bypass). `addLiquidity` is the SOLE path that mints new counted LP (stake/unstake only
+        // relocate existing LP the oracle already counts), so this one gate covers the whole surface. Fails closed when
+        // unwired: v0 launches with `navOracle == 0`, so LP cannot be funded until the v1 cutover wires it + arms W.
+        address o = navOracle;
+        if (o == address(0)) revert NavOracleUnset();
+        if (INavOracleLpConfig(o).lpTwapWindow() == 0) revert LpTwapWindowOff();
+        if (INavOracleLpConfig(o).ichiVault() != ichiVault) revert LpVaultMismatch();
+        if (INavOracleLpConfig(o).gauge() != gauge) revert LpGaugeMismatch();
 
         // approve the non-zero legs (token0 then token1) — exact amount, reset below (no standing approval).
         if (deposit0 != 0) {

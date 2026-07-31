@@ -88,7 +88,11 @@ msg.sender, and the Hydrex Voter is **account-keyed** (no per-NFT id is ever tra
 - **`rewardsDistributor` → `Minter._rewards_distributor()` read at deploy** (= `HYDREX_REWARDS_DISTRIBUTOR
   0x6FCa…eD42`), passed into `setUp` — NOT the Minter directly (the rebase is claimed on the RewardsDistributor).
 - **`oHYDX` / `ve` are NOT passed in** — they are derived live in `setUp` (`gauge.rewardToken()` /
-  `voter.ve()`), so they cannot drift from the wired gauge/voter.
+  `voter.ve()`), and since audit F13 the `setGauge`/`setVoter` re-points re-derive them the same way (fail-closed
+  on a zero answer; `setOHYDX`/`setVe` remain manual overrides). So OUR wiring cannot drift. What can still drift
+  is Hydrex's side: the live gauge has an `onlyOwner updateRewardToken()` that can change the answer in place
+  (its fallback can even return raw HYDX). The keeper's strike loop alarms on that every tick
+  (`module.oHYDX() != gauge.rewardToken()` → a loud repeating error instead of a silent idle).
 - **The fresh-veNFT / account-aggregate model** (the load-bearing cross-component shape, fork-proven): each
   `exerciseVe` mints a FRESH account-owned veHYDX to the Safe; the Voter aggregates voting power by ACCOUNT
   (`getVotes(Safe)` sums all the Safe's veNFTs), so there is no merge, no enumeration, and no `tokenId` the module

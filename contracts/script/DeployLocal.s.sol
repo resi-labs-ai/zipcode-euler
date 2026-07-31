@@ -3,8 +3,6 @@ pragma solidity 0.8.24;
 
 import {DeployZipcode} from "./DeployZipcode.s.sol";
 import {BaseAddresses} from "./BaseAddresses.sol";
-import {FarmUtilityMarketDeployer} from "./FarmUtilityMarketDeployer.sol";
-import {SzipFarmUtilityLpOracle} from "../src/supply/SzipFarmUtilityLpOracle.sol";
 import {SzipPerspectiveProbe} from "./SzipPerspectiveProbe.sol";
 import {LineIrm} from "./LineIrm.sol";
 import {GenericFactory} from "evk/GenericFactory/GenericFactory.sol";
@@ -89,6 +87,7 @@ contract DeployLocal is DeployZipcode {
 
         // numeric knobs (mirror .env.example)
         i.validityWindow = 31_536_000;
+        i.lpTwapWindow = 3600; // fair-LP TWAP window (required non-zero — the CRE-push twin was deleted)
         i.W = 3600;
         i.maxAge = 86_400;
         i.maxDeviationBps = 1000;
@@ -193,45 +192,6 @@ contract DeployLocal is DeployZipcode {
         }
     }
 
-    /// @notice P5 override: seed an initial `LP_MARK` between oracle creation and the market build, so the farm utility
-    ///         `setLTV`'s `getQuote` resolves. In production the CRE `LP_MARK` push does this; here the broadcaster
-    ///         (the oracle's owner at birth) seeds it by briefly pointing the forwarder at itself.
-    function _phaseP5() internal override {
-        // 23. LP oracle.
-        d.lpOracle = new SzipFarmUtilityLpOracle(
-            BaseAddresses.CRE_KEYSTONE_FORWARDER, BaseAddresses.USDC, i.validityWindow, i.polIchiVault
-        );
-
-        // seed an initial mark: $1.00 per 1e18 LP share (6-dp quote).
-        _seedLpMark(1e6);
-
-        // 24. farm utility market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
-        (d.escrowVault, d.borrowVault, d.router) = new FarmUtilityMarketDeployer().deploy(
-            FarmUtilityMarketDeployer.Params({
-                factory: GenericFactory(BaseAddresses.EVAULT_FACTORY),
-                evc: BaseAddresses.EVC,
-                governor: address(d.timelock),
-                lpToken: i.polIchiVault,
-                usdc: BaseAddresses.USDC,
-                lpOracle: address(d.lpOracle),
-                irm: i.irm,
-                juniorTrancheEngine: d.sub.juniorTrancheSafe,
-                borrowLTV: i.borrowLTV,
-                liqLTV: i.liqLTV
-            })
-        );
-
-        // 25. shared-LP invariant: POL_ICHI_VAULT == escrow.asset() (seam #4).
-        if (i.polIchiVault != IEVault(d.escrowVault).asset()) revert SeamSharedLp();
-    }
-
-    /// @dev Push a single `LP_MARK` as the broadcaster: temporarily point the oracle's forwarder at `i.team` (the
-    ///      broadcaster, which owns the just-created oracle), push, then restore the real CRE Forwarder.
-    function _seedLpMark(uint256 mark) internal {
-        d.lpOracle.setForwarderAddress(i.team);
-        d.lpOracle.onReport("", abi.encode(d.lpOracle.LP_MARK(), abi.encode(mark, uint32(block.timestamp))));
-        d.lpOracle.setForwarderAddress(BaseAddresses.CRE_KEYSTONE_FORWARDER);
-    }
 }
 
 // ============================================================================ local stand-in mocks

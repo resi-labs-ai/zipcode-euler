@@ -3,7 +3,7 @@
 // Host sim test for the scaffold (models cre/buyburn-bid/main_test.go). It runs the full handler path —
 // DON-only secret read -> RunInNodeMode + identical consensus -> runtime.Now() stamp -> zipreport encode
 // -> GenerateReport -> WriteReport — under the testutils + evmmock harness, and asserts the captured report
-// decodes to the LpMark envelope (reportType 7, inner (uint256 mark, uint32 ts)).
+// decodes to the Rate envelope (reportType 8, inner (uint256 rate, uint48 ts)).
 //
 // The exemplar calls its loop fn directly rather than firing the cron trigger; we do the same (call onCron
 // with a nil *cron.Payload). The secret read is fail-safe, so the happy path needs no seeded secret.
@@ -77,28 +77,28 @@ func runHandler(t *testing.T, cfg *Config, secrets testutils.Secrets) [][]byte {
 	return captured
 }
 
-// TestSimWritesLpMark drives the whole handler (incl. RunInNodeMode + identical consensus) and asserts the
-// captured report is the LpMark envelope with the consensus mark + the DON-stamped ts.
-func TestSimWritesLpMark(t *testing.T) {
+// TestSimWritesRate drives the whole handler (incl. RunInNodeMode + identical consensus) and asserts the
+// captured report is the Rate envelope with the consensus mark + the DON-stamped ts.
+func TestSimWritesRate(t *testing.T) {
 	out := runHandler(t, testConfig(), testutils.Secrets{})
 	if len(out) != 1 {
-		t.Fatalf("expected 1 write (LpMark), got %d", len(out))
+		t.Fatalf("expected 1 write (Rate), got %d", len(out))
 	}
 	rt, payload := decodeEnvelope(t, out[0])
-	if rt != zipreport.LpMark {
-		t.Fatalf("reportType: got %d want %d (LpMark)", rt, zipreport.LpMark)
+	if rt != zipreport.RateReportType {
+		t.Fatalf("reportType: got %d want %d (Rate)", rt, zipreport.RateReportType)
 	}
 	u256, _ := abi.NewType("uint256", "", nil)
-	u32, _ := abi.NewType("uint32", "", nil)
-	dec, err := abi.Arguments{{Type: u256}, {Type: u32}}.Unpack(payload)
+	u48, _ := abi.NewType("uint48", "", nil)
+	dec, err := abi.Arguments{{Type: u256}, {Type: u48}}.Unpack(payload)
 	if err != nil {
 		t.Fatalf("decode inner: %v", err)
 	}
 	if dec[0].(*big.Int).Cmp(new(big.Int).SetUint64(templateMark)) != 0 {
 		t.Fatalf("mark: got %v want %v", dec[0], templateMark)
 	}
-	if dec[1].(uint32) != uint32(1_700_000_000) {
-		t.Fatalf("ts: got %v want %v", dec[1], uint32(1_700_000_000))
+	if dec[1].(*big.Int).Cmp(big.NewInt(1_700_000_000)) != 0 {
+		t.Fatalf("ts: got %v want %v", dec[1], 1_700_000_000)
 	}
 }
 
@@ -111,8 +111,8 @@ func TestSimSeededSecretStillWrites(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("expected 1 write with seeded secret, got %d", len(out))
 	}
-	if rt, _ := decodeEnvelope(t, out[0]); rt != zipreport.LpMark {
-		t.Fatalf("reportType: got %d want %d (LpMark)", rt, zipreport.LpMark)
+	if rt, _ := decodeEnvelope(t, out[0]); rt != zipreport.RateReportType {
+		t.Fatalf("reportType: got %d want %d (Rate)", rt, zipreport.RateReportType)
 	}
 }
 

@@ -7,7 +7,6 @@ import {IICHIVault} from "../interfaces/ichi/IICHIVault.sol";
 import {IAlgebraPool} from "../interfaces/algebra/IAlgebraPool.sol";
 import {IAlgebraOraclePlugin} from "../interfaces/algebra/IAlgebraOraclePlugin.sol";
 import {IGauge} from "../interfaces/hydrex/IGauge.sol";
-import {IOptionToken} from "../interfaces/hydrex/IOptionToken.sol";
 import {IXAlphaRate} from "../interfaces/bridge/IXAlphaRate.sol";
 import {IchiAlgebraFairReserves} from "./lib/IchiAlgebraFairReserves.sol";
 
@@ -17,6 +16,7 @@ import {IchiAlgebraFairReserves} from "./lib/IchiAlgebraFairReserves.sol";
 interface IXAlphaRateFresh {
     function fresh() external view returns (bool);
     function lastUpdate() external view returns (uint48);
+    function maxStaleness() external view returns (uint256);
 }
 
 /// @notice The farm utility LP escrow collateral vault (8-B5) — only the two views the NAV needs to value the
@@ -29,6 +29,16 @@ interface IFarmUtilityEscrow {
 /// @notice The farm utility USDC borrow vault (8-B5) — only the outstanding-debt read the NAV subtracts.
 interface IFarmUtilityDebt {
     function debtOf(address account) external view returns (uint256);
+}
+
+/// @notice The `ZipRedemptionQueue` receivables face (SEC/M-2): the in-flight senior-redemption value that has left
+///         the `juniorTrancheSafe` but is still owned by it — escrowed-pending zipUSD (18-dp $1) plus filled-but-
+///         unclaimed USDC (6-dp $1). Reading these closes the off-ramp NAV undercount: during the request→claim
+///         window the value is off the Safe (so `_bal` misses it) but economically still basket equity. Both are
+///         trivial storage getters (cannot revert), so folding them into `grossBasketValue` adds no brick surface.
+interface IZipRedemptionQueueReceivables {
+    function pendingRedeemRequest(uint256 requestId, address requester) external view returns (uint256);
+    function maxWithdraw(address requester) external view returns (uint256);
 }
 
 /// @title SzipNavOracle
@@ -85,8 +95,8 @@ contract SzipNavOracle is ReceiverTemplate {
     address public immutable zipUSD; // 18-dp, $1
     address public immutable usdc; // 6-dp, $1
     address public immutable xAlpha; // 18-dp, two-layer mark
-    address public immutable hydx; // 18-dp, pushed
-    address public immutable oHydx; // 18-dp, intrinsic
+    address public immutable hydx; // 18-dp; marked $0 in NAV (see grossBasketValue) — kept for freeze-module wiring
+    address public immutable oHydx; // 18-dp; marked $0 in NAV (see grossBasketValue) — kept for freeze-module wiring
     address public immutable juniorTrancheSafe; // free equity (Baal avatar)
     address public immutable juniorTrancheSidecar; // committed equity (non-RQ)
     /// @notice The TWAP window (governed, set at deploy via `NAV_W`; default 1h / `W=3600`).
@@ -132,6 +142,11 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         its `fresh()`** (a stale cross-chain rate must not mint), while exit still prices off the last rate
     ///         (the §7 asymmetry). Zero ⇒ fall back to reading `IXAlphaRate(xAlpha)` directly (the M1 stand-in).
     address public xAlphaRateOracle;
+    /// @notice The `ZipRedemptionQueue` (SEC/M-2): the senior par off-ramp sink whose in-flight receivables are added
+    ///         back to the basket to close the off-ramp NAV undercount. Zero ⇒ the receivables leg contributes 0 (the
+    ///         v0 / pre-off-ramp state — nothing is ever escrowed, so nothing to count). Timelock-settable (§17); the
+    ///         attributed requester is always `juniorTrancheSafe` (the rq Safe the OffRampModule drives).
+    address public redemptionQueue;
 
     // --------------------------------------------------------------------- pushed-leg cache
     struct LegCache {
@@ -187,6 +202,7 @@ contract SzipNavOracle is ReceiverTemplate {
     event EngineSafeSet(address indexed juniorTrancheEngine);
     event DefaultCoordinatorSet(address indexed dc);
     event XAlphaRateOracleSet(address indexed rateOracle);
+    event RedemptionQueueSet(address indexed redemptionQueue);
     event LegPriceUpdated(uint8 indexed leg, uint256 price, uint48 ts);
     event ProvisionWritten(uint256 provision);
     event Poked(uint32 ts, uint256 cumNav);
@@ -231,9 +247,22 @@ contract SzipNavOracle is ReceiverTemplate {
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase)
     // NOTE (§17): re-pointable by the Timelock, NOT set-once — build-phase flexibility so a redeployed
     // share token / LP / engine Safe / coordinator is a one-call re-point, not a redeploy cascade. Lock down pre-prod.
+
+    /// @dev Best-effort TWAP checkpoint before a NAV-input re-point: books [lastUpdate, now] at the OLD
+    ///      configuration's spot so the change doesn't retroactively re-weight elapsed history at the NEW spot
+    ///      (the setter-vs-write-path checkpoint asymmetry). MUST be best-effort, never mandatory: during an
+    ///      outage the basket walk reverts, and a hard checkpoint here would brick the very setters that are the
+    ///      recovery levers (`setFarmUtilityLeg(0,0)`, `setLpTwapWindow(0)`, rate re-points). The skipped
+    ///      checkpoint in that case is unavoidable — correct history is uncomputable while a leg is broken — and
+    ///      the residue is bounded by the consumer brackets (`navEntry = max(spot,twap)`, `navExit = min(spot,twap)`).
+    function _checkpointBestEffort() internal {
+        try this.poke() {} catch {}
+    }
+
     /// @notice Wire/re-point the szipUSD share token (the supply denominator). `onlyOwner` (Timelock).
     function setShareToken(address szipUSD_) external onlyOwner {
         if (szipUSD_ == address(0)) revert ZeroAddress();
+        _checkpointBestEffort();
         shareToken = szipUSD_;
         emit ShareTokenSet(szipUSD_);
     }
@@ -241,6 +270,7 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice Wire/re-point the ICHI vault + its Hydrex gauge (the LP position). `onlyOwner` (Timelock).
     function setLpPosition(address ichiVault_, address gauge_) external onlyOwner {
         if (ichiVault_ == address(0) || gauge_ == address(0)) revert ZeroAddress();
+        _checkpointBestEffort();
         ichiVault = ichiVault_;
         gauge = gauge_;
         // SEC-10: if a non-zero LP-TWAP window is already live, the re-pointed vault must itself
@@ -254,8 +284,16 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice Wire/re-point the farm utility escrow + borrow vaults (8-B5), set together. `onlyOwner` (Timelock).
     ///         Closes the mid-loop NAV blind spot: the escrow-collateralized LP is added and the strike debt
     ///         subtracted, so a `postCollateral`/`borrow`/`repay`/`withdrawCollateral` cycle is NAV-invariant.
+    ///         `(0, 0)` is a valid ATOMIC UNSET — the emergency lever for a regressed escrow/borrow-vault view
+    ///         (`convertToAssets`/`debtOf` reverting would otherwise freeze `_accumulate()` and every NAV consumer
+    ///         with no recovery path). Both-or-neither: a mixed zero/non-zero pair is rejected, since a half-wired
+    ///         leg counts escrow LP without its debt (or vice versa) and silently misprices NAV. Use the unset with
+    ///         eyes open: mid-loop it removes escrow LP AND debt from the basket, understating NAV by the loop
+    ///         equity — an entry-side arb while engaged — so pause issuance first and re-wire as soon as the
+    ///         dependency is healthy. Mirrors the `setLpTwapWindow(0)` emergency-lever pattern.
     function setFarmUtilityLeg(address escrowVault_, address borrowVault_) external onlyOwner {
-        if (escrowVault_ == address(0) || borrowVault_ == address(0)) revert ZeroAddress();
+        if ((escrowVault_ == address(0)) != (borrowVault_ == address(0))) revert ZeroAddress();
+        _checkpointBestEffort();
         escrowVault = escrowVault_;
         borrowVault = borrowVault_;
         emit FarmUtilityLegSet(escrowVault_, borrowVault_);
@@ -268,14 +306,29 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @dev SEC-10: a non-zero window is validated at set-time — it requires `ichiVault` wired and the vault's pool
     ///      to expose a plugin that reports `isInitialized() == true`, else reverts `LpTwapPluginNotReady()`. This
     ///      guards ONLY the gross "no plugin / uninitialized plugin" brick. `isInitialized() == true` is a
-    ///      NECESSARY-NOT-SUFFICIENT precheck: a window longer than the plugin's accumulated history can still revert
-    ///      in `getTimepoints` on the first read (observation cardinality is NOT on-chain-queryable). That residual
-    ///      fails closed at read-time and is recoverable via `setLpTwapWindow(0)`. The setter's `isInitialized()`
-    ///      check and the read-time `getTimepoints` revert are therefore DIFFERENT conditions. `onlyOwner` (Timelock).
+    ///      NECESSARY-NOT-SUFFICIENT precheck: a window longer than the plugin's accumulated history (a
+    ///      replaced/reset plugin re-accumulating) still fails closed at read-time — now as the typed, self-healing
+    ///      `LpTwapHistoryTooShort(plugin, readyAt)` (see `IchiAlgebraFairReserves` + `lpTwapStatus()`), which
+    ///      clears unaided at `readyAt`. `setLpTwapWindow(0)` remains the emergency lever, but use it with eyes
+    ///      open: zero values counted LP at SPOT — the manipulable surface the LP-funding gate exists to keep off
+    ///      safety paths — so prefer waiting out `readyAt` over reflexively zeroing. `onlyOwner` (Timelock).
     function setLpTwapWindow(uint32 lpTwapWindow_) external onlyOwner {
         if (lpTwapWindow_ != 0) _assertLpTwapReady();
+        _checkpointBestEffort();
         lpTwapWindow = lpTwapWindow_; // zero is a valid "use spot" value
         emit LpTwapWindowSet(lpTwapWindow_);
+    }
+
+    /// @notice Non-reverting halt-status probe of the LP-TWAP history gate. `ready == false` ⇒ every LP-containing
+    ///         NAV read (`navEntry`/`navExit`/`grossBasketValue` and the coverage reads behind it) currently
+    ///         reverts `LpTwapHistoryTooShort(plugin, readyAt)` — the pool's Algebra plugin was replaced/reset and
+    ///         is re-accumulating history; reads resume unaided at `readyAt` (`readyAt == 0` ⇒ no initialized
+    ///         plugin at all, no ETA). `lpTwapWindow == 0` / LP unwired ⇒ the TWAP is not in play ⇒ ready. CRE
+    ///         (`cre/buyburn-bid`) polls this before quoting so a halt surfaces as "plugin X replaced, resuming at
+    ///         readyAt" + a skipped round instead of an opaque errored run.
+    function lpTwapStatus() external view returns (bool ready, address plugin, uint256 readyAt) {
+        if (lpTwapWindow == 0 || ichiVault == address(0)) return (true, address(0), 0);
+        return IchiAlgebraFairReserves.historyStatus(ichiVault, lpTwapWindow);
     }
 
     /// @dev SEC-10: assert the LP-TWAP readiness invariant — a non-zero `lpTwapWindow` requires
@@ -296,6 +349,7 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice Wire/re-point the engine Safe (its transient pre-burn szipUSD is excluded). `onlyOwner` (Timelock).
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        _checkpointBestEffort();
         juniorTrancheEngine = juniorTrancheEngine_;
         emit EngineSafeSet(juniorTrancheEngine_);
     }
@@ -311,8 +365,18 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         reads the rate from it and issuance gates on its `fresh()`. Zero ⇒ fall back to `IXAlphaRate(xAlpha)`.
     ///         `onlyOwner` (Timelock). Re-pointable, not set-once (§17 build-phase wiring).
     function setXAlphaRateOracle(address rateOracle_) external onlyOwner {
+        _checkpointBestEffort();
         xAlphaRateOracle = rateOracle_; // address(0) is a valid "unset / use fallback" value
         emit XAlphaRateOracleSet(rateOracle_);
+    }
+
+    /// @notice Wire/re-point (or unset with `address(0)`) the `ZipRedemptionQueue` whose in-flight receivables are
+    ///         added back to the basket (SEC/M-2, the off-ramp undercount fix). Zero ⇒ the receivables leg contributes
+    ///         0 (v0 / pre-off-ramp). `onlyOwner` (Timelock). Re-pointable, not set-once (§17 build-phase wiring).
+    function setRedemptionQueue(address redemptionQueue_) external onlyOwner {
+        _checkpointBestEffort();
+        redemptionQueue = redemptionQueue_; // address(0) is a valid "unset / no off-ramp yet" value
+        emit RedemptionQueueSet(redemptionQueue_);
     }
 
     // --------------------------------------------------------------------- write paths
@@ -395,18 +459,25 @@ contract SzipNavOracle is ReceiverTemplate {
 
         value += _bal(usdc) * 1e12; // 6-dp -> 18-dp $1
         value += _bal(xAlpha) * _xAlphaUSD() / 1e18;
-        value += _bal(hydx) * legCache[LEG_HYDX_USD].price / 1e18;
-        value += _bal(oHydx) * _oHydxUSD() / 1e18;
+        // HYDX, oHYDX, and veHYDX are all marked $0 by design. HYDX is pure sale inventory (spot-marking it
+        // overstates realizable value by the dump slippage); oHYDX's intrinsic formula can't track Hydrex's
+        // per-token exercise payment floor or that same slippage; exerciseVe absorbs value into permalocked
+        // voting power that never returns to the basket. NAV recognizes emission value only when realized
+        // proceeds land in a Safe. The LEG_HYDX_USD feed (pushes, deviation band, staleness gates) is KEPT:
+        // the live HYDX mark is the input for deciding whether exercising oHYDX is profitable — a separate
+        // accounting concern, never a NAV input.
         value += _lpValue(_lpShares(juniorTrancheSafe) + _lpShares(juniorTrancheSidecar));
+        value += _queueReceivables(); // SEC/M-2: in-flight off-ramp value (owned by juniorTrancheSafe), 0 if unwired
         uint256 debt = _farmUtilityDebt(juniorTrancheSafe) + _farmUtilityDebt(juniorTrancheSidecar);
         value = value > debt ? value - debt : 0;
     }
 
     /// @notice The committed (juniorTrancheSidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
     ///         DurationFreezeModule bounds `release` against. ADDITIVE: `grossBasketValue()` is unchanged; this is
-    ///         an INDEPENDENT per-Safe re-computation. For the five plain legs `committedValue() + freeValue()`
+    ///         an INDEPENDENT per-Safe re-computation. For the three valued plain legs `committedValue() + freeValue()`
     ///         equals `grossBasketValue()` EXACTLY; for a split LP it is within ≤2 wei (the per-Safe pro-rata floors
-    ///         twice vs once). The module only ever moves the five plain legs, so gross is exactly rotation-invariant.
+    ///         twice vs once). The module only ever moves plain legs (incl. $0-marked HYDX/oHYDX), so gross is
+    ///         exactly rotation-invariant.
     function committedValue() external view returns (uint256) {
         return _grossValueOf(juniorTrancheSidecar);
     }
@@ -422,9 +493,12 @@ contract SzipNavOracle is ReceiverTemplate {
         value += IERC20(zipUSD).balanceOf(safe); // 18-dp $1
         value += IERC20(usdc).balanceOf(safe) * 1e12; // 6-dp -> 18-dp $1
         value += IERC20(xAlpha).balanceOf(safe) * _xAlphaUSD() / 1e18;
-        value += IERC20(hydx).balanceOf(safe) * legCache[LEG_HYDX_USD].price / 1e18;
-        value += IERC20(oHydx).balanceOf(safe) * _oHydxUSD() / 1e18;
+        // HYDX + oHYDX marked $0 — see grossBasketValue; per-Safe additivity holds trivially for $0 legs.
         value += _lpValue(_lpShares(safe));
+        // SEC/M-2: the off-ramp receivables are `juniorTrancheSafe` (rq Safe) equity ⇒ they belong to `freeValue`,
+        // NOT the sidecar's `committedValue`. Adding here (and ONLY here) keeps `committedValue + freeValue ==
+        // grossBasketValue` exact and avoids double-counting the in-flight value across the two Safes.
+        if (safe == juniorTrancheSafe) value += _queueReceivables();
         uint256 debt = _farmUtilityDebt(safe);
         value = value > debt ? value - debt : 0;
     }
@@ -468,6 +542,8 @@ contract SzipNavOracle is ReceiverTemplate {
         if (supplyLp == 0) return 0;
         // Reserve source: spot `getTotalAmounts()` (default) OR the manipulation-resistant TWAP reconstruction
         // when `lpTwapWindow` is wired (fair-LP reconstruction). Pro-rata + leg pricing are identical either way.
+        // OPERATIONS: if the TWAP read reverts (plugin replaced/reset, short history), `lpTwapStatus()` reports
+        // `readyAt`; prefer waiting it out — `setLpTwapWindow(0)` is the emergency spot fallback (see its NatSpec).
         uint256 total0;
         uint256 total1;
         if (lpTwapWindow != 0) {
@@ -555,10 +631,14 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @dev    Unset-leg / unseeded-rate handling: an unpushed required leg (`ts == 0`) yields `0`, which fails the
     ///         bid closed at the module's anchor fence. The rate leg is folded only when its own `lastUpdate() != 0`
     ///         so an unseeded-but-wired rate routes to the cleaner `fresh()`/`StaleNav` gate instead of clamping the
-    ///         anchor to `0`. Window note: the rate leg's native freshness is the rate oracle's own `maxStaleness`
-    ///         (tighter than `maxAge`), still enforced at post-time by the module's `fresh()` check; this anchor
-    ///         additionally caps every fed mark — rate included — to at most `maxAge` at fill. Folding more terms
-    ///         into the `min` only LOWERS the anchor, so the per-leg `maxAge` guarantee is never weakened.
+    ///         anchor to `0`. Rate-leg window: the rate's native freshness is the rate oracle's own `maxStaleness`
+    ///         (6h fixture, tighter than the 24h `maxAge`), so folding the raw `lastUpdate()` would let a bid rest
+    ///         up to `maxAge − maxStaleness` past the rate's own trust window (a pre-slash fill lane during
+    ///         wind-down-length TTLs). The rate's timestamp is therefore SHIFTED back by that difference before the
+    ///         `min`, so the module's `anchor + maxAge` fence lands at `lastUpdate + min(maxAge, maxStaleness)` —
+    ///         every input, rate included, is within ITS OWN bound at fill. Shifting only LOWERS the anchor, so the
+    ///         per-leg `maxAge` guarantee is never weakened; a shift past zero clamps to `0` and fails the bid
+    ///         closed (the rate is far beyond stale there and `fresh()` blocks posting anyway).
     function oldestRequiredLegTs() external view returns (uint48) {
         uint48 a = legCache[LEG_ALPHA_USD].ts;
         uint48 h = legCache[LEG_HYDX_USD].ts;
@@ -566,7 +646,14 @@ contract SzipNavOracle is ReceiverTemplate {
         address rate = xAlphaRateOracle;
         if (rate != address(0)) {
             uint48 r = IXAlphaRateFresh(rate).lastUpdate();
-            if (r != 0 && r < oldest) oldest = r;
+            if (r != 0) {
+                uint256 ms = IXAlphaRateFresh(rate).maxStaleness();
+                if (ms < maxAge) {
+                    uint256 shift = maxAge - ms;
+                    r = uint256(r) > shift ? uint48(uint256(r) - shift) : 0;
+                }
+                if (r < oldest) oldest = r;
+            }
         }
         return oldest;
     }
@@ -582,6 +669,21 @@ contract SzipNavOracle is ReceiverTemplate {
         return IERC20(token).balanceOf(juniorTrancheSafe) + IERC20(token).balanceOf(juniorTrancheSidecar);
     }
 
+    /// @dev SEC/M-2: the in-flight senior-redemption value attributable to `juniorTrancheSafe` (the rq Safe) — the
+    ///      escrowed-pending zipUSD (18-dp $1) plus the filled-but-unclaimed USDC (6-dp $1, scaled ×1e12 like every
+    ///      other USDC leg). During the OffRampModule request→claim window this value has left the Safe (so `_bal`
+    ///      misses it) yet is still basket equity; adding it back keeps NAV continuous across the off-ramp so a
+    ///      deposit in the window mints at the true (not a depressed) `navEntry`. No double-count: `settleEpoch` moves
+    ///      pending→claimable atomically (burns the zipUSD as it banks the USDC) and `claim` moves claimable→on-Safe
+    ///      balance, so `pending + claimable + on-Safe` sums the same value at every instant. Zero when unwired.
+    function _queueReceivables() internal view returns (uint256) {
+        address q = redemptionQueue;
+        if (q == address(0)) return 0;
+        uint256 pending = IZipRedemptionQueueReceivables(q).pendingRedeemRequest(0, juniorTrancheSafe); // 18-dp $1
+        uint256 claimable = IZipRedemptionQueueReceivables(q).maxWithdraw(juniorTrancheSafe); // 6-dp $1
+        return pending + claimable * 1e12;
+    }
+
     /// @dev USD per 1.0 xALPHA (18-dp): on-chain LST exchangeRate × the pushed alphaUSD.
     ///      Fail-closed on an UNSEEDED rate (`exchangeRate() == 0`, genesis/uninitialized) — reverts `RateUnseeded`
     ///      rather than silently valuing the entire xALPHA leg at 0. This is distinct from STALENESS, which is still
@@ -595,11 +697,6 @@ contract SzipNavOracle is ReceiverTemplate {
         uint256 rate = IXAlphaRate(rateSrc).exchangeRate();
         if (rate == 0) revert RateUnseeded();
         return rate * legCache[LEG_ALPHA_USD].price / 1e18;
-    }
-
-    /// @dev USD per 1.0 oHYDX (18-dp): intrinsic = HYDX/USD × (100 - discount)/100, discount read on-chain.
-    function _oHydxUSD() internal view returns (uint256) {
-        return legCache[LEG_HYDX_USD].price * (100 - IOptionToken(oHydx).discount()) / 100;
     }
 
     /// @dev The per-whole-token USD mark (`1e18 = $1`) for a valid LP reserve token. OUR ICHI vault is the

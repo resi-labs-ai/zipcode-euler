@@ -79,9 +79,9 @@ is a deploy INPUT. It is pure composition + the per-silo venue front; it invents
   (`isAccountOperatorAuthorized(caller, borrowDriver)`, `:110-113`). N silos = N adapters = N hooks. So the deployer
   builds a fresh hook per silo, mirroring `DeployZipcode.s.sol:212`. The index's "deployed once at the hub, SHARED"
   list-item for the hook is superseded by this.
-- **`lpOracle` is a built-and-seeded INPUT.** The runbook builds a `SzipFarmUtilityLpOracle` per silo + CRE pushes its
-  first `LP_MARK` BEFORE `SiloDeployer.deploy` (the farm utility `setLTV`'s `getQuote` needs it). The deployer cannot push
-  the mark (forwarder-gated).
+- **`lpOracle` is a built INPUT.** The runbook builds an `AlgebraIchiFairLpOracle` per silo (no seed push — it reads the
+  pool's Algebra TWAP live) BEFORE `SiloDeployer.deploy` — the farm utility `setLTV`'s `getQuote` must resolve,
+  so the silo pool's plugin needs ≥ window of TWAP history at deploy time.
 - **`saltNonce` distinct per silo** (CREATE2 across the Safe factory + Baal summoner + EVK proxies + the EE salt — the
   guaranteed cross-silo collision is the junior main Safe, its initializer is silo-invariant; see CTR-06b's note).
 - **D1/D5 ratified** (per CTR-06b): POL pool address shared (per-silo staked position); no per-silo `OffRampModule`

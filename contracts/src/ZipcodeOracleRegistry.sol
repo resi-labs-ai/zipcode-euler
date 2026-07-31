@@ -65,7 +65,7 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     /// @notice The controller was wired (Timelock-settable, build phase).
     event ControllerSet(address indexed controller);
     /// @notice A lien's mark was seeded by the controller at origination.
-    event RegistryPriceSeed(address indexed lien, uint256 price);
+    event RegistryPriceSeed(address indexed lien, uint256 price, uint48 timestamp);
     /// @notice A lien's mark was revalued by the Forwarder.
     event RegistryPriceUpdated(address indexed lien, uint256 price, uint48 timestamp);
     /// @notice A Timelock re-point of an address wiring slot (build phase).
@@ -108,13 +108,21 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
         emit ValidityWindowSet(validityWindow_);
     }
 
-    /// @notice Origination seed (§4.4a): the controller writes a single lien's mark inside its atomic batch.
+    /// @notice Origination/draw seed (§4.4a/a'): the controller writes a single lien's mark inside its atomic batch,
+    ///         stamped with the equity mark's APPRAISAL SOURCE ts (SEC/L-3) — the SAME clock the Forwarder revaluation
+    ///         (rt-3, `_processReport`) stamps. This makes the strictly-newer `_writePrice` guard order controller
+    ///         seeds and revaluations UNIFORMLY: a stale (out-of-order) seed carrying an older appraisal now reverts
+    ///         `StaleReport` instead of clobbering a newer revaluation, because it no longer wins on wall-clock alone.
+    ///         The producer supplies `ts` (the equityMark's appraisal time); the `_writePrice` `FutureTimestamp` guard
+    ///         rejects `ts > now`, and read-staleness (`getQuote`) is unaffected — a draw's appraisal is fresh by
+    ///         construction (minutes old vs the line-term `validityWindow`).
     /// @param lien The lien token (oracle key).
     /// @param price The equity mark, in the quote asset's native units.
-    function seedPrice(address lien, uint256 price) external {
+    /// @param ts The appraisal source timestamp (same clock as rt-3), NOT `block.timestamp`.
+    function seedPrice(address lien, uint256 price, uint48 ts) external {
         if (msg.sender != controller) revert NotController();
-        _writePrice(lien, price, uint48(block.timestamp));
-        emit RegistryPriceSeed(lien, price);
+        _writePrice(lien, price, ts);
+        emit RegistryPriceSeed(lien, price, ts);
     }
 
     /// @notice Revaluation (§4.4 reportType 3): the Forwarder pushes a batch of new marks. All-or-nothing.

@@ -26,8 +26,9 @@
 ## Role
 
 A trustless, fully on-chain fair-value oracle for an ICHI-vault LP share on an Algebra pool. Realizes the
-TWAP-ring / ring-spacing defense-in-depth (price `spot` itself manipulation-resistantly) and is the trustless
-alternative to `SzipFarmUtilityLpOracle`'s CRE-pushed mark. Serves **two** consumers:
+TWAP-ring / ring-spacing defense-in-depth (price `spot` itself manipulation-resistantly). It is THE farm-utility
+LP oracle — its CRE-push twin `SzipFarmUtilityLpOracle` was deleted (the pushed mark was composed from spot
+`getTotalAmounts`, the manipulable surface this TWAP prices out). Serves **two** consumers:
 
 - **EVK farm utility collateral** — a `BaseAdapter`/`IPriceOracle` drop-in the `EulerRouter` resolves the LP
   collateral through (`govSetConfig(lpToken, USDC, oracle)`). Proven against a live router on a Base fork.
@@ -43,11 +44,11 @@ alternative to `SzipFarmUtilityLpOracle`'s CRE-pushed mark. Serves **two** consu
 
 ## Wiring — cross-component
 
-- **EulerRouter → oracle.** `govSetConfig(lpToken, USDC, AlgebraIchiFairLpOracle)`. In the deploy, gated by
-  `Inputs.lpTwapWindow != 0` in `DeployZipcode._phaseP5` (the `FarmUtilityMarketDeployer` `lpOracle` param);
-  else the CRE-push `SzipFarmUtilityLpOracle` (the M1 default). The fair oracle is **ownerless** (immutable),
-  so `_phaseP9` skips `transferOwnership` for it. It resolves immediately on a live Algebra pool (no CRE
-  seed needed before `setLTV`).
+- **EulerRouter → oracle.** `govSetConfig(lpToken, USDC, AlgebraIchiFairLpOracle)`. In the deploy this is
+  unconditional — `DeployZipcode._phaseP5` always builds this oracle (the `FarmUtilityMarketDeployer`
+  `lpOracle` param); `Inputs.lpTwapWindow` is required non-zero (`LpTwapWindowZero` guard, default 3600). The
+  fair oracle is **ownerless** (immutable), so `_phaseP9` has nothing to transfer. It resolves immediately on a
+  live Algebra pool whose plugin holds ≥ window of history (no seed needed before `setLTV`).
 - **SzipNavOracle → oracle math.** `_lpValue` calls `IchiAlgebraFairReserves.fairReserves(ichiVault,
   lpTwapWindow)` when the Timelock-settable `lpTwapWindow != 0` (set via `setLpTwapWindow`; wired in
   `_phaseP8` from the same input), else spot `getTotalAmounts()`. See `8-B4-SzipNavOracle.md`.
@@ -57,9 +58,10 @@ alternative to `SzipFarmUtilityLpOracle`'s CRE-pushed mark. Serves **two** consu
 
 ## Deploy knob
 
-`LP_TWAP_WINDOW` (`Inputs.lpTwapWindow`, `.env.example`): `0` = CRE-push lpOracle + spot NAV LP (M1
-default, what local/anvil/fork-skeleton use); `>0` (e.g. `3600`) = trustless fair-LP for BOTH the farm utility
-collateral and the NAV LP leg. Opt-in once the zipUSD/xALPHA LP is a live Algebra pool with a TWAP plugin.
+`LP_TWAP_WINDOW` (`Inputs.lpTwapWindow`, `.env.example`): required non-zero (default `3600` = 1h); zero
+reverts `LpTwapWindowZero` at load. It drives BOTH the farm-utility collateral oracle window and the NAV LP
+leg (`setLpTwapWindow`). The old `0` meaning (CRE-push lpOracle + spot NAV LP) was deleted with the push twin;
+local/anvil deploys run on a Base fork whose live pool satisfies the TWAP-readiness precondition.
 
 ## Verification
 
@@ -67,7 +69,7 @@ collateral and the NAV LP leg. Opt-in once the zipUSD/xALPHA LP is a live Algebr
 cross-check (debank-verifiable, m4ngos.base.eth); **manipulation invariance** (a 300k-USDC in-block swap
 moves the spot split >2% while the fair quote is byte-identical); **resolves through a real `EulerRouter`**
 as LP collateral; **builds a real farm utility market** via the actual `FarmUtilityMarketDeployer` (the
-`lpTwapWindow != 0` P5 path) — wiring + the W3 wire-check resolve with NO CRE seed, since the fair oracle
+P5 path — now the only one) — wiring + the W3 wire-check resolve with NO seed, since the fair oracle
 prices live; ctor fail-closed guards (`ZeroAddress`/`ZeroWindow`/`NoPlugin`); rounds-DOWN + high-`sqrtP`
 branch; and the **readiness suite**: uninitialized plugin reverts `PluginNotReady` at ctor AND
 on the read path, and an under-coverage (10y) window reverts in the live plugin's `getTimepoints` (fail-CLOSED,

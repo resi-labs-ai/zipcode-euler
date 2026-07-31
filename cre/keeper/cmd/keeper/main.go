@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 
 	"cre-keeper/internal/chain"
@@ -123,9 +124,15 @@ func run(log *slog.Logger) error {
 	}
 	identity := job.NewIdentityJob(signer.Address(), checks)
 
-	// Burn job: retire szipUSD the engine Safe bought below NAV (8-B14). ExitGate
-	// addr reused from MustAddr above; floor from cfg.MinBurnAmount (0 = any fill).
-	burn := job.NewBurnJob(exitGate, cfg.MinBurnAmount)
+	// Burn job: retire szipUSD the engine Safe bought below NAV (8-B14).
+	// FILL-TRIGGERED (2026-07-28): fires only on GPv2 filledAmount evidence for the
+	// bid module's uid — a donor can never schedule a burn — and sweeps the FULL
+	// balance (no floor; the old KEEPER_MIN_BURN_AMOUNT is gone).
+	buyBurnMod, err := cfg.MustAddr("SzipBuyBurnModule")
+	if err != nil {
+		return err
+	}
+	burn := job.NewBurnJob(exitGate, buyBurnMod)
 
 	// Strike-loop job (KEEPER-01b): the auto-compounder harvest loop — the new
 	// primary job, registered AFTER the burn. The HYDX/USDC pool address comes from
@@ -185,6 +192,14 @@ func run(log *slog.Logger) error {
 		windDown := job.NewWindDownLpJob(lpMod, quoter, cfg.CushionBps, cfg.WinddownMaxDeviationBps, cfg.WinddownMaxSlice)
 		jobs = append(jobs, windDown)
 		log.Info("wind-down LP-dissolution job armed (KEEPER_WINDDOWN_ENABLED)", "LpStrategyModule", lpMod.Hex())
+	}
+	// Solvency probe: alerts when the SeniorNavAggregator reports unreadable venue
+	// pairs (its Σ views count a broken venue as zero — this is the loud side of
+	// that quiet zero). Optional wiring: registered only when the address is set,
+	// so single-silo deploys without the aggregator run unchanged.
+	if aggAddr, ok := cfg.Modules["SeniorNavAggregator"]; ok && aggAddr != (common.Address{}) {
+		jobs = append(jobs, job.NewSolvencyProbeJob(aggAddr))
+		log.Info("solvency probe armed", "SeniorNavAggregator", aggAddr.Hex())
 	}
 	runner := job.NewRunner(c, jobs, cfg.PollInterval, log)
 	runner.Run(ctx)

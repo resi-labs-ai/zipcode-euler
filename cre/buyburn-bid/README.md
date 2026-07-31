@@ -9,10 +9,20 @@ workstream item #1, and the first buildable CRE workflow in this tree (also esta
 Two triggers, one body (`evaluateAndReconcile`): a `cron` heartbeat and an `evm.LogTrigger` on
 `ZipRedemptionQueue.RedemptionSettled` (more USDC freed → resize). Each tick:
 
-1. **Reads** (view `CallContract`, decode the return): `currentBid()` → `(bytes uid, uint256 sellAmount)`;
-   `quoteMaxPrice()`, `buybackCap()` on the module; `fresh()`, `maxAge()`, `oldestRequiredLegTs()` on
-   `SzipNavOracle`; `covered()` on the coverage gate (skipped → `true` when the gate is the zero address);
-   `maxWithdraw(warehouse)` on `EulerEarn` (the donation-immune §8.2 free-reservoir read).
+1. **Reads** (view `CallContract`, decode the return): `currentBid()` → `(bytes uid, uint256 sellAmount)` and
+   `currentBuyAmount()` (together they expose the live bid's POSTED implied price — SEC/L-7);
+   `quoteMaxPrice()`, `buybackCap()` on the module; `lpTwapStatus()`, `fresh()`, `maxAge()`,
+   `oldestRequiredLegTs()` on `SzipNavOracle`; `covered()` on the coverage gate (skipped → `true` when the gate
+   is the zero address); `maxWithdraw(warehouse)` on `EulerEarn` (the donation-immune §8.2 free-reservoir read).
+1a. **LP-TWAP halt gate (audit F8)** — probed right after `currentBid()`, BEFORE any NAV-dependent read: when a
+   replaced/reset Algebra plugin leaves the NAV oracle's 1h LP-TWAP under-covered, every NAV read (incl.
+   `quoteMaxPrice`) reverts `LpTwapHistoryTooShort(plugin, readyAt)` on-chain. `lpTwapStatus()` is the
+   non-reverting probe: on `ready == false` the loop logs the human-readable status — *"Algebra pool plugin 0x…
+   has been replaced/reset; TWAP NAV oracle is halted. Resuming at \<RFC3339\> (unix readyAt) once 1h of price
+   history has accumulated."* (`readyAt == 0` ⇒ no initialized plugin, no ETA) — cancels any RESTING bid (it
+   would keep quoting a pre-halt mark that cannot be drift-checked while NAV reverts), and skips the round.
+   Self-healing: the first tick at/after `readyAt` resumes business as usual; nothing to unpause.
+   (`TestSimTwapHaltedCancelsRestingBidAndSkips` / `TestSimTwapHaltedNoBidNoOp`.)
 2. **Size:** `targetSell = clamp(freeReservoir − harvestReserve − safetyBuffer, 0, buybackCap)` (6-dp USDC).
 3. **Price:** `maxPrice = quoteMaxPrice()`; if `0` ⇒ skip. Else `targetBuy = ceilDiv(targetSell·1e18, maxPrice)`
    (ceil so the implied price ≤ `maxPrice` and the on-chain `BidAboveDiscount` bound passes).
@@ -21,8 +31,13 @@ Two triggers, one body (`evaluateAndReconcile`): a `cron` heartbeat and an `evm.
 5. **Reconcile** (single-resting-bid): `postable = targetSell>0 && fresh && covered && maxPrice>0 && validTo>now`.
    - No live bid + `postable` ⇒ `POST_BID`.
    - Live bid + `!postable` ⇒ `CANCEL_BID`.
-   - Live bid + size drift ≥ `driftBps` ⇒ `CANCEL_BID` then `POST_BID` (sequential `Await`s — the module's
-     `BidAlreadyLive` requires cancel-before-repost; they cannot be atomic).
+   - Live bid + size drift ≥ `driftBps` **OR price drift ≥ `priceDriftBps`** ⇒ `CANCEL_BID` then `POST_BID`
+     (sequential `Await`s — the module's `BidAlreadyLive` requires cancel-before-repost; they cannot be atomic).
+     Price drift (SEC/L-7 / Octane V7): a resting bid keeps quoting the price it was POSTED at even after the
+     oracle re-prices — the loop derives the posted implied price (`currentSellAmount·1e18/currentBuyAmount`,
+     6-dp per 1e18 share, same unit as `quoteMaxPrice`) and reprices when it drifts. `priceDriftBps == 0` falls
+     back to `driftBps` (the reconcile is never silently off); a zero `currentBuyAmount` under a live uid forces
+     a reprice (drift reads 10_000).
    - Otherwise no-op.
 
 The only write is `WriteReport` (the report path). No raw/keeper tx, no operator key, no second resting bid, no
@@ -40,7 +55,16 @@ The encode round-trip test (`TestPostBidEnvelopeRoundTrip` / `TestCancelBidEnvel
 without a chain — it decodes back as `(uint8, bytes)` then `(uint256, uint256, uint32)`.
 
 **CONFIG (`Config`, JSON):** the chain selector + the module / nav-oracle / coverage-gate / EulerEarn / warehouse /
-redemption-queue addresses + `schedule` + `driftBps` + `ttlSeconds` + `harvestReserve` + `safetyBuffer`.
+redemption-queue addresses + `schedule` + `driftBps` + `priceDriftBps` (SEC/L-7 reprice threshold; 0 ⇒ `driftBps`)
++ `ttlSeconds` + `harvestReserve` + `safetyBuffer`. Keep `ttlSeconds` SHORT in normal operation (minutes — the
+   accept-when-we-accept posture): the on-chain `MAX_BID_TTL` (1 day) is a wind-down allowance, not a default.
+
+**DEMAND GATE (ratified 2026-07-30 — fill-only, never market-make):** `orderbookUrl` + `szipUsd` + `usdc`. When
+`orderbookUrl` is set, every tick reads the CoW auction per node (median consensus) and sizes the bid to the
+resting szipUSD sell orders asking ≤ `quoteMaxPrice` — no acceptable order ⇒ no bid, demand gone ⇒ a live bid
+cancels, book unreachable ⇒ fails closed (nothing posts). Empty `orderbookUrl` disables the gate (build/sim
+back-compat ONLY — production config MUST set it; without it the workflow posts on cash alone and a bid can rest
+with nobody to fill it). Tests: `TestSimDemandGate*`.
 
 **CRE-06 folded in as config:** the exit-vs-harvest working-capital split is the `harvestReserve` + `safetyBuffer`
 constants in the sizing step (M1 = constants; a dynamic, utilization-aware policy is a later parameter swap, not a

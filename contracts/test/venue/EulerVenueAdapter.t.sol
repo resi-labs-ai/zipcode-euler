@@ -453,7 +453,7 @@ contract EulerVenueAdapterTest is ForkConfig {
 
     function _seedRegistry(address lien, uint256 price) internal {
         vm.prank(controller);
-        registry.seedPrice(lien, price);
+        registry.seedPrice(lien, price, uint48(block.timestamp)); // SEC/L-3: seed carries the source ts
     }
 
     function _openA() internal returns (address lineRef, address oracleKey) {
@@ -1335,16 +1335,20 @@ contract EulerVenueAdapterTest is ForkConfig {
 
     event FeeLevied(address indexed lineRef, uint256 fee);
     event FeeSet(uint16 feeBps);
+    event LineFunded(address indexed lineRef, uint256 amount);
     event WiringSet(bytes32 indexed slot, address value);
 
     address internal feeSink = makeAddr("feeSink");
 
     /// @dev Open A, set limits, supply cash. Returns the line + its borrow account. Shared by the fee tests.
+    ///      Also seeds the reservoir base position: a fee-on `draw` now JIT-reallocates `fee` from the reservoir
+    ///      (CTR-09 net-vs-gross fix), and `_eeMove`'s absolute-target math underflows on an empty base.
     function _openAndFundA() internal returns (address lineRef, address borrowAccount) {
         _seedRegistry(address(LIEN_A), PRICE_A);
         (lineRef,) = _openA();
         adapter.setLineLimits(lineRef, 0.7e4, 0.8e4, 1_000_000e6);
         _supplyToLine(lineRef, 1_000_000e6);
+        _fundBaseMarket(1_000_000e6);
         borrowAccount = adapter.getLine(lineRef).borrowAccount;
     }
 
@@ -1369,6 +1373,42 @@ contract EulerVenueAdapterTest is ForkConfig {
         assertEq(IEVault(lineRef).debtOf(borrowAccount), amount + fee, "line debt = amount + fee (financed)");
         assertEq(IERC20(usdc).balanceOf(feeSink) - sinkBefore, fee, "adminSafe received the fee");
         assertEq(IERC20(usdc).balanceOf(erebor) - erBefore, amount, "erebor received exactly the principal (F2)");
+    }
+
+    /// @dev The CTR-09 net-vs-gross fix: a fee-on `draw` must JIT-reallocate `fee` from the reservoir onto the
+    ///      line BEFORE the borrow batch — the controller's sequence (`fund(drawAmount)` → `draw(drawAmount)`)
+    ///      delivers exactly the principal, so without this every fee-on origination/redraw reverts on the fee
+    ///      borrow (cash covers `amount`, batch pays `amount + fee`). Pins the reallocate request at the EE seam
+    ///      (two-item absolute targets, reservoir − fee / line + fee) — the same assurance level `fund` itself
+    ///      has (`test_Fund_RecordsTwoItemAbsoluteAllocation`) — plus the LineFunded(fee) telemetry.
+    function test_CTR09_FeeOn_JITFundsFeeLeg_FromReservoir() public {
+        (address lineRef,) = _openAndFundA();
+        adapter.setAdminSafe(feeSink);
+
+        uint256 amount = 100_000e6;
+        uint256 fee = amount * adapter.feeBps() / 10_000;
+        uint256 baseBal = IEVault(usdcReservoir).convertToAssets(IEVault(usdcReservoir).balanceOf(address(ee)));
+        uint256 lineBal = IEVault(lineRef).convertToAssets(IEVault(lineRef).balanceOf(address(ee)));
+        uint256 reallocBefore = ee.reallocCount();
+
+        vm.expectEmit(true, false, false, true, address(adapter));
+        emit LineFunded(lineRef, fee);
+        adapter.draw(lineRef, amount, erebor);
+
+        assertEq(ee.reallocCount(), reallocBefore + 1, "fee JIT reallocate requested");
+        assertEq(ee.lastReallocLength(), 2, "two-item allocation");
+        assertEq(ee.lastReallocIds(0), usdcReservoir, "item0 = usdcReservoir (withdraw)");
+        assertEq(ee.lastReallocAssets(0), baseBal - fee, "item0 absolute target = base - fee");
+        assertEq(ee.lastReallocIds(1), lineRef, "item1 = lineRef (supply)");
+        assertEq(ee.lastReallocAssets(1), lineBal + fee, "item1 absolute target = line + fee");
+    }
+
+    /// @dev Fee-off (`adminSafe == 0`): NO JIT reallocate fires — `draw` stays reallocate-free, exactly as before.
+    function test_CTR09_FeeOff_NoJITReallocate() public {
+        (address lineRef,) = _openAndFundA();
+        uint256 reallocBefore = ee.reallocCount();
+        adapter.draw(lineRef, 100_000e6, erebor);
+        assertEq(ee.reallocCount(), reallocBefore, "no reallocate on a fee-off draw");
     }
 
     /// @dev per-revolution: a second draw on the SAME line levies AGAIN — debt grows by `amount2 + fee2` (a revolving

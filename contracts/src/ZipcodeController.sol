@@ -21,7 +21,7 @@ interface ILienToken {
 
 /// @notice The single write face the controller touches on the registry (WOOF-02): the controller-gated seed.
 interface IZipcodeOracleRegistry {
-    function seedPrice(address lien, uint256 price) external;
+    function seedPrice(address lien, uint256 price, uint48 ts) external;
 }
 
 /// @notice The three faces the controller needs on the `SiloRegistry` (CTR-02/CTR-03): venue resolution + the
@@ -68,11 +68,13 @@ contract ZipcodeController is ReceiverTemplate {
     ///         (symmetric to the oracle registry's `setController`). MANDATORY for the report paths: a `0` registry
     ///         fails closed (`RegistryUnset`) rather than falling back to the `venue` slot — eliminating the
     ///         brick/decrement-underflow hazards of a dual-mode resolver.
-    /// @dev CTR-04 capacity caveat: `decrementLineCount` corrects the registry counter on close, but the as-built
-    ///      `EulerVenueAdapter.closeLine` frees only the SUPPLY queue, NOT the binding WITHDRAW-queue slot. Until
-    ///      CTR-04 lands, a pool's true capacity is ~28 *lifetime* opens, not concurrent — the decrement does NOT
-    ///      free the underlying slot. CTR-03 is correct registry accounting; concurrent capacity is fully sound only
-    ///      once both CTR-03 (this) AND CTR-04 land.
+    /// @dev CTR-04 capacity (LANDED): `decrementLineCount` corrects the registry counter on close, AND the as-built
+    ///      `EulerVenueAdapter.closeLine` reclaims BOTH EE queue slots — the SUPPLY queue (SEC-06) and the binding
+    ///      WITHDRAW-queue slot (CTR-04). So a fully-repaid line's slot is freed and reusable: capacity is ~28
+    ///      CONCURRENT open lines per pool (the registry `SiloFull` cap, just under the adapter's ~29-line
+    ///      `MAX_QUEUE_LENGTH` hard cap), NOT ~28 lifetime. Caveat: a DEFAULTED line with outstanding debt cannot
+    ///      close (`observeDebt != 0`), so it holds its concurrent slot until repaid (repay is permissionless) —
+    ///      defaults consume concurrent capacity, they do not leak lifetime capacity.
     address public registry;
 
     /// @notice Per-lien state. `lien` = LIEN_i (collateral token / oracle key); `lineRef` = the opaque venue line
@@ -83,15 +85,38 @@ contract ZipcodeController is ReceiverTemplate {
         address lineRef;
         bool open;
         bytes32 siloId; // CTR-03: the silo this line was originated into; draws/closes re-resolve the venue from it.
+        // SEC/L-4 (defense-in-depth): set true on an RT_DEFAULT/RT_LIQUIDATION report; ONE-WAY — never cleared (the
+        // lienId is single-use forever, F-12: close flips `open=false` but keeps the record, so a closed line already
+        // fails `_draw`'s `!open` guard and the flag is moot post-close). Blocks `_draw` on-chain so a defaulted line
+        // can never be re-drawn, hardening the trust assumption that the CRE never sends a post-default draw. Does NOT
+        // free the slot or the capital (repay+close still do that); it only fences the draw path. Economic loss is
+        // handled by the DefaultCoordinator.
+        bool defaulted;
     }
 
     /// @notice lienId => LienRecord. Public for cheap reads; the struct getter `getLien` returns the struct.
     mapping(bytes32 => LienRecord) public liens;
 
+    /// @notice The decoded RT_ORIGINATION payload. Decoded as ONE memory struct (not 9 stack locals) to stay under
+    ///         the stack-depth limit without via-ir. ABI-identical to the flat tuple the producer encodes (all members
+    ///         are value types, so tuple- and struct-encoding coincide). `sourceTs` is the SEC/L-3 appraisal ts.
+    struct OrigParams {
+        bytes32 lienId;
+        bytes32 proofRef;
+        uint256 equityMark;
+        uint16 borrowLTV;
+        uint16 liqLTV;
+        uint256 drawAmount;
+        uint256 cap;
+        bytes32 siloId;
+        uint48 sourceTs;
+    }
+
     // ----- errors (identity/sender/owner reverts reuse ReceiverTemplate/Ownable; no EVC errors) -----
     error ZeroAddress();
     error LienExists(bytes32 lienId);
     error UnknownLien(bytes32 lienId);
+    error LienDefaulted(bytes32 lienId); // SEC/L-4: `_draw` on a lien flagged defaulted (one-way)
     error PrecomputeMismatch();
     error DebtOutstanding();
     error UnsupportedReportType(uint8 reportType);
@@ -200,7 +225,10 @@ contract ZipcodeController is ReceiverTemplate {
             _close(payload);
         } else if (reportType == RT_DEFAULT || reportType == RT_LIQUIDATION) {
             // M1: status-marker only — no markdown / escrow / venue.liquidate (§4.4d/e; DefaultCoordinator is M2).
+            // SEC/L-4: ALSO set the one-way `defaulted` flag so `_draw` fails closed on-chain for this lien (defense-
+            // in-depth over the trusted-CRE assumption). No-op on an unknown lien (flag on a zeroed record is inert).
             (bytes32 lienId, uint8 status) = abi.decode(payload, (bytes32, uint8));
+            liens[lienId].defaulted = true;
             emit LienStatusUpdated(lienId, status);
         } else {
             revert UnsupportedReportType(reportType);
@@ -210,70 +238,67 @@ contract ZipcodeController is ReceiverTemplate {
     /// @dev Origination branch (a) — the atomic batch: create -> openLine -> seed -> setLineLimits -> fund -> draw.
     ///      Any revert rolls back the whole branch (incl. the CREATE2 deploys) — no orphan lien/market.
     function _origination(bytes memory payload) internal {
-        (
-            bytes32 lienId,
-            bytes32 proofRef,
-            uint256 equityMark,
-            uint16 borrowLTV,
-            uint16 liqLTV,
-            uint256 drawAmount,
-            uint256 cap,
-            bytes32 siloId
-        ) = abi.decode(payload, (bytes32, bytes32, uint256, uint16, uint16, uint256, uint256, bytes32));
+        OrigParams memory p = abi.decode(payload, (OrigParams));
 
         // 0: resolve the routing venue for this silo (fail-closed: RegistryUnset / SiloUnrouted). Local name `venue_`
         //    — do NOT shadow the `venue` state var; the report paths route EXCLUSIVELY via the registry (CTR-03).
-        address venue_ = _venueFor(siloId);
+        address venue_ = _venueFor(p.siloId);
 
         // 1: clean dup guard (the factory also reverts FailedDeployment on a re-used slot).
-        if (liens[lienId].lien != address(0)) revert LienExists(lienId);
+        if (liens[p.lienId].lien != address(0)) revert LienExists(p.lienId);
 
         // 2: precompute + create + defensive assert (both addresses derive from (lienId, this) -> equal).
-        address predicted = ILienTokenFactory(lienFactory).computeAddress(lienId, address(this));
-        address lien = ILienTokenFactory(lienFactory).create(lienId);
-        if (lien != predicted) revert PrecomputeMismatch();
+        address lien = ILienTokenFactory(lienFactory).create(p.lienId);
+        if (lien != ILienTokenFactory(lienFactory).computeAddress(p.lienId, address(this))) revert PrecomputeMismatch();
 
         // 3: custody approve — exactly 1e18 (no standing allowance left, F-7).
         ILienToken(lien).approve(venue_, FULL_LIEN);
 
         // 4: open the line with the FULL lien (the venue backstops != 1e18); oracleKey == lien by construction.
-        (address lineRef, address oracleKey) = IZipcodeVenue(venue_).openLine(lienId, lien, FULL_LIEN);
+        (address lineRef, address oracleKey) = IZipcodeVenue(venue_).openLine(p.lienId, lien, FULL_LIEN);
 
-        // 5: seed the Proof-of-Value mark on the openLine-returned oracleKey, after openLine + before draw.
-        IZipcodeOracleRegistry(oracleRegistry).seedPrice(oracleKey, equityMark);
+        // 5: seed the Proof-of-Value mark on the openLine-returned oracleKey, after openLine + before draw. The mark
+        //    is stamped with its APPRAISAL SOURCE ts (SEC/L-3), the same clock as rt-3 revaluations, so a stale
+        //    out-of-order seed reverts StaleReport instead of clobbering a newer revaluation. (Fresh lien ⇒ cache
+        //    ts == 0, so any real sourceTs is accepted; the guard bites the re-anchor draw path.)
+        IZipcodeOracleRegistry(oracleRegistry).seedPrice(oracleKey, p.equityMark, p.sourceTs);
 
         // 6: set limits (1e4-scale LTVs; raw cap).
-        IZipcodeVenue(venue_).setLineLimits(lineRef, borrowLTV, liqLTV, cap);
+        IZipcodeVenue(venue_).setLineLimits(lineRef, p.borrowLTV, p.liqLTV, p.cap);
 
         // 7: fund + draw. The draw's on-chain LTV/cap bound (the EVK account-status check) is the only gate — the
         //    controller does NOT pre-check it. The borrow is authorized because the adapter is the line's operator.
-        IZipcodeVenue(venue_).fund(lineRef, drawAmount);
-        IZipcodeVenue(venue_).draw(lineRef, drawAmount, erebor);
+        IZipcodeVenue(venue_).fund(lineRef, p.drawAmount);
+        IZipcodeVenue(venue_).draw(lineRef, p.drawAmount, erebor);
 
         // 8: store + event (the liens write is LAST — last-write reentrancy safety, F-10).
-        liens[lienId] = LienRecord({lien: lien, lineRef: lineRef, open: true, siloId: siloId});
-        emit LienOriginated(lienId, lien, lineRef, proofRef, equityMark, drawAmount, siloId);
+        liens[p.lienId] = LienRecord({lien: lien, lineRef: lineRef, open: true, siloId: p.siloId, defaulted: false});
+        emit LienOriginated(p.lienId, lien, lineRef, p.proofRef, p.equityMark, p.drawAmount, p.siloId);
 
         // 9: bump the registry slot count as the FINAL statement (fail-closed — a SiloFull revert rolls back the
         //    whole atomic origination incl. the CREATE2 deploys; F-10 is preserved because the registry is trusted
         //    and makes NO callback into the controller).
-        ISiloRegistry(registry).incrementLineCount(siloId);
+        ISiloRegistry(registry).incrementLineCount(p.siloId);
     }
 
     /// @dev Draw branch (a') — additional draw on an open line: re-anchor seed -> fund -> draw.
     function _draw(bytes memory payload) internal {
-        (bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount) =
-            abi.decode(payload, (bytes32, bytes32, uint256, uint256));
+        (bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount, uint48 sourceTs) =
+            abi.decode(payload, (bytes32, bytes32, uint256, uint256, uint48));
 
         LienRecord storage r = liens[lienId];
         if (!r.open) revert UnknownLien(lienId);
+        if (r.defaulted) revert LienDefaulted(lienId); // SEC/L-4: a defaulted line can never be re-drawn (one-way)
 
         // Re-resolve the SAME venue from the stored siloId (NEVER from a global pointer — a re-pointed/retired silo
         // cannot strand an open line in the wrong venue, Key req 1).
         address venue_ = _venueFor(r.siloId);
 
-        // Re-anchor a fresh Proof-of-Value mark (also refreshes the cache timestamp, §4.4a'/§4.1).
-        IZipcodeOracleRegistry(oracleRegistry).seedPrice(r.lien, equityMark);
+        // Re-anchor the Proof-of-Value mark stamped with its APPRAISAL SOURCE ts (SEC/L-3): a draw whose appraisal
+        // predates the latest cached mark (an out-of-order/stale draw) reverts StaleReport at `_writePrice` and rolls
+        // back the whole atomic branch — it can no longer overwrite a newer revaluation with an older, higher mark and
+        // borrow against it. Sequential draws each carry a strictly-newer appraisal ts and pass.
+        IZipcodeOracleRegistry(oracleRegistry).seedPrice(r.lien, equityMark, sourceTs);
 
         IZipcodeVenue(venue_).fund(r.lineRef, drawAmount);
         IZipcodeVenue(venue_).draw(r.lineRef, drawAmount, erebor);

@@ -4,7 +4,7 @@
 //
 // wasip1 entrypoint for the CRE-00 (R)-track workflow scaffold. The workflow logic lives in workflow.go
 // (untagged, so it builds + tests on the host); main() + the wasm runner are wasip1-only because
-// cre/wasm.NewRunner is wasip1-bound. Clone this module, rename it, and replace the illustrative LpMark
+// cre/wasm.NewRunner is wasip1-bound. Clone this module, rename it, and replace the illustrative Rate
 // push in workflow.go with your ticket's zipreport.Xxx call.
 package main
 

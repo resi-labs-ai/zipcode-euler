@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -128,6 +129,24 @@ func (j *StrikeLoopJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	oHYDX, err := chain.CallAddress(ctx, r, j.harvest, "oHYDX()")
 	if err != nil {
 		return chain.Plan{}, err
+	}
+	// Drift alarm (audit F13): the gauge is the source of truth for what it pays. If the module's
+	// stored oHYDX disagrees with gauge.rewardToken(), the loop would otherwise idle SILENTLY forever
+	// (a stale token reads a zero balance → the no-op gate below fires every tick with no error).
+	// Return an error instead: the Runner logs it EVERY tick until governance re-syncs (setGauge
+	// re-derives, or setOHYDX overrides). Two extra reads per tick.
+	gauge, err := chain.CallAddress(ctx, r, j.harvest, "gauge()")
+	if err != nil {
+		return chain.Plan{}, err
+	}
+	gaugeReward, err := chain.CallAddress(ctx, r, gauge, "rewardToken()")
+	if err != nil {
+		return chain.Plan{}, err
+	}
+	if gaugeReward != oHYDX {
+		return chain.Plan{}, fmt.Errorf(
+			"strike-loop DRIFT ALARM: HarvestVoteModule.oHYDX() %s != gauge.rewardToken() %s — the gauge changed its reward token; harvest halted until setGauge/setOHYDX re-syncs",
+			oHYDX.Hex(), gaugeReward.Hex())
 	}
 	hydx, err := chain.CallAddress(ctx, r, j.sell, "hydx()")
 	if err != nil {

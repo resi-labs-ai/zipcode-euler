@@ -12,22 +12,21 @@
 //
 //	Envelope (every receiver): abi.encode(uint8 reportType, bytes payload)
 //	  ZipcodeController.sol:193, ZipcodeOracleRegistry.sol:129, SzipNavOracle.sol:301,
-//	  SzipFarmUtilityLpOracle.sol:107, DefaultCoordinator.sol:182, SzAlphaRateOracle.sol:81,
+//	  DefaultCoordinator.sol:182, SzAlphaRateOracle.sol:81,
 //	  WarehouseAdminModule.sol:158 (there the first field is named opType — same (uint8, bytes) shape).
 //
 //	reportType  receiver constant @ line                 inner payload tuple (the abi.decode site)
 //	1 Origination ZipcodeController.RT_ORIGINATION  :47   (bytes32 lienId, bytes32 proofRef, uint256 equityMark,
 //	                                                        uint16 borrowLTV, uint16 liqLTV, uint256 drawAmount,
-//	                                                        uint256 cap, bytes32 siloId)            :222
+//	                                                        uint256 cap, bytes32 siloId, uint48 sourceTs)  :222
 //	2 Draw        ZipcodeController.RT_DRAW         :48   (bytes32 lienId, bytes32 proofRef, uint256 equityMark,
-//	                                                        uint256 drawAmount)                      :266
+//	                                                        uint256 drawAmount, uint48 sourceTs)     :266
 //	4 Close       ZipcodeController.RT_CLOSE        :50   (bytes32 lienId)                           :287
 //	5 Default /   ZipcodeController.RT_DEFAULT      :51   (bytes32 lienId, uint8 status)            :203
 //	6 Liquidation ZipcodeController.RT_LIQUIDATION  :52
 //	3 Revaluation ZipcodeOracleRegistry.REVALUATION :29   (address[] liens, uint256[] prices, uint32 ts) :132
 //	7 NavLeg      SzipNavOracle.NAV_LEG             :72   (uint8[] legs, uint256[] prices, uint32 ts) :304
 //	                                                       legs ∈ {0 LEG_ALPHA_USD, 1 LEG_HYDX_USD}  :66/:68
-//	7 LpMark      SzipFarmUtilityLpOracle.LP_MARK     :28   (uint256 mark, uint32 ts)                  :109
 //	8 Coordinator DefaultCoordinator.REPORT_TYPE    :49   (uint8 action, bytes data)                 :185
 //	                                                       action: Lock=0,Release=1,Default_=2,Recovery=3,
 //	                                                       Resolve=4,WriteOff=5                       :52-58
@@ -67,9 +66,8 @@ import (
 // ──────────────────────────────────────────────────────────────────────── reportType / action / op constants
 //
 // One const block per RECEIVER so the cross-receiver numeral collisions are explicit and a reader cannot
-// conflate them: NavLeg==7 and LpMark==7 live in different blocks; CoordinatorReportType==8 and
-// RateReportType==8 likewise; the warehouse WhSupply==1..WhRepay==4 reuse 1-4 but are opTypes on their
-// own receiver.
+// conflate them: CoordinatorReportType==8 and RateReportType==8 collide; the warehouse WhSupply==1..WhRepay==4
+// reuse 1-4 but are opTypes on their own receiver.
 
 // ZipcodeController report types.
 const (
@@ -90,11 +88,6 @@ const (
 	NavLeg      uint8 = 7 // NAV_LEG (:72)
 	LegAlphaUsd uint8 = 0 // LEG_ALPHA_USD (:66)
 	LegHydxUsd  uint8 = 1 // LEG_HYDX_USD (:68)
-)
-
-// SzipFarmUtilityLpOracle report type.
-const (
-	LpMark uint8 = 7 // LP_MARK (:28)
 )
 
 // DefaultCoordinator report type + action enum.
@@ -125,17 +118,17 @@ const (
 // ──────────────────────────────────────────────────────────────────────── abi types (built once)
 
 var (
-	tUint8    = mustType("uint8")
-	tUint16   = mustType("uint16")
-	tUint32   = mustType("uint32")
-	tUint48   = mustType("uint48")
-	tUint256  = mustType("uint256")
-	tBytes    = mustType("bytes")
-	tBytes32  = mustType("bytes32")
-	tAddress  = mustType("address")
-	tAddrArr  = mustType("address[]")
-	tU256Arr  = mustType("uint256[]")
-	tU8Arr    = mustType("uint8[]")
+	tUint8   = mustType("uint8")
+	tUint16  = mustType("uint16")
+	tUint32  = mustType("uint32")
+	tUint48  = mustType("uint48")
+	tUint256 = mustType("uint256")
+	tBytes   = mustType("bytes")
+	tBytes32 = mustType("bytes32")
+	tAddress = mustType("address")
+	tAddrArr = mustType("address[]")
+	tU256Arr = mustType("uint256[]")
+	tU8Arr   = mustType("uint8[]")
 )
 
 func mustType(s string) abi.Type {
@@ -177,19 +170,24 @@ func wrap(reportType uint8, payloadArgs abi.Arguments, vals ...interface{}) ([]b
 // Origination encodes RT_ORIGINATION (1):
 // (bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint16 borrowLTV, uint16 liqLTV,
 //
-//	uint256 drawAmount, uint256 cap, bytes32 siloId) — ZipcodeController.sol:222.
-func Origination(lienId, proofRef [32]byte, equityMark *big.Int, borrowLTV, liqLTV uint16, drawAmount, cap *big.Int, siloId [32]byte) ([]byte, error) {
+//	uint256 drawAmount, uint256 cap, bytes32 siloId, uint48 sourceTs) — ZipcodeController.sol:222.
+//
+// sourceTs (SEC/L-3) is the equityMark's APPRAISAL as-of time — the SAME clock the rt-3 revaluation stamps.
+// The controller seeds it as the registry mark's ts (NOT block.timestamp), so a stale out-of-order write reverts
+// StaleReport instead of clobbering a fresher revaluation. It MUST be the appraisal time carried on the event, not
+// the emit time.
+func Origination(lienId, proofRef [32]byte, equityMark *big.Int, borrowLTV, liqLTV uint16, drawAmount, cap *big.Int, siloId [32]byte, sourceTs *big.Int) ([]byte, error) {
 	return wrap(ControllerOrigination,
-		args(tBytes32, tBytes32, tUint256, tUint16, tUint16, tUint256, tUint256, tBytes32),
-		lienId, proofRef, equityMark, borrowLTV, liqLTV, drawAmount, cap, siloId)
+		args(tBytes32, tBytes32, tUint256, tUint16, tUint16, tUint256, tUint256, tBytes32, tUint48),
+		lienId, proofRef, equityMark, borrowLTV, liqLTV, drawAmount, cap, siloId, sourceTs)
 }
 
-// Draw encodes RT_DRAW (2): (bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount)
-// — ZipcodeController.sol:266.
-func Draw(lienId, proofRef [32]byte, equityMark, drawAmount *big.Int) ([]byte, error) {
+// Draw encodes RT_DRAW (2): (bytes32 lienId, bytes32 proofRef, uint256 equityMark, uint256 drawAmount,
+// uint48 sourceTs) — ZipcodeController.sol:266. sourceTs is the re-anchored mark's APPRAISAL time (see Origination).
+func Draw(lienId, proofRef [32]byte, equityMark, drawAmount, sourceTs *big.Int) ([]byte, error) {
 	return wrap(ControllerDraw,
-		args(tBytes32, tBytes32, tUint256, tUint256),
-		lienId, proofRef, equityMark, drawAmount)
+		args(tBytes32, tBytes32, tUint256, tUint256, tUint48),
+		lienId, proofRef, equityMark, drawAmount, sourceTs)
 }
 
 // Close encodes RT_CLOSE (4): (bytes32 lienId) — ZipcodeController.sol:287.
@@ -231,15 +229,6 @@ func NavLegReport(legs []uint8, prices []*big.Int, ts uint32) ([]byte, error) {
 		return nil, fmt.Errorf("zipreport.NavLeg: len(legs)=%d != len(prices)=%d (LengthMismatch)", len(legs), len(prices))
 	}
 	return wrap(NavLeg, args(tU8Arr, tU256Arr, tUint32), legs, prices, ts)
-}
-
-// ──────────────────────────────────────────────────────────────────────── SzipFarmUtilityLpOracle builder
-
-// LpMarkReport encodes LP_MARK (7): (uint256 mark, uint32 ts) — SzipFarmUtilityLpOracle.sol:109.
-//
-// Named LpMarkReport (not LpMark) because LpMark is the reportType constant. Exported for clarity.
-func LpMarkReport(mark *big.Int, ts uint32) ([]byte, error) {
-	return wrap(LpMark, args(tUint256, tUint32), mark, ts)
 }
 
 // ──────────────────────────────────────────────────────────────────────── SzAlphaRateOracle builder

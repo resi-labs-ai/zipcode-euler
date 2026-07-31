@@ -61,7 +61,7 @@ func initFn(_ []byte, _ *slog.Logger, _ cre.SecretsProvider) (cre.Workflow[Confi
 
 func onCron(cfg Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, error) {
 	// 1. Pull the rate from 964 (the irreducible cross-chain fact).
-	rate, ts, err := readExchangeRate(&evm.Client{ChainSelector: cfg.SubtensorChainSelector}, runtime, cfg.SzAlpha)
+	rate, err := readExchangeRate(&evm.Client{ChainSelector: cfg.SubtensorChainSelector}, runtime, cfg.SzAlpha)
 	if err != nil {
 		return struct{}{}, err
 	}
@@ -69,13 +69,20 @@ func onCron(cfg Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, error) 
 		return struct{}{}, nil // never push a zero rate (the receiver would revert ZeroRate anyway)
 	}
 
-	// 2. Encode the payload EXACT to SzAlphaRateOracle._processReport: (uint256 rate, uint48 ts).
+	// 2. Stamp with DON time (`runtime.Now()`, the sharefeeds pattern) — NEVER the 964 read-block timestamp.
+	// The receiver compares `ts` against BASE time (not-future + maxStaleness), so a remote-chain stamp imports
+	// 964's clock skew: ahead ⇒ FutureTimestamp reverts; behind ⇒ old-on-arrival freshness. DON time ≈ Base time
+	// (seconds), so neither can arise, and the receiver's not-future check remains a pure producer-bug tripwire
+	// (e.g. a ms-vs-s stamp is caught loudly on the FIRST push instead of poisoning the strictly-newer cursor).
+	ts := uint64(runtime.Now().Unix())
+
+	// 3. Encode the payload EXACT to SzAlphaRateOracle._processReport: (uint256 rate, uint48 ts).
 	payload, err := encodeRatePayload(rate, ts)
 	if err != nil {
 		return struct{}{}, err
 	}
 
-	// 3. Sign + 4. push to Base. The receiver enforces non-zero / not-future / strictly-newer.
+	// 4. Sign + 5. push to Base. The receiver enforces non-zero / not-future / strictly-newer.
 	report, err := runtime.GenerateReport(&cre.ReportRequest{
 		EncodedPayload: encodeEnvelope(rateReportType, payload),
 		EncoderName:    "evm",
@@ -108,13 +115,14 @@ func encodeEnvelope(reportType uint8, payload []byte) []byte {
 	return out
 }
 
-// readExchangeRate reads IXAlphaRate.exchangeRate() on SzAlpha (964) + the read block's timestamp.
-func readExchangeRate(c *evm.Client, runtime cre.Runtime, szAlpha string) (*big.Int, uint64, error) {
+// readExchangeRate reads IXAlphaRate.exchangeRate() on SzAlpha (964). The RATE is the only thing read across
+// the chain boundary — the push timestamp is stamped DON-side in `onCron` (never the 964 block time; see there).
+func readExchangeRate(c *evm.Client, runtime cre.Runtime, szAlpha string) (*big.Int, error) {
 	// R-1 (BLOCKING, see ticket) + R-4: c.CallContract(runtime, &evm.CallContractRequest{Call:{To: szAlpha,
-	// Data: selector("exchangeRate()")}}).Await() → decode uint256; ts = read block timestamp. R-1 GATES THIS:
+	// Data: selector("exchangeRate()")}}).Await() → decode uint256. R-1 GATES THIS:
 	// exchangeRate() staticcalls the 0x805 precompile — prove CRE can reach it on 964 before relying on this.
 	_ = c
 	_ = runtime
 	_ = common.HexToAddress(szAlpha)
-	return big.NewInt(0), 0, nil
+	return big.NewInt(0), nil
 }

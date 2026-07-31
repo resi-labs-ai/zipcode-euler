@@ -56,6 +56,9 @@ contract JuniorTrancheDeployer is SummonSubstrate {
     error SeamGateShareToken();
     error SeamCoverageGate();
     error SeamEngineSafe();
+    /// @notice The buy-burn module's Zodiac exec pointers diverge from its engine (`avatar`/`target` != `juniorTrancheEngine`) —
+    ///         the uid `owner` would differ from the presigning Safe, so every post/cancel would revert at CoW's owner check.
+    error SeamEngineAvatar();
     error SeamSharedLp();
     error SeamOneBank();
     error SeamEscrowCoordinator();
@@ -222,6 +225,10 @@ contract JuniorTrancheDeployer is SummonSubstrate {
             SzipBuyBurnModule(t.buyBurn).juniorTrancheEngine() != t.gate.juniorTrancheEngine()
                 || t.gate.juniorTrancheEngine() != t.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
+        if (
+            SzipBuyBurnModule(t.buyBurn).avatar() != juniorTrancheEngine
+                || SzipBuyBurnModule(t.buyBurn).target() != juniorTrancheEngine
+        ) revert SeamEngineAvatar();
 
         // -- 8. FarmUtilityLoopModule (juniorTrancheEngine).
         t.farmUtilityLoop = _cloneModule(
@@ -251,6 +258,12 @@ contract JuniorTrancheDeployer is SummonSubstrate {
                 || p.polIchiVault != IEVault(p.escrowVault).asset()
         ) revert SeamSharedLp();
         if (LpStrategyModule(t.lpStrategy).coverageGate() != t.durationFreeze) revert SeamCoverageGate();
+        // SEC/H-1: `navOracle` is DELIBERATELY left unwired here so `addLiquidity` fails closed (`NavOracleUnset`) —
+        // v0 ships with NO LP in the vault (LP leg == 0, nothing to spot-manipulate). The v1 LP cutover is a single
+        // paired Timelock act, ordering enforced by the gate: (1) `SzipNavOracle.setLpTwapWindow(NAV_W)` once the live
+        // Algebra pool exposes an initialized TWAP plugin, then (2) `LpStrategyModule.setNavOracle(navOracle)`. Only
+        // after BOTH can LP be funded, and it is fair-priced from the first wei. Do NOT wire navOracle before the
+        // window is armed — the gate would then permit spot-priced funding.
 
         // -- 10. HarvestVoteModule (juniorTrancheEngine).
         t.harvestVote = _cloneModule(

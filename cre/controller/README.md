@@ -71,6 +71,7 @@ Block-Analitica feeds + on-node zk/hash/cert-chain verify, deriving `Gates` + `E
   "action": "origination",
   "lienId": "0xab...01", "proofRef": "0xab...02", "siloId": "0xab...03",
   "equityMark": "1500000000000000000",  // 18-dp mark, > 0
+  "equityMarkTs": "1700000000",         // SEC/L-3: appraisal as-of time (unix s), > 0, uint48 — NOT emit time
   "drawAmount": "1000000000000000000", "cap": "5000000000000000000",  // may be 0
   "borrowLtv": 7500, "liqLtv": 8500,    // 1e4-scale uint16
   "gates": { "lienPerfected": true, "insured": true, "identityOk": true,
@@ -80,7 +81,8 @@ Block-Analitica feeds + on-node zk/hash/cert-chain verify, deriving `Gates` + `E
 ```jsonc
 // draw (rt2) — Proof-gated, NO siloId
 { "action": "draw", "lienId": "0xab...11", "proofRef": "0xab...12",
-  "equityMark": "2000000000000000000", "drawAmount": "750000000000000000",
+  "equityMark": "2000000000000000000", "equityMarkTs": "1700000500",  // SEC/L-3: appraisal as-of time (unix s)
+  "drawAmount": "750000000000000000",
   "gates": { "lienPerfected": true, "insured": true, "identityOk": true,
              "creditOk": true, "incomeOk": true, "titleClean": true } }
 ```

@@ -5,7 +5,8 @@
 // Job: maintain the SINGLE resting buy-burn bid on the post-CTR-01 SzipBuyBurnModule via the §8.0 report path
 // (POST_BID=1 / CANCEL_BID=2). It reads the live bid + the chain-derived price ceiling + the free reservoir off
 // EulerEarn, sizes one bid (clamped to buybackCap, net of working-capital reserves), and reconciles it: post when
-// none rests and the position is fundable/fresh/covered; repost on size drift; cancel when the bid must come down.
+// none rests and the position is fundable/fresh/covered; repost on size drift OR price drift (SEC/L-7 — a resting
+// bid must never keep quoting a mark the oracle has since re-priced); cancel when the bid must come down.
 //
 // It NEVER computes NAV/APR off-chain and NEVER submits a raw tx — the only write is WriteReport. One bid, repost
 // on drift (single-resting-bid invariant, driver §4).
@@ -22,14 +23,19 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math/big"
+	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/smartcontractkit/cre-sdk-go/capabilities/blockchain/evm"
+	httpcap "github.com/smartcontractkit/cre-sdk-go/capabilities/networking/http"
 	"github.com/smartcontractkit/cre-sdk-go/capabilities/scheduler/cron"
 	"github.com/smartcontractkit/cre-sdk-go/cre"
 )
@@ -60,9 +66,18 @@ type Config struct {
 	RedemptionQueue string `json:"redemptionQueue"` // ZipRedemptionQueue (the RedemptionSettled emitter)
 
 	DriftBps       uint64 `json:"driftBps"`       // repost threshold: resize the bid when |Δsize| in bps ≥ this
+	PriceDriftBps  uint64 `json:"priceDriftBps"`  // repost threshold: reprice when |posted price − quoteMaxPrice| in bps ≥ this (SEC/L-7); 0 ⇒ falls back to driftBps (drift reconcile is never silently off)
 	TTLSeconds     uint64 `json:"ttlSeconds"`     // desired bid lifetime (clamped by the NAV-freshness fence + MAX_BID_TTL)
 	HarvestReserve string `json:"harvestReserve"` // 6-dp USDC held back for the harvest engine (CRE-06 constant)
 	SafetyBuffer   string `json:"safetyBuffer"`   // 6-dp USDC operational buffer (CRE-06 constant)
+
+	// DEMAND GATE (ratified 2026-07-30): the protocol only fills — it never makes a market. A bid is posted only
+	// against sell orders ALREADY resting on the CoW book at an acceptable price (≤ quoteMaxPrice, the current
+	// fair ceiling), sized to exactly that demand. Empty OrderbookURL ⇒ gate OFF (build/sim back-compat only —
+	// production config MUST set it). SzipUSD/Usdc identify the pair on the book.
+	OrderbookURL string `json:"orderbookUrl"` // CoW orderbook API base, e.g. "https://api.cow.fi/base"
+	SzipUSD      string `json:"szipUsd"`      // the share token (the book's sellToken side)
+	Usdc         string `json:"usdc"`         // the payment token (the book's buyToken side)
 }
 
 func initFn(cfg *Config, _ *slog.Logger, _ cre.SecretsProvider) (cre.Workflow[*Config], error) {
@@ -94,6 +109,36 @@ func evaluateAndReconcile(cfg *Config, runtime cre.Runtime) (struct{}, error) {
 
 	// --- Reads (all view CallContract; decode the return) -----------------------------------------------------
 	uid, currentSellAmount, err := readCurrentBid(client, runtime, moduleAddr)
+	if err != nil {
+		return struct{}{}, err
+	}
+
+	// --- LP-TWAP halt gate (audit F8) --------------------------------------------------------------------------
+	// A replaced/reset Algebra plugin restarts with EMPTY history; until the 1h window re-accumulates, every NAV
+	// read (quoteMaxPrice ← navExit) reverts LpTwapHistoryTooShort. Probe the oracle's NON-REVERTING status view
+	// FIRST so a halt surfaces as a legible status + a skipped round, not an opaque errored run. A resting bid is
+	// cancelled: it would keep quoting a pre-halt mark that fills cannot be re-checked against while NAV is halted.
+	// Self-healing — the first tick at/after readyAt resumes business as usual with nothing to unpause.
+	twapReady, twapPlugin, twapReadyAt, err := readLpTwapStatus(client, runtime, common.HexToAddress(cfg.NavOracle))
+	if err != nil {
+		return struct{}{}, err
+	}
+	if !twapReady {
+		eta := "no ETA -- the pool has no initialized plugin yet"
+		if twapReadyAt.Sign() > 0 {
+			eta = fmt.Sprintf("resuming at %s (unix %d) once 1h of price history has accumulated",
+				time.Unix(twapReadyAt.Int64(), 0).UTC().Format(time.RFC3339), twapReadyAt)
+		}
+		runtime.Logger().Warn(fmt.Sprintf(
+			"Algebra pool plugin %s has been replaced/reset; TWAP NAV oracle is halted. %s. Skipping bid round.",
+			twapPlugin.Hex(), eta))
+		if len(uid) != 0 {
+			return struct{}{}, writeCancel(client, runtime, moduleAddr)
+		}
+		return struct{}{}, nil
+	}
+
+	currentBuyAmount, err := readUint(client, runtime, moduleAddr, "currentBuyAmount()")
 	if err != nil {
 		return struct{}{}, err
 	}
@@ -141,6 +186,19 @@ func evaluateAndReconcile(cfg *Config, runtime cre.Runtime) (struct{}, error) {
 	avail := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, harvestReserve), safetyBuffer)
 	targetSell := clamp(avail, big.NewInt(0), buybackCap)
 
+	// --- Demand gate (ratified 2026-07-30: fill-only, never market-make) ---------------------------------------
+	// Read the CoW book for resting szipUSD→USDC sell orders asking ≤ the CURRENT fair ceiling (quoteMaxPrice).
+	// The bid is sized to min(that demand, cash): no acceptable resting order ⇒ no bid ⇒ no resting protocol
+	// price to go stale. Fail-closed: an unreachable book ⇒ demand 0 ⇒ nothing posts (and a live bid cancels).
+	if cfg.OrderbookURL != "" && maxPrice.Sign() > 0 {
+		demandUSDC, derr := acceptableDemandUSDC(cfg, runtime, maxPrice)
+		if derr != nil {
+			runtime.Logger().Warn(fmt.Sprintf("orderbook read failed (%v); demand gate fails closed this tick", derr))
+			demandUSDC = big.NewInt(0)
+		}
+		targetSell = clamp(demandUSDC, big.NewInt(0), targetSell)
+	}
+
 	// --- Price ------------------------------------------------------------------------------------------------
 	// maxPrice == 0 ⇒ no fresh mark; skip posting (targetBuy is undefined). targetBuy = ceilDiv(sell·1e18, maxPrice).
 	var targetBuy *big.Int
@@ -167,7 +225,13 @@ func evaluateAndReconcile(cfg *Config, runtime cre.Runtime) (struct{}, error) {
 		if !postable {
 			return struct{}{}, writeCancel(client, runtime, moduleAddr)
 		}
-		if sizeDriftBps(targetSell, currentSellAmount).Uint64() >= cfg.DriftBps {
+		// SEC/L-7 price-drift reconcile: a resting bid keeps quoting the price it was POSTED at even after the
+		// oracle re-prices navExit — the stale-high side of that is the Octane V7 window. Derive the posted
+		// implied price from the module's live-bid state (sell·1e18/buy, 6-dp USDC per 1e18 share — the same unit
+		// as quoteMaxPrice) and cancel-and-repost when it has drifted ≥ priceDriftBps from the CURRENT ceiling.
+		// Symmetric on purpose: stale-HIGH overpays the treasury side, stale-LOW under-bids the exit lane.
+		reprice := driftBps(maxPrice, postedPrice(currentSellAmount, currentBuyAmount)).Uint64() >= priceDriftThreshold(cfg)
+		if reprice || driftBps(targetSell, currentSellAmount).Uint64() >= cfg.DriftBps {
 			// The module's BidAlreadyLive requires cancel-before-repost; they cannot be atomic → sequential Awaits.
 			if err := writeCancel(client, runtime, moduleAddr); err != nil {
 				return struct{}{}, err
@@ -176,6 +240,98 @@ func evaluateAndReconcile(cfg *Config, runtime cre.Runtime) (struct{}, error) {
 		}
 		return struct{}{}, nil // bid still good — no-op
 	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────── the demand gate (fill-only)
+
+// cowOrder is the slice of a CoW orderbook auction order this gate reads. Amounts are decimal strings.
+type cowOrder struct {
+	SellToken  string `json:"sellToken"`
+	BuyToken   string `json:"buyToken"`
+	SellAmount string `json:"sellAmount"`
+	BuyAmount  string `json:"buyAmount"`
+	Kind       string `json:"kind"`
+}
+
+type cowAuction struct {
+	Orders []cowOrder `json:"orders"`
+}
+
+// demandQuery is the node-mode observation carrier: everything a node needs to fetch + filter the book.
+type demandQuery struct {
+	URL      string // {OrderbookURL}/api/v1/auction
+	SzipUSD  string // lowercased hex
+	Usdc     string // lowercased hex
+	MaxPrice string // quoteMaxPrice() at read time, 6-dp USDC per 1e18 share, decimal string
+}
+
+// acceptableDemandUSDC reads the CoW book per node and returns (median-aggregated) the USDC needed to fill every
+// resting szipUSD→USDC SELL order whose asking price is at or below the current fair ceiling (maxPrice). An order
+// asking sellAmount shares for buyAmount USDC has price buyAmount·1e18/sellAmount; acceptable ⇔ price ≤ maxPrice.
+// USDC needed for the acceptable set = ceil(Σshares · maxPrice / 1e18) — we fund at OUR ceiling, the module's
+// exact price bound enforces the rest. Median (not identical) consensus: nodes may see the book seconds apart.
+func acceptableDemandUSDC(cfg *Config, runtime cre.Runtime, maxPrice *big.Int) (*big.Int, error) {
+	q := demandQuery{
+		URL:      strings.TrimRight(cfg.OrderbookURL, "/") + "/api/v1/auction",
+		SzipUSD:  strings.ToLower(cfg.SzipUSD),
+		Usdc:     strings.ToLower(cfg.Usdc),
+		MaxPrice: maxPrice.String(),
+	}
+	return cre.RunInNodeMode(q, runtime, observeDemand, cre.ConsensusMedianAggregation[*big.Int]()).Await()
+}
+
+func observeDemand(q demandQuery, nr cre.NodeRuntime) (*big.Int, error) {
+	client := &httpcap.Client{}
+	resp, err := client.SendRequest(nr, &httpcap.Request{Url: q.URL, Method: "GET"}).Await()
+	if err != nil {
+		return nil, fmt.Errorf("orderbook fetch: %w", err)
+	}
+	var auction cowAuction
+	if err := json.Unmarshal(resp.Body, &auction); err != nil {
+		return nil, fmt.Errorf("orderbook decode: %w", err)
+	}
+	maxPrice, ok := new(big.Int).SetString(q.MaxPrice, 10)
+	if !ok || maxPrice.Sign() <= 0 {
+		return nil, fmt.Errorf("bad maxPrice carrier %q", q.MaxPrice)
+	}
+	oneE18 := big.NewInt(1e18)
+	shares := big.NewInt(0)
+	for _, o := range auction.Orders {
+		if o.Kind != "sell" || strings.ToLower(o.SellToken) != q.SzipUSD || strings.ToLower(o.BuyToken) != q.Usdc {
+			continue
+		}
+		sell, okS := new(big.Int).SetString(o.SellAmount, 10)
+		buy, okB := new(big.Int).SetString(o.BuyAmount, 10)
+		if !okS || !okB || sell.Sign() <= 0 || buy.Sign() < 0 {
+			continue
+		}
+		// asking price ≤ ceiling ⇔ buy·1e18 ≤ maxPrice·sell (exact integer form, no division)
+		ask := new(big.Int).Mul(buy, oneE18)
+		ceil := new(big.Int).Mul(maxPrice, sell)
+		if ask.Cmp(ceil) <= 0 {
+			shares.Add(shares, sell)
+		}
+	}
+	return ceilDiv(new(big.Int).Mul(shares, maxPrice), oneE18), nil
+}
+
+// postedPrice derives the live bid's implied price (6-dp USDC per 1e18 share) from the module's exposed
+// (currentSellAmount, currentBuyAmount) pair: floor(sell·1e18/buy). Returns 0 when no bid state (buy == 0) —
+// driftBps against 0 then reads 10_000 bps, which correctly forces a reprice of any malformed live state.
+func postedPrice(sell, buy *big.Int) *big.Int {
+	if buy == nil || buy.Sign() <= 0 {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Div(new(big.Int).Mul(sell, big.NewInt(1e18)), buy)
+}
+
+// priceDriftThreshold: the SEC/L-7 reprice threshold. An unset priceDriftBps (0) falls back to driftBps so the
+// price reconcile can never be silently configured off.
+func priceDriftThreshold(cfg *Config) uint64 {
+	if cfg.PriceDriftBps != 0 {
+		return cfg.PriceDriftBps
+	}
+	return cfg.DriftBps
 }
 
 // computeValidTo: fence = oldestRequiredLegTs + maxAge; validTo = min(now+ttl, fence, now+MAX_BID_TTL). The fence and
@@ -200,8 +356,9 @@ func computeValidTo(now, ttlSeconds uint64, oldestLeg, maxAge *big.Int) uint64 {
 	return min.Uint64()
 }
 
-// sizeDriftBps = |target − current| · 10_000 / max(current, 1).
-func sizeDriftBps(target, current *big.Int) *big.Int {
+// driftBps = |target − current| · 10_000 / max(current, 1). Shared by the size reconcile (targetSell vs
+// currentSellAmount) and the SEC/L-7 price reconcile (quoteMaxPrice vs the posted implied price).
+func driftBps(target, current *big.Int) *big.Int {
 	diff := new(big.Int).Abs(new(big.Int).Sub(target, current))
 	denom := new(big.Int).Set(current)
 	if denom.Sign() <= 0 {
@@ -293,6 +450,24 @@ func selector(sig string) []byte {
 // redemptionSettledTopic0 = keccak256(canonical RedemptionSettled signature) (C5).
 func redemptionSettledTopic0() common.Hash {
 	return crypto.Keccak256Hash([]byte(redemptionSettledSig))
+}
+
+// readLpTwapStatus reads SzipNavOracle.lpTwapStatus() → (bool ready, address plugin, uint256 readyAt) — the
+// non-reverting probe of the LP-TWAP history halt (audit F8). ready=false ⇒ every NAV read currently reverts
+// LpTwapHistoryTooShort(plugin, readyAt); readyAt==0 ⇒ no initialized plugin at all (no ETA).
+func readLpTwapStatus(client *evm.Client, runtime cre.Runtime, addr common.Address) (bool, common.Address, *big.Int, error) {
+	data, err := call(client, runtime, addr, selector("lpTwapStatus()"))
+	if err != nil {
+		return false, common.Address{}, nil, err
+	}
+	boolT, _ := abi.NewType("bool", "", nil)
+	addrT, _ := abi.NewType("address", "", nil)
+	u256, _ := abi.NewType("uint256", "", nil)
+	out, err := abi.Arguments{{Type: boolT}, {Type: addrT}, {Type: u256}}.Unpack(data)
+	if err != nil {
+		return false, common.Address{}, nil, err
+	}
+	return out[0].(bool), out[1].(common.Address), out[2].(*big.Int), nil
 }
 
 // readCurrentBid reads SzipBuyBurnModule.currentBid() → (bytes uid, uint256 sellAmount).

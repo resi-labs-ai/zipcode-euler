@@ -27,16 +27,14 @@ type Config struct {
 	ConfirmTimeout   time.Duration             `json:"confirm_timeout"`
 	Modules          map[string]common.Address `json:"modules"` // address book keyed by name
 
-	// MinBurnAmount is the BurnJob floor (KEEPER_MIN_BURN_AMOUNT, base-10). It is
-	// env-only — `json:"-"` keeps it OUT of the JSON-file overlay (a *big.Int does
-	// not round-trip cleanly through it). Default 0 = burn any non-zero fill;
-	// unlike the scalar knobs, an explicit 0 is VALID here (no Validate rule).
-	MinBurnAmount *big.Int `json:"-"`
+	// (KEEPER_MIN_BURN_AMOUNT is GONE — ratified 2026-07-28: the BurnJob is
+	// fill-triggered with a full-balance sweep, so there is no configurable
+	// "keep some ghost shares" floor to hold.)
 
 	// RedeemTargetPending is the RedemptionJob escrow target (KEEPER_REDEEM_TARGET_PENDING,
 	// base-10, zipUSD 18dp). env-only `json:"-"` (a *big.Int does not round-trip the
 	// JSON overlay cleanly). Default 0 = escrow disabled; an explicit 0 is VALID
-	// here (no Validate rule), mirroring MinBurnAmount.
+	// here (no Validate rule).
 	RedeemTargetPending *big.Int `json:"-"`
 
 	// ---- StrikeLoopJob knobs (KEEPER-01b, §8.7; TUNABLE / C4 reviewer-flagged) ----
@@ -69,7 +67,7 @@ type Config struct {
 
 	// WinddownMaxSlice is an OPTIONAL per-invocation share cap (KEEPER_WINDDOWN_MAX_SLICE,
 	// base-10) — defense-in-depth on top of the coverage-excess clamp. env-only
-	// `json:"-"`. Default 0 = no cap (an explicit 0 is VALID; mirrors MinBurnAmount).
+	// `json:"-"`. Default 0 = no cap (an explicit 0 is VALID).
 	WinddownMaxSlice *big.Int `json:"-"`
 
 	// WinddownMaxDeviationBps is the WindDownLpJob spot↔TWAP deviation ceiling
@@ -89,7 +87,6 @@ func defaults() Config {
 		FeeCapMultiplier: 2,    // base-fee headroom
 		ConfirmTimeout:   60 * time.Second,
 		Modules:          map[string]common.Address{},
-		MinBurnAmount:    big.NewInt(0), // 0 = burn any non-zero fill (explicit 0 is valid)
 
 		RedeemTargetPending: big.NewInt(0), // 0 = escrow disabled (explicit 0 is valid)
 
@@ -184,18 +181,6 @@ func overlayEnv(cfg *Config) error {
 		}
 		cfg.ConfirmTimeout = d
 	}
-	// MinBurnAmount: env-only, base-10 *big.Int. Replace the default ONLY if the
-	// var is non-empty (so the seeded 0 survives, per the defaults→json→env order).
-	// Reject only an unparseable non-empty value (a Load error, not a Validate
-	// rule — any parsed value ≥0 is valid; 0 = burn any non-zero fill).
-	if v := os.Getenv("KEEPER_MIN_BURN_AMOUNT"); v != "" {
-		n, ok := new(big.Int).SetString(v, 10)
-		if !ok {
-			return fmt.Errorf("config: KEEPER_MIN_BURN_AMOUNT %q is not a base-10 integer", v)
-		}
-		cfg.MinBurnAmount = n
-	}
-
 	// RedeemTargetPending: env-only, base-10 *big.Int (zipUSD 18dp). Replace the
 	// default ONLY if non-empty (so the seeded 0 survives). Reject only an
 	// unparseable non-empty value (a Load error, not a Validate rule — any parsed
@@ -262,7 +247,7 @@ func overlayEnv(cfg *Config) error {
 	// WinddownMaxSlice: env-only, base-10 *big.Int. Replace the default ONLY if
 	// non-empty (so the seeded 0 survives). Reject only an unparseable non-empty
 	// value (a Load error, not a Validate rule — any parsed value ≥0 is valid;
-	// 0 = no cap). Mirrors MinBurnAmount.
+	// 0 = no cap).
 	if v := os.Getenv("KEEPER_WINDDOWN_MAX_SLICE"); v != "" {
 		n, ok := new(big.Int).SetString(v, 10)
 		if !ok {

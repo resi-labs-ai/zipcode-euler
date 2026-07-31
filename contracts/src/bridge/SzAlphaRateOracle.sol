@@ -38,7 +38,7 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
     // --------------------------------------------------------------------- state
     struct Sample {
         uint256 rate; // exchangeRate() (alpha per xALPHA, 18-dp)
-        uint48 ts; // the 964 read time the workflow stamped (0 ⇒ unset)
+        uint48 ts; // the DON push time the workflow stamped (`runtime.Now()` — NEVER the 964 block time; 0 ⇒ unset)
     }
 
     /// @notice The latest pushed rate — the headline `exchangeRate()` (updates every push).
@@ -76,7 +76,12 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
 
     // --------------------------------------------------------------------- the push (CRE → Base)
     /// @notice The CRE workflow pushes the 964 rate. Envelope `abi.encode(uint8 reportType, bytes payload)`; payload
-    ///         `abi.encode(uint256 rate, uint48 ts)` — the raw rate + the 964 read time. Forwarder-gated.
+    ///         `abi.encode(uint256 rate, uint48 ts)` — the raw rate + the DON PUSH time (`cre/szalpha-rate` stamps
+    ///         `runtime.Now()`, the sharefeeds pattern — never the 964 block time, whose skew vs Base would make the
+    ///         not-future/staleness gates below judge the wrong clock). Under DON stamping the `FutureTimestamp`
+    ///         guard is a pure producer-bug tripwire (e.g. a ms-vs-s stamp fails LOUDLY on the first push instead of
+    ///         poisoning the strictly-newer cursor forever — this contract has no admin reset, so an accepted
+    ///         far-future `ts` would both wedge every later push AND read permanently fresh). Forwarder-gated.
     function _processReport(bytes calldata report) internal override {
         (uint8 reportType, bytes memory payload) = abi.decode(report, (uint8, bytes));
         if (reportType != RATE) revert InvalidReportType(reportType);
@@ -112,7 +117,7 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
         return latest.rate;
     }
 
-    /// @notice The 964 read time of the latest pushed rate (0 ⇒ never pushed).
+    /// @notice The DON push time of the latest pushed rate (0 ⇒ never pushed).
     function lastUpdate() external view returns (uint48) {
         return latest.ts;
     }

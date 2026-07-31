@@ -412,6 +412,24 @@ contract DurationFreezeModuleSetupTest is FreezeBase {
         );
     }
 
+    // ----------------------------------------------------------------- F13: setNavOracle re-derives the whitelist
+    /// @notice `setNavOracle` now re-reads the five-leg movable whitelist off the NEW oracle in the same call —
+    ///         the dormant commit/release lever's whitelist can no longer silently keep the OLD oracle's tokens
+    ///         after an oracle re-point (pre-fix it stored only the oracle address).
+    function test_F13_setNavOracle_rederives_whitelist() public {
+        MockNavBasket o2 = new MockNavBasket(
+            makeAddr("zip2"), makeAddr("usdc2"), makeAddr("xa2"), makeAddr("hydx2"), makeAddr("ohydx2")
+        );
+        vm.prank(owner);
+        m.setNavOracle(address(o2));
+        assertEq(m.navOracle(), address(o2), "oracle re-pointed");
+        assertEq(m.zipUSD(), makeAddr("zip2"), "zipUSD re-derived off the new oracle");
+        assertEq(m.usdc(), makeAddr("usdc2"), "usdc re-derived");
+        assertEq(m.xAlpha(), makeAddr("xa2"), "xAlpha re-derived");
+        assertEq(m.hydx(), makeAddr("hydx2"), "hydx re-derived");
+        assertEq(m.oHydx(), makeAddr("ohydx2"), "oHydx re-derived");
+    }
+
     /// @dev the two Safe setters must mirror `setUp`'s distinctness guard — a re-point can never
     ///      collapse the two Safes to one address (which would make a `release` a self-transfer that trivially
     ///      clears the floor, neutralizing I-1). Pre-fix both setters guarded only the zero address.

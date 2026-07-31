@@ -17,11 +17,13 @@ import {TickMath, FullMath} from "../libraries/ConcentratedLiquidity.sol";
 ///           2. valuing the volatile leg (token0) in token1 at that same TWAP tick;
 ///           3. pro-rating the resulting TVL by the caller's LP-share fraction (rounded DOWN, against the borrower).
 ///
-///         This is the trustless on-chain alternative to `SzipFarmUtilityLpOracle`'s CRE-pushed mark: same EVK
-///         `_getQuote(lpShares) -> USDC` face, but no off-chain push and no liveness dependency — the price is a
-///         pure function of pool/vault state + the Algebra TWAP. Fail-closed: reverts (`NoPlugin` / a plugin TWAP
-///         revert / zero supply) so a missing manipulation-resistant price FAILS THE BORROW rather than opening an
-///         unsafe one.
+///         This is THE farm-utility LP oracle (its CRE-push twin, `SzipFarmUtilityLpOracle`, was deleted: even a
+///         trusted pusher composed the mark from spot `getTotalAmounts` — the in-block-manipulable surface this
+///         adapter exists to price out). No off-chain push: the price is a pure function of pool/vault state + the
+///         Algebra TWAP. Fail-closed: reverts (`NoPlugin` / `LpTwapHistoryTooShort` / a plugin TWAP revert / zero
+///         supply) so a missing manipulation-resistant price FAILS THE BORROW rather than opening an unsafe one —
+///         a replaced plugin pauses the farm loop until its history refills (the ratified halt-over-degrade
+///         posture; the sole borrower is the protocol's own engine, so the pause strands no user funds).
 ///
 /// @dev Params are immutable (a cheap, replaceable clone, per the repo's oracle philosophy): re-pointing the vault
 ///      or TWAP window is a redeploy + a one-call router re-point, not a setter. `quote` is pinned to the pool's
@@ -59,6 +61,14 @@ contract AlgebraIchiFairLpOracle is BaseAdapter {
         token0 = IICHIVault(vault_).token0();
         quote = IICHIVault(vault_).token1();
         twapWindow = twapWindow_;
+    }
+
+    /// @notice Non-reverting halt-status probe of the TWAP history gate. `ready == false` ⇒ `getQuote` currently
+    ///         reverts `LpTwapHistoryTooShort(plugin, readyAt)` — a replaced Algebra plugin is re-accumulating
+    ///         history, and EVK borrows/health checks against this LP halt until `readyAt`, then self-heal
+    ///         (`readyAt == 0` ⇒ no initialized plugin at all, no ETA). Monitoring/keeper surface.
+    function twapStatus() external view returns (bool ready, address plugin, uint256 readyAt) {
+        return IchiAlgebraFairReserves.historyStatus(lpToken, twapWindow);
     }
 
     /// @notice The vault's TVL expressed in `quote`, plus the fair reserves + TWAP tick used (monitoring / tests).

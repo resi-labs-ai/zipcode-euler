@@ -75,10 +75,10 @@ function requireIdentityWired(address[] memory receivers, address registry) inte
   individually — a representative-only check would miss an unset name on one receiver. `workflowName` is what
   separates two same-author daemons sharing the one deploy wallet (the K5 reason both author AND name are required).
 - **The dormancy proof the gate is load-bearing** (`CTR16ReceiverIdentityTest`, against the real
-  `SzipFarmUtilityLpOracle`):
-  - **Dormant** (`test_Behavioral_DormantAcceptsWrongIdentity`): identity never set ⇒ a wrong-identity `LP_MARK`
-    push from the (shared) Forwarder is ACCEPTED and writes the cache. Any co-tenant workflow clearing the
-    Forwarder can drive it. This IS the vuln.
+  `ZipcodeOracleRegistry`):
+  - **Dormant** (`test_Behavioral_DormantAcceptsWrongIdentity`): identity never set ⇒ a wrong-identity
+    revaluation push from the (shared) Forwarder is ACCEPTED and writes the cache. Any co-tenant workflow
+    clearing the Forwarder can drive it. This IS the vuln.
   - **Sealed** (`test_Behavioral_SealedRejectsWrongName`): a report whose author matches but whose name does NOT
     reverts `ReceiverTemplate.InvalidWorkflowName(wrong, sealed)` BEFORE dispatch; the matching report
     (`test_Behavioral_SealedAcceptsCorrectIdentity`) still pushes through.
@@ -96,10 +96,10 @@ function requireIdentityWired(address[] memory receivers, address registry) inte
   `controller` getter, and the gate's `registry` argument. It is ALSO a receiver in the array, so it gets both an
   identity check (as a receiver) and the distinct `controller()` check.
 - **Every `ReceiverTemplate` subclass is asserted individually (CTR-16).** The deploy passes the full live fleet
-  as `receivers[]` — controller, registry, warehouse adapter, coordinator, navOracle, rateOracle, and the CRE-push
-  `lpOracle` when present (`!= address(0)`; the ownerless fair-LP branch is neither sealed nor asserted). The
+  as `receivers[]` — controller, registry, warehouse adapter, coordinator, navOracle, rateOracle (the ownerless
+  fair-LP oracle is not a receiver — no writer, nothing to seal). The
   kept-code subclasses are `ZipcodeController`, `ZipcodeOracleRegistry`, `loss/DefaultCoordinator`,
-  `supply/CreditWarehouse/WarehouseAdminModule`, `supply/SzipNavOracle`, `supply/SzipFarmUtilityLpOracle`,
+  `supply/CreditWarehouse/WarehouseAdminModule`, `supply/SzipNavOracle`,
   `bridge/SzAlphaRateOracle` (all `is ReceiverTemplate`). The old "same `WORKFLOW_ID` ⇒ a representative stands in
   for the whole set" inference is DROPPED — each receiver carries its own per-daemon `workflowName`, so a missing
   name on any one fails closed.
@@ -130,7 +130,7 @@ function requireIdentityWired(address[] memory receivers, address registry) inte
     `OwnableUnauthorizedAccount`).
   The per-receiver author+name posture and the dormancy/K5 proofs live in the second test contract,
   `CTR16ReceiverIdentityTest` (the `test_Behavioral_*` / `test_PreGate_*` / `test_K5_*` set, against the real
-  `SzipFarmUtilityLpOracle`). 13 tests total.
+  `ZipcodeOracleRegistry`). 13 tests total.
 - **Applies to every `ReceiverTemplate` subclass** — the same S10b-set identity + S11 assert + hand-off pattern
   seals the controller, registry, coordinator, and warehouse-admin receivers.
 - **Build-phase doctrine shift — hand-off, not renounce.** The spec/PROGRESS were updated (§9 `:1810-1820`,

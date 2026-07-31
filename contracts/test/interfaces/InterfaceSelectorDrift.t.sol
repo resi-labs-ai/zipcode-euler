@@ -228,6 +228,9 @@ contract InterfaceSelectorDriftTest is Test {
         // The plugin is an EIP-1967 beacon proxy; assertSelectorLive resolves to the beacon impl.
         assertSelectorLive(plugin, IAlgebraOraclePlugin.getTimepoints.selector, "IAlgebraOraclePlugin.getTimepoints");
         assertSelectorLive(plugin, IAlgebraOraclePlugin.isInitialized.selector, "IAlgebraOraclePlugin.isInitialized");
+        // The history-depth halt gate (audit F8) stands on the ring-buffer surface — pin it live.
+        assertSelectorLive(plugin, IAlgebraOraclePlugin.timepointIndex.selector, "IAlgebraOraclePlugin.timepointIndex");
+        assertSelectorLive(plugin, IAlgebraOraclePlugin.timepoints.selector, "IAlgebraOraclePlugin.timepoints");
     }
 
     function test_AlgebraSwapRouter_selectorsLive() public view {

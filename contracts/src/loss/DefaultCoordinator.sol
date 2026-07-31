@@ -107,6 +107,14 @@ contract DefaultCoordinator is ReceiverTemplate {
     error InvalidAction(uint8 action);
     error BadStatus();
     error ZeroAtRisk();
+    /// @notice A zero-capital RESOLVE/WRITEOFF found NO bond in the CURRENT escrow. Every Bonded lien holds a
+    ///         `> 0` bond in its escrow (`lockXAlpha` rejects zero) and nothing consumes it while `Defaulted`
+    ///         (RECOVERY only adjusts provision) — so `bondAmount == 0` here can ONLY mean the escrow was
+    ///         re-pointed (`setEscrow`) away from the lien's escrow. Without this guard the zero-capital path
+    ///         was the ONE silent finalize against the wrong custody contract (release reverts `NoBond`, a
+    ///         nonzero capital slash reverts `ExceedsBond`): the lien flipped terminal `Resolved`/`WrittenOff`
+    ///         while the bond premium stayed stranded in the old escrow, never routed to the cohort.
+    error NoBondInEscrow(bytes32 lienId);
 
     // --------------------------------------------------------------------- events
     event EscrowSet(address indexed escrow);
@@ -284,6 +292,9 @@ contract DefaultCoordinator is ReceiverTemplate {
     function _resolve(bytes memory data) internal {
         (bytes32 lienId, uint256 capitalSlashAmount) = abi.decode(data, (bytes32, uint256));
         if (lienLoss[lienId].status != LienStatus.Defaulted) revert BadStatus();
+        // Wrong-escrow detector (see `NoBondInEscrow`): a Defaulted lien ALWAYS has a live bond in ITS escrow,
+        // so zero here means a re-pointed `escrow` — fail closed instead of finalizing against the wrong custody.
+        if (capitalSlashAmount == 0 && escrow.bondAmount(lienId) == 0) revert NoBondInEscrow(lienId);
 
         totalProvision -= lienLoss[lienId].provision;
         lienLoss[lienId].provision = 0;
@@ -305,6 +316,8 @@ contract DefaultCoordinator is ReceiverTemplate {
     function _writeOff(bytes memory data) internal {
         (bytes32 lienId, uint256 capitalSlashAmount) = abi.decode(data, (bytes32, uint256));
         if (lienLoss[lienId].status != LienStatus.Defaulted) revert BadStatus();
+        // Wrong-escrow detector — same guard as `_resolve` (see `NoBondInEscrow`).
+        if (capitalSlashAmount == 0 && escrow.bondAmount(lienId) == 0) revert NoBondInEscrow(lienId);
 
         lienLoss[lienId].status = LienStatus.WrittenOff;
 

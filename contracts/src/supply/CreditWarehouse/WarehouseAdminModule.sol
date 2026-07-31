@@ -51,11 +51,13 @@ contract WarehouseAdminModule is ReceiverTemplate {
     /// @dev PARITY — load-bearing: this injected `warehouseSafe` and the Roles modifier's own `avatar` slot are
     ///      INDEPENDENT storage (`warehouseSafe` is set here via `setWarehouseSafe`; `avatar` is set on the Roles
     ///      instance via its own `setAvatar`). SUPPLY/REDEEM inject this `warehouseSafe` as the deposit/redeem owner
-    ///      while the Roles scope checks `receiver == avatar`, so they MUST be the same address. `setWarehouseSafe`
-    ///      now ENFORCES this on-chain (reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`), so a
-    ///      one-sided re-point can no longer be saved — the paired re-point is `Roles.setAvatar` FIRST, then
-    ///      `setWarehouseSafe`. Were the slots ever mismatched anyway, SUPPLY/REDEEM still FAIL CLOSED (the scope
-    ///      rejects the mismatched receiver, nothing leaks). See `docs/roles.md` and the runbook.
+    ///      while the Roles scope checks `receiver == avatar`, so they MUST be the same address. Parity is now
+    ///      ENFORCED on-chain at ALL THREE pairing sites — the constructor, `setRoles`, and `setWarehouseSafe`
+    ///      (each reverts `AvatarMismatch` unless `roles.avatar() == warehouseSafe`) — so a one-sided re-point of
+    ///      EITHER slot is a hard revert, never a live mismatch. Were the slots ever mismatched anyway,
+    ///      SUPPLY/REDEEM still FAIL CLOSED (the scope rejects the mismatched receiver) — but REPAY would NOT
+    ///      (no "from" to scope; it spends whatever Safe the Roles is attached to), which is why the guard covers
+    ///      `setRoles` and the ctor too. See `docs/roles.md` and the runbook.
     address public warehouseSafe;
     /// @notice The `EulerEarn` pool the warehouse supplies into / redeems from.
     address public eePool;
@@ -72,11 +74,15 @@ contract WarehouseAdminModule is ReceiverTemplate {
     error UnsupportedOpType(uint8 opType);
     /// @notice A REPAY payload carried a `dest` other than the wired `redemptionBox` (self-enforced, not just scoped).
     error WrongRedemptionBox(address dest);
-    /// @notice `setWarehouseSafe` was called with a `warehouseSafe_` that does not equal the Roles modifier's current
-    ///         `avatar()`. The two slots are independent (see the `warehouseSafe` docstring), and SUPPLY/REDEEM inject
-    ///         this address as the receiver/owner while the scope pins `receiver == avatar` — so a one-sided re-point
-    ///         would silently brick senior par-redemption (fail-closed liveness). This guard converts that into a hard
-    ///         revert at set-time: the operator MUST run `Roles.setAvatar(new)` FIRST, then this. See `docs/roles.md`.
+    /// @notice The Roles modifier's `avatar()` does not equal `warehouseSafe` — raised by ALL THREE sites that can
+    ///         pair the two slots (the constructor, `setRoles`, `setWarehouseSafe`). The slots are independent (see
+    ///         the `warehouseSafe` docstring); SUPPLY/REDEEM fail closed under a mismatch (the scope pins
+    ///         `receiver == avatar`), but REPAY has no "from" parameter to scope — it executes as whatever Safe the
+    ///         Roles instance is attached to, so a mis-paired `roles` would move THAT Safe's USDC to the
+    ///         `redemptionBox` (where `settleEpoch` spends it; the queue has no sweep). The guard converts both the
+    ///         silent SUPPLY/REDEEM brick and the REPAY wrong-Safe drain into a hard revert at wire-time: pair
+    ///         FIRST (`Roles.setAvatar` / deploy the new Roles on the right Safe), then re-point here. See
+    ///         `docs/roles.md`.
     error AvatarMismatch(address warehouseSafe, address avatar);
     /// @notice The inner `execTransactionWithRole` returned false (unreachable defense-in-depth: with
     ///         `shouldRevert=true` the modifier already reverts `ModuleTransactionFailed` on a failed exec).
@@ -112,6 +118,11 @@ contract WarehouseAdminModule is ReceiverTemplate {
             revert ZeroAddress();
         }
         if (roleKey_ == bytes32(0)) revert ZeroRoleKey();
+        // AVATAR PARITY at birth (same invariant `setRoles`/`setWarehouseSafe` enforce): the Roles instance must
+        // already be attached to `warehouseSafe_`. `CreditWarehouseDeployer` builds the Roles (avatar = safe)
+        // before this ctor runs, so the check is deploy-order-compatible.
+        address av = IRoles(roles_).avatar();
+        if (av != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av);
         roles = IRoles(roles_);
         roleKey = roleKey_;
         warehouseSafe = warehouseSafe_;
@@ -122,8 +133,17 @@ contract WarehouseAdminModule is ReceiverTemplate {
 
     // --------------------------------------------------------------------- Timelock-settable wiring (build phase, §17)
     /// @notice Re-point the Roles-modifier instance. `onlyOwner` (Timelock).
+    /// @dev AVATAR PARITY (enforced on-chain, mirror of `setWarehouseSafe`): the re-point is REJECTED unless the
+    ///      NEW Roles instance's `avatar()` already equals the wired `warehouseSafe`. Without this, a Roles
+    ///      attached to a DIFFERENT Safe would leave SUPPLY/REDEEM failing closed but REPAY live — REPAY's
+    ///      `usdc.transfer(redemptionBox, …)` has no "from" to scope, so it would drain the WRONG Safe into the
+    ///      redemption queue (unrecoverable: the queue has no sweep and `settleEpoch` consumes any free balance).
+    ///      Joint Safe+Roles migration stays possible, order-dependent: pair the new Roles to `warehouseSafe`
+    ///      first (or migrate the Safe via `Roles.setAvatar` + `setWarehouseSafe`, THEN re-point `roles`).
     function setRoles(address roles_) external onlyOwner {
         if (roles_ == address(0)) revert ZeroAddress();
+        address av = IRoles(roles_).avatar();
+        if (av != warehouseSafe) revert AvatarMismatch(warehouseSafe, av);
         roles = IRoles(roles_);
         emit WiringSet("roles", roles_);
     }
@@ -177,6 +197,13 @@ contract WarehouseAdminModule is ReceiverTemplate {
     ///         call, and forwards it through the Roles modifier. Reverts `UnsupportedOpType` on any other byte.
     /// @param report The shared envelope `abi.encode(uint8 opType, bytes payload)`.
     function _processReport(bytes calldata report) internal override {
+        // Use-time parity re-check (the third leg of the guard): the wiring-site checks (ctor/`setRoles`/
+        // `setWarehouseSafe`) cannot see an EXTERNAL `Roles.setAvatar` on the modifier itself, so re-assert at
+        // every effect. This makes parity a MAINTAINED invariant — no op (REPAY included) can ever execute
+        // against a modifier attached to the wrong Safe. One `avatar()` staticcall per report.
+        address av = roles.avatar();
+        if (av != warehouseSafe) revert AvatarMismatch(warehouseSafe, av);
+
         (uint8 opType, bytes memory payload) = abi.decode(report, (uint8, bytes));
 
         address to;

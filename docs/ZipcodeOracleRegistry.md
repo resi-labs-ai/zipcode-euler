@@ -38,4 +38,3 @@ References:
 - The controller seeds a line's price at origination and re-anchors it on draw — [contracts/src/ZipcodeController.sol] ([ZipcodeController.md]).
 - It prices lien tokens, whose strict 18-decimal pin it validates against the factory's constant — [contracts/src/LienCollateralToken.sol] ([LienCollateralToken.md]), [contracts/src/LienTokenFactory.sol] ([LienTokenFactory.md]).
 - The lending market resolves the lien collateral's price through it — [contracts/src/venue/EulerVenueAdapter.sol] ([venue.md]).
-- It is the multi-line sibling of the single-key push oracle — [contracts/src/supply/SzipFarmUtilityLpOracle.sol] ([supply/SzipFarmUtilityLpOracle.md]).

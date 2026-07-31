@@ -36,5 +36,5 @@ The load-bearing points an auditor should check (full catalog + test connection 
 References:
 
 - It delegates manipulation-resistance to the fair-reserves library — [contracts/src/supply/lib/IchiAlgebraFairReserves.sol] ([lib/IchiAlgebraFairReserves.md]).
-- It is the trustless alternative to the keeper-pushed LP oracle — [contracts/src/supply/SzipFarmUtilityLpOracle.sol] ([SzipFarmUtilityLpOracle.md]).
+- It is THE farm-utility LP oracle; the keeper-pushed twin was deleted (its mark was composed from spot reserves — the manipulable surface this oracle's TWAP prices out).
 - The lending market that resolves LP collateral through it is built by the venue adapter — [contracts/src/venue/EulerVenueAdapter.sol] ([../venue.md]).

@@ -10,7 +10,6 @@ import {FarmUtilityMarketDeployer} from "../../script/FarmUtilityMarketDeployer.
 import {SiloRegistry} from "../../src/SiloRegistry.sol";
 
 import {SzipNavOracle} from "../../src/supply/SzipNavOracle.sol";
-import {SzipFarmUtilityLpOracle} from "../../src/supply/SzipFarmUtilityLpOracle.sol";
 
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -55,6 +54,30 @@ contract MockERC20 {
         balanceOf[f] -= a;
         balanceOf[to] += a;
         return true;
+    }
+}
+
+/// @dev A fixed-mark LP price adapter stand-in (production: `AlgebraIchiFairLpOracle`) so the market deployer's
+///      `setLTV` `getQuote` resolves against the mock LP without a live Algebra pool.
+contract MockLpOracle {
+    address public immutable lpToken;
+    address public immutable quoteToken;
+    uint256 public immutable mark; // quote-native per 1e18 LP share
+
+    constructor(address lpToken_, address quoteToken_, uint256 mark_) {
+        lpToken = lpToken_;
+        quoteToken = quoteToken_;
+        mark = mark_;
+    }
+
+    function getQuote(uint256 inAmount, address base, address quote) public view returns (uint256) {
+        require(base == lpToken && quote == quoteToken, "MockLpOracle: unsupported pair");
+        return inAmount * mark / 1e18;
+    }
+
+    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        uint256 out = getQuote(inAmount, base, quote);
+        return (out, out);
     }
 }
 
@@ -241,12 +264,10 @@ contract JuniorTrancheDeployerTest is ForkConfig {
         gauge = new MockGauge(address(ohydx)); // HarvestVoteModule.setUp reads gauge.rewardToken() live
         irm = new ZeroIRM();
 
-        // farm utility market: real FarmUtilityMarketDeployer over the live EVK + a CRE-fed LP oracle (mark pushed so the
-        // deployer's setLTV getQuote resolves), governor = the Timelock. polIchiVault == escrowVault.asset() (seam #4).
-        SzipFarmUtilityLpOracle lpOracle =
-            new SzipFarmUtilityLpOracle(BaseAddresses.CRE_KEYSTONE_FORWARDER, address(usdc), 1 days, address(lp));
-        lpOracle.renounceOwnership();
-        _pushLpMark(lpOracle, 1e6); // $1.00 per LP share (6-dp USDC quote)
+        // farm utility market: real FarmUtilityMarketDeployer over the live EVK + a fixed-mark LP oracle stand-in
+        // ($1.00 per LP share, so the deployer's setLTV getQuote resolves), governor = the Timelock.
+        // polIchiVault == escrowVault.asset() (seam #4).
+        MockLpOracle lpOracle = new MockLpOracle(address(lp), address(usdc), 1e6);
 
         FarmUtilityMarketDeployer dep = new FarmUtilityMarketDeployer();
         (escrowVault, borrowVault,) = dep.deploy(
@@ -263,12 +284,6 @@ contract JuniorTrancheDeployerTest is ForkConfig {
                 liqLTV: 0.8e4
             })
         );
-    }
-
-    function _pushLpMark(SzipFarmUtilityLpOracle o, uint256 mark) internal {
-        bytes memory report = abi.encode(o.LP_MARK(), abi.encode(mark, uint32(block.timestamp)));
-        vm.prank(BaseAddresses.CRE_KEYSTONE_FORWARDER);
-        o.onReport("", report);
     }
 
     function _params() internal view returns (JuniorTrancheDeployer.JuniorParams memory) {

@@ -9,14 +9,36 @@ import {SiloDeployer} from "../../script/SiloDeployer.s.sol";
 import {SiloRegistry} from "../../src/SiloRegistry.sol";
 import {SeniorNavAggregator} from "../../src/SeniorNavAggregator.sol";
 
-import {SzipFarmUtilityLpOracle} from "../../src/supply/SzipFarmUtilityLpOracle.sol";
-
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IEVault} from "evk/EVault/IEVault.sol";
 import {ISafe} from "../../src/interfaces/safe/ISafe.sol";
 
 // =========================================================================== mocks
+
+/// @dev A fixed-mark LP price adapter stand-in (production: a per-silo `AlgebraIchiFairLpOracle`) so the market
+///      deployer's `setLTV` `getQuote` resolves against the mock LP. Mirrors JuniorTrancheDeployer.t.sol.
+contract MockLpOracle {
+    address public immutable lpToken;
+    address public immutable quoteToken;
+    uint256 public immutable mark; // quote-native per 1e18 LP share
+
+    constructor(address lpToken_, address quoteToken_, uint256 mark_) {
+        lpToken = lpToken_;
+        quoteToken = quoteToken_;
+        mark = mark_;
+    }
+
+    function getQuote(uint256 inAmount, address base, address quote) public view returns (uint256) {
+        require(base == lpToken && quote == quoteToken, "MockLpOracle: unsupported pair");
+        return inAmount * mark / 1e18;
+    }
+
+    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        uint256 out = getQuote(inAmount, base, quote);
+        return (out, out);
+    }
+}
 
 /// @dev Minimal configurable-decimals ERC20 (the NAV/token leg stand-ins). Mirrors JuniorTrancheDeployer.t.sol.
 contract MockERC20 {
@@ -265,7 +287,7 @@ contract SiloDeployerHarness is SiloDeployer {
 // =========================================================================== test
 
 /// @notice CTR-06c fork test (D3/D4). On `_selectBaseFork()` (live Baal summoner + live EVK/EVC): inject mock NAV legs +
-///         a MockLpToken (polIchiVault) + a FORWARDER-seeded SzipFarmUtilityLpOracle, override `_createEePool` to the
+///         a MockLpToken (polIchiVault) + a fixed-mark MockLpOracle, override `_createEePool` to the
 ///         combined MockEulerEarn, run `SiloDeployer.deploy(...)`, and assert the silo seams hold, the ownership handoff
 ///         is complete, the handle passes a real `addSilo` on the first try, two-silo routing/rollover + the aggregate
 ///         hold (registry-level, NO real controller/opens), and the D2 runbook lands via Timelock pranks.
@@ -325,16 +347,11 @@ contract SiloDeployerTest is ForkConfig {
         irm = new ZeroIRM();
     }
 
-    /// @dev Build + FORWARDER-seed a fresh per-silo LP oracle (the JuniorTrancheDeployer.t.sol:245-249 pattern). The
-    ///      mark must be pushed BEFORE `deploy` (the farm utility `setLTV` `getQuote` reverts without a resolvable mark).
+    /// @dev Build a fresh per-silo fixed-mark LP oracle stand-in ($1.00/share — the JuniorTrancheDeployer.t.sol
+    ///      pattern; production is a per-silo `AlgebraIchiFairLpOracle`). It must resolve BEFORE `deploy` (the farm
+    ///      utility `setLTV` `getQuote` reverts on an unresolvable key).
     function _seededLpOracle() internal returns (address) {
-        SzipFarmUtilityLpOracle o =
-            new SzipFarmUtilityLpOracle(BaseAddresses.CRE_KEYSTONE_FORWARDER, address(usdc), 1 days, address(lp));
-        o.renounceOwnership();
-        bytes memory report = abi.encode(o.LP_MARK(), abi.encode(uint256(1e6), uint32(block.timestamp)));
-        vm.prank(BaseAddresses.CRE_KEYSTONE_FORWARDER);
-        o.onReport("", report);
-        return address(o);
+        return address(new MockLpOracle(address(lp), address(usdc), 1e6));
     }
 
     function _params(uint256 salt, address lpOracle) internal view returns (SiloDeployer.SiloParams memory) {

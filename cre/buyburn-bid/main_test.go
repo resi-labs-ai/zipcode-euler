@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"math/big"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/smartcontractkit/cre-sdk-go/capabilities/blockchain/evm"
 	evmmock "github.com/smartcontractkit/cre-sdk-go/capabilities/blockchain/evm/mock"
+	httpcap "github.com/smartcontractkit/cre-sdk-go/capabilities/networking/http"
+	httpmock "github.com/smartcontractkit/cre-sdk-go/capabilities/networking/http/mock"
 	"github.com/smartcontractkit/cre-sdk-go/cre/testutils"
 )
 
@@ -137,7 +140,7 @@ func TestComputeValidTo(t *testing.T) {
 	}
 }
 
-func TestSizeDriftBps(t *testing.T) {
+func TestDriftBps(t *testing.T) {
 	cases := []struct {
 		target, current, want int64
 	}{
@@ -147,10 +150,35 @@ func TestSizeDriftBps(t *testing.T) {
 		{1, 0, 10_000}, // current 0 → denom max(.,1)=1
 	}
 	for _, c := range cases {
-		got := sizeDriftBps(big.NewInt(c.target), big.NewInt(c.current)).Int64()
+		got := driftBps(big.NewInt(c.target), big.NewInt(c.current)).Int64()
 		if got != c.want {
-			t.Fatalf("sizeDriftBps(%d,%d): got %d want %d", c.target, c.current, got, c.want)
+			t.Fatalf("driftBps(%d,%d): got %d want %d", c.target, c.current, got, c.want)
 		}
+	}
+}
+
+// SEC/L-7 unit: postedPrice derives the live bid's implied 6-dp price; 0-buy (no/malformed bid state) → 0.
+func TestPostedPrice(t *testing.T) {
+	// sell 850 USDC (6-dp) for 850e18 shares → 1.0 USDC/share = 1_000_000 (6-dp per 1e18).
+	sell := big.NewInt(850_000_000)
+	buy, _ := new(big.Int).SetString("850000000000000000000", 10) // 850e18
+	if got := postedPrice(sell, buy); got.Int64() != 1_000_000 {
+		t.Fatalf("postedPrice: got %d want 1000000", got.Int64())
+	}
+	if got := postedPrice(sell, big.NewInt(0)); got.Sign() != 0 {
+		t.Fatalf("postedPrice with 0 buy must be 0, got %v", got)
+	}
+}
+
+// SEC/L-7 unit: an unset priceDriftBps falls back to driftBps — the price reconcile is never silently off.
+func TestPriceDriftThresholdFallback(t *testing.T) {
+	cfg := &Config{DriftBps: 500}
+	if got := priceDriftThreshold(cfg); got != 500 {
+		t.Fatalf("fallback: got %d want 500", got)
+	}
+	cfg.PriceDriftBps = 50
+	if got := priceDriftThreshold(cfg); got != 50 {
+		t.Fatalf("explicit: got %d want 50", got)
 	}
 }
 
@@ -165,12 +193,19 @@ var (
 	eulerAddr  = common.HexToAddress("0x00000000000000000000000000000000000000E0")
 	whAddr     = common.HexToAddress("0x00000000000000000000000000000000000000D0")
 	queueAddr  = common.HexToAddress("0x00000000000000000000000000000000000000F0")
+	pluginAddr = common.HexToAddress("0x00000000000000000000000000000000000000AB") // lpTwapStatus().plugin
+)
+
+var (
+	szipAddr = common.HexToAddress("0x0000000000000000000000000000000000005219")
+	usdcAddr = common.HexToAddress("0x0000000000000000000000000000000000000006")
 )
 
 // readState is the scriptable view layer for one simulated tick.
 type readState struct {
 	uid           []byte
 	curSell       *big.Int
+	curBuy        *big.Int // currentBuyAmount() — nil ⇒ 0 (no live-bid state)
 	maxPrice      *big.Int
 	buybackCap    *big.Int
 	fresh         bool
@@ -178,6 +213,9 @@ type readState struct {
 	oldestLeg     *big.Int
 	covered       bool
 	freeReservoir *big.Int
+	twapHalted    bool     // lpTwapStatus().ready == !twapHalted — zero value ⇒ TWAP fine (audit F8)
+	twapReadyAt   *big.Int // lpTwapStatus().readyAt — nil ⇒ 0 (no ETA: plugin missing/uninitialized)
+	auctionJSON   string   // non-empty ⇒ demand gate ON: config gains OrderbookURL and the http mock serves this body
 }
 
 func testConfig() *Config {
@@ -191,6 +229,7 @@ func testConfig() *Config {
 		Warehouse:       whAddr.Hex(),
 		RedemptionQueue: queueAddr.Hex(),
 		DriftBps:        500, // 5%
+		PriceDriftBps:   100, // 1% — the SEC/L-7 reprice threshold
 		TTLSeconds:      3_600,
 		HarvestReserve:  "100000000",  // 100 USDC (6-dp)
 		SafetyBuffer:    "50000000",   // 50 USDC
@@ -206,6 +245,14 @@ func encUint(v *big.Int) []byte {
 func encBool(b bool) []byte {
 	boolT, _ := abi.NewType("bool", "", nil)
 	out, _ := abi.Arguments{{Type: boolT}}.Pack(b)
+	return out
+}
+
+func encLpTwapStatus(ready bool, plugin common.Address, readyAt *big.Int) []byte {
+	boolT, _ := abi.NewType("bool", "", nil)
+	addrT, _ := abi.NewType("address", "", nil)
+	u256, _ := abi.NewType("uint256", "", nil)
+	out, _ := abi.Arguments{{Type: boolT}, {Type: addrT}, {Type: u256}}.Pack(ready, plugin, readyAt)
 	return out
 }
 
@@ -238,18 +285,33 @@ func runTick(t *testing.T, st readState) [][]byte {
 		return &evm.WriteReportReply{}, nil
 	}
 
-	// Module: currentBid / quoteMaxPrice / buybackCap views + the WriteReport receiver.
+	// Module: currentBid / currentBuyAmount / quoteMaxPrice / buybackCap views + the WriteReport receiver.
+	curBuy := st.curBuy
+	if curBuy == nil {
+		curBuy = big.NewInt(0)
+	}
+	if st.curSell == nil {
+		st.curSell = big.NewInt(0)
+	}
 	evmmock.AddContractMock(moduleAddr, evmMock, map[string]func([]byte) ([]byte, error){
-		sel("currentBid()"):    func([]byte) ([]byte, error) { return encCurrentBid(st.uid, st.curSell), nil },
-		sel("quoteMaxPrice()"): func([]byte) ([]byte, error) { return encUint(st.maxPrice), nil },
-		sel("buybackCap()"):    func([]byte) ([]byte, error) { return encUint(st.buybackCap), nil },
+		sel("currentBid()"):       func([]byte) ([]byte, error) { return encCurrentBid(st.uid, st.curSell), nil },
+		sel("currentBuyAmount()"): func([]byte) ([]byte, error) { return encUint(curBuy), nil },
+		sel("quoteMaxPrice()"):    func([]byte) ([]byte, error) { return encUint(st.maxPrice), nil },
+		sel("buybackCap()"):       func([]byte) ([]byte, error) { return encUint(st.buybackCap), nil },
 	}, writeCap)
 
 	// NavOracle views.
+	twapReadyAt := st.twapReadyAt
+	if twapReadyAt == nil {
+		twapReadyAt = big.NewInt(0)
+	}
 	evmmock.AddContractMock(navAddr, evmMock, map[string]func([]byte) ([]byte, error){
 		sel("fresh()"):               func([]byte) ([]byte, error) { return encBool(st.fresh), nil },
 		sel("maxAge()"):              func([]byte) ([]byte, error) { return encUint(st.maxAge), nil },
 		sel("oldestRequiredLegTs()"): func([]byte) ([]byte, error) { return encUint(st.oldestLeg), nil },
+		sel("lpTwapStatus()"): func([]byte) ([]byte, error) {
+			return encLpTwapStatus(!st.twapHalted, pluginAddr, twapReadyAt), nil
+		},
 	}, nil)
 
 	// Coverage gate.
@@ -262,7 +324,22 @@ func runTick(t *testing.T, st readState) [][]byte {
 		sel("maxWithdraw(address)"): func([]byte) ([]byte, error) { return encUint(st.freeReservoir), nil },
 	}, nil)
 
-	if _, err := evaluateAndReconcile(testConfig(), runtime); err != nil {
+	cfg := testConfig()
+	if st.auctionJSON != "" {
+		cfg.OrderbookURL = "https://orderbook.test"
+		cfg.SzipUSD = szipAddr.Hex()
+		cfg.Usdc = usdcAddr.Hex()
+		httpMock, herr := httpmock.NewClientCapability(t)
+		if herr != nil {
+			t.Fatalf("http NewClientCapability: %v", herr)
+		}
+		body := st.auctionJSON
+		httpMock.SendRequest = func(_ context.Context, _ *httpcap.Request) (*httpcap.Response, error) {
+			return &httpcap.Response{StatusCode: 200, Body: []byte(body)}, nil
+		}
+	}
+
+	if _, err := evaluateAndReconcile(cfg, runtime); err != nil {
 		t.Fatalf("evaluateAndReconcile: %v", err)
 	}
 	return captured
@@ -316,6 +393,99 @@ func TestSimPostBidWhenNoLiveAndFunded(t *testing.T) {
 	}
 }
 
+// ───────────────────────────────────────────────── demand gate (fill-only, ratified 2026-07-30)
+
+// auction builds a one-or-two-order CoW auction body for the szipUSD→USDC pair.
+func auctionBody(orders ...string) string {
+	out := `{"orders":[`
+	for i, o := range orders {
+		if i > 0 {
+			out += ","
+		}
+		out += o
+	}
+	return out + `]}`
+}
+
+func sellOrder(sellShares, buyUSDC string) string {
+	return `{"sellToken":"` + szipAddr.Hex() + `","buyToken":"` + usdcAddr.Hex() +
+		`","sellAmount":"` + sellShares + `","buyAmount":"` + buyUSDC + `","kind":"sell"}`
+}
+
+// One acceptable resting order (asks 0.90/share vs ceiling 0.99) → bid sized to that demand, NOT to cash.
+func TestSimDemandGateSizesToAcceptableOrders(t *testing.T) {
+	st := readState{
+		maxPrice:      big.NewInt(990_000), // 0.99 USDC per share (6-dp per 1e18)
+		buybackCap:    big.NewInt(1_000_000_000_000),
+		fresh:         true,
+		maxAge:        big.NewInt(3_600),
+		oldestLeg:     big.NewInt(999_900),
+		covered:       true,
+		freeReservoir: big.NewInt(1_000_000_000), // 1,000 USDC cash — demand must undercut this
+		auctionJSON: auctionBody(
+			sellOrder("100000000000000000000", "90000000"),   // 100 shares asking 90 USDC (0.90) — acceptable
+			sellOrder("50000000000000000000", "60000000"),    // 50 shares asking 60 USDC (1.20) — above ceiling, ignored
+		),
+	}
+	out := runTick(t, st)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 write (POST_BID), got %d", len(out))
+	}
+	rt, payload := decodeEnvelope(t, out[0])
+	if rt != postBidReportType {
+		t.Fatalf("expected POST_BID, got %d", rt)
+	}
+	// demand = ceil(100e18 × 0.99 / 1e18) = 99 USDC — the bid funds the acceptable set at OUR ceiling.
+	wantSell := big.NewInt(99_000_000)
+	u256, _ := abi.NewType("uint256", "", nil)
+	u32, _ := abi.NewType("uint32", "", nil)
+	dec, err := abi.Arguments{{Type: u256}, {Type: u256}, {Type: u32}}.Unpack(payload)
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if dec[0].(*big.Int).Cmp(wantSell) != 0 {
+		t.Fatalf("sell: got %v want %v (sized to acceptable demand, not cash)", dec[0], wantSell)
+	}
+}
+
+// Empty book → nothing posts, even with cash available. The protocol never makes a market.
+func TestSimDemandGateNoOrdersNoPost(t *testing.T) {
+	st := readState{
+		maxPrice:      big.NewInt(990_000),
+		buybackCap:    big.NewInt(1_000_000_000_000),
+		fresh:         true,
+		maxAge:        big.NewInt(3_600),
+		oldestLeg:     big.NewInt(999_900),
+		covered:       true,
+		freeReservoir: big.NewInt(1_000_000_000),
+		auctionJSON:   auctionBody(),
+	}
+	if out := runTick(t, st); len(out) != 0 {
+		t.Fatalf("expected no writes on an empty book, got %d", len(out))
+	}
+}
+
+// Live bid + demand gone → the bid comes down. No resting protocol price without someone to fill it.
+func TestSimDemandGateCancelsWhenDemandGone(t *testing.T) {
+	st := readState{
+		uid:           []byte{0x01, 0x02, 0x03},
+		curSell:       big.NewInt(99_000_000),
+		curBuy:        new(big.Int).Mul(big.NewInt(100), big.NewInt(1e18)),
+		maxPrice:      big.NewInt(990_000),
+		buybackCap:    big.NewInt(1_000_000_000_000),
+		fresh:         true,
+		maxAge:        big.NewInt(3_600),
+		oldestLeg:     big.NewInt(999_900),
+		covered:       true,
+		freeReservoir: big.NewInt(1_000_000_000),
+		auctionJSON:   auctionBody(), // book emptied since the post
+	}
+	out := runTick(t, st)
+	if len(out) != 1 || decodeCapturedType(t, out[0]) != cancelBidReportType {
+		t.Fatalf("expected exactly CANCEL_BID, got %d writes", len(out))
+	}
+}
+
 func TestSimCancelThenPostOnDrift(t *testing.T) {
 	st := readState{
 		uid:           []byte{0x01, 0x02, 0x03}, // live bid
@@ -358,6 +528,49 @@ func TestSimCancelAloneWhenNotCovered(t *testing.T) {
 	}
 }
 
+// Audit F8: while the LP-TWAP history halt is live (lpTwapStatus().ready == false), the round is skipped and a
+// RESTING bid is cancelled — it would keep quoting a pre-halt mark that cannot be drift-checked while NAV reverts.
+// The gate fires BEFORE quoteMaxPrice, so the halted-NAV read is never attempted.
+func TestSimTwapHaltedCancelsRestingBidAndSkips(t *testing.T) {
+	st := readState{
+		uid:           []byte{0xAA},
+		curSell:       big.NewInt(850_000_000),
+		maxPrice:      big.NewInt(990_000),
+		buybackCap:    big.NewInt(1_000_000_000_000),
+		fresh:         true,
+		maxAge:        big.NewInt(3_600),
+		oldestLeg:     big.NewInt(999_900),
+		covered:       true,
+		freeReservoir: big.NewInt(1_000_000_000),
+		twapHalted:    true,
+		twapReadyAt:   big.NewInt(1_003_000), // plugin replaced; history covers at unix 1_003_000
+	}
+	out := runTick(t, st)
+	if len(out) != 1 || decodeCapturedType(t, out[0]) != cancelBidReportType {
+		t.Fatalf("expected single CANCEL_BID during TWAP halt, got %d writes", len(out))
+	}
+}
+
+// Audit F8: halted with NO resting bid ⇒ pure no-op (log-and-skip; nothing to cancel, nothing posted).
+func TestSimTwapHaltedNoBidNoOp(t *testing.T) {
+	st := readState{
+		uid:           nil,
+		curSell:       big.NewInt(0),
+		maxPrice:      big.NewInt(990_000),
+		buybackCap:    big.NewInt(1_000_000_000_000),
+		fresh:         true,
+		maxAge:        big.NewInt(3_600),
+		oldestLeg:     big.NewInt(999_900),
+		covered:       true,
+		freeReservoir: big.NewInt(1_000_000_000),
+		twapHalted:    true, // twapReadyAt nil ⇒ 0: plugin missing/uninitialized, no ETA branch
+	}
+	out := runTick(t, st)
+	if len(out) != 0 {
+		t.Fatalf("expected no writes during TWAP halt with no resting bid, got %d", len(out))
+	}
+}
+
 func TestSimCancelAloneWhenNotFresh(t *testing.T) {
 	st := readState{
 		uid:           []byte{0xAA},
@@ -395,10 +608,14 @@ func TestSimCancelAloneWhenTargetZero(t *testing.T) {
 }
 
 func TestSimNothingWithinDrift(t *testing.T) {
+	sell := big.NewInt(850_000_000)
+	maxPrice := big.NewInt(990_000)
 	st := readState{
-		uid:           []byte{0xAA},
-		curSell:       big.NewInt(850_000_000), // == target ⇒ drift 0 < driftBps
-		maxPrice:      big.NewInt(990_000),
+		uid:     []byte{0xAA},
+		curSell: sell, // == target ⇒ size drift 0 < driftBps
+		// posted at the CURRENT ceiling (the buyAmount the loop itself would post) ⇒ price drift ~0 < priceDriftBps
+		curBuy:        ceilDiv(new(big.Int).Mul(sell, big.NewInt(1e18)), maxPrice),
+		maxPrice:      maxPrice,
 		buybackCap:    big.NewInt(1_000_000_000_000),
 		fresh:         true,
 		maxAge:        big.NewInt(3_600),
@@ -409,6 +626,71 @@ func TestSimNothingWithinDrift(t *testing.T) {
 	out := runTick(t, st)
 	if len(out) != 0 {
 		t.Fatalf("expected NO writes within drift, got %d", len(out))
+	}
+}
+
+// SEC/L-7: size unchanged but the oracle re-priced — the live bid still quotes its POSTED price, so the loop must
+// cancel-and-repost at the current ceiling. This is the Octane V7 stale-resting-bid window closed operationally.
+func TestSimRepriceOnPriceDriftOnly(t *testing.T) {
+	sell := big.NewInt(850_000_000)
+	st := readState{
+		uid:     []byte{0xAA},
+		curSell: sell, // == target ⇒ size drift 0: ONLY the price moved
+		// posted when the ceiling was 1.10 USDC/share; the mark has since dropped to 0.99 (~10% drift ≥ 1%)
+		curBuy:        new(big.Int).Div(new(big.Int).Mul(sell, big.NewInt(1e18)), big.NewInt(1_100_000)),
+		maxPrice:      big.NewInt(990_000),
+		buybackCap:    big.NewInt(1_000_000_000_000),
+		fresh:         true,
+		maxAge:        big.NewInt(3_600),
+		oldestLeg:     big.NewInt(999_900),
+		covered:       true,
+		freeReservoir: big.NewInt(1_000_000_000),
+	}
+	out := runTick(t, st)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 writes (CANCEL then POST) on price drift, got %d", len(out))
+	}
+	if decodeCapturedType(t, out[0]) != cancelBidReportType {
+		t.Fatalf("first write should be CANCEL_BID")
+	}
+	rt, payload := decodeEnvelope(t, out[1])
+	if rt != postBidReportType {
+		t.Fatalf("second write should be POST_BID")
+	}
+	// The repost is priced at the CURRENT ceiling: buy = ceilDiv(sell·1e18, maxPrice-now).
+	u256, _ := abi.NewType("uint256", "", nil)
+	u32, _ := abi.NewType("uint32", "", nil)
+	dec, err := abi.Arguments{{Type: u256}, {Type: u256}, {Type: u32}}.Unpack(payload)
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	wantBuy := ceilDiv(new(big.Int).Mul(sell, big.NewInt(1e18)), st.maxPrice)
+	if dec[1].(*big.Int).Cmp(wantBuy) != 0 {
+		t.Fatalf("repost buy: got %v want %v (current-ceiling pricing)", dec[1], wantBuy)
+	}
+}
+
+// SEC/L-7: malformed/legacy live-bid state (buyAmount reads 0 while a uid rests) must force a reprice, never a
+// silent no-op — postedPrice(…, 0) = 0 ⇒ drift 10_000 bps.
+func TestSimRepriceWhenLiveBuyAmountZero(t *testing.T) {
+	st := readState{
+		uid:           []byte{0xAA},
+		curSell:       big.NewInt(850_000_000), // == target ⇒ size drift 0
+		curBuy:        nil,                     // reads 0
+		maxPrice:      big.NewInt(990_000),
+		buybackCap:    big.NewInt(1_000_000_000_000),
+		fresh:         true,
+		maxAge:        big.NewInt(3_600),
+		oldestLeg:     big.NewInt(999_900),
+		covered:       true,
+		freeReservoir: big.NewInt(1_000_000_000),
+	}
+	out := runTick(t, st)
+	if len(out) != 2 {
+		t.Fatalf("expected CANCEL then POST on zero live buyAmount, got %d writes", len(out))
+	}
+	if decodeCapturedType(t, out[0]) != cancelBidReportType || decodeCapturedType(t, out[1]) != postBidReportType {
+		t.Fatalf("expected CANCEL_BID then POST_BID")
 	}
 }
 

@@ -182,6 +182,42 @@ func CallTwoUints(ctx context.Context, r Reader, to common.Address, sig string) 
 	return out[0].(*big.Int), out[1].(*big.Int), nil
 }
 
+// CallBytesUint reads a no-arg view returning (bytes, uint256) — e.g.
+// SzipBuyBurnModule.currentBid() -> (bytes uid, uint256 sellAmount).
+func CallBytesUint(ctx context.Context, r Reader, to common.Address, sig string) ([]byte, *big.Int, error) {
+	data, err := callView(ctx, r, to, selector(sig))
+	if err != nil {
+		return nil, nil, err
+	}
+	bytesT, err := abi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	out, err := abi.Arguments{{Type: bytesT}, {Type: uint256T}}.Unpack(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out[0].([]byte), out[1].(*big.Int), nil
+}
+
+// CallUintWithBytes reads a single-bytes-arg view returning a uint — e.g.
+// GPv2Settlement.filledAmount(bytes orderUid).
+func CallUintWithBytes(ctx context.Context, r Reader, to common.Address, sig string, arg []byte) (*big.Int, error) {
+	bytesT, err := abi.NewType("bytes", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	packed, err := abi.Arguments{{Type: bytesT}}.Pack(arg)
+	if err != nil {
+		return nil, err
+	}
+	data, err := callView(ctx, r, to, append(selector(sig), packed...))
+	if err != nil {
+		return nil, err
+	}
+	return decodeUint(data)
+}
+
 // uint256T is the single-uint256 ABI type, shared with encode.go (same package).
 
 func decodeUint(data []byte) (*big.Int, error) {

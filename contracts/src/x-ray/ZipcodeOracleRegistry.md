@@ -10,7 +10,7 @@
 > not a value delta.)
 
 > **Update 2026-06-24:** ctor now zero-guards `quote_` (`:80`, `quote_ == 0 → ZeroAddress`) for parity with
-> `setQuote` and the sibling `SzipFarmUtilityLpOracle.constructor`. This is hardening, not a bug-fix — a zero
+> `setQuote` (and the since-deleted push-LP-oracle sibling). This is hardening, not a bug-fix — a zero
 > `quote_` already deployed fail-closed (every read reverted `NotSupported` at `:172`; never fail-open) and was
 > recoverable via `setQuote` while owner-live; the guard shifts a silent inert-deploy to an explicit deploy-time
 > revert. Pinned by `test_Ctor_ZeroQuote_Reverts`; 41/41 green. (Surfaced by the core/zipcodeoracleregistry
@@ -18,8 +18,7 @@
 
 Per-contract X-Ray for `contracts/src/ZipcodeOracleRegistry.sol`, the **multi-asset Proof-of-Value push-cache** that
 prices every lien token at its appraised-value-minus-senior-debt mark. The EVK read-adapter
-(`BaseAdapter`/`IPriceOracle`) and CRE receiver (`ReceiverTemplate`) in one contract — the multi-asset sibling of
-`SzipFarmUtilityLpOracle`. Exercised by `ZipcodeOracleRegistry.t.sol` — a **41-test** suite. This is the LAST loose
+(`BaseAdapter`/`IPriceOracle`) and CRE receiver (`ReceiverTemplate`) in one contract. Exercised by `ZipcodeOracleRegistry.t.sol` — a **41-test** suite. This is the LAST loose
 top-level contract in `src/`.
 
 > Two write paths feed one venue-neutral cache: a **controller-gated origination seed** (`seedPrice`, single lien,
@@ -109,7 +108,7 @@ are now exercised — no untested surface.
   `setValidityWindow` (onlyOwner / tighten the window so a previously-fresh mark reads `TooStale`). `setQuote`'s
   `scale` is numerically decimals-invariant by construction (`feedDecimals == quoteDecimals` ⇒ `/1e18`), so the
   re-derive is proven by "the new quote prices correctly without bricking/overflow" rather than a value delta — the
-  same load-bearing re-derive as `SzipFarmUtilityLpOracle.setQuote`, now pinned.
+  same load-bearing re-derive the deleted push-LP-oracle twin ran, now pinned.
 - **Inherent trust:** the CRE Forwarder/identity, the upstream Proof-of-Value producer, and the EVK `ScaleUtils` math
   are trusted; build-phase mutable wiring (frozen pre-prod) is the subsystem residual.
 

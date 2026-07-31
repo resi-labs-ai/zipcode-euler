@@ -52,7 +52,7 @@ No permissionless mutators. No custody, no approvals, no recipient parameter exc
 | I-3 | **account-keyed + stateless** — no `tokenId` state; veNFT/votes accrue to the Safe as msg.sender; account-aggregate | Yes | **`test_fork_real_exerciseVe_fresh_nft_account_aggregate`** (two locks → two *distinct* fresh NFTs, aggregate votes grow each time) |
 | I-4 | **exec false-return hard-reverts with bubbled inner data** (the Safe swallows reverts otherwise) | Yes | `test_exec_bubbles_custom_error` (surfaces `TargetBoom`), `test_exec_bubbles_no_data_ExecFailed`, `test_lockVe_reverts_on_short/empty_return_data` |
 | I-5 | **views read `juniorTrancheEngine`**, never the caller/operator | Yes | `test_views_read_juniorTrancheEngine`, **`test_views_pass_oHYDX_and_juniorTrancheEngine`** (`expectCall` pins `earned(oHYDX, engine)` + `getVotes(engine)`) |
-| I-6 | **live-read targets** — `oHYDX = gauge.rewardToken()`, `ve = voter.ve()` (can't drift from the real deps) | Yes | `test_setUp_rejects_zero_rewardToken_live`, `test_setUp_rejects_zero_ve_live`, **`test_fork_sig_verify`** (live oHYDX/ve match) |
+| I-6 | **live-read targets, re-derived on EVERY wiring act (F13)** — `oHYDX = gauge.rewardToken()`, `ve = voter.ve()` at `setUp` AND at `setGauge`/`setVoter` re-points (fail-closed on zero; pre-F13 the setters stored blindly and the caches could go stale — the old "can't drift" claim held only at setUp). Residual: Hydrex can change `rewardToken()` in place (`onlyOwner updateRewardToken()` on the live gauge, beacon-upgradeable); the keeper strike loop alarms on module↔gauge disagreement every tick instead of idling silently | Yes | `test_setUp_rejects_zero_rewardToken_live`, `test_setUp_rejects_zero_ve_live`, **`test_F13_setGauge_zero_rewardToken_fails_closed`**, **`test_F13_setVoter_zero_ve_fails_closed`**, re-derivation asserts in `test_wiring_setters_onlyOwner_effect_and_zeroGuard`, **`test_fork_sig_verify`** (live oHYDX/ve match); keeper `TestStrikeLoop_DriftAlarm_Errors` |
 | I-7 | **`claimRebase` tolerates an imperfect array** — the rebase credits each veNFT's own lock, can't be redirected | Yes | **`test_fork_real_claimRebase`** (asserts both the consumed and the empty-tolerance branch) |
 | X-1 | §10.1 residual: operator trusted for `(amount, pools/weights, tokenIds)` — bounded, not theft | **No** | recipient pin + account-keyed + no-approvals cap it on-chain; the `lockVe` over-lock grief (below) is the residual |
 
@@ -66,7 +66,7 @@ No permissionless mutators. No custody, no approvals, no recipient parameter exc
 | `NotOperator` on all 5 mutators | `test_entrypoints_only_operator`, `test_fork_non_operator_reverts` |
 | `ZeroAmount` / `EmptyArray` / `LengthMismatch` | `test_guards` |
 | operator cannot redirect Safe (`setAvatar`/`setTarget`) | `test_operator_cannot_redirect_safe` |
-| 6 wiring setters (`setJuniorTrancheEngine`/`setGauge`/`setVoter`/`setRewardsDistributor`/`setOHYDX`/`setVe`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` (onlyOwner + effect + zero-guard, all 6; + `setJuniorTrancheEngine` syncs `avatar`/`target`) |
+| 6 wiring setters (`setJuniorTrancheEngine`/`setGauge`/`setVoter`/`setRewardsDistributor`/`setOHYDX`/`setVe`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` (onlyOwner + effect + zero-guard, all 6; `setJuniorTrancheEngine` syncs `avatar`/`target`; `setGauge`/`setVoter` re-derive `oHYDX`/`ve` — F13) |
 
 ## 5. Attack surfaces
 

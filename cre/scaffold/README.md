@@ -18,7 +18,7 @@ workflows (CRE-01/03/04) need, so you can clone it and replace the worked exampl
 3. **`RunInNodeMode` + identical consensus** — `cre.RunInNodeMode(cfg, runtime, observe,
    cre.ConsensusIdenticalAggregation[uint64]())`. The carrier is a single `uint64` scalar (a known
    `values.Wrap`-able type). The timestamp is NOT consensused — it is stamped DON-side.
-4. **The §8.0 write path** — `runtime.Now()` stamp → `zipreport.LpMarkReport(...)` encode →
+4. **The §8.0 write path** — `runtime.Now()` stamp → `zipreport.Rate(...)` encode →
    `GenerateReport` → `WriteReport` to `cfg.Receiver`. Imports the shared `cre-zipreport` library.
 
 ## §8.0 report table
@@ -43,7 +43,7 @@ table. This scaffold pushes `LpMark` (reportType `7`, inner `(uint256 mark, uint
 2. Keep the `replace` blocks (the in-tree SDK snapshot + `cre-zipreport => ../zipreport`).
 3. In `workflow.go`, replace the `TEMPLATE:`-marked seams:
    - `observe` — your real per-node observation (a chain read, etc.).
-   - the `zipreport.LpMarkReport(...)` call — your ticket's `zipreport.Xxx` builder.
+   - the `zipreport.Rate(...)` call — your ticket's `zipreport.Xxx` builder.
    - the `Config` fields — your workflow's addresses / parameters.
 4. Copy `secrets.yaml.example` → `secrets.yaml` (gitignored) and `.env.example` → `.env`; fill them in.
 
