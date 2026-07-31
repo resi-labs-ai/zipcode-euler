@@ -6,6 +6,24 @@ Dedicated single-contract X-Ray for `contracts/src/bridge/SzAlphaRateOracle.sol`
 `test/bridge/SzAlphaRateOracle.t.sol`. This is the real-logic bridge contract (vs the thin pool/mirror
 wrappers), so it gets the full treatment.
 
+> **Update 2026-07-31 (two items, no code change to guards):**
+> - **`ts` semantics pinned (Octane remote-timestamp finding, commit `7551f5b`, NatSpec-only):** the pushed `ts`
+>   is the **DON push time** (`cre/szalpha-rate` stamps `runtime.Now()`, the sharefeeds pattern) — NEVER the 964
+>   block time, whose clock skew vs Base would make the `FutureTimestamp`/staleness gates judge the wrong clock
+>   (the finding's DoS: a 964 clock ahead of Base bricks every push). Under DON stamping, `FutureTimestamp` is a
+>   pure producer-bug tripwire: a ms-vs-s stamp fails LOUDLY on the first push instead of poisoning the
+>   strictly-newer cursor forever (no admin reset exists — an accepted far-future ts would wedge every later
+>   push AND read permanently fresh). This is a PRODUCER contract on the CRE job, enforced by convention +
+>   NatSpec, not by this contract.
+> - **Upstream producer behavior changed (Phase 0, `SzAlpha.exchangeRate()`):** the 964 rate now REVERTS on
+>   vanished backing (`BackingVanished`) instead of returning ~0. Effect here: a drift incident becomes a
+>   STALE feed (no push lands), and `fresh()` fails consumers closed — the no-deviation-band design gains its
+>   missing catastrophic-value backstop without any change to this contract. The CRE job spec MUST treat a
+>   reverting read as no-push, never "push 0" (`SN46-BRIDGE-MVP-V2.md` §B5) — the `ZeroRate` guard here is the
+>   last-line tripwire if it ever did.
+> - Suite count corrected: **23/23 green** per forge (21 in the unit suite incl. the fuzz + 2 invariants); the
+>   prior "22/22" undercounted by one.
+
 ## 1. What it is
 
 The **Base-side** xALPHA exchange-rate oracle — the on-Base home for a fact native to Subtensor 964. A CRE

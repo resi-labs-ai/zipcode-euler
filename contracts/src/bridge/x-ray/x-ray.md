@@ -4,6 +4,12 @@
 
 Analyzed branch: `main` at `e6a4111`. Scope: `contracts/src/bridge` (5 contracts).
 
+> **2026-07-31:** the Phase-0 hardening (`bridge/SN46-BRIDGE-MVP-V2.md`) changed `SzAlpha` materially —
+> `BackingVanished` guards, `retarget`/`migrateFrom`, `redeemTo`; suite now 91/91. The per-contract
+> [`SzAlpha.md`](SzAlpha.md) and [`SzAlphaRateOracle.md`](SzAlphaRateOracle.md) are updated and authoritative;
+> the counts/entry-point lists in THIS overview and the bundled `entry-points.md`/`invariants.md` below are the
+> 2026-06-20 snapshot and are NOT refreshed.
+>
 > **CURRENT STATE (2026-06-20): this scope report is the OVERVIEW; the per-contract X-Rays are authoritative.**
 > Every bridge contract now has its own dedicated, test-connected single-contract X-Ray. Each was reviewed
 > one-at-a-time and connected to its tests; two had test gaps filled (fuzz + invariant added). All five are now

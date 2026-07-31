@@ -28,6 +28,7 @@ contract MockSubtensorStaking {
     uint256 public priceRaoPerAlpha = 1e9;
     bool public breakAddStake;
     bool public breakRemoveStake;
+    bool public breakMoveStake;
 
     function _coldkeyOf(address a) internal pure returns (bytes32) {
         return keccak256(abi.encode(a));
@@ -43,6 +44,10 @@ contract MockSubtensorStaking {
 
     function setBreakRemoveStake(bool v) external {
         breakRemoveStake = v;
+    }
+
+    function setBreakMoveStake(bool v) external {
+        breakMoveStake = v;
     }
 
     /// @dev `amountRao` = TAO in rao (9-dp). Swaps TAO -> alpha at the configured price.
@@ -67,6 +72,31 @@ contract MockSubtensorStaking {
     /// @return The staked alpha in 9-dp units.
     function getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) external view returns (uint256) {
         return stake[hotkey][coldkey][netuid];
+    }
+
+    /// @dev Same-coldkey hotkey-to-hotkey move (9-dp alpha), mirroring the runtime's
+    ///      `moveStake(bytes32,bytes32,uint256,uint256,uint256)` — same-netuid moves re-attribute
+    ///      without an AMM swap. `breakMoveStake` = silent no-op (exercises MigrationLostStake).
+    function moveStake(
+        bytes32 originHotkey,
+        bytes32 destinationHotkey,
+        uint256 originNetuid,
+        uint256 destinationNetuid,
+        uint256 amountRao
+    ) external payable {
+        if (breakMoveStake) return; // silent no-op: the wrapper's conservation check must revert
+        bytes32 ck = _coldkeyOf(msg.sender);
+        require(stake[originHotkey][ck][originNetuid] >= amountRao, "insufficient stake");
+        stake[originHotkey][ck][originNetuid] -= amountRao;
+        stake[destinationHotkey][ck][destinationNetuid] += amountRao;
+    }
+
+    /// @notice Simulate hotkey drift (substrate `swap_hotkey`): the ENTIRE stake under `coldkey` moves
+    ///         from `oldHotkey` to `newHotkey`. The wrapper, still configured at `oldHotkey`, reads 0.
+    function driftHotkey(bytes32 oldHotkey, bytes32 newHotkey, bytes32 coldkey, uint256 netuid) external {
+        uint256 amount = stake[oldHotkey][coldkey][netuid];
+        stake[oldHotkey][coldkey][netuid] = 0;
+        stake[newHotkey][coldkey][netuid] += amount;
     }
 
     /// @notice Raise backing stake with no share mint (9-dp alpha): validator rewards — or, identically

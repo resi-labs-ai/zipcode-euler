@@ -6,6 +6,22 @@
 > / `_RepointAndEmit` cover all 5 wiring setters (`onlyOwner` + `ZeroAddress` + re-point/`WiringSet`), and
 > `test_I11_Ctor_ZeroGuards` covers the 4 ctor `require` zero-guards. 43/43 green. Verdict lifted to HARDENED.
 
+> **Update 2026-07-31 (Octane audit response, commit `7551f5b`):** three deltas, all tested, **46/46 green**:
+> - **SEC/L-3 — appraisal-ts seeding.** `seedPrice` is now 3-arg (`lien, price, ts`): origination and draw stamp the
+>   mark with its APPRAISAL SOURCE ts (carried in the report payload), the same clock as rt-3 revaluations, so an
+>   out-of-order/stale draw reverts `StaleReport` at the registry instead of re-anchoring an older, higher mark with
+>   `block.timestamp` and borrowing against it. `test_Draw_StaleSourceTs_RollsBack`.
+> - **SEC/L-4 — one-way `defaulted` flag.** The RT-5/6 marker branch is no longer emit-only: it sets
+>   `liens[lienId].defaulted = true` (one-way, never cleared; inert on unknown lienIds) and `_draw` reverts
+>   `LienDefaulted` — a defaulted line can never be re-drawn on-chain, hardening the trusted-CRE assumption.
+>   Repay + close still work (`test_Draw_AfterDefault_Reverts`, `test_DefaultedLine_StillRepayAndCloses`).
+>   Clarification (b) below is superseded accordingly: the marker now has an on-chain effect for KNOWN liens.
+> - **`OrigParams` struct decode.** `_origination` decodes one memory struct (ABI-identical to the flat tuple)
+>   instead of 9 stack locals — stack-depth relief to carry `sourceTs`; no behavior change.
+> - Also: the I-1 CTR-04 caveat is retired — `closeLine` reclaims BOTH EE queue slots, so capacity is ~28
+>   CONCURRENT lines (a defaulted line holds its slot until repaid; defaults consume concurrent capacity, never
+>   lifetime capacity).
+
 Per-contract X-Ray for `contracts/src/ZipcodeController.sol` (§4.4), the **portable core's orchestrator**: the CRE
 receiver (Forwarder-gated), the per-`reportType` decision logic, and the lien-token mint/burn authority. It is the
 on-chain borrower of record but touches **no EVC** — every venue effect goes through the venue-neutral
@@ -38,9 +54,9 @@ A 174-nSLOC `ReceiverTemplate` (CRE receiver; owner = Timelock). Five Timelock-s
 `onReport` → `_processReport`, dispatching:
 
 - **`_origination`** (RT=1) — the atomic 9-step batch: resolve venue from `siloId` → dup-guard → precompute+create the lien (assert match) → approve exactly `1e18` → `openLine` → `seedPrice` → `setLineLimits` → `fund` → `draw` (to `erebor`) → store record (last write) → `incrementLineCount` (final).
-- **`_draw`** (RT=2) — re-resolve the SAME venue from the stored `siloId` → re-anchor `seedPrice` → `fund` → `draw`.
+- **`_draw`** (RT=2) — `LienDefaulted` gate (SEC/L-4) → re-resolve the SAME venue from the stored `siloId` → re-anchor `seedPrice` with the appraisal `sourceTs` (SEC/L-3) → `fund` → `draw`.
 - **`_close`** (RT=4) — re-resolve venue → `observeDebt==0` guard → `closeLine` (reclaims the lien) → `burn(1e18)` → flip `open=false` → `decrementLineCount`.
-- **RT=5/6 (default/liquidation)** — M1 status-marker only (emit `LienStatusUpdated`, with no lien-existence check — see §5); **RT=3 and any other** → `UnsupportedReportType`.
+- **RT=5/6 (default/liquidation)** — emit `LienStatusUpdated` + set the one-way `defaulted` flag (SEC/L-4; inert on unknown lienIds, no existence check — see §5); **RT=3 and any other** → `UnsupportedReportType`.
 
 No EVC, no custody beyond the transient lien approve. Wiring is build-phase re-pointable; `registry` starts zero and
 fails closed (`RegistryUnset`) rather than falling back to the `venue` slot.
@@ -83,6 +99,8 @@ Report paths route EXCLUSIVELY via the registry (`_venueFor`), never the `venue`
 | `UnknownLien` (draw/close) | `:269,290` | `test_Draw_UnknownLien_Reverts`, `_Close_NeverOpened_Reverts` |
 | `DebtOutstanding` (close) | `_close:296` | `test_Close_DebtOutstanding_StateUnchanged` |
 | `RegistryUnset` / `SiloUnrouted` | `_venueFor:179,181` | `test_CTR03_RegistryUnset_Reverts`, `_UnknownSilo_RevertsSiloUnrouted` |
+| `LienDefaulted` (SEC/L-4, one-way) | `_draw` | `test_Draw_AfterDefault_Reverts`, `test_DefaultedLine_StillRepayAndCloses` |
+| stale appraisal ts (SEC/L-3, via registry `StaleReport`) | `seedPrice(lien, mark, sourceTs)` | `test_Draw_StaleSourceTs_RollsBack` |
 | Forwarder / identity gate | `ReceiverTemplate` | `test_Authority_NonForwarder_Reverts`, `_DormantGate_Demonstration` |
 | 5 wiring setters: `onlyOwner` + `ZeroAddress` + `WiringSet` | `:141-174` | `test_I11_WiringSetters_RejectNonOwner` / `_RejectZeroAddress` / `_RepointAndEmit` |
 | ctor `require` zero-guards (×4) | `:128-131` | `test_I11_Ctor_ZeroGuards` |
@@ -140,7 +158,8 @@ Every guard, branch, setter, and ctor zero-guard is now exercised — no unteste
 | Identity / reentrancy / live-borrow | 5 | non-forwarder, dormant gate, post-renounce, ReentrantVenue, no-operator-wiring |
 | Wiring setters (onlyOwner/zero/event) + ctor zero-guards | 4 | `test_I11_*` (added 2026-06-20) |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); **43 fork tests green**. The suite is fork-integration
+Coverage % uninstrumentable (project-wide `Stack too deep`); **46 fork tests green** (43 + the 3 SEC/L-3/L-4
+tests from the 2026-07-31 audit response). The suite is fork-integration
 against the real EVK/EVC/EulerEarn stack — exactly right for an orchestrator whose correctness is its end-to-end
 interaction with the venue. No coverage gap remains.
 

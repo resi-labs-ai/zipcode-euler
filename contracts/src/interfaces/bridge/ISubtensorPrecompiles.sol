@@ -44,10 +44,31 @@ interface IStakingV2 {
     /// @return The staked alpha in 9-dp units.
     function getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) external view returns (uint256);
 
-    // NOTE (donation vector, 8x-01): StakingV2 also exposes `transferStake` / `moveStake`, which let a
-    // third party attribute staked alpha to an ARBITRARY destination coldkey — including a wrapper's.
-    // They are not load-bearing here (so not pinned), but their existence means "no third party can
-    // raise the wrapper's backing stake" is FALSE; the wrapper's donation handling documents this.
+    /// @notice Move the caller's staked alpha from one hotkey to another (same coldkey attribution).
+    /// @dev Pinned for the wrapper's `migrateFrom` recovery path (hotkey-drift incident class; see
+    ///      `bridge/rubicon-incident-2026-06-12.md`). Signature verified against
+    ///      `reference/subtensor/precompiles/src/staking.rs`
+    ///      (`moveStake(bytes32,bytes32,uint256,uint256,uint256)`). Same-netuid moves re-attribute the
+    ///      stake without routing through the subnet AMM; a CROSS-netuid move would swap through both
+    ///      AMMs — the wrapper always passes the same netuid on both sides.
+    /// @param originHotkey The hotkey the stake currently sits under.
+    /// @param destinationHotkey The hotkey to move it to.
+    /// @param originNetuid The source subnet id.
+    /// @param destinationNetuid The destination subnet id (the wrapper pins == originNetuid).
+    /// @param amountAlpha The alpha to move, 9-dp.
+    function moveStake(
+        bytes32 originHotkey,
+        bytes32 destinationHotkey,
+        uint256 originNetuid,
+        uint256 destinationNetuid,
+        uint256 amountAlpha
+    ) external payable;
+
+    // NOTE (donation vector, 8x-01): StakingV2 also exposes `transferStake`, which lets a third party
+    // attribute staked alpha to an ARBITRARY destination coldkey — including a wrapper's. It is not
+    // load-bearing here (so not pinned), but its existence means "no third party can raise the
+    // wrapper's backing stake" is FALSE; the wrapper's donation handling documents this. (`moveStake`
+    // IS pinned above — it became load-bearing for the drift-recovery path.)
 }
 
 /// @title Minimal Alpha precompile interface (0x...0808, INDEX 2056).

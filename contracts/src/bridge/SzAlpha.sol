@@ -84,8 +84,8 @@ contract SzAlpha is
 
     // --- Config (set at initialize, UUPS) ---
     uint256 public netuid; // slot (<= type(uint16).max, enforced at init — IAlpha takes uint16)
-    bytes32 public validatorHotkey;
-    bytes32 public wrapperColdkey; // derived once at init, cached
+    bytes32 public validatorHotkey; // a POINTER, not a fact: owner-repointable via retarget() (drift recovery)
+    bytes32 public wrapperColdkey; // derived once at init, cached, immutable thereafter
     address public ccipAdmin; // the CCIP registrar (getCCIPAdmin); != owner
 
     /// @dev Storage gap for future upgrades (UUPS). 50 - 4 used slots = 46.
@@ -95,9 +95,18 @@ contract SzAlpha is
     /// @param taoIn TAO actually staked (wei, 18-dp; excludes the refunded sub-rao remainder).
     /// @param alphaStakedRao alpha received from the AMM swap (9-dp) — the measured stake delta.
     event Deposited(address indexed user, uint256 taoIn, uint256 alphaStakedRao, uint256 sharesOut);
-    /// @param alphaOutRao alpha unstaked (9-dp). @param taoOut TAO paid to the redeemer (wei, 18-dp).
-    event Redeemed(address indexed user, uint256 sharesIn, uint256 alphaOutRao, uint256 taoOut);
+    /// @param receiver where the TAO was paid (== `user` for `redeem`; caller-named for `redeemTo`).
+    /// @param alphaOutRao alpha unstaked (9-dp). @param taoOut TAO paid out (wei, 18-dp).
+    event Redeemed(
+        address indexed user, address indexed receiver, uint256 sharesIn, uint256 alphaOutRao, uint256 taoOut
+    );
     event CcipAdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    /// @param stakeAtOld alpha (9-dp) read at the outgoing hotkey. @param stakeAtNew at the incoming one.
+    event ValidatorRetargeted(
+        bytes32 indexed oldHotkey, bytes32 indexed newHotkey, uint256 stakeAtOld, uint256 stakeAtNew
+    );
+    /// @param amountRao alpha (9-dp) consolidated onto the configured hotkey.
+    event StakeMigrated(bytes32 indexed sourceHotkey, bytes32 indexed destinationHotkey, uint256 amountRao);
 
     // --- Errors ---
     error ZeroAmount();
@@ -113,6 +122,9 @@ contract SzAlpha is
     error PrecompileCallFailed();
     error NotCcipAdmin();
     error NativeTransferFailed();
+    error BackingVanished();
+    error RetargetLosesStake(uint256 stakeAtCurrent, uint256 stakeAtNew);
+    error MigrationLostStake(uint256 expected, uint256 actual);
 
     modifier onlyCcipAdmin() {
         if (msg.sender != ccipAdmin) revert NotCcipAdmin();
@@ -191,6 +203,13 @@ contract SzAlpha is
         uint256 stakeRaoBefore = _readStake();
         uint256 supplyBefore = totalSupply();
 
+        // Backing-vanished guard (Rubicon 2026-06-12 incident class): supply outstanding but the
+        // configured hotkey reads ZERO backing means the validator hotkey drifted (substrate
+        // `swap_hotkey`), not that the backing is gone — the pre-deposit rate is garbage and any mint
+        // against it dilutes existing holders (Rubicon: 56x over-mint for 10.6h). Halt entry until
+        // `retarget`/`migrateFrom` re-points the read. Genesis (supply 0) is unaffected.
+        if (supplyBefore != 0 && stakeRaoBefore == 0) revert BackingVanished();
+
         // Interaction: stake via the precompile (low-level; a typed call never reaches the runtime).
         _callStaking(abi.encodeWithSelector(IStakingV2.addStake.selector, validatorHotkey, amountRao, netuid));
 
@@ -228,6 +247,29 @@ contract SzAlpha is
         nonReentrant
         returns (uint256 taoOut)
     {
+        return _redeemTo(msg.sender, shares, minTaoOut, deadline);
+    }
+
+    /// @notice `redeem`, with the TAO paid to a named `receiver` instead of the caller. Shares are
+    ///         ALWAYS burned from `msg.sender` — this only redirects the caller's own payout.
+    /// @dev Exists for callers that cannot (or should not) hold native TAO — canonically the 964-side
+    ///      value-return executor unwinding bridged-back szALPHA, which routes the TAO straight to the
+    ///      next leg. A `receiver` that cannot accept native TAO reverts `NativeTransferFailed`.
+    ///      Same non-pausable / CEI / measured-output semantics as `redeem`.
+    function redeemTo(address receiver, uint256 shares, uint256 minTaoOut, uint256 deadline)
+        external
+        nonReentrant
+        returns (uint256 taoOut)
+    {
+        if (receiver == address(0)) revert ZeroAddress();
+        return _redeemTo(receiver, shares, minTaoOut, deadline);
+    }
+
+    /// @dev Shared redeem path. Burns from `msg.sender`, pays `receiver` the MEASURED TAO output.
+    function _redeemTo(address receiver, uint256 shares, uint256 minTaoOut, uint256 deadline)
+        internal
+        returns (uint256 taoOut)
+    {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (shares == 0) revert ZeroAmount();
         // redeem always requires a real floor (supply is never 0 here — no genesis exemption).
@@ -252,11 +294,11 @@ contract SzAlpha is
         if (taoOut == 0) revert RemoveStakeEffectMissing();
         if (taoOut < minTaoOut) revert SlippageExceeded(taoOut, minTaoOut);
 
-        // Interaction: pay the caller the measured output.
-        (bool ok,) = payable(msg.sender).call{value: taoOut}("");
+        // Interaction: pay the receiver the measured output.
+        (bool ok,) = payable(receiver).call{value: taoOut}("");
         if (!ok) revert NativeTransferFailed();
 
-        emit Redeemed(msg.sender, shares, alphaOutRao, taoOut);
+        emit Redeemed(msg.sender, receiver, shares, alphaOutRao, taoOut);
     }
 
     // ================================================================
@@ -270,8 +312,18 @@ contract SzAlpha is
     ///      on-chain concern. Stake is normalized to 18-dp (`_stake18`) so the rate's external semantics
     ///      are unchanged by the 9-dp precompile units. Bridged-out supply stays in `totalSupply()`
     ///      (lock/release — see the topology note), keeping this rate truthful across chains.
+    /// @dev FAIL-CLOSED, deliberately (both branches). On a precompile outage the stake read reverts
+    ///      (`PrecompileCallFailed`); on hotkey drift (supply outstanding, backing reads zero) this
+    ///      reverts `BackingVanished` instead of pricing the dead pointer at ~0. A reverting rate cannot
+    ///      be pushed by the CRE, so the Base feed goes stale and every consumer fails closed on
+    ///      `fresh()` — the existing staleness machinery IS the cross-chain circuit breaker. (A
+    ///      zero-priced rate would instead mark NAV to ~0 and, in an EVK market, hand liquidators the
+    ///      whole collateral pool — `Liquidation.sol`'s `collateralValue == 0` path.)
     function exchangeRate() external view returns (uint256) {
-        return (_stake18() + VIRTUAL_STAKE).mulDiv(1e18, totalSupply() + VIRTUAL_SHARES);
+        uint256 supply = totalSupply();
+        uint256 stake18 = _stake18();
+        if (supply != 0 && stake18 == 0) revert BackingVanished();
+        return (stake18 + VIRTUAL_STAKE).mulDiv(1e18, supply + VIRTUAL_SHARES);
     }
 
     /// @notice The wrapper's aggregate backing alpha, normalized to 18-dp (raw precompile units are
@@ -322,6 +374,46 @@ contract SzAlpha is
     // │                       Admin (owner)                          │
     // ================================================================
 
+    /// @notice Re-point `validatorHotkey` at the key that actually holds our stake. No stake movement,
+    ///         no swap, no slippage — a pointer update. Owner (timelock) only.
+    /// @dev THE drift recovery (`bridge/rubicon-incident-2026-06-12.md`): a substrate `swap_hotkey`
+    ///      moves every delegator's stake — including ours — to the operator's new hotkey, leaving this
+    ///      contract reading a dead key (`getStake` == 0, `BackingVanished` halts entry + the rate).
+    ///      The stake is already AT the new key under our own coldkey, so recovery is exactly this
+    ///      pointer update. Rubicon shipped the equivalent 26 days into their incident via UUPS upgrade;
+    ///      here it is a timelocked transaction from genesis. Guarded: the new key must hold at least
+    ///      the stake the current one does, so a wrong target cannot strand the backing.
+    function retarget(bytes32 newHotkey) external onlyOwner {
+        if (newHotkey == bytes32(0)) revert ZeroAddress();
+        uint256 stakeAtCurrent = _readStake();
+        uint256 stakeAtNew = _readStakeAt(newHotkey);
+        if (stakeAtNew < stakeAtCurrent) revert RetargetLosesStake(stakeAtCurrent, stakeAtNew);
+        emit ValidatorRetargeted(validatorHotkey, newHotkey, stakeAtCurrent, stakeAtNew);
+        validatorHotkey = newHotkey;
+    }
+
+    /// @notice Consolidate stake stranded under `sourceHotkey` onto the configured hotkey, via the
+    ///         `moveStake` precompile. Owner (timelock) only.
+    /// @dev The companion recovery for stake sitting on a key we are LEAVING (the source argument is
+    ///      the point — the whole incident class is "the configured key is not where the stake is").
+    ///      `netuid` is pinned on BOTH sides of the move: a cross-subnet move would route through both
+    ///      AMMs and reprice every holder. S4-style conservation check: the configured key must end up
+    ///      holding at least `before + amount`, else the whole call reverts.
+    function migrateFrom(bytes32 sourceHotkey) external onlyOwner {
+        if (sourceHotkey == bytes32(0)) revert ZeroAddress();
+        uint256 stakeBefore = _readStake();
+        uint256 amountRao = _readStakeAt(sourceHotkey);
+        if (amountRao == 0) revert ZeroAmount();
+        _callStaking(
+            abi.encodeWithSelector(
+                IStakingV2.moveStake.selector, sourceHotkey, validatorHotkey, netuid, netuid, amountRao
+            )
+        );
+        uint256 stakeAfter = _readStake();
+        if (stakeAfter < stakeBefore + amountRao) revert MigrationLostStake(stakeBefore + amountRao, stakeAfter);
+        emit StakeMigrated(sourceHotkey, validatorHotkey, amountRao);
+    }
+
     /// @notice Pause deposits. Redeem stays available (S3/S11). Owner (timelock) only.
     function pause() external onlyOwner {
         _pause();
@@ -358,8 +450,14 @@ contract SzAlpha is
 
     /// @dev Live `getStake(validatorHotkey, wrapperColdkey, netuid)` via staticcall. Returns 9-dp alpha.
     function _readStake() internal view returns (uint256) {
+        return _readStakeAt(validatorHotkey);
+    }
+
+    /// @dev `getStake(hotkey, wrapperColdkey, netuid)` for an arbitrary hotkey — the probe behind
+    ///      `retarget`/`migrateFrom` (drift recovery reads keys the config does not yet point at).
+    function _readStakeAt(bytes32 hotkey) internal view returns (uint256) {
         (bool ok, bytes memory ret) = STAKING_V2.staticcall(
-            abi.encodeWithSelector(IStakingV2.getStake.selector, validatorHotkey, wrapperColdkey, netuid)
+            abi.encodeWithSelector(IStakingV2.getStake.selector, hotkey, wrapperColdkey, netuid)
         );
         if (!ok || ret.length < 32) revert PrecompileCallFailed();
         return abi.decode(ret, (uint256));

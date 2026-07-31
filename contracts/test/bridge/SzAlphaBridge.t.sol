@@ -78,6 +78,7 @@ contract SzAlphaBridgeTest is Test {
 
     uint256 internal constant NETUID = 99;
     bytes32 internal constant HOTKEY = bytes32(uint256(0xABCD));
+    bytes32 internal constant HOTKEY2 = bytes32(uint256(0xBEEF)); // drift/retarget target
     uint64 internal constant REMOTE_SEL = 15971525489660198786; // Base selector
     uint256 internal constant RAO = 1e9;
     uint256 internal constant MAX_DL = type(uint256).max;
@@ -863,6 +864,193 @@ contract SzAlphaBridgeTest is Test {
             abi.encodeCall(SzAlpha.initialize, ("n", "s", NETUID, bytes32(0), timelock, ccipAdmin));
         vm.expectRevert(SzAlpha.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), bad);
+    }
+
+    // ================================================================
+    // │  PHASE-0 (MVP v2): BackingVanished / retarget / migrateFrom  │
+    // │  / redeemTo / Octane-7 pin — the Rubicon 2026-06-12 class    │
+    // ================================================================
+
+    /// @dev Simulate substrate `swap_hotkey`: the wrapper's ENTIRE stake moves off the configured
+    ///      hotkey to HOTKEY2, same coldkey. The wrapper, still reading HOTKEY, sees 0 — the exact
+    ///      pre-state of the 12 Jun 2026 Rubicon incident (getStake under-reports to ZERO; the
+    ///      lying-mock over-report test covers the other X-1 direction).
+    function _drift() internal {
+        _staking().driftHotkey(HOTKEY, HOTKEY2, _coldkey(), NETUID);
+    }
+
+    // --- 0.1: deposits halt in the vanished state (the 10.6h dilution window closes) ---
+    function test_backingVanished_depositReverts() public {
+        vm.deal(alice, 20 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+
+        _drift();
+        assertEq(token.totalStaked(), 0, "configured key reads zero (drift, not loss)");
+
+        // Rubicon minted 75k shares in this state for 10.6 hours. We revert instead.
+        vm.prank(alice);
+        vm.expectRevert(SzAlpha.BackingVanished.selector);
+        token.deposit{value: 1 ether}(1, MAX_DL);
+    }
+
+    // --- 0.2: the rate view fails closed in the vanished state (genesis still serves) ---
+    function test_backingVanished_exchangeRateRevertsButGenesisServes() public {
+        // Genesis: supply 0 AND stake 0 is a healthy empty wrapper, not a vanished one.
+        assertEq(token.exchangeRate(), 1e18, "genesis 1:1 still served");
+
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        _drift();
+
+        // The CRE cannot read a reverting rate -> no push -> Base feed goes stale -> consumers
+        // fail closed on fresh(). A ~0 rate here would instead mark NAV to zero and open the
+        // EVK free-collateral-seizure path (Liquidation.sol collateralValue == 0).
+        vm.expectRevert(SzAlpha.BackingVanished.selector);
+        token.exchangeRate();
+
+        // The raw probe stays readable for monitoring (alarm #1: stake==0 && supply>0).
+        assertEq(token.totalStaked(), 0);
+        assertGt(token.totalSupply(), 0);
+    }
+
+    // --- 0.3a: retarget recovers from drift (pointer update, no stake movement) ---
+    function test_retarget_recoversFromDrift() public {
+        vm.deal(alice, 20 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        uint256 rateBefore = token.exchangeRate();
+
+        _drift();
+        vm.expectRevert(SzAlpha.BackingVanished.selector);
+        token.exchangeRate();
+
+        // Recovery = one timelocked pointer update (vs Rubicon's 26-day UUPS upgrade under fire).
+        vm.prank(timelock);
+        vm.expectEmit(true, true, false, true);
+        emit SzAlpha.ValidatorRetargeted(HOTKEY, HOTKEY2, 0, 5 * 1e9);
+        token.retarget(HOTKEY2);
+
+        assertEq(token.validatorHotkey(), HOTKEY2, "pointer updated");
+        assertEq(token.exchangeRate(), rateBefore, "rate restored exactly, zero dilution");
+
+        // Deposits resume and price at the recovered rate; redeem works against the new key.
+        vm.prank(alice);
+        uint256 shares = token.deposit{value: 2 ether}(1, MAX_DL);
+        assertEq(shares, 2 ether, "post-recovery deposit prices correctly");
+        vm.prank(alice);
+        uint256 out = token.redeem(1 ether, 1, MAX_DL);
+        assertEq(out, 1 ether, "post-recovery redeem pays correctly");
+    }
+
+    // --- 0.3b: retarget cannot strand the backing on a worse key ---
+    function test_retarget_losesStakeReverts() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+
+        // Healthy at HOTKEY; re-pointing at an empty key must revert, not orphan the stake.
+        vm.prank(timelock);
+        vm.expectRevert(abi.encodeWithSelector(SzAlpha.RetargetLosesStake.selector, 5 * 1e9, 0));
+        token.retarget(HOTKEY2);
+    }
+
+    // --- 0.3c: migrateFrom consolidates stake stranded on a key we are leaving ---
+    function test_migrateFrom_consolidatesStrandedStake() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        // Strand 3 alpha under OUR coldkey at another hotkey (partial operator migration shape).
+        _staking().addReward(HOTKEY2, _coldkey(), NETUID, 3 * 1e9);
+
+        vm.prank(timelock);
+        vm.expectEmit(true, true, false, true);
+        emit SzAlpha.StakeMigrated(HOTKEY2, HOTKEY, 3 * 1e9);
+        token.migrateFrom(HOTKEY2);
+
+        assertEq(token.totalStaked(), 8 ether, "stranded stake consolidated onto the configured key");
+
+        // Nothing left at the source: a second migrate is a ZeroAmount revert, not a no-op.
+        vm.prank(timelock);
+        vm.expectRevert(SzAlpha.ZeroAmount.selector);
+        token.migrateFrom(HOTKEY2);
+    }
+
+    // --- 0.3d: a silently failing moveStake cannot pass the conservation check ---
+    function test_migrateFrom_lostStakeReverts() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        _staking().addReward(HOTKEY2, _coldkey(), NETUID, 3 * 1e9);
+        _staking().setBreakMoveStake(true);
+
+        vm.prank(timelock);
+        vm.expectRevert(abi.encodeWithSelector(SzAlpha.MigrationLostStake.selector, 8 * 1e9, 5 * 1e9));
+        token.migrateFrom(HOTKEY2);
+    }
+
+    // --- 0.3e: both recovery functions are timelock-only ---
+    function test_retargetAndMigrate_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
+        token.retarget(HOTKEY2);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
+        token.migrateFrom(HOTKEY2);
+    }
+
+    // --- 0.4a: redeemTo pays a named receiver, burns from the caller ---
+    function test_redeemTo_paysNamedReceiver() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+
+        uint256 bobBefore = bob.balance;
+        vm.prank(alice);
+        uint256 out = token.redeemTo(bob, 2 ether, 1, MAX_DL);
+
+        assertEq(out, 2 ether);
+        assertEq(bob.balance, bobBefore + 2 ether, "TAO paid to the NAMED receiver");
+        assertEq(token.balanceOf(alice), 3 ether, "shares burned from the CALLER only");
+        assertEq(token.balanceOf(bob), 0, "receiver holds no shares, payout redirect only");
+    }
+
+    // --- 0.4b: redeemTo rejects zero and non-payable receivers ---
+    function test_redeemTo_rejectsZeroAndNonPayableReceiver() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+
+        vm.prank(alice);
+        vm.expectRevert(SzAlpha.ZeroAddress.selector);
+        token.redeemTo(address(0), 1 ether, 1, MAX_DL);
+
+        // The finding's landmine: an executor that cannot receive native TAO. Fail loudly.
+        RevertingReceiver r = new RevertingReceiver(token);
+        r.armRevert();
+        vm.prank(alice);
+        vm.expectRevert(SzAlpha.NativeTransferFailed.selector);
+        token.redeemTo(address(r), 1 ether, 1, MAX_DL);
+    }
+
+    // --- 0.5: Octane finding 7 pin — state paths never touch the 0x808 quote precompile ---
+    function test_statePaths_neverTouchAlphaQuotePrecompile() public {
+        // Rubicon's _updateTVL made stake/redeem/emergency-withdraw revert when the IAlpha quote
+        // precompile failed (Octane 7). Brick 0x808 entirely: our state paths must be unaffected.
+        vm.etch(ALPHA_PRECOMPILE, hex"fe"); // INVALID opcode — any call reverts
+
+        vm.deal(alice, 10 ether);
+        vm.startPrank(alice);
+        uint256 shares = token.deposit{value: 5 ether}(1, MAX_DL);
+        uint256 out = token.redeem(shares, 1, MAX_DL);
+        vm.stopPrank();
+        assertEq(out, 5 ether, "full round trip with the quote precompile dead");
+
+        // Sanity: the ADVISORY previews DO read 0x808 — and fail closed, not silently.
+        vm.expectRevert(SzAlpha.PrecompileCallFailed.selector);
+        token.previewDeposit(1 ether);
     }
 }
 

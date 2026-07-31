@@ -17,6 +17,12 @@ analysis. It does NOT re-derive node internals — see each contract's `x-ray/` 
 trusts something it does not itself enforce." Collect them, find the other side of each joint, and check whether
 the producer's guarantee matches the consumer's assumption.
 
+> **Update 2026-07-31:** revised for the Octane audit response (commit `7551f5b`) + the bridge Phase-0 hardening
+> (`bridge/SN46-BRIDGE-MVP-V2.md`, working tree). Material changes: S1/S3 semantics (the 964 rate now FAILS
+> CLOSED on vanished backing — a drift incident becomes a stale feed, not a ~0 price), two NEW seams (S14 the
+> CRE no-push-on-revert producer contract, S15 the SEC/H-1 fair-LP funding gate), S10 gains the rate-staleness
+> fence, and the hub's HYDX/oHYDX legs are now marked $0 in NAV.
+
 ---
 
 ## 1. The hub — `SzipNavOracle` (the systemic single point)
@@ -25,7 +31,9 @@ Everything that moves value prices off NAV. The oracle is the one contract whose
 *aggregate* attack surface and whose output feeds every value decision.
 
 **Inputs NAV reads** (`grossBasketValue()` + legs, per `8-B4-SzipNavOracle.md`):
-- raw `balanceOf` of the **main + sidecar Safes** for the 5 plain legs (zipUSD/USDC/xALPHA/HYDX/oHYDX)
+- raw `balanceOf` of the **main + sidecar Safes** for the plain legs — zipUSD/USDC/xALPHA valued; **HYDX + oHYDX
+  (+ veHYDX) marked $0 since 2026-07-31** (emission value recognized only on realized stable proceeds; the
+  HYDX/USD push feed is kept to price LP reserves + as the exercise-profitability input)
 - the **escrow-collateralized ICHI LP** (counted in place) **minus farm utility strike debt**
 - the **xALPHA rate** — from the wired Base `SzAlphaRateOracle` (CRE-pushed from 964), else the M1 stand-in
 - the **impairment provision** — written only by `DefaultCoordinator`
@@ -55,19 +63,21 @@ Each row is a joint between two components. **Enforcement** column: `on-chain` (
 
 | # | Producer → Consumer | The joint (guarantee ↔ assumption) | Enforcement |
 |---|---|---|---|
-| S1 | Subtensor precompile → `SzAlpha` | mint/redeem use the *measured* stake/balance delta; only the **sign** is guarded, the **magnitude** is trusted runtime [bridge X-1] | off-chain (runtime) |
+| S1 | Subtensor precompile → `SzAlpha` | mint/redeem use the *measured* stake/balance delta; the **sign** AND the **vanished state** (`supply>0 && stake==0` → `BackingVanished`, the Rubicon drift class) are guarded, the **magnitude** is trusted runtime [bridge X-1, both directions tested] | off-chain (runtime) + on-chain (vanished) |
 | S2 | `SzAlpha.exchangeRate` → `SzAlphaRateOracle` → `SzipNavOracle` | the bridged rate stays truthful **iff** 964 supply is *locked, not burned* + decimals==18 [bridge E-1] | deploy-topology |
-| S3 | `SzAlphaRateOracle.fresh()` → `SzipNavOracle.navEntry` | a stale cross-chain rate must **not** mint; issuance reverts `StaleRate`, exit prices last good (the §7 asymmetry) | on-chain |
+| S3 | `SzAlphaRateOracle.fresh()` → `SzipNavOracle.navEntry` | a stale cross-chain rate must **not** mint; issuance reverts `StaleRate`, exit prices last good (the §7 asymmetry). Since Phase 0 this seam also carries the CATASTROPHIC-VALUE case: a vanished-backing 964 rate REVERTS at the producer, so it arrives here as staleness (fail-closed via `fresh()`), never as a ~0 price — the "bad push is a stale push" assumption now actually holds for the zero class; a well-formed wrong-VALUE push remains DON-trust (S4) | on-chain |
 | S4 | CRE Forwarder → every `ReceiverTemplate` (rate oracle, NAV, `DefaultCoordinator`, `WarehouseAdminModule`, engine modules) | each report path is Forwarder-gated; CRE is trusted for magnitude/timing, bounded to *grief* per-contract [loss X-1] | off-chain (correlated) |
 | S5 | `DefaultCoordinator` → `SzipNavOracle.provision` | DC guarantees the provision bound on-chain (down by `atRisk·(1−floor)`, heal by receipts, floored at 0) [loss E-1]; NAV gates the writer to DC-only [demo X-1] | on-chain (both sides) |
 | S6 | `DefaultCoordinator` ↔ `LienXAlphaEscrow` | escrow is `onlyCoordinator`; bonds flow only to originator/treasury/engine — destination integrity, absolute only once sinks are immutable [loss X-2] | build-phase |
 | S7 | counted Safes / LP venues → `SzipNavOracle.grossBasketValue` | NAV prices raw `balanceOf` + spot LP reserves; a direct **donation** into a counted Safe moves NAV with no deposit — the Gate's denominator is the only tie-back [demo I-1/I-2] | off-chain (design) |
 | S8 | `SzipNavOracle` → `ExitGate` | bracket fail-closed: `navEntry` reverts on stale (pause issuance); Gate mints down-rounded and is the **first-depositor guard** NAV delegates | on-chain + Gate-discipline |
 | S9 | `SzipNavOracle` → `DurationFreezeModule` | coverage floor = `committedValue()+pathLockedLpEquity()`; `release` cannot drop below it; LP counted in place (the demo notes a ≤2-wei split-LP drift) [demo I-4] | on-chain |
-| S10 | `SzipNavOracle` → `SzipBuyBurnModule` | the buy-and-burn bid is priced at `navExit` and fenced to `oldestRequiredLegTs` (`validTo`) — no stale-mark bid | on-chain |
+| S10 | `SzipNavOracle` → `SzipBuyBurnModule` | the buy-and-burn bid is priced at `navExit` and fenced to `oldestRequiredLegTs` (`validTo`) — no stale-mark bid; since `7551f5b` the fence also honors the RATE ORACLE's own `maxStaleness`, so a bid can never outlive the rate that priced it (closed the 18h stale-live window) | on-chain |
 | S11 | `WarehouseAdminModule` → Roles scope → Warehouse Safe → `EulerEarn` | the **real** param-pinning is the Roles **scope config**, not the module bytecode [warehouse X-1]; `warehouseSafe` must equal the modifier's `avatar` [warehouse X-2] | off-chain scope + on-chain* |
 | S12 | `EulerEarn` shares → senior NAV (`SeniorNavAggregator` via `ISeniorPool`) | senior par read is donation-immune (`convertToAssets`/`maxWithdraw`, never `balanceOf(pool)`) — every venue must satisfy this contract | on-chain (interface contract) |
 | S13 | engine module fleet → shared engine/main Safe(s) | many Zodiac modules `enableModule`'d on shared Safes; the **module set** is the access control and it spans contracts | on-chain (Safe) |
+| S14 | `SzAlpha.exchangeRate` (reverting) → `cre/szalpha-rate` job → `SzAlphaRateOracle` | a REVERTING 964 read means **no push** — never "push 0" (the `ZeroRate` guard is the last-line tripwire). The whole S3 fail-closed conversion rests on the job honoring this; it is a SPEC requirement on a job that does not exist yet [`SN46-BRIDGE-MVP-V2.md` §B5]. Companion: `ts` is the DON push time (`runtime.Now()`), never 964 block time | **off-chain (job spec, UNBUILT)** |
+| S15 | `SzipNavOracle.lpTwapWindow`/`ichiVault`/`gauge` → `LpStrategyModule.addLiquidity` | LP may enter the counted Safe ONLY while the oracle prices THIS vault off its fair-reserves TWAP (SEC/H-1): unwired oracle / window==0 / vault-or-gauge mismatch all fail closed. `addLiquidity` is the sole minter of new counted LP, so this one gate closes the in-block spot-LP mint at the FUNDING boundary (the read-path bracket, S7/S8, stays the pricing defense) | on-chain |
 
 *S11 avatar-parity is now integration-tested (`test/WarehouseAdminModule.t.sol::test_Parity_*`) — fail-closed proven.
 
@@ -75,7 +85,7 @@ Each row is a joint between two components. **Enforcement** column: `on-chain` (
 
 ## 3. The four systemic seam-classes
 
-The 13 seams collapse into four recurring whole-protocol patterns. Audit each *class* once.
+The 15 seams collapse into four recurring whole-protocol patterns. Audit each *class* once.
 
 1. **The NAV hub (S2,S3,S5,S7–S10).** Every value decision prices off `SzipNavOracle`; its inputs (raw Safe
    balances, LP marks, the xALPHA rate, the provision) are the aggregate attack surface. The bracket
@@ -135,6 +145,9 @@ spot/TWAP bracket (everything). The only input with no on-chain bound is the raw
 | Donation into a counted Safe moves NAV | S7 | by design — the Gate's denominator + round-down absorb it; verify the Gate side |
 | Build-phase wiring re-pointable | S6, S11, S13 | the deferred pre-prod **immutable re-freeze** (process step) |
 | Roles scope is the real warehouse boundary | S11 | the deployed scope tree (audit it directly; parity now tested) |
+| CRE rate job: reverting read = no push, never "push 0" | S14 | the `cre/szalpha-rate` job is written WITH this in its spec (`SN46-BRIDGE-MVP-V2.md` §B5) + a job test |
+| Hotkey-drift DETECTION latency (the halt is on-chain; the alarm is not) | S1 | Phase C monitoring (`SN46-BRIDGE-MVP-V2.md`): 4 alarms + `HotkeySwappedOnSubnet` subscription, before the second depositor |
+| `SzipNavOracle` consumer-side breaker on a well-formed wrong-VALUE rate push | S3, S4 | recorded pre-lending gate (MVP-V2 next-steps #7) — deferred with the rate-oracle wiring |
 
 ---
 

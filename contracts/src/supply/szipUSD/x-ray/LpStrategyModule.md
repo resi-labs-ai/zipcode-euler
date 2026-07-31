@@ -12,6 +12,19 @@ carries the **coverage path-lock seam** back to `DurationFreezeModule`. Connecte
 > coverage floor — the on-chain enforcement of the same floor `DurationFreezeModule` gates `release`/exit by. That
 > seam (`lpBurnKeepsCovered`) is the highest-value thing to verify, and it is tested across all three gate states.
 
+> **Update 2026-07-31 (Octane audit response, commit `7551f5b`): the SEC/H-1 fair-LP funding gate.** `addLiquidity`
+> now enforces on-chain what was previously a NatSpec invariant ("do not fund the LP with `lpTwapWindow == 0`"):
+> LP may enter the counted Safe ONLY while the wired `SzipNavOracle` prices THIS vault off its fair-reserves TWAP.
+> Four checks, all fail-closed: `navOracle == 0` → `NavOracleUnset` (the v0/pre-LP posture — no LP until governance
+> wires the oracle AND arms the window), `lpTwapWindow() == 0` → `LpTwapWindowOff`, oracle `ichiVault`/`gauge`
+> mismatch vs this module's → `LpVaultMismatch`/`LpGaugeMismatch` (the window flag alone is only a proxy; the
+> mismatch checks prove the oracle prices/counts the SAME position this module funds). `addLiquidity` is the SOLE
+> path that mints new counted LP (stake/unstake only relocate), so this one gate closes the in-block
+> spot-manipulation mint at the funding boundary. New setter `setNavOracle` (onlyOwner, non-zero only — unwiring
+> back to spot-priced funding is never valid). 6 new tests (`test_setNavOracle_onlyOwner_zeroGuard_effect`,
+> `test_addLiquidity_reverts_when_navOracle_unset` / `_when_lpTwapWindow_off` / `_on_vault_mismatch` /
+> `_on_gauge_mismatch`, `test_addLiquidity_unlocks_once_window_armed`) — **44/44 green** (was 38).
+
 ## 1. What it is
 
 The third engine Zodiac `Module`, CRE-operator-gated, enabled on the engine Safe (`avatar == target ==
@@ -31,12 +44,12 @@ Safe holds tokens, LP, and the staked position).
 
 | Function | Access | Notes |
 |---|---|---|
-| `addLiquidity(d0, d1, minShares)` | operator-only | approve→deposit→reset (3 or 5 execs); `ZeroAmount`/`ZeroMinShares`/`Slippage` guards; `to == juniorTrancheEngine` |
+| `addLiquidity(d0, d1, minShares)` | operator-only | **SEC/H-1 fair-LP funding gate first** (`NavOracleUnset`/`LpTwapWindowOff`/`LpVaultMismatch`/`LpGaugeMismatch`); then approve→deposit→reset (3 or 5 execs); `ZeroAmount`/`ZeroMinShares`/`Slippage` guards; `to == juniorTrancheEngine` |
 | `removeLiquidity(shares, min0, min1)` | operator-only | 1 exec `withdraw`; **coverage-gated** (`Undercovered`); `Slippage` floors |
 | `stake(lpAmount)` | operator-only | approve→deposit→reset (3 execs) |
 | `unstake(lpAmount)` | operator-only | 1 exec `gauge.withdraw` |
 | `stakedBalance` / `lpBalance` | `view` | read `juniorTrancheEngine` off the gauge / vault |
-| `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring (incl. `setCoverageGate`, where zero = gate OFF) |
+| `setUp` + 8 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring (incl. `setCoverageGate`, where zero = gate OFF, and `setNavOracle`, non-zero only — the SEC/H-1 gate source) |
 
 No permissionless mutators. No custody, no recipient parameter except the pinned `juniorTrancheEngine`.
 

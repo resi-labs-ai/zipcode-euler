@@ -12,6 +12,18 @@ the full test pyramid.**
 > exact.* **Both are directly proven** — the stateful invariant proves no `release` ever breached the live floor; the
 > SEC-02 vectors prove the LP is single-counted; the debt-pinned/basket-shrink-invariant tests prove un-drainability.
 
+> **Update 2026-07-31 (Octane audit response, commit `7551f5b`):** two deltas, **58/58 green**:
+> - **F13 — `setNavOracle` re-derives the whitelist.** Re-pointing the oracle now re-reads the five movable leg
+>   tokens LIVE off the NEW oracle (the same reads `setUp` runs), so the dormant commit/release lever's whitelist
+>   can never silently drift from what the wired oracle actually prices. This closes the specific
+>   oracle-re-point half of the §5 "whitelist drift" residual; the five INDIVIDUAL leg setters (`setUsdc` etc.)
+>   still carry the careless-use drift risk until the pre-prod re-freeze. `test_F13_setNavOracle_rederives_whitelist`.
+> - **Header reframe (doc-only, no behavior change).** The NatSpec now states what was already true structurally:
+>   the freeze is a RULE, not a vault — `covered()` (live `committedValue + pathLockedLpEquity` vs senior debt) is
+>   what `SzipBuyBurnModule.postBid` / `LpStrategyModule.removeLiquidity` gate on, and THAT gating is the freeze.
+>   The physical `commit`/`release` sidecar lever is the DORMANT exception-only path (the sidecar sits empty in
+>   normal operation; the LP backs the floor in place). §1 below reads with that framing.
+
 ## 1. What it is
 
 The seventh engine Zodiac `Module`, and the **first enabled on BOTH Safes** (main + `juniorTrancheSidecar`) because
@@ -95,7 +107,8 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
   one-trusted-operator model shared across the engine fleet.
 - **Large mutable-wiring surface (X-3 pattern)** — **12** `onlyOwner` setters, including the 5 leg tokens. Re-pointing
   a leg (`setUsdc`, etc.) could desync the whitelist from what the oracle prices (the `setUp` reads them live to
-  avoid exactly this drift; the setters reintroduce the drift risk if used carelessly). All zero-guarded; the
+  avoid exactly this drift; the individual leg setters reintroduce the drift risk if used carelessly — though
+  `setNavOracle` now re-derives all five live off the new oracle, F13, closing the oracle-re-point half). All zero-guarded; the
   destination guarantees hold after the deferred pre-prod immutable re-freeze. Untested: the 12 setters' effects (the
   shared `onlyOwner` gate is proven on `setAvatar`/`setTarget` + `setOperator`). The
   two Safe setters now also re-check `juniorTrancheSafe != juniorTrancheSidecar` (mirroring `setUp` + the SEC-15

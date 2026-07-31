@@ -10,6 +10,17 @@ Dedicated single-contract X-Ray for `contracts/src/hydrex-demo-fork/SzipNavOracl
 > (`IVammPair.getReserves()` pro-rata) instead of an ICHI vault, so the auto-compounder's LP can be priced on
 > mainnet before the real zipUSD/xALPHA ICHI pool exists. Paired with `LpStrategyModuleDemoVAMM`.
 
+> **Update 2026-07-31 (Octane audit response, commit `7551f5b`, mirroring the prod parent):**
+> - **HYDX / oHYDX raw balances are marked $0 in NAV** — emission value is recognized only when sold-for-stables
+>   proceeds land in a Safe. `_oHydxUSD()` and its `IOptionToken.discount()` read are DELETED, killing the
+>   unbounded-external-discount NAV-DoS finding at the root (an underflowing `100 - discount` could brick every
+>   NAV-dependent flow). The `LEG_HYDX_USD` push feed is KEPT: it still prices the HYDX side of the vAMM LP
+>   reserves and remains the exercise-profitability input.
+> - **Best-effort TWAP checkpoint on every NAV-input setter** (`_checkpointBestEffort`: `try this.poke() {} catch {}`)
+>   — a re-point books elapsed history at the OLD configuration first, so it cannot re-weight history at the new
+>   one; best-effort so setters keep working as recovery levers mid-outage.
+> - Suite still **27/27 green** (assertions updated for the $0 marking; no count change).
+
 ## 1. What it is
 
 The szipUSD junior-vault **NAV-per-share pricing primitive** (the demo variant) — both issuance and exit price
@@ -38,7 +49,7 @@ $1 fold). The demo has **no farm utility leg**.
 | Property | On-chain | Proven by |
 |---|---|---|
 | `spotNavPerShare == (gross − provision)·1e18 / effectiveSupply`; `GENESIS_NAV` at zero supply | Yes | `test_spotNavPerShare_genesis_and_priced`, **`testFuzz_spotNavFormula`** |
-| plain-leg gross = Σ `_bal·mark` (zip/usdc·1e12/xa·rate·alphaUSD/hydx/oHydx) | Yes | `test_grossBasketValue_plain_legs` |
+| plain-leg gross = Σ `_bal·mark` (zip / usdc·1e12 / xa·rate·alphaUSD; HYDX + oHYDX marked $0 since 2026-07-31) | Yes | `test_grossBasketValue_plain_legs` |
 | **vAMM LP leg = heldShares/totalSupply × reserves, priced HYDX/USDC** | Yes | **`test_vamm_lp_leg_valuation`** (1 HYDX@$1 + 2 USDC@$1 = $3), `test_vamm_lp_zero_when_unwired_or_empty` |
 | leg push: deviation band, non-zero, not-future, valid-leg, length-match, forwarder-only | Yes | `test_push_deviation_band_rejects`, `_zeroPrice_`, `_futureTimestamp_`, `_invalidLeg_`, `_lengthMismatch_`, `_non_forwarder_`, `_wrong_reportType_` |
 | freshness: both required legs within `maxAge` | Yes | `test_fresh_requires_both_legs_within_maxAge` |

@@ -8,6 +8,14 @@
 > closes the `seniorPool` note. 53/53 fork tests green. Every guard, every setter, and the senior surface are now
 > exercised; verdict lifted to HARDENED.
 
+> **Update 2026-07-31 (Octane audit response, commit `7551f5b`):** the net-vs-gross draw-funding finding is fixed —
+> `draw` now **JIT-funds the CTR-09 fee leg from the reservoir** (`_eeMove(usdcReservoir, lineRef, fee)`) before
+> borrowing `amount + fee`. Before this, every fee-on draw through the controller reverted: the controller funds
+> exactly the principal, so the vault held `amount` while the batch paid out `amount + fee`. Same donation-immune
+> absolute-target reallocate as `fund`; deliberately NOT a controller-side gross-up (the fee stays a venue-internal
+> concern, the `IZipcodeVenue` seam stays venue-neutral). `test_CTR09_FeeOn_JITFundsFeeLeg_FromReservoir`,
+> `test_CTR09_FeeOff_NoJITReallocate` — **55/55 fork tests green**.
+
 First per-contract X-Ray in `contracts/src/venue/` (this dir's x-ray scope). Subject: `EulerVenueAdapter.sol`, the
 substantive contract; its two siblings — `IZipcodeVenue.sol` (the venue-neutral seam, 24 nSLOC interface) and
 `LineAccount.sol` (8 nSLOC, ctor-only per-line EVC borrower-of-record) — are summarized at the end. Exercised by
@@ -65,7 +73,7 @@ gate — `onlyFarmUtilityAllocator` — guards the farm-utility JIT path (two-ke
 | I-7 | **close defunds USDC to base (SEC-07)** — no strand, no later `fund` underflow; never-funded line no-ops | Yes | **`test_SEC07_CloseLine_DefundsUsdcToBase`**, `_NoLaterFundUnderflow`, `_NeverFundedLine_NoDefund` |
 | I-8 | **close guards on repayment + reclaims the 1e18 lien** | Yes | **`test_CloseLine_LineNotRepaid_WhileDebt`**, `_NoDebt_ReclaimsLien` |
 | I-9 | **EE-timelock precheck (SEC-08)** — non-zero EE timelock aborts BEFORE any line state (no orphan) | Yes | **`test_SEC08_TimelockPrecheck_RevertsEarly_NoOrphan`**, `_TimelockZero_HappyPath`, `_DeployProbe_PassesLive`/`_Bites` |
-| I-10 | **CTR-09 per-draw fee** — financed by the line as a 2nd borrow leg; off when recipient unset / bps zero / dust; F2 preserved | Yes | **`test_CTR09_FeeOn_FinancesAndRoutesFee`**, `_FeeIsPerRevolution`, `_NoOp_WhenRecipientUnset`, `_NoOp_WhenFeeBpsZero`, `_DustDraw_NoFeeLeg`, `_Setters_GatingCapAndEvents` |
+| I-10 | **CTR-09 per-draw fee** — financed by the line as a 2nd borrow leg, JIT-funded from the reservoir (a controller-funded principal-only draw cannot revert on the fee borrow); off when recipient unset / bps zero / dust; F2 preserved | Yes | **`test_CTR09_FeeOn_FinancesAndRoutesFee`**, `_FeeOn_JITFundsFeeLeg_FromReservoir`, `_FeeOff_NoJITReallocate`, `_FeeIsPerRevolution`, `_NoOp_WhenRecipientUnset`, `_NoOp_WhenFeeBpsZero`, `_DustDraw_NoFeeLeg`, `_Setters_GatingCapAndEvents` |
 | I-11 | **CTR-13 line IRM + curator fee** — real IRM accrues ~7.5% APR vs ZeroIRM zero; curator governor-share routes to the curator vault | Yes | **`test_CTR13_LineIrm_BaseRate_Is_7_5pct_APR_Nominal`**, `_RealLineAccrues7_5pct_While_ZeroIrmLineAccruesZero`, `_CuratorFee_RoutesGovernorShareToCuratorVault` |
 | I-12 | **`_assertWired` wire-mismatch fail (W3)** — reachable via a deliberately mis-wiring subclass | Yes | **`test_WireMismatch_ReachableViaMisWiringHarness`** |
 | I-13 | **AmountCap encode round-trips + rejects zero** | Yes | **`test_AmountCap_RoundTrip_And_ZeroReverts`** |
@@ -135,7 +143,8 @@ gate — `onlyFarmUtilityAllocator` — guards the farm-utility JIT path (two-ke
 | Infra wiring setters (`onlyOwner`/`ZeroAddress`/effect) + `seniorPool` | 4 | all 11 infra setters swept + the senior surface (added 2026-06-20) |
 | Farm-utility fund/defund (cross-suite) | — | in `FarmUtilityLoopModule.t.sol` (fund/defund, two-key gate, CTR-07 hook) |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); **53 fork tests green**. The suite is fork-integration
+Coverage % uninstrumentable (project-wide `Stack too deep`); **55 fork tests green** (53 + the 2 CTR-09 JIT-fee
+tests from the 2026-07-31 audit response). The suite is fork-integration
 against the real EVK/EVC/EulerEarn stack — the right kind of test for a factory whose correctness IS its interaction
 with that stack. No code or coverage gap remains; the residuals are inherent (external-infra trust, the two-key
 deploy invariant, the pre-prod immutable re-freeze).
