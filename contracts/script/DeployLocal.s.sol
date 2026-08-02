@@ -90,7 +90,6 @@ contract DeployLocal is DeployZipcode {
         i.lpTwapWindow = 3600; // fair-LP TWAP window (required non-zero — the CRE-push twin was deleted)
         i.W = 3600;
         i.maxAge = 86_400;
-        i.maxDeviationBps = 1000;
         i.tvlCap = 100_000_000e18;
         i.recoveryFloor = 0.5e18;
         i.borrowCap = 1_000_000e6;

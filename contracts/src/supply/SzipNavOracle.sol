@@ -103,8 +103,6 @@ contract SzipNavOracle is ReceiverTemplate {
     uint32 public immutable W;
     /// @notice The pushed-leg staleness bound (governed).
     uint256 public immutable maxAge;
-    /// @notice The per-push deviation circuit-break, in bps (governed).
-    uint256 public immutable maxDeviationBps;
     /// @notice Minimum wall-clock between committed TWAP checkpoints, derived from `W` in the ctor. The integral
     ///         (`cumNav`) still advances on every `poke()` with `dt>0`; this only throttles how often a NEW ring
     ///         slot is consumed, so the `CARDINALITY-1` frozen checkpoints always span `>= W` (with headroom)
@@ -185,7 +183,6 @@ contract SzipNavOracle is ReceiverTemplate {
     error FutureTimestamp();
     error ZeroPrice();
     error InvalidLeg(uint8 leg);
-    error DeviationExceeded(uint8 leg, uint256 prior, uint256 next);
     error StalePrice(uint8 leg);
     error UnknownLpToken(address token);
     error ZeroAddress();
@@ -218,8 +215,7 @@ contract SzipNavOracle is ReceiverTemplate {
         address juniorTrancheSafe_,
         address juniorTrancheSidecar_,
         uint32 W_,
-        uint256 maxAge_,
-        uint256 maxDeviationBps_
+        uint256 maxAge_
     ) ReceiverTemplate(forwarder) {
         if (
             zipUSD_ == address(0) || usdc_ == address(0) || xAlpha_ == address(0) || hydx_ == address(0)
@@ -234,7 +230,6 @@ contract SzipNavOracle is ReceiverTemplate {
         juniorTrancheSidecar = juniorTrancheSidecar_;
         W = W_;
         maxAge = maxAge_;
-        maxDeviationBps = maxDeviationBps_;
         // obsSpacing = ceil(1.25 * W / (CARDINALITY - 1)): the CARDINALITY-1 frozen checkpoints then span ~1.25*W
         // (worst-case >= (CARDINALITY-2)*obsSpacing right after a slot advance, still comfortably >= W). The 25%
         // headroom keeps the query checkpoint off the exact `now - W` boundary under block-time jitter.
@@ -397,12 +392,13 @@ contract SzipNavOracle is ReceiverTemplate {
             uint256 p = prices[i];
             if (p == 0) revert ZeroPrice();
             LegCache memory prior = legCache[leg];
-            if (prior.ts != 0) {
-                uint256 priorP = prior.price;
-                uint256 diff = p > priorP ? p - priorP : priorP - p;
-                if (diff * 10_000 / priorP > maxDeviationBps) revert DeviationExceeded(leg, priorP, p);
-            }
-            if (prior.ts != 0 && ts <= prior.ts) revert StaleReport(); // strictly-newer (deviation band is price-only; a backdated replay would otherwise slip through and freeze issuance)
+            // NO DEVIATION BAND (removed 2026-07-31). A per-push band on a SPOT feed rejects the truth: an 11% real
+            // move cannot be published honestly against a 10% band. The producer's answer was to CLAMP to the band
+            // edge and push a knowingly-wrong number — a silent falsification, strictly worse than a loud revert.
+            // The magnitude guard belongs at the SOURCE: the CRE publishes a TWAP of the subnet-46 pool reserves, so
+            // a single trade never produces an out-of-band jump and no on-chain clamp is needed. See
+            // `bridge/xalpha-price-leg.md`.
+            if (prior.ts != 0 && ts <= prior.ts) revert StaleReport(); // strictly-newer: catches the same-price backdated replay (a magnitude check never could)
             legCache[leg] = LegCache(p, uint48(ts));
             emit LegPriceUpdated(leg, p, uint48(ts));
         }
@@ -475,9 +471,20 @@ contract SzipNavOracle is ReceiverTemplate {
     /// @notice The committed (juniorTrancheSidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
     ///         DurationFreezeModule bounds `release` against. ADDITIVE: `grossBasketValue()` is unchanged; this is
     ///         an INDEPENDENT per-Safe re-computation. For the three valued plain legs `committedValue() + freeValue()`
-    ///         equals `grossBasketValue()` EXACTLY; for a split LP it is within ≤2 wei (the per-Safe pro-rata floors
-    ///         twice vs once). The module only ever moves plain legs (incl. $0-marked HYDX/oHYDX), so gross is
-    ///         exactly rotation-invariant.
+    ///         equals `grossBasketValue` EXACTLY; for a split LP the per-Safe pro-rata floors run twice vs once, so
+    ///         the sum sits below gross by at most `floor(px/1e18) + 4` wei, where `px = exchangeRate * alphaUSD / 1e18`
+    ///         is the xALPHA USD mark. The tolerance is PRICE-DEPENDENT, not a flat 2 wei: the inner floor loss is
+    ///         amplified by the outer `_tokenValue` division (`amt * price / 1e18`), which is lossless only at
+    ///         `price == 1e18`. Measured gaps: 2 wei at $1.00, 3 at $0.50, 4 at $1.20, 7 at $3.70 (the bound is tight
+    ///         there), 101 at $100. Derived + fuzz-verified in `SzipNavOracleInvariant.t.sol`
+    ///         (`invariant_decompositionAdditivity`).
+    ///         DIRECTION CAVEAT — `sum <= gross` is NOT unconditional. `grossBasketValue` saturates on the COMBINED
+    ///         value-minus-debt; `_grossValueOf` saturates PER SAFE. If one Safe's farm-utility debt exceeds its own
+    ///         valued legs, that shortfall is floored away here instead of reducing the other Safe's value, and
+    ///         `sum > gross` with no rounding bound. The under-count-only direction holds whenever each Safe's legs
+    ///         cover its own debt — the only state the farm-utility loop constructs.
+    ///         The module only ever moves plain legs (incl. $0-marked HYDX/oHYDX), so gross is exactly
+    ///         rotation-invariant.
     function committedValue() external view returns (uint256) {
         return _grossValueOf(juniorTrancheSidecar);
     }
@@ -534,8 +541,9 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @dev 18-dp USD value of `lpShares` ICHI LP, pro-rata over the OUR-pool reserves. Returns 0 if the LP is
-    ///      unwired or the vault is empty (the `supplyLp == 0` guard). One floor-division pair per call (the ≤2 wei
-    ///      gross-vs-per-Safe split note still holds — combined shares floor once, per-Safe floor separately).
+    ///      unwired or the vault is empty (the `supplyLp == 0` guard). One floor-division pair per call (the
+    ///      `floor(px/1e18) + 4` wei gross-vs-per-Safe split note still holds — combined shares floor once, per-Safe
+    ///      floor separately, and the residue is then scaled by the outer `_tokenValue` price division).
     function _lpValue(uint256 lpShares) internal view returns (uint256) {
         if (lpShares == 0 || ichiVault == address(0)) return 0;
         uint256 supplyLp = IICHIVault(ichiVault).totalSupply();
@@ -572,6 +580,20 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @notice The time-weighted (windowed `W`) szipUSD NAV-per-share, 18-dp. Falls back to spot before `W` of history.
+    /// @dev  THE SPOT FALLBACK IS NOT ONLY A GENESIS PATH. If the accumulator goes idle for `W` (no leg push, no
+    ///       `poke()`), the newest observation is older than `target`, the lookup misses, and this returns EXACTLY
+    ///       `spot` — so `navEntry == navExit` and the bracket's asymmetry is absent until someone pokes. Keeper
+    ///       liveness is what keeps the window populated; it is an operational assumption, not an on-chain one.
+    ///       DO NOT "FIX" THIS BY REVERTING WHEN IDLE. That was built (`TwapAccumulatorStale` plus a partial-window
+    ///       fallback for genesis) and REVERTED 2026-07-31. It changes nothing, because `poke()` is permissionless
+    ///       and anyone can clear the idle state before reading, and it costs real behaviour: the revert also fires
+    ///       on the EXIT path, narrowing the "staleness pauses issuance, never exit" asymmetry documented above
+    ///       (60 tests failed, 54 of them purely genesis-path).
+    ///       WHY NO READ-PATH GUARD WORKS: `_accumulate()` books a RIGHT-ENDPOINT sample, crediting the CURRENT spot
+    ///       across the WHOLE preceding gap, so an idle gap is repriced at whatever spot is true when it is finally
+    ///       poked. Leg pushes escape this because `_processReport` accumulates BEFORE writing, booking the old price
+    ///       first. A mark living in ANOTHER contract (the xALPHA rate) structurally cannot do that, which is why its
+    ///       guard belongs at that contract rather than here.
     function twapNavPerShare() public view returns (uint256) {
         uint256 spot = spotNavPerShare();
         uint32 nowTs = uint32(block.timestamp);

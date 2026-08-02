@@ -27,7 +27,17 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 `if (p == 0) revert ZeroPrice()` · `SzipNavOracleDemoVAMM.sol:242` · a zero leg price would zero out a basket leg.
 
 #### G-7
-`if (diff * 10_000 / priorP > maxDeviationBps) revert DeviationExceeded(...)` · `SzipNavOracleDemoVAMM.sol:247` · per-push circuit breaker against a single bad/fat-fingered mark.
+`if (prior.ts != 0 && ts <= prior.ts) revert StaleReport` · `SzipNavOracleDemoVAMM.sol:267` · strictly-newer per-leg monotonicity — rejects a replayed or out-of-order push.
+
+> **This slot used to hold the `maxDeviationBps` per-push deviation band; the band was removed 2026-07-31**
+>. A band on a spot feed rejects the truth — an 11% real move cannot be published
+> against a 10% band — and the CRE producer's `bandClamp` workaround pushed the band EDGE, i.e. a knowingly-wrong
+> number, silently. Magnitude is now guarded at the SOURCE (the CRE publishes a TWAP of the subnet-46 pool reserves,
+> so an implausible jump never arises) and is **not** replaced by another on-chain check. `StaleReport` takes the
+> slot because it is the guard that actually carries weight here: it catches the same-price backdated replay a
+> magnitude check never could. Note the demo/prod asymmetry — in the DEMO fork `_legPriceOfToken` reads
+> `legCache[LEG_HYDX_USD].price` to mark the vAMM LP's HYDX reserve, so leg 1 is a live NAV input here (in PROD its
+> price is never read, only its `.ts`).
 
 #### G-8
 `if (msg.sender != defaultCoordinator) revert NotDefaultCoordinator()` · `SzipNavOracleDemoVAMM.sol:257` · only the M2 coordinator writes the impairment provision (value bound lives there, not here).
@@ -71,7 +81,7 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 > `spotNavPerShare == (grossBasketValue() − provision) · 1e18 / effectiveSupply`, returning `GENESIS_NAV` at zero effective supply.
 
-**Derivation** — Ratio formula at `SzipNavOracleDemoVAMM.sol:347-353`; `grossBasketValue` sums `_bal`/LP marks (`:283-305`); `provision` from `writeProvision` (`:259`); `effectiveSupply = totalSupply − engineBalance` (`:461-466`).
+**Derivation** — Ratio formula at `SzipNavOracleDemoVAMM.sol:347-353`; `grossBasketValue()` sums `_bal`/LP marks (`:283-305`); `provision` from `writeProvision()` (`:259`); `effectiveSupply = totalSupply − engineBalance` (`:461-466`).
 
 **If violated** — issuance/exit misprice; note the numerator reads raw Safe `balanceOf`, so a direct transfer into a counted Safe moves NAV (this is the design seam the Gate must absorb).
 
@@ -89,9 +99,9 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 `Temporal` · On-chain: **Yes**
 
-> The TWAP accumulator is monotonic: `lastUpdate` only advances and `cumNav += spot · dt` with `dt = now − lastUpdate ≥ 0`; advancing is idempotent within a block (`dt == 0 ⇒ no-op`).
+> The TWAP accumulator is monotonic: `lastUpdate()` only advances and `cumNav += spot · dt` with `dt = now − lastUpdate ≥ 0`; advancing is idempotent within a block (`dt == 0 ⇒ no-op`).
 
-**Derivation** — temporal: `_accumulate:270-279` (`if (dt == 0) return false`; `lastUpdate = nowTs`). All three mutating paths (`_processReport`, `writeProvision`, `poke`) call `_accumulate` before changing inputs.
+**Derivation** — temporal: `_accumulate:270-279` (`if (dt == 0) return false`; `lastUpdate = nowTs`). All three mutating paths (`_processReport`, `writeProvision()`, `poke()`) call `_accumulate()` before changing inputs.
 
 **If violated** — TWAP could double-count or rewind; the `dt==0` guard + single accumulator entry point prevent it.
 
@@ -99,11 +109,11 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 `Bound` · On-chain: **No**
 
-> `committedValue() + freeValue() == grossBasketValue()` — exact for the five plain legs; for a split LP it holds only "within ≤2 wei" (per-Safe pro-rata floors twice vs once).
+> `committedValue + freeValue == grossBasketValue` — exact for the five plain legs; for a split LP it holds only within `floor(px/1e18) + 4` wei, where `px = exchangeRate * alphaUSD / 1e18` is the xALPHA USD mark (per-Safe pro-rata floors twice vs once, then amplified by the outer `_tokenValue` price division). The flat "≤2 wei" figure is the `px == 1e18` special case only.
 
-**Derivation** — guard-lift/formula: `committedValue:312` + `freeValue:317` re-derive via `_grossValueOf:324-344`; `grossBasketValue:283-305` floors LP once. Documented drift at `:307-311`.
+**Derivation** — guard-lift/formula: `committedValue:312` + `freeValue:317` re-derive via `_grossValueOf:324-344`; `grossBasketValue:283-305` floors LP once. Documented drift at `:307-311`. The outer division `amt * price / 1e18` is lossless only at `price == 1e18`, so the doubled inner floor scales with the mark: 2 wei at $1.00, 3 at $0.50, 4 at $1.20, 7 at $3.70, 101 at $100.
 
-**If violated** — On-chain=No: the equality is not exact across the LP path (≤2 wei). A consumer (e.g. a freeze module) treating it as exact could be off by the floor drift.
+**If violated** — On-chain=No: the equality is not exact across the LP path (`floor(px/1e18) + 4` wei). A consumer (e.g. a freeze module) treating it as exact could be off by the floor drift, and the drift grows with the xALPHA mark rather than staying at 2 wei. The under-count *direction* (`sum <= gross`) is also conditional, not unconditional: `grossBasketValue()` saturates on the COMBINED value-minus-debt while `_grossValueOf` saturates PER SAFE, so a Safe whose farm-utility debt exceeds its own valued legs has that shortfall floored away instead of reducing the other Safe's value — `sum > gross`, with no rounding bound.
 
 ---
 
@@ -113,9 +123,9 @@ Per-call preconditions. Heading IDs below (`G-N`) are anchor targets from x-ray.
 
 On-chain: **No**
 
-> The oracle assumes the `provision` value supplied by `writeProvision` is already bounded (down ≤ atRisk·(1−recoveryFloor), up by realized receipts). The oracle enforces only the *caller*, never the *value*.
+> The oracle assumes the `provision` value supplied by `writeProvision()` is already bounded (down ≤ atRisk·(1−recoveryFloor), up by realized receipts). The oracle enforces only the *caller*, never the *value*.
 
-**Caller side** — `SzipNavOracleDemoVAMM.sol:256-261` (`writeProvision`): `provision = newProvision` flows directly into `spotNavPerShare:351`.
+**Caller side** — `SzipNavOracleDemoVAMM.sol:256-261` (`writeProvision()`): `provision = newProvision` flows directly into `spotNavPerShare:351`.
 
 **Callee side** — the `DefaultCoordinator` (M2) is the sole writer (set via `setDefaultCoordinator:212`) and holds the bound — **out of scope** in this directory.
 
@@ -133,4 +143,4 @@ On-chain: **Yes**
 
 **Follows from** — `I-1` (spot ratio) + `I-3` (monotonic TWAP) + the bracket selection at `navEntry:387-389` / `navExit:393-397`.
 
-**If violated** — if the LP leg did NOT propagate into the TWAP (see `I-2`), the bracket would only defend the five plain legs and an in-block reserve push could escape it. The defense is sound only if `spotNavPerShare`'s LP contribution flows through `_accumulate → cumNav` — the load-bearing check for this property.
+**If violated** — if the LP leg did NOT propagate into the TWAP (see `I-2`), the bracket would only defend the five plain legs and an in-block reserve push could escape it. The defense is sound only if `spotNavPerShare()`'s LP contribution flows through `_accumulate → cumNav` — the load-bearing check for this property.

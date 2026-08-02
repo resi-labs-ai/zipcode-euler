@@ -43,12 +43,11 @@ func e18() *big.Int { return new(big.Int).Exp(big.NewInt(10), big.NewInt(18), ni
 
 func testConfig() *Config {
 	return &Config{
-		ChainSelector:   testChainSelector,
-		NavOracle:       navAddr.Hex(),
-		RateSource:      rateAddr.Hex(),
-		MaxDeviationBps: 500, // 5%
-		Schedule:        "0 */5 * * * *",
-		WriteGasLimit:   600_000,
+		ChainSelector: testChainSelector,
+		NavOracle:     navAddr.Hex(),
+		RateSource:    rateAddr.Hex(),
+		Schedule:      "0 */5 * * * *",
+		WriteGasLimit: 600_000,
 	}
 }
 
@@ -209,69 +208,7 @@ func TestSimEncodeHandshake(t *testing.T) {
 
 // ───────────────────────────────────────────────────────────────── band clamp (pure)
 
-func TestBandClampPure(t *testing.T) {
-	prior := new(big.Int).Mul(big.NewInt(100), e18()) // priorP = 100e18
-	const maxDev = 500                                // 5% → step = 5e18
-	step := new(big.Int).Mul(big.NewInt(5), e18())
-
-	// unset prior (ts==0) → true value passes unchanged.
-	trueP := new(big.Int).Mul(big.NewInt(200), e18())
-	if got := bandClamp(trueP, prior, 0, maxDev); got.Cmp(trueP) != 0 {
-		t.Fatalf("unset prior: got %v want %v (true value)", got, trueP)
-	}
-
-	// within-band move → passthrough (102e18 within [95e18,105e18]).
-	within := new(big.Int).Mul(big.NewInt(102), e18())
-	if got := bandClamp(within, prior, 1, maxDev); got.Cmp(within) != 0 {
-		t.Fatalf("within-band: got %v want %v (passthrough)", got, within)
-	}
-
-	// beyond band above → upper edge (priorP + step = 105e18).
-	above := new(big.Int).Mul(big.NewInt(300), e18())
-	wantHi := new(big.Int).Add(prior, step)
-	if got := bandClamp(above, prior, 1, maxDev); got.Cmp(wantHi) != 0 {
-		t.Fatalf("beyond above: got %v want %v (upper edge)", got, wantHi)
-	}
-
-	// beyond band below → lower edge (priorP − step = 95e18).
-	below := new(big.Int).Mul(big.NewInt(1), e18())
-	wantLo := new(big.Int).Sub(prior, step)
-	if got := bandClamp(below, prior, 1, maxDev); got.Cmp(wantLo) != 0 {
-		t.Fatalf("beyond below: got %v want %v (lower edge)", got, wantLo)
-	}
-
-	// exactly at the edge passes through (== edge, within the closed interval).
-	if got := bandClamp(wantHi, prior, 1, maxDev); got.Cmp(wantHi) != 0 {
-		t.Fatalf("at upper edge: got %v want %v", got, wantHi)
-	}
-}
-
 // TestSimBandClampInHandler proves the clamp drives the pushed NAV price: a huge alpha move beyond the band
-// lands at the upper edge of the prior cached mark.
-func TestSimBandClampInHandler(t *testing.T) {
-	prior := new(big.Int).Mul(big.NewInt(100), e18())
-	hugeAlpha := new(big.Int).Mul(big.NewInt(1000), e18()) // way beyond +5%
-	hydx := new(big.Int).Mul(big.NewInt(3), e18())
-	rate := e18() // 1.0
-
-	st := chainState{
-		exchangeRate: rate,
-		priorAlpha:   prior,
-		priorAlphaTs: 1, // seen before → band applies
-		priorHydx:    hydx,
-		priorHydxTs:  1,
-	}
-	out, err := runTick(t, testConfig(), marks(hugeAlpha, hydx), st)
-	if err != nil {
-		t.Fatalf("onEpoch: %v", err)
-	}
-	_, payload := decodeEnvelope(t, out[0])
-	_, prices, _ := decodeNavPayload(t, payload)
-	wantHi := new(big.Int).Add(prior, new(big.Int).Mul(big.NewInt(5), e18())) // +5% edge
-	if prices[0].Cmp(wantHi) != 0 {
-		t.Fatalf("clamped alpha: got %v want %v (band edge)", prices[0], wantHi)
-	}
-}
 
 // ───────────────────────────────────────────────────────────────── fail-safe no-ops (full handler)
 
@@ -318,6 +255,183 @@ func TestSimNoOpNavUnset(t *testing.T) {
 		t.Fatalf("expected 0 writes (navOracle unset), got %d", len(out))
 	}
 }
+
+// ───────────────────────────────────────────────────────────────── the real alpha-USD leg (derived path)
+
+const testSubtensorSelector = uint64(2135107236357186872) // 964's CCIP selector, as deploy config pins it
+const testEthereumSelector = evm.EthereumMainnet          // where the TAO/USD feed lives
+
+var (
+	alphaPreAddr = common.HexToAddress(alphaPrecompile)
+	feedAddr     = common.HexToAddress("0x00000000000000000000000000000000000000F1")
+)
+
+// derivedState scripts the 964 + Ethereum reads for the derived alpha-USD path.
+type derivedState struct {
+	ema           *big.Int // getMovingAlphaPrice (9-dp TAO/alpha)
+	spot          *big.Int // getAlphaPrice (9-dp TAO/alpha)
+	feedAnswer    *big.Int // Chainlink TAO/USD answer (8-dp, int256)
+	feedUpdatedAt int64    // Chainlink round updatedAt
+	alphaReadErr  error    // non-nil ⇒ both precompile reads error (a failed read, not a guard)
+}
+
+// encRoundData encodes the Chainlink latestRoundData() 5-tuple.
+func encRoundData(answer *big.Int, updatedAt int64) []byte {
+	u80, _ := abi.NewType("uint80", "", nil)
+	i256, _ := abi.NewType("int256", "", nil)
+	u256, _ := abi.NewType("uint256", "", nil)
+	out, _ := abi.Arguments{{Type: u80}, {Type: i256}, {Type: u256}, {Type: u256}, {Type: u80}}.Pack(
+		big.NewInt(1), answer, big.NewInt(updatedAt), big.NewInt(updatedAt), big.NewInt(1))
+	return out
+}
+
+// derivedConfig wires the real-source slots; MockMarks.AlphaUSD stays EMPTY so the derivation engages
+// (HydxUsd stays mocked — its real source is a separate item).
+func derivedConfig() *Config {
+	cfg := testConfig()
+	cfg.SubtensorChainSelector = testSubtensorSelector
+	cfg.Netuid = 46
+	cfg.EthereumChainSelector = testEthereumSelector
+	cfg.TaoUsdFeed = feedAddr.Hex()
+	return cfg
+}
+
+// runDerivedTick extends runTick's wiring with the 964 precompile mock + the Ethereum feed mock.
+func runDerivedTick(t *testing.T, cfg *Config, st chainState, ds derivedState) ([][]byte, error) {
+	t.Helper()
+
+	subMock, err := evmmock.NewClientCapability(testSubtensorSelector, t)
+	if err != nil {
+		t.Fatalf("NewClientCapability(964): %v", err)
+	}
+	ethMock, err := evmmock.NewClientCapability(testEthereumSelector, t)
+	if err != nil {
+		t.Fatalf("NewClientCapability(ethereum): %v", err)
+	}
+
+	sel := func(sig string) string { return string(selector(sig)) }
+	alphaRead := func(v *big.Int) func([]byte) ([]byte, error) {
+		return func([]byte) ([]byte, error) {
+			if ds.alphaReadErr != nil {
+				return nil, ds.alphaReadErr
+			}
+			return encUint(v), nil
+		}
+	}
+	evmmock.AddContractMock(alphaPreAddr, subMock, map[string]func([]byte) ([]byte, error){
+		sel("getMovingAlphaPrice(uint16)"): alphaRead(ds.ema),
+		sel("getAlphaPrice(uint16)"):       alphaRead(ds.spot),
+	}, nil)
+	evmmock.AddContractMock(feedAddr, ethMock, map[string]func([]byte) ([]byte, error){
+		sel("latestRoundData()"): func([]byte) ([]byte, error) { return encRoundData(ds.feedAnswer, ds.feedUpdatedAt), nil },
+	}, nil)
+
+	return runTick(t, cfg, LegMarks{AlphaUSD: "", HydxUsd: e18().String()}, st)
+}
+
+// TestSimDerivedAlphaUSD: the real composition lands in the NAV push — EMA (9-dp) × TAO/USD (8-dp) × 10 =
+// 18-dp — and the EMA is the priced value (spot only guards).
+func TestSimDerivedAlphaUSD(t *testing.T) {
+	ds := derivedState{
+		ema:           big.NewInt(500_000_000),    // 0.5 TAO/alpha, 9-dp
+		spot:          big.NewInt(520_000_000),    // 4% off the EMA — within tolerance, ignored as value
+		feedAnswer:    big.NewInt(42_000_000_000), // $420.00, 8-dp
+		feedUpdatedAt: int64(testTs) - 3600,       // an hour-old round: fresh
+	}
+	// expected: 5e8 × 4.2e10 × 10 = 2.1e20 ($210, 18-dp)
+	want := new(big.Int).Mul(big.NewInt(210), e18())
+
+	out, err := runDerivedTick(t, derivedConfig(), chainState{exchangeRate: e18()}, ds)
+	if err != nil {
+		t.Fatalf("onEpoch: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 write (NAV_LEG), got %d", len(out))
+	}
+	rt, payload := decodeEnvelope(t, out[0])
+	if rt != zipreport.NavLeg {
+		t.Fatalf("reportType: got %d want NavLeg(%d)", rt, zipreport.NavLeg)
+	}
+	_, prices, _ := decodeNavPayload(t, payload)
+	if prices[0].Cmp(want) != 0 {
+		t.Fatalf("derived alphaUSD: got %v want %v (EMA × TAO/USD × 10)", prices[0], want)
+	}
+}
+
+// TestSimDerivedSkipDislocation: spot beyond CrossCheckBps of the EMA ⇒ the tick is SKIPPED, never clamped
+// (manipulation and a violent real move are indistinguishable in one read; silence is the honest output).
+func TestSimDerivedSkipDislocation(t *testing.T) {
+	ds := derivedState{
+		ema:           big.NewInt(500_000_000),
+		spot:          big.NewInt(1_000_000_000), // 100% off — far beyond the 25% default
+		feedAnswer:    big.NewInt(42_000_000_000),
+		feedUpdatedAt: int64(testTs) - 3600,
+	}
+	out, err := runDerivedTick(t, derivedConfig(), chainState{exchangeRate: e18()}, ds)
+	if err != nil {
+		t.Fatalf("dislocation must be a skip, not an error: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected 0 writes (spot/EMA dislocation), got %d", len(out))
+	}
+}
+
+// TestSimDerivedSkipStaleFeed: a TAO/USD round older than MaxFeedAgeSeconds ⇒ skip.
+func TestSimDerivedSkipStaleFeed(t *testing.T) {
+	ds := derivedState{
+		ema:           big.NewInt(500_000_000),
+		spot:          big.NewInt(500_000_000),
+		feedAnswer:    big.NewInt(42_000_000_000),
+		feedUpdatedAt: int64(testTs) - 90_001, // one second past the default 90000s bound
+	}
+	out, err := runDerivedTick(t, derivedConfig(), chainState{exchangeRate: e18()}, ds)
+	if err != nil {
+		t.Fatalf("stale feed must be a skip, not an error: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected 0 writes (stale TAO/USD round), got %d", len(out))
+	}
+}
+
+// TestSimDerivedSkipNonPositiveAnswer: a non-positive Chainlink answer ⇒ skip.
+func TestSimDerivedSkipNonPositiveAnswer(t *testing.T) {
+	ds := derivedState{
+		ema:           big.NewInt(500_000_000),
+		spot:          big.NewInt(500_000_000),
+		feedAnswer:    big.NewInt(-1),
+		feedUpdatedAt: int64(testTs) - 3600,
+	}
+	out, err := runDerivedTick(t, derivedConfig(), chainState{exchangeRate: e18()}, ds)
+	if err != nil {
+		t.Fatalf("non-positive answer must be a skip, not an error: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected 0 writes (non-positive TAO/USD answer), got %d", len(out))
+	}
+}
+
+// TestSimDerivedReadErrorLoud: a FAILED 964 read (revert/transport) is not a guard — it errors loudly and
+// pushes nothing (the S14 posture, same as the rate feed).
+func TestSimDerivedReadErrorLoud(t *testing.T) {
+	ds := derivedState{
+		alphaReadErr:  errAlphaRead,
+		feedAnswer:    big.NewInt(42_000_000_000),
+		feedUpdatedAt: int64(testTs) - 3600,
+	}
+	out, err := runDerivedTick(t, derivedConfig(), chainState{exchangeRate: e18()}, ds)
+	if err == nil {
+		t.Fatal("a failed precompile read must surface as a loud error")
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected 0 writes (failed read), got %d", len(out))
+	}
+}
+
+var errAlphaRead = errAlphaReadT{}
+
+type errAlphaReadT struct{}
+
+func (errAlphaReadT) Error() string { return "execution reverted (precompile unavailable)" }
 
 // guard: the consensus carrier round-trips through json (proves the §8.9 mock seam is JSON-native).
 func TestLegMarksJSONRoundTrip(t *testing.T) {

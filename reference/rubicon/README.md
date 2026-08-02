@@ -2,7 +2,7 @@
 
 > Vendored 2026-06-12 as the proven-pattern source of truth for the 8x-01 szALPHA bridge rework.
 > Read-only reference — nothing here is compiled by this repo. Consumers:
-> `build/wires/8x-01-szALPHA-bridge.md` (§Provenance), `contracts/src/bridge/SzAlpha.sol` (header),
+> `docs/wires/8x-01-szALPHA-bridge.md` (§Provenance), `contracts/src/bridge/SzAlpha.sol` (header),
 > `contracts/src/interfaces/bridge/ISubtensorPrecompiles.sol` (unit docs).
 
 ## What Rubicon is

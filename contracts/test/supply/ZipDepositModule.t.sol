@@ -712,8 +712,7 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
             sub.juniorTrancheSafe,
             sub.juniorTrancheSidecar,
             W,
-            MAX_AGE,
-            DEV_BPS
+            MAX_AGE
         );
 
         // real Gate + szipUSD

@@ -134,7 +134,7 @@ contract SzipNavOracleDemoVAMMTest is Test {
         ohydx = new MockOHydx(30);
         szip = new MockToken(18);
         oracle = new SzipNavOracleDemoVAMM(
-            forwarder, address(zip), address(usdc), address(xa), address(hydx), address(ohydx), safe, sidecar, W, MAX_AGE, DEV_BPS
+            forwarder, address(zip), address(usdc), address(xa), address(hydx), address(ohydx), safe, sidecar, W, MAX_AGE
         );
     }
 
@@ -185,11 +185,11 @@ contract SzipNavOracleDemoVAMMTest is Test {
     function test_ctor_rejects_zero_address() public {
         vm.expectRevert(SzipNavOracleDemoVAMM.ZeroAddress.selector);
         new SzipNavOracleDemoVAMM(
-            forwarder, address(0), address(usdc), address(xa), address(hydx), address(ohydx), safe, sidecar, W, MAX_AGE, DEV_BPS
+            forwarder, address(0), address(usdc), address(xa), address(hydx), address(ohydx), safe, sidecar, W, MAX_AGE
         );
         vm.expectRevert(SzipNavOracleDemoVAMM.ZeroAddress.selector);
         new SzipNavOracleDemoVAMM(
-            forwarder, address(zip), address(usdc), address(xa), address(hydx), address(ohydx), safe, sidecar, 0, MAX_AGE, DEV_BPS
+            forwarder, address(zip), address(usdc), address(xa), address(hydx), address(ohydx), safe, sidecar, 0, MAX_AGE
         );
     }
 
@@ -281,15 +281,17 @@ contract SzipNavOracleDemoVAMMTest is Test {
         oracle.onReport("", report);
     }
 
-    function test_push_deviation_band_rejects() public {
-        uint8 hydxLeg = oracle.LEG_HYDX_USD(); // read BEFORE expectRevert
+    /// @notice The deviation band is GONE (2026-07-31): a large honest move now lands instead of reverting.
+    ///         The old test pinned +21% as rejected against a 20% band; that behaviour was the bug — an out-of-band
+    ///         REAL move could not be published, and the producer's workaround was to clamp and push a knowingly
+    ///         wrong number. Magnitude is now guarded at the source (CRE-side TWAP), not by an on-chain clamp.
+    function test_push_large_honest_move_lands_no_band() public {
+        uint8 hydxLeg = oracle.LEG_HYDX_USD();
         _push(hydxLeg, 1e18);
         vm.warp(block.timestamp + 1);
-        // +21% > 20% band
-        vm.expectRevert(abi.encodeWithSelector(SzipNavOracleDemoVAMM.DeviationExceeded.selector, hydxLeg, uint256(1e18), uint256(1.21e18)));
-        _push(hydxLeg, 1.21e18);
-        // +20% exactly lands
-        _push(hydxLeg, 1.2e18);
+        _push(hydxLeg, 1.21e18); // +21%: would have reverted DeviationExceeded
+        (uint256 p,) = oracle.legCache(hydxLeg);
+        assertEq(p, 1.21e18, "the +21% move is recorded at its TRUE value, not clamped to a band edge");
     }
 
     function test_push_lengthMismatch_reverts() public {

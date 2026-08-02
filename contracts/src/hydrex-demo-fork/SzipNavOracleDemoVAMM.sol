@@ -21,7 +21,7 @@ interface IXAlphaRateFresh {
 ///         auto-compounder's LP be priced + displayed on mainnet BEFORE our real zipUSD/xALPHA ICHI pool exists. The
 ///         `ichiVault` slot holds the vAMM pair (name kept so `setLpPosition` + deploy wiring are identical). Pairs
 ///         with `LpStrategyModuleDemoVAMM` (the paired LP-module fork). Do NOT use the prod oracle for this — it reverts
-///         `UnknownLpToken` on a HYDX/USDC LP. See `build/wires/SHOWCASE-VAMM.md`.
+///         `UnknownLpToken` on a HYDX/USDC LP. See `docs/wires/SHOWCASE-VAMM.md`.
 ///
 /// @notice [prod docstring, unchanged] The szipUSD junior-vault NAV-per-share oracle: the **issuance + exit pricing primitive** (NAV is not
 ///         display-only). It composes the junior basket's NAV on-chain — reading every quantity trustlessly across
@@ -76,8 +76,6 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     uint32 public immutable W;
     /// @notice The pushed-leg staleness bound (governed).
     uint256 public immutable maxAge;
-    /// @notice The per-push deviation circuit-break, in bps (governed).
-    uint256 public immutable maxDeviationBps;
     /// @notice Minimum wall-clock between committed TWAP checkpoints, derived from `W` in the ctor
     ///         (back-ported from the prod parent). The integral (`cumNav`) still advances on every `poke()` with
     ///         `dt>0`; this only throttles how often a NEW ring slot is consumed, so the `CARDINALITY-1` frozen
@@ -139,7 +137,6 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     error FutureTimestamp();
     error ZeroPrice();
     error InvalidLeg(uint8 leg);
-    error DeviationExceeded(uint8 leg, uint256 prior, uint256 next);
     error StalePrice(uint8 leg);
     error UnknownLpToken(address token);
     error ZeroAddress();
@@ -168,8 +165,7 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         address juniorTrancheSafe_,
         address juniorTrancheSidecar_,
         uint32 W_,
-        uint256 maxAge_,
-        uint256 maxDeviationBps_
+        uint256 maxAge_
     ) ReceiverTemplate(forwarder) {
         if (
             zipUSD_ == address(0) || usdc_ == address(0) || xAlpha_ == address(0) || hydx_ == address(0)
@@ -184,7 +180,6 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
         juniorTrancheSidecar = juniorTrancheSidecar_;
         W = W_;
         maxAge = maxAge_;
-        maxDeviationBps = maxDeviationBps_;
         // obsSpacing = ceil(1.25 * W / (CARDINALITY - 1)) (from the prod parent): the CARDINALITY-1
         // frozen checkpoints then span ~1.25*W, comfortably >= W, with headroom for block-time jitter.
         obsSpacing = uint32((uint256(W_) * 5 + (4 * (CARDINALITY - 1) - 1)) / (4 * (CARDINALITY - 1)));
@@ -263,13 +258,12 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
             uint256 p = prices[i];
             if (p == 0) revert ZeroPrice();
             LegCache memory prior = legCache[leg];
-            if (prior.ts != 0) {
-                uint256 priorP = prior.price;
-                uint256 diff = p > priorP ? p - priorP : priorP - p;
-                if (diff * 10_000 / priorP > maxDeviationBps) revert DeviationExceeded(leg, priorP, p);
-            }
-            // strictly-newer (the deviation band is price-only; a backdated replay would otherwise
-            // slip through and rewind the freshness clock / freeze issuance). Back-ported from the prod parent.
+            // NO DEVIATION BAND (removed 2026-07-31, tracking the prod parent). See.
+            // NOTE the demo diverges from prod here: `_legPriceOfToken` DOES read `legCache[LEG_HYDX_USD].price` to
+            // mark the vAMM LP's HYDX reserve, so on this oracle leg 1 is a live NAV input (in prod it is $0-marked
+            // and only its `.ts` is read). The magnitude guard is therefore the source-side TWAP's job here too.
+            // strictly-newer: catches the same-price backdated replay that would rewind the freshness clock / freeze
+            // issuance — a magnitude check never could. Back-ported from the prod parent.
             if (prior.ts != 0 && ts <= prior.ts) revert StaleReport();
             legCache[leg] = LegCache(p, uint48(ts));
             emit LegPriceUpdated(leg, p, uint48(ts));
@@ -339,9 +333,17 @@ contract SzipNavOracleDemoVAMM is ReceiverTemplate {
     /// @notice The committed (juniorTrancheSidecar-only) basket value, 18-dp USD — the §11-B / §6.4 freeze-floor read the
     ///         DurationFreezeModule bounds `release` against. ADDITIVE: `grossBasketValue()` is unchanged; this is
     ///         an INDEPENDENT per-Safe re-computation. For the three valued plain legs `committedValue() + freeValue()`
-    ///         equals `grossBasketValue()` EXACTLY; for a split LP it is within ≤2 wei (the per-Safe pro-rata floors
-    ///         twice vs once). The module only ever moves plain legs (incl. $0-marked HYDX/oHYDX), so gross is
-    ///         exactly rotation-invariant.
+    ///         equals `grossBasketValue` EXACTLY; for a split LP the per-Safe pro-rata floors run twice vs once, so
+    ///         the sum sits below gross by at most `floor(px/1e18) + 4` wei, where `px = exchangeRate * alphaUSD / 1e18`
+    ///         is the xALPHA USD mark. The tolerance is PRICE-DEPENDENT, not a flat 2 wei: the inner floor loss is
+    ///         amplified by the outer `_tokenValue` division (`amt * price / 1e18`), which is lossless only at
+    ///         `price == 1e18` (2 wei at $1.00, 3 at $0.50, 4 at $1.20, 7 at $3.70, 101 at $100).
+    ///         DIRECTION CAVEAT — `sum <= gross` is NOT unconditional: `grossBasketValue` saturates on the COMBINED
+    ///         value-minus-debt while `_grossValueOf` saturates PER SAFE, so a Safe whose farm-utility debt exceeds
+    ///         its own valued legs has that shortfall floored away here rather than netted against the other Safe, and
+    ///         `sum > gross` with no rounding bound.
+    ///         The module only ever moves plain legs (incl. $0-marked HYDX/oHYDX), so gross is exactly
+    ///         rotation-invariant.
     function committedValue() external view returns (uint256) {
         return _grossValueOf(juniorTrancheSidecar);
     }

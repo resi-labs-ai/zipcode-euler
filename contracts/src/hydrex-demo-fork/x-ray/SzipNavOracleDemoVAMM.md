@@ -27,7 +27,7 @@ The szipUSD junior-vault **NAV-per-share pricing primitive** (the demo variant) 
 off it. It composes the junior basket NAV on-chain across the main + sidecar Safes, CRE-pushes the off-chain leg
 marks (alphaUSD, HYDX/USD) it cannot read on Base, and maintains an on-chain TWAP. Consumers read a bracketed
 share price: `navEntry = max(spot, twap)` (issuance, reverts on stale), `navExit = min(spot, twap)` (exit, prices
-last good mark). The `DefaultCoordinator` writes an impairment `provision` that `spotNavPerShare` subtracts.
+last good mark). The `DefaultCoordinator` writes an impairment `provision` that `spotNavPerShare()` subtracts.
 
 **The fork delta (vs prod):** the LP leg. Prod values an ICHI vault (`getTotalAmounts()` + a farm utility escrow
 collateral leg). The demo values the Solidly **pair** directly: `heldShares/totalSupply × getReserves()`, with
@@ -38,11 +38,11 @@ $1 fold). The demo has **no farm utility leg**.
 
 | Function | Access | Notes |
 |---|---|---|
-| `_processReport` (via `onReport`) | Forwarder-gated (CRE) | leg-price push (reportType 7); deviation band + not-future + non-zero + valid-leg guards; advances TWAP |
+| `_processReport` (via `onReport`) | Forwarder-gated (CRE) | leg-price push (reportType 7); not-future + non-zero + valid-leg + strictly-newer (`StaleReport`) guards — **no magnitude band** (removed 2026-07-31); advances TWAP |
 | `writeProvision(newProvision)` | `defaultCoordinator` only | impairment mark; **unbounded at the oracle** (bound lives in the DC) |
 | `poke()` | permissionless | advance the TWAP accumulator before a read |
 | `setShareToken` / `setLpPosition` / `setJuniorTrancheEngine` / `setDefaultCoordinator` / `setXAlphaRateOracle` | `onlyOwner` (Timelock) | build-phase re-point (§17); `setXAlphaRateOracle(0)` = use the M1 stand-in |
-| `grossBasketValue` / `committedValue` / `freeValue` / `spotNavPerShare` / `twapNavPerShare` / `navEntry` / `navExit` / `fresh` / `valueOf` | view | the consumer surface |
+| `grossBasketValue()` / `committedValue()` / `freeValue()` / `spotNavPerShare()` / `twapNavPerShare()` / `navEntry()` / `navExit()` / `fresh()` / `valueOf()` | view | the consumer surface |
 
 ## 3. Invariants — with test connection
 
@@ -50,8 +50,8 @@ $1 fold). The demo has **no farm utility leg**.
 |---|---|---|
 | `spotNavPerShare == (gross − provision)·1e18 / effectiveSupply`; `GENESIS_NAV` at zero supply | Yes | `test_spotNavPerShare_genesis_and_priced`, **`testFuzz_spotNavFormula`** |
 | plain-leg gross = Σ `_bal·mark` (zip / usdc·1e12 / xa·rate·alphaUSD; HYDX + oHYDX marked $0 since 2026-07-31) | Yes | `test_grossBasketValue_plain_legs` |
-| **vAMM LP leg = heldShares/totalSupply × reserves, priced HYDX/USDC** | Yes | **`test_vamm_lp_leg_valuation`** (1 HYDX@$1 + 2 USDC@$1 = $3), `test_vamm_lp_zero_when_unwired_or_empty` |
-| leg push: deviation band, non-zero, not-future, valid-leg, length-match, forwarder-only | Yes | `test_push_deviation_band_rejects`, `_zeroPrice_`, `_futureTimestamp_`, `_invalidLeg_`, `_lengthMismatch_`, `_non_forwarder_`, `_wrong_reportType_` |
+| **vAMM LP leg = heldShares/totalSupply × reserves, priced HYDX/USDC** (`_legPriceOfToken` reads `legCache[LEG_HYDX_USD].price` — so unlike PROD, where leg 1's price is never read and only its `.ts` matters, **leg 1 IS a live NAV input on this fork**) | Yes | **`test_vamm_lp_leg_valuation`** (1 HYDX@$1 + 2 USDC@$1 = $3), `test_vamm_lp_zero_when_unwired_or_empty` |
+| leg push: non-zero, not-future, valid-leg, length-match, strictly-newer, forwarder-only — **no magnitude band** (removed 2026-07-31; magnitude is guarded at the source, not on-chain) | Yes | `test_push_large_honest_move_lands_no_band` (a large honest move lands at its TRUE value, unclamped), `_zeroPrice_`, `_futureTimestamp_`, `_invalidLeg_`, `_lengthMismatch_`, `_non_forwarder_`, `_wrong_reportType_`, `test_staleReport_non_newer_push_reverts` |
 | freshness: both required legs within `maxAge` | Yes | `test_fresh_requires_both_legs_within_maxAge` |
 | bracket: `navEntry = max`, `navExit = min`; issuance reverts on stale leg / stale rate | Yes | `test_navEntry_max_navExit_min`, `_reverts_on_stale_leg`, `_reverts_on_stale_rate_oracle` |
 | provision: DC-only writer; subtracts from gross | Yes (writer) / **No** (value) | `test_writeProvision_only_defaultCoordinator`, `_subtracts_from_gross` |
@@ -66,7 +66,7 @@ $1 fold). The demo has **no farm utility leg**.
 
 ## 4. Attack surfaces (unchanged by the gap-fill; now exercised)
 
-- **vAMM spot LP valuation** — `grossBasketValue` reads `getReserves()` at spot (manipulable in-block); the
+- **vAMM spot LP valuation** — `grossBasketValue()` reads `getReserves()` at spot (manipulable in-block); the
   defense is the `min/max(spot, twap)` bracket. The bracket + the LP pro-rata are tested
   (`test_vamm_lp_leg_valuation`, `test_navEntry_max_navExit_min`); the in-block-push resistance rests on the
   TWAP lag — **now genuinely poke-spam-proof since `obsSpacing` was restored
@@ -74,7 +74,7 @@ $1 fold). The demo has **no farm utility leg**.
   residual the bracket is documented not to defend.
 - **NAV reads raw Safe balances** — a direct transfer into a counted Safe moves NAV with no deposit; the Gate's
   denominator is the tie-back (Gate is out of this scope). Tested that gross sums the Safe balances as designed.
-- **Unbounded provision at the oracle** — `writeProvision` accepts any value from the DC; the bound (down ≤
+- **Unbounded provision at the oracle** — `writeProvision()` accepts any value from the DC; the bound (down ≤
   atRisk·(1−floor)) lives in the `DefaultCoordinator` (out of scope). Tested: DC-only + applied to NAV.
 - **Build-phase mutable wiring** — `setLpPosition`/`setShareToken`/`setDefaultCoordinator`/`setXAlphaRateOracle`
   re-pointable by the Timelock; demo, so disabled after the show.
@@ -88,7 +88,7 @@ $1 fold). The demo has **no farm utility leg**.
 | Suite status | **27/27 green** | `forge test` (was 24/24; +3 regression tests) |
 
 Ported the applicable prod coverage (ctor/guards, the full CRE push path, freshness, plain-leg NAV, the spot/twap
-bracket, provision gating, `valueOf`, genesis) and wrote fresh tests for the **swapped vAMM LP valuation** — the
+bracket, provision gating, `valueOf()`, genesis) and wrote fresh tests for the **swapped vAMM LP valuation** — the
 one part that differs from the audited parent. Skipped the prod suite's farm utility-leg + ICHI-`getTotalAmounts`
 tests (the demo has neither). The vAMM `getReserves()` pro-rata pricing is now covered, including the HYDX/USDC
 `_legPriceOfToken` decimal fold and the unwired/empty-LP zero case.
@@ -104,8 +104,8 @@ bracket, unbounded provision bounded off-chain in the DC) — none new to the fo
 out-of-scope-by-design.
 
 **Structural facts:**
-1. 294 nSLOC; plain (non-upgradeable) `ReceiverTemplate`; one CRE-gated state-changer (`_processReport`) + `writeProvision` (DC) + `poke` (permissionless) + Timelock setters.
+1. 294 nSLOC; plain (non-upgradeable) `ReceiverTemplate`; one CRE-gated state-changer (`_processReport`) + `writeProvision()` (DC) + `poke()` (permissionless) + Timelock setters.
 2. The fork delta is the LP leg: vAMM `getReserves()` pro-rata (HYDX/USDC), vs prod's ICHI `getTotalAmounts()` + farm utility escrow — no farm utility leg here.
 3. Tests: 23 unit + 1 fuzz, **24/24 green** — ported from the prod `SzipNavOracle` suite with the vAMM LP seam swapped in (was 0 dedicated).
-4. Both value reads (issuance `navEntry`, exit `navExit`) price off this oracle; the bracket + freshness gate the fail-closed behavior.
+4. Both value reads (issuance `navEntry()`, exit `navExit()`) price off this oracle; the bracket + freshness gate the fail-closed behavior.
 5. Self-declared DEMO/SHOWCASE; the NAV-hub residuals (donation seam, spot-LP, unbounded provision) are inherited from the prod design, not introduced by the fork.

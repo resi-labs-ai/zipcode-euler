@@ -15,6 +15,13 @@ optimizer_runs = 20_000
 # "File outside of allowed directories".
 allow_paths = ["../reference"]
 
+# The two CCT pool contracts (SzAlphaLockReleasePool, SzAlphaTokenPool) EXCEED the EIP-170 runtime
+# limit at the default 20k optimizer runs (24,831 / 25,007 bytes — found in the Phase-B deploy; forge
+# tests never enforce runtime size). Production pools were deployed at runs=200 (~19.8 KB). Deploy
+# pools with FOUNDRY_PROFILE=pools; `script/check-pool-sizes.sh` asserts this profile still fits.
+[profile.pools]
+optimizer_runs = 200
+
 [profile.default.fmt]
 line_length = 120
 tab_width = 4

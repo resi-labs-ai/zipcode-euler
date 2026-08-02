@@ -13,7 +13,7 @@ Analyzed branch: `main` at `b240994`. Scope: `contracts/src/hydrex-demo-fork` (2
 **What it does:** A NAV-per-share oracle for the szipUSD junior vault plus a Zodiac module that builds and gauge-stakes a Solidly vAMM LP — the demo prices/operates an existing live HYDX/USDC pair instead of the not-yet-deployed ICHI pool.
 
 - **Users**: A CRE operator (hot key) drives the LP lifecycle; the Forwarder and DefaultCoordinator write oracle inputs; consumers (Exit Gate) read bracketed NAV.
-- **Core flow**: `addLiquidity()` builds the vAMM LP into the engine Safe → `stake()` gauge-stakes it to farm oHYDX; the oracle composes basket NAV and exposes `navEntry`/`navExit`.
+- **Core flow**: `addLiquidity()` builds the vAMM LP into the engine Safe → `stake()` gauge-stakes it to farm oHYDX; the oracle composes basket NAV and exposes `navEntry()`/`navExit()`.
 - **Key mechanism**: NAV = (gross basket value − impairment provision) / effective supply, with an on-chain TWAP accumulator; consumers read `navEntry = max(spot, twap)` (issuance) and `navExit = min(spot, twap)` (exit).
 - **Token model**: Values szipUSD (18-dp $1 denominator), USDC, xALPHA, HYDX, oHYDX, and the vAMM LP; the LP token is the pair contract itself.
 - **Admin model**: `owner()` is the Timelock (all wiring setters, re-pointable not set-once); the LP module is operated by a separate CRE `operator` hot key.
@@ -66,7 +66,8 @@ navExit() = min(spot, twap)                                 *NEVER reverts on st
 ```
 Forwarder → ReceiverTemplate.onReport → _processReport (reportType 7)
   ├─ _accumulate()  (book OLD spot before new prices apply)
-  └─ per leg: require(p != 0), deviation <= maxDeviationBps, legCache[leg] = (p, ts)
+  └─ per leg: require(leg < NUM_LEGS), require(p != 0), require(ts > prior.ts), legCache[leg] = (p, ts)
+                                                        *no magnitude band — removed 2026-07-31, guarded at source*
 
 DefaultCoordinator → writeProvision(newProvision)          *UNBOUNDED at the oracle; bound lives in the coordinator*
 Anyone → poke()                                            permissionless TWAP advance
@@ -80,18 +81,18 @@ Anyone → poke()                                            permissionless TWAP
 
 > Protocol classified as: **Yield Aggregator / Vault (NAV oracle)** with **DEX/AMM** and **Oracle-transport** characteristics
 
-Signals: a share-price oracle for a junior vault with provision/TWAP (Vault); valuation of a Solidly vAMM pair via live `getReserves` + an LP-mint module (DEX/AMM); CRE leg-price push with deviation/staleness guards (Oracle).
+Signals: a share-price oracle for a junior vault with provision/TWAP (Vault); valuation of a Solidly vAMM pair via live `getReserves` + an LP-mint module (DEX/AMM); CRE leg-price push with shape/monotonicity/staleness guards (Oracle).
 
 ### Actors & Adversary Model
 
 | Actor | Trust Level | Capabilities |
 |-------|-------------|-------------|
 | CRE `operator` | Bounded (hot key) | `addLiquidity`/`stake`/`unstake` — supplies only scalar amounts; module builds all calldata to wired targets; no custody, no passthrough. Bounded by `minShares` floor. |
-| Forwarder | Bounded (push only) | Sole writer of `_processReport` (reportType 7); per-leg non-zero + deviation-band + not-future guards. |
-| DefaultCoordinator | Bounded (provision) | Sole `writeProvision` caller. The provision value is **unbounded at the oracle** — the bound lives off-chain in the coordinator (M2). Until wired, reverts for everyone. |
+| Forwarder | Bounded (push only) | Sole writer of `_processReport` (reportType 7); per-leg valid-leg + non-zero + not-future + strictly-newer (`StaleReport`) guards. **Bounded on shape/timing, not magnitude** — the `maxDeviationBps` band was removed 2026-07-31; a compromised Forwarder can push any *magnitude*, and the mitigation is source-side (CRE TWAP of the subnet-46 pool reserves), not on-chain. |
+| DefaultCoordinator | Bounded (provision) | Sole `writeProvision()` caller. The provision value is **unbounded at the oracle** — the bound lives off-chain in the coordinator (M2). Until wired, reverts for everyone. |
 | `owner()` (Timelock) | Trusted (timelock) | Re-points ALL wiring on both contracts (`shareToken`, `ichiVault`/pair, `gauge`, `defaultCoordinator`, `xAlphaRateOracle`, module targets). Re-pointable, not set-once. No pause on either contract. |
 | Keeper / anyone | Untrusted | `poke()` — advances the TWAP accumulator only. |
-| Exit Gate (consumer) | Trusted (reads) | Reads `navEntry`/`navExit`/`fresh`/`valueOf`; is the first minter and the first-depositor guard (oracle delegates this). |
+| Exit Gate (consumer) | Trusted (reads) | Reads `navEntry()`/`navExit()`/`fresh()`/`valueOf()`; is the first minter and the first-depositor guard (oracle delegates this). |
 
 **Adversary Ranking** (ordered for this protocol type, adjusted by git evidence):
 
@@ -112,13 +113,13 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 ### Key Attack Surfaces
 
-- **NAV prices raw Safe balances** &nbsp;[[I-1](invariants.md#i-1)] — `grossBasketValue:284-304` / `_bal:413` sum `balanceOf` of the two Safes for five legs plus a pro-rata LP slice; worth tracing whether a direct token transfer (not via the Gate) into a counted Safe shifts `navEntry`/`navExit` and how the Gate's denominator absorbs it.
+- **NAV prices raw Safe balances** &nbsp;[[I-1](invariants.md#i-1)] — `grossBasketValue:284-304` / `_bal:413` sum `balanceOf` of the two Safes for five legs plus a pro-rata LP slice; worth tracing whether a direct token transfer (not via the Gate) into a counted Safe shifts `navEntry()`/`navExit()` and how the Gate's denominator absorbs it.
 
 - **vAMM spot LP valuation** &nbsp;[[I-2](invariants.md#i-2)] — `grossBasketValue:297` and `_grossValueOf:336` read `getReserves()` at spot; worth confirming the LP leg actually propagates into the TWAP (`spotNavPerShare → _accumulate → cumNav`) so `navEntry=max`/`navExit=min` truly brackets an in-block reserve push, not just the five plain legs.
 
 - **Unbounded provision at the oracle** &nbsp;[[X-1](invariants.md#x-1)] — `writeProvision:256` accepts any `newProvision` from the coordinator and feeds it straight into `spotNavPerShare:351`; worth confirming the coordinator's down/up bound (atRisk·(1−floor) / realized receipts) is the real enforcement and that the oracle is never wired before it exists.
 
-- **committedValue + freeValue vs grossBasketValue drift** &nbsp;[[I-4](invariants.md#i-4)] — `committedValue:312` / `freeValue:317` re-derive per-Safe and are documented to match gross "within ≤2 wei" on a split LP (double pro-rata floor); worth confirming a freeze module reading these tolerates the drift direction.
+- **committedValue + freeValue vs grossBasketValue drift** &nbsp;[[I-4](invariants.md#i-4)] — `committedValue:312` / `freeValue:317` re-derive per-Safe and match gross only to `floor(px/1e18) + 4` wei on a split LP (double pro-rata floor, then amplified by the outer `_tokenValue` price division — the old flat "≤2 wei" holds only at an xALPHA mark of exactly $1.00), and the under-count *direction* itself is conditional: gross saturates on the COMBINED value-minus-debt while `_grossValueOf` saturates PER SAFE, so a Safe whose farm-utility debt exceeds its own legs makes `sum > gross` unboundedly. Worth confirming a freeze module reading these tolerates both the magnitude and the direction.
 
 - **addLiquidity excess-donation** — `addLiquidity:208-216` `transfer`s both legs straight to the pair then `mint`s; any side sized above the live reserve ratio is donated to the pool (Solidly keeps the lesser side). `minShares` is the sole protection; worth confirming the operator sizes against fresh `getReserves()`.
 
@@ -141,11 +142,11 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 ### Temporal Risk Profile
 
 **Deployment & Initialization:**
-- Wiring is re-pointable by the Timelock during the build phase (`:187-188`); the live risk is operating before `shareToken`/`defaultCoordinator`/`xAlphaRateOracle` are wired — each has a fail-closed path (zero supply ⇒ GENESIS_NAV; zero coordinator ⇒ `writeProvision` reverts; zero rate oracle ⇒ M1 stand-in read).
+- Wiring is re-pointable by the Timelock during the build phase (`:187-188`); the live risk is operating before `shareToken`/`defaultCoordinator`/`xAlphaRateOracle` are wired — each has a fail-closed path (zero supply ⇒ GENESIS_NAV; zero coordinator ⇒ `writeProvision()` reverts; zero rate oracle ⇒ M1 stand-in read).
 - The module clone `setUp:80` validates five addresses then reads `token0`/`token1` live off the pair — worth confirming the mastercopy is init-locked so it can't be hijacked.
 
 **Market Stress:**
-- `navExit` deliberately never reverts on staleness (prices off the last good mark); staleness pauses issuance only. The TWAP lag is the defense — keepers must `poke()` before reads.
+- `navExit()` deliberately never reverts on staleness (prices off the last good mark); staleness pauses issuance only. The TWAP lag is the defense — keepers must `poke()` before reads.
 
 ### Composability & Dependency Risks
 
@@ -157,7 +158,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 > - Mutability: external live pair; reserves move every swap.
 > - On failure: math guards skip the LP leg (contributes 0); mint revert bubbles via `_exec`.
 
-> **xAlphaRateOracle (SzAlphaRateOracle)** — via `_xAlphaUSD` / `navEntry` / `fresh`
+> **xAlphaRateOracle (SzAlphaRateOracle)** — via `_xAlphaUSD` / `navEntry()` / `fresh()`
 > - Assumes: `exchangeRate()` is the cross-chain rate; `fresh()` gates issuance.
 > - Validates: issuance reverts `StaleRate` if wired and not fresh; value (not freshness) read for gross/exit (the §7 asymmetry).
 > - Mutability: Timelock-re-pointable (`setXAlphaRateOracle`, zero ⇒ M1 stand-in `IXAlphaRate(xAlpha)`).
@@ -165,7 +166,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 > **CRE Forwarder** — via `_processReport`
 > - Assumes: honest leg marks (alphaUSD, HYDX/USD).
-> - Validates: reportType 7, non-zero, deviation band (`maxDeviationBps`), not-future, length match.
+> - Validates: reportType 7, valid leg, non-zero, not-future, length match, strictly-newer ts (`StaleReport`). **No magnitude check** — the deviation band was removed 2026-07-31; magnitude is guarded at the source (CRE-side TWAP), not here.
 > - Mutability: forwarder set in `ReceiverTemplate` (Timelock-re-pointable per `:153`).
 > - On failure: reverts the whole batch (all-or-nothing).
 
@@ -196,7 +197,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 | Aspect | Status | Notes |
 |--------|--------|-------|
-| README | Missing (in scope dir) | Design lives in NatSpec + `build/wires/SHOWCASE-VAMM.md`, `claude-zipcode.md` §7/§12 |
+| README | Missing (in scope dir) | Design lives in NatSpec + `docs/wires/SHOWCASE-VAMM.md`, `claude-zipcode.md` §7/§12 |
 | NatSpec | ~83 annotations | Dense, design-grade; demo-vs-prod deltas explicitly called out at the top of each file |
 | Spec/Whitepaper | Missing (in scope dir) | References `baal-spec.md` §3 (out of dir) |
 | Inline Comments | Thorough | Documented invariants, asymmetry rationale, security-boundary notes, demo-fork deltas |
@@ -228,7 +229,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 ### Gaps
 
 - **No tests at all for this scope** — the demo forks have zero dedicated unit/fuzz/invariant coverage. Their prod parents are tested, but the swapped vAMM seams (LP mint via `IVammPair.mint`, LP valuation via `getReserves`, the `_legPriceOfToken` HYDX/USDC additions) are exactly the un-forked behavior and are untested.
-- **Highest-value additions** — unit tests for the vAMM LP valuation path and the `addLiquidity` donation/ratio behavior; fuzz on `spotNavPerShare`/`twapNavPerShare` and the `_legPriceOfToken` dp-scaling.
+- **Highest-value additions** — unit tests for the vAMM LP valuation path and the `addLiquidity` donation/ratio behavior; fuzz on `spotNavPerShare()`/`twapNavPerShare()` and the `_legPriceOfToken` dp-scaling.
 - **Coverage unmeasurable** — project does not compile under the coverage instrumenter (stack-too-deep).
 
 ---
@@ -273,7 +274,7 @@ See [entry-points.md](entry-points.md) for the full permissionless entry point m
 
 ### Cross-Reference Synthesis
 
-- **Untested vAMM seam = the entire risk delta** → the swapped LP-mint and LP-valuation paths (`addLiquidity`, `grossBasketValue` LP block, `_legPriceOfToken`) carry the prod parents' assurance for everything *except* the parts that changed.
+- **Untested vAMM seam = the entire risk delta** → the swapped LP-mint and LP-valuation paths (`addLiquidity`, `grossBasketValue()` LP block, `_legPriceOfToken`) carry the prod parents' assurance for everything *except* the parts that changed.
 - **NAV reads raw Safe balances + spot reserves, no test** → the donation and in-block-reserve surfaces (I-1/I-2) have neither tests nor on-chain bounds in this scope; the Gate + TWAP are the sole defenses.
 
 ---
@@ -292,7 +293,7 @@ files are authoritative: [`LpStrategyModuleDemoVAMM.md`](LpStrategyModuleDemoVAM
 
 **Structural facts:**
 1. 423 nSLOC across 2 contracts (NAV oracle 294, LP module 129); 0 upgradeable (1 plain, 1 clone-via-`setUp`).
-2. 1 permissionless entry point (`poke`); LP ops operator-gated, all wiring Timelock-gated, no pause on either contract.
+2. 1 permissionless entry point (`poke()`); LP ops operator-gated, all wiring Timelock-gated, no pause on either contract.
 3. Tests: 45 dedicated functions (43 unit + 2 fuzz), **21/21 + 24/24 green** — ported from the prod parents with the vAMM seam swapped in (was 0 dedicated).
 4. 100% of source authored by a single developer; the files landed in 1 source-touching commit; 0 merge commits.
 5. Coverage uninstrumentable — project-wide stack-too-deep even under `--ir-minimum`; test existence confirmed by scan + run.

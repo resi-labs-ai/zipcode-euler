@@ -1,3 +1,8 @@
+# NOTE ON COMMENTS IN THIS FILE. This file is TRACKED and PUBLIC. Every comment here ships.
+# A path tells a reader that something is ignored, which is unavoidable and low-information.
+# A comment describing WHAT a file contains, how severe it is, or whether it is still open is
+# high-information and defeats the point of ignoring it. Keep entries below content-free.
+
 # Cloned upstream repos kept as read-only reference (~5 GB, each has its own .git) — ignored,
 # but the upstream-URL + pinned-commit manifest IS tracked so the refs are reproducible.
 reference/*
@@ -16,17 +21,12 @@ subgraph/
 # docs-site/ duplicates published docs living elsewhere — not part of this repo.
 docs-site/
 
-# Security work-in-progress: raw auditor reports, adversarial-review prompts/tooling, and
-# generated build artifacts/tickets. Local only until findings are resolved and published
-# via the external audit process.
+# Security working directories. Local only, by decision.
 audit/
 adversarial-review/
 build/
 
-# Bridge work-in-progress: relocated auditor findings (verbatim exploit scenarios + fix diffs),
-# third-party incident forensics, and the pre-mainnet requirements derived from them. Same
-# never-publish rationale as the analysis reports above — an open-findings roadmap plus a live
-# account of an incumbent's unremediated failure. Local only.
+# Bridge working directory. Local only, by decision.
 bridge/
 
 # Foundry build artifacts
@@ -41,20 +41,18 @@ contracts/broadcast/
 !*.env.example
 contracts/.env
 
-# NEVER-PUBLISH (this repo is PUBLIC).
-# Raw auditor reports: unremediated findings + exploit scenarios + the fix diffs = an attack
-# roadmap while the findings are still open. Triage/response lives in the audit workflow, not here.
-resi-labs-ai-zipcode-euler-*-analysis.md
-resi-labs-ai-zipcode-euler-*-analysis*.md
+# Working notes and internal planning. Local only, by decision. No leading slash, so these match
+# at any depth and are caught wherever the file is dropped.
 *-analysis.md
-*-analysis (*).md
-
-# Internal exit-design working notes (two-lane exit, fairness debate) — internal planning, not
-# protocol documentation, and not a filename for a public repo. Lives in cre/ until the CRE review.
+*-analysis*.md
 FUCK_UR_MOM.md
-
-# Internal planning + strategy that is not protocol documentation. Matched by name at any
-# depth — carry-risk names the still-open soft spots and points into the private crank trees,
-# so it must not land in this repo no matter which directory it is dropped in.
 fable.md
 carry-risk.md
+
+# Local only, by decision. Re-evaluate the entry below when the work it covers is finished.
+contracts/test/supply/ClaimVerification.t.sol
+
+# Local only, by decision. LOCAL-ONLY MEANS ONE DISK: no private-repo copy of these exists, and
+# their cited sources are memory files that do not either. Back them up out-of-band.
+DISPOSITIONS.md
+CLAUDE.md

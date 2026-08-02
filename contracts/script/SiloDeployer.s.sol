@@ -98,7 +98,6 @@ contract SiloDeployer is Script {
         uint16 liqLTV;
         uint32 W;
         uint256 maxAge;
-        uint256 maxDeviationBps;
         uint256 tvlCap;
         uint16 dBps;
         uint256 buybackCap;
@@ -327,7 +326,6 @@ contract SiloDeployer is Script {
             adminSafe: p.adminSafe,
             W: p.W,
             maxAge: p.maxAge,
-            maxDeviationBps: p.maxDeviationBps,
             tvlCap: p.tvlCap,
             dBps: p.dBps,
             buybackCap: p.buybackCap,

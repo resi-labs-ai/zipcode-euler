@@ -46,7 +46,7 @@ interface IStakingV2 {
 
     /// @notice Move the caller's staked alpha from one hotkey to another (same coldkey attribution).
     /// @dev Pinned for the wrapper's `migrateFrom` recovery path (hotkey-drift incident class; see
-    ///      `bridge/rubicon-incident-2026-06-12.md`). Signature verified against
+    ///      `audit/reviewed/rubicon-incident-2026-06-12.md`). Signature verified against
     ///      `reference/subtensor/precompiles/src/staking.rs`
     ///      (`moveStake(bytes32,bytes32,uint256,uint256,uint256)`). Same-netuid moves re-attribute the
     ///      stake without routing through the subnet AMM; a CROSS-netuid move would swap through both

@@ -76,7 +76,10 @@ contract MockSubtensorStaking {
 
     /// @dev Same-coldkey hotkey-to-hotkey move (9-dp alpha), mirroring the runtime's
     ///      `moveStake(bytes32,bytes32,uint256,uint256,uint256)` — same-netuid moves re-attribute
-    ///      without an AMM swap. `breakMoveStake` = silent no-op (exercises MigrationLostStake).
+    ///      without an AMM swap. RUNTIME-FAITHFUL 1-rao shave: the live 964 pallet credits the
+    ///      destination `amount - 1` (integer rounding, measured on mainnet 2026-07-31), so the mock
+    ///      does too — the wrapper's `MOVE_ROUNDING_RAO` tolerance is exercised on every happy path.
+    ///      `breakMoveStake` = silent no-op (exercises MigrationLostStake).
     function moveStake(
         bytes32 originHotkey,
         bytes32 destinationHotkey,
@@ -88,7 +91,7 @@ contract MockSubtensorStaking {
         bytes32 ck = _coldkeyOf(msg.sender);
         require(stake[originHotkey][ck][originNetuid] >= amountRao, "insufficient stake");
         stake[originHotkey][ck][originNetuid] -= amountRao;
-        stake[destinationHotkey][ck][destinationNetuid] += amountRao;
+        stake[destinationHotkey][ck][destinationNetuid] += amountRao - (amountRao > 0 ? 1 : 0);
     }
 
     /// @notice Simulate hotkey drift (substrate `swap_hotkey`): the ENTIRE stake under `coldkey` moves

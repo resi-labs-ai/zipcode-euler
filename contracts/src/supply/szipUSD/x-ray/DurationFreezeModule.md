@@ -49,7 +49,7 @@ exits) but **cannot steal** and **cannot under-freeze**.
 | `release(asset, amount)` | operator + `nonReentrant` + `onlyValued` | SIDECAR→MAIN; **the autonomous floor** — reverts `FreezeFloorBreach` unless post-move coverage ≥ `requiredCommittedValue()` (atomic rollback) |
 | `setUp(initParams)` | `initializer` (clone) | wires 7 addrs, reads the 5 movable legs LIVE off the oracle, sets `avatar=target=juniorTrancheSafe`, transfers ownership to Timelock |
 | 12 × `setX(...)` | `onlyOwner` (Timelock) | build-phase wiring re-points (2 Safes, operator, oracle, eulerEarn, warehouse, 5 leg tokens) |
-| views | public | `utilization`, `requiredFraction`, `committedValue`, `grossBasketValue`, `freeValue`, `pathLockedLpEquity`, `coverageValue`, `illiquidSeniorValue`, `requiredCommittedValue`, `covered`, `lpBurnKeepsCovered` |
+| views | public | `utilization`, `requiredFraction`, `committedValue()`, `grossBasketValue()`, `freeValue()`, `pathLockedLpEquity()`, `coverageValue()`, `illiquidSeniorValue`, `requiredCommittedValue()`, `covered()`, `lpBurnKeepsCovered` |
 
 No permissionless mutators. The operator supplies only `(asset, amount)`; the module builds all calldata.
 
@@ -64,10 +64,10 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
 | I-5 | **donation-immune** U/debt — read via `maxWithdraw`/`convertToAssets`, never `balanceOf(eulerEarn)` | Yes | **`test_utilization_donation_immune`**, `test_utilization_*` (zero/mid/exact-boundary), `test_illiquidSeniorValue_scales_6dp_to_18dp` |
 | I-6 | **only the 5 oracle-valued legs are movable**; the ICHI LP share is NOT whitelisted (fenced in place) | Yes | `test_commit_unvalued_asset_reverts`, `test_release_unvalued_asset_reverts`, `test_each_leg_is_accepted_by_whitelist` |
 | I-7 | **FoT / false-return transfer defense** — dest balance delta MUST equal `amount` | Yes | `test_commit_feeOnTransfer_reverts_shortfall`, `test_commit_safe_returns_false_reverts_execFailed`, `test_release_safe_returns_false_reverts_execFailed` |
-| I-8 | **gross is invariant under rotation** (oracle sums both Safes) — the floor is a pure "did the sidecar keep enough" check; `gross == committed + free` | Yes | **`testFuzz_parity_no_LP`** (fuzz, exact), `test_parity_exact_plain_legs`, `test_parity_split_LP_within_2_wei` (≤2-wei pro-rata floor), fork rotation |
-| I-9 | **unseeded xALPHA rate fails closed** — `coverageValue` reverts `RateUnseeded` rather than under-counting the floor | Yes | **`test_SEC04_unseeded_rate_reverts_coverageValue`** (fail-before/pass-after) |
+| I-8 | **gross is invariant under rotation** (oracle sums both Safes) — the floor is a pure "did the sidecar keep enough" check; `gross == committed + free` | Yes | **`testFuzz_parity_no_LP`** (fuzz, exact), `test_parity_exact_plain_legs`, `test_parity_split_LP_within_2_wei` (2-wei pro-rata floor at the $1 marks that vector uses; the general tolerance is `floor(px/1e18)+4` wei, `px` = the xALPHA USD mark, and the `committed+free <= gross` direction holds only while each Safe's legs cover its own farm-utility debt), fork rotation |
+| I-9 | **unseeded xALPHA rate fails closed** — `coverageValue()` reverts `RateUnseeded` rather than under-counting the floor | Yes | **`test_SEC04_unseeded_rate_reverts_coverageValue`** (fail-before/pass-after) |
 | X-1 | §13 residual: CRE operator trusted for asset/amount/timing — **grief-bounded, not theft, not under-freeze** | **No** | the bound is the on-chain floor + no-recipient-param; `test_commit_over_freeze_all_free_equity_succeeds` shows over-freeze is *permitted* (accepted grief, §12 alarm) |
-| X-2 | the floor's correctness depends on the **oracle**'s `committedValue`/`pathLockedLpEquity`/`grossBasketValue` being honest | **No** | `SzipNavOracle` is the valuation authority (out of this scope); SEC-02/SEC-04 exercise the REAL oracle to pin the seam |
+| X-2 | the floor's correctness depends on the **oracle**'s `committedValue()`/`pathLockedLpEquity()`/`grossBasketValue()` being honest | **No** | `SzipNavOracle` is the valuation authority (out of this scope); SEC-02/SEC-04 exercise the REAL oracle to pin the seam |
 
 ## 4. Guards — coverage
 
@@ -93,11 +93,11 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
   game. The **128k-call stateful invariant** (`U` floated independently via `bumpUtilization`, `commit` ungated,
   `release` recorded per success) found **zero** breaches. This is the strongest evidence in the subsystem.
 - **LP-in-place accounting is exact (I-4) — the drill's #2 question, answered** — the SEC-02 vectors run the REAL
-  oracle: a sidecar LP donation raises coverage by *exactly one* mark (`pathLockedLpEquity` is main-only, so the
+  oracle: a sidecar LP donation raises coverage by *exactly one* mark (`pathLockedLpEquity()` is main-only, so the
   sidecar LP isn't double-counted), and `test_SEC02_floor_breach_covered_flips_false` proves the pre-fix
   double-count *would* have falsely reported `covered()`.
 - **The double-squeeze (documented, fail-closed by design)** — `covered():323-329` documents that a farm utility borrow
-  against the fenced LP pushes **both** sides the wrong way at once: the numerator drops (`pathLockedLpEquity`
+  against the fenced LP pushes **both** sides the wrong way at once: the numerator drops (`pathLockedLpEquity()`
   subtracts strike debt) **and** the floor rises (the borrow draws senior cash → `maxWithdraw` falls →
   `illiquidSeniorValue` rises). The two do **not** cancel. This is **self-DoS**: the borrower can only freeze its own
   outflow, and it recovers fully on repay. A liveness footgun, never a solvency hole — well-reasoned and explicitly
@@ -114,7 +114,7 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
   two Safe setters now also re-check `juniorTrancheSafe != juniorTrancheSidecar` (mirroring `setUp` + the SEC-15
   `setOperator` pattern) — previously a Timelock re-point could collapse the two Safes to one, making a `release` a
   self-transfer that trivially clears the floor (I-1). Tested by `test_setSafes_reject_collapse_to_equal`.
-- **Oracle is the valuation authority (X-2)** — every floor input (`committedValue`, `pathLockedLpEquity`, `gross`)
+- **Oracle is the valuation authority (X-2)** — every floor input (`committedValue()`, `pathLockedLpEquity()`, `gross`)
   is read from `SzipNavOracle`. A wrong oracle mark mis-gates outflow. Out of this scope, but the SEC tests pin the
   seam against the real oracle.
 
@@ -125,7 +125,7 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
 | Unit | 54 | setUp/guards, the full views suite, commit/release happy+revert matrix, whitelist, FoT defense, balance conservation, SEC-02 (LP single-count, the marquee fix), SEC-04 (unseeded-rate fail-close), SEC-14/15 |
 | Stateless fuzz | 1 | `testFuzz_parity_no_LP` — `gross == committed + free` exact across 4 fuzzed balances |
 | Stateful invariant | 1 | **`invariant_release_never_breached_floor`** — 128k calls, `U` floated, 0 floor violations |
-| Base-fork | 2 | real summoned Safes + real `SzipNavOracle` + a `ModuleProxyFactory` clone enabled on both Safes via the Baal idiom: real cross-Safe rotation moves real `committedValue`; high-U release reverts `FreezeFloorBreach` |
+| Base-fork | 2 | real summoned Safes + real `SzipNavOracle` + a `ModuleProxyFactory` clone enabled on both Safes via the Baal idiom: real cross-Safe rotation moves real `committedValue()`; high-U release reverts `FreezeFloorBreach` |
 
 All **56 pass** (`forge test --match-path test/DurationFreezeModule.t.sol`). The **decisive safety property (the
 floor) is under a stateful Foundry invariant** *and* a base-fork test — the gold standard. Coverage %

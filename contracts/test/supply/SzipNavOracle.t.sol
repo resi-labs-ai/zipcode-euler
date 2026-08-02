@@ -282,8 +282,7 @@ contract SzipNavOracleTest is Test {
             juniorTrancheSafe,
             juniorTrancheSidecar,
             W,
-            MAX_AGE,
-            DEV_BPS
+            MAX_AGE
         );
     }
 
@@ -322,7 +321,6 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.juniorTrancheSidecar(), juniorTrancheSidecar);
         assertEq(oracle.W(), W);
         assertEq(oracle.maxAge(), MAX_AGE);
-        assertEq(oracle.maxDeviationBps(), DEV_BPS);
         assertEq(oracle.GENESIS_NAV(), 1e18);
         assertEq(oracle.NAV_LEG(), 7);
         assertEq(oracle.NUM_LEGS(), 2);
@@ -334,17 +332,17 @@ contract SzipNavOracleTest is Test {
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         new SzipNavOracle(
             forwarder, address(0), address(usdc), address(xa), address(hydx),
-            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE
         );
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, 0, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, 0, MAX_AGE
         );
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, 0, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, 0
         );
     }
 
@@ -360,7 +358,7 @@ contract SzipNavOracleTest is Test {
         // non-owner
         SzipNavOracle fresh = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE
         );
         vm.prank(makeAddr("rando"));
         vm.expectRevert();
@@ -379,7 +377,7 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.ichiVault(), address(iv2));
         SzipNavOracle fresh = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE
         );
         vm.expectRevert(SzipNavOracle.ZeroAddress.selector);
         fresh.setLpPosition(address(0), address(g));
@@ -586,30 +584,40 @@ contract SzipNavOracleTest is Test {
         oracle.onReport("", report);
     }
 
-    // ----------------------------------------------------------------- deviation circuit-break
-    function test_deviation_first_push_not_checked() public {
-        _push(0, 100e18); // any value ok first time
-        (uint256 p,) = oracle.legCache(0);
-        assertEq(p, 100e18);
-    }
-
-    function test_deviation_within_bound_ok() public {
+    // ----------------------------------------------------------------- no deviation band (removed 2026-07-31)
+    /// @notice The band capped each push at +/-N% vs the last cached price. On a SPOT feed that rejects the truth:
+    ///         an 11% real move could not be published, and the CRE producer's answer was `bandClamp` — push the
+    ///         band EDGE, a knowingly-wrong number, silently. Magnitude is now guarded at the source (a CRE-side
+    ///         TWAP of the subnet-46 pool reserves), so an implausible jump never arises rather than being clamped.
+    ///         See `deriveAlphaUSD` in `cre/sharefeeds/workflow.go`.
+    function test_no_band_large_honest_move_lands_at_true_value() public {
         _push(0, 1e18);
-        vm.warp(block.timestamp + 1); // SEC-01: a second push needs a strictly-newer ts (monotonic guard)
-        _push(0, 119e16); // +19% <= 20%
+        vm.warp(block.timestamp + 1); // SEC-01: strictly-newer ts still required
+        _push(0, 121e16); // +21% — would have reverted DeviationExceeded
         (uint256 p,) = oracle.legCache(0);
-        assertEq(p, 119e16);
+        assertEq(p, 121e16, "recorded at the TRUE price, not clamped to a band edge");
     }
 
-    function test_deviation_exceeded_reverts() public {
+    /// @notice A crash is symmetric: a -50% move is a real market event and must be publishable.
+    function test_no_band_large_downward_move_lands() public {
+        _push(0, 1e18);
+        vm.warp(block.timestamp + 1);
+        _push(0, 5e17); // -50%
+        (uint256 p,) = oracle.legCache(0);
+        assertEq(p, 5e17);
+    }
+
+    /// @notice The guards that REMAIN on the push path are unaffected by the band's removal.
+    function test_no_band_other_push_guards_intact() public {
         _push(0, 1e18);
         uint8[] memory legs = new uint8[](1);
         uint256[] memory ps = new uint256[](1);
         legs[0] = 0;
-        ps[0] = 121e16; // +21% > 20%
+        ps[0] = 0; // zero price still rejected
+        vm.warp(block.timestamp + 1); // advance the clock, not the report ts (a future ts trips FutureTimestamp first)
         bytes memory report = abi.encode(uint8(7), abi.encode(legs, ps, uint32(block.timestamp)));
         vm.prank(forwarder);
-        vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.DeviationExceeded.selector, uint8(0), uint256(1e18), uint256(121e16)));
+        vm.expectRevert(SzipNavOracle.ZeroPrice.selector);
         oracle.onReport("", report);
     }
 
@@ -1356,7 +1364,7 @@ contract SzipNavOracleTest is Test {
         // also succeeds before the LP is even wired (ichiVault could be 0 on a fresh oracle).
         SzipNavOracle freshOracle = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
-            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE
         );
         freshOracle.setLpTwapWindow(0); // unconditionally valid
         assertEq(freshOracle.lpTwapWindow(), 0);
@@ -1512,10 +1520,18 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.freeValue(), gross - 50e18, "main = the rest");
     }
 
-    /// @notice For a SPLIT LP the per-Safe pro-rata floors twice vs once, so `committedValue()+freeValue()` is within
-    ///         ≤2 wei of `grossBasketValue()` (and never above it). Constructed to force the worst case: supply 7e18,
-    ///         reserves 1e18/1e18, both legs priced exactly $1, and L_safe=L_sidecar=4e18 — each per-Safe leg floors
-    ///         away 4/7 of a wei (×2 legs), and the two halves sum to exactly 2 wei below the combined floor.
+    /// @notice For a SPLIT LP the per-Safe pro-rata floors twice vs once, so `committedValue+freeValue` lands
+    ///         below `grossBasketValue`. Constructed to force the worst case AT AN xALPHA MARK OF EXACTLY $1.00:
+    ///         supply 7e18, reserves 1e18/1e18, both legs priced exactly $1, and L_safe=L_sidecar=4e18 — each per-Safe
+    ///         leg floors away 4/7 of a wei (×2 legs), and the two halves sum to exactly 2 wei below the combined floor.
+    ///         NOTE — the 2 wei in this test's NAME is NOT the general bound; it is this construction's $1-pinned
+    ///         value. The outer `_tokenValue` division (`amt * price / 1e18`) is lossless only at `price == 1e18`, so
+    ///         off $1 the doubled inner floor is amplified: the general tolerance is `floor(px/1e18) + 4` wei for
+    ///         `px = exchangeRate * alphaUSD / 1e18` (3 wei at $0.50, 4 at $1.20, 7 at $3.70, 101 at $100). The
+    ///         price-aware bound is the one fuzzed in `SzipNavOracleInvariant.t.sol::invariant_decompositionAdditivity`;
+    ///         this case stays deliberately pinned at $1 so the 2-wei figure is exact and deterministic.
+    ///         The `sum <= gross` direction asserted below is likewise construction-specific — see that invariant's
+    ///         docstring for the per-Safe-debt saturation case where it does not hold.
     function test_committed_plus_free_equals_gross_splitLp_within_2wei() public {
         MockICHIVault iv = new MockICHIVault();
         MockGauge g = new MockGauge();

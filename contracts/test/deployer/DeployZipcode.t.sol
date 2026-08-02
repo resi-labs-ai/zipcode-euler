@@ -91,7 +91,6 @@ abstract contract DeployZipcodeForkBase is ForkConfig {
         vm.setEnv("VALIDITY_WINDOW", vm.toString(uint256(31_536_000)));
         vm.setEnv("NAV_W", vm.toString(uint256(3600)));
         vm.setEnv("NAV_MAX_AGE", vm.toString(uint256(86_400)));
-        vm.setEnv("NAV_MAX_DEVIATION_BPS", vm.toString(uint256(1000)));
         vm.setEnv("TVL_CAP", vm.toString(uint256(100_000_000e18)));
         vm.setEnv("RECOVERY_FLOOR", vm.toString(uint256(0.5e18)));
         vm.setEnv("BORROW_CAP", vm.toString(uint256(1_000_000e6)));

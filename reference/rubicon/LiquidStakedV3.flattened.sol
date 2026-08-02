@@ -7,7 +7,7 @@
 // Compiler: v0.8.24+commit.e11b9ed9, evm: cancun. Audit: Hashlock (Oct 2025).
 // Why vendored: this is the proven-pattern source of truth for the 8x-01 SzAlpha rework — precompile
 // unit semantics (rao 9-dp), measured-delta minting, slippage params, lock/release CCIP topology.
-// See reference/rubicon/README.md + build/wires/8x-01-szALPHA-bridge.md (§Provenance).
+// See reference/rubicon/README.md + docs/wires/8x-01-szALPHA-bridge.md (§Provenance).
 
 // Sources flattened with hardhat v2.26.1 https://hardhat.org
 

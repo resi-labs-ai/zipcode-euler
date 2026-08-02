@@ -14,7 +14,9 @@
 ## Role
 The §11-B / §6.4 / §8.2 duration-squeeze freeze actuator: a zodiac-core `Module` (`is Module,
 ReentrancyGuard`) and the **first engine module enabled on BOTH Safes** — the free-equity (ragequit-target)
-**main** Safe and the non-ragequittable **juniorTrancheSidecar** Safe — because the freeze moves value across them. It is
+**main** Safe and the non-ragequittable **juniorTrancheSidecar** Safe. The freeze itself is a **RULE, not a
+vault** (ratified 2026-07-24): a value floor gated at the exits via `covered()`; `commit`/`release` are the
+dormant exception-only levers, and the sidecar sits empty in normal operation. It is
 the Duration-Bond **trigger B**, a pure LIQUIDITY squeeze: no realized loss, no xALPHA premium/slash, no
 markdown, no Exit-Gate/DefaultCoordinator coupling.
 

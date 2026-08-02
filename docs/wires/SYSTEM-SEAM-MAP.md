@@ -70,9 +70,9 @@ Each row is a joint between two components. **Enforcement** column: `on-chain` (
 | S5 | `DefaultCoordinator` → `SzipNavOracle.provision` | DC guarantees the provision bound on-chain (down by `atRisk·(1−floor)`, heal by receipts, floored at 0) [loss E-1]; NAV gates the writer to DC-only [demo X-1] | on-chain (both sides) |
 | S6 | `DefaultCoordinator` ↔ `LienXAlphaEscrow` | escrow is `onlyCoordinator`; bonds flow only to originator/treasury/engine — destination integrity, absolute only once sinks are immutable [loss X-2] | build-phase |
 | S7 | counted Safes / LP venues → `SzipNavOracle.grossBasketValue` | NAV prices raw `balanceOf` + spot LP reserves; a direct **donation** into a counted Safe moves NAV with no deposit — the Gate's denominator is the only tie-back [demo I-1/I-2] | off-chain (design) |
-| S8 | `SzipNavOracle` → `ExitGate` | bracket fail-closed: `navEntry` reverts on stale (pause issuance); Gate mints down-rounded and is the **first-depositor guard** NAV delegates | on-chain + Gate-discipline |
-| S9 | `SzipNavOracle` → `DurationFreezeModule` | coverage floor = `committedValue()+pathLockedLpEquity()`; `release` cannot drop below it; LP counted in place (the demo notes a ≤2-wei split-LP drift) [demo I-4] | on-chain |
-| S10 | `SzipNavOracle` → `SzipBuyBurnModule` | the buy-and-burn bid is priced at `navExit` and fenced to `oldestRequiredLegTs` (`validTo`) — no stale-mark bid; since `7551f5b` the fence also honors the RATE ORACLE's own `maxStaleness`, so a bid can never outlive the rate that priced it (closed the 18h stale-live window) | on-chain |
+| S8 | `SzipNavOracle` → `ExitGate` | bracket fail-closed: `navEntry()` reverts on stale (pause issuance); Gate mints down-rounded and is the **first-depositor guard** NAV delegates | on-chain + Gate-discipline |
+| S9 | `SzipNavOracle` → `DurationFreezeModule` | coverage floor = `committedValue+pathLockedLpEquity`; `release` cannot drop below it; LP counted in place (the demo notes a split-LP drift of up to `floor(px/1e18)+4` wei — ≤2 only at a $1.00 xALPHA mark) [demo I-4] | on-chain |
+| S10 | `SzipNavOracle` → `SzipBuyBurnModule` | the buy-and-burn bid is priced at `navExit()` and fenced to `oldestRequiredLegTs()` (`validTo`) — no stale-mark bid; since `7551f5b` the fence also honors the RATE ORACLE's own `maxStaleness()`, so a bid can never outlive the rate that priced it (closed the 18h stale-live window) | on-chain |
 | S11 | `WarehouseAdminModule` → Roles scope → Warehouse Safe → `EulerEarn` | the **real** param-pinning is the Roles **scope config**, not the module bytecode [warehouse X-1]; `warehouseSafe` must equal the modifier's `avatar` [warehouse X-2] | off-chain scope + on-chain* |
 | S12 | `EulerEarn` shares → senior NAV (`SeniorNavAggregator` via `ISeniorPool`) | senior par read is donation-immune (`convertToAssets`/`maxWithdraw`, never `balanceOf(pool)`) — every venue must satisfy this contract | on-chain (interface contract) |
 | S13 | engine module fleet → shared engine/main Safe(s) | many Zodiac modules `enableModule`'d on shared Safes; the **module set** is the access control and it spans contracts | on-chain (Safe) |
@@ -130,9 +130,19 @@ raw Safe balanceOf (donation seam S7) ──────────────
                                                                      committed+LP ──▶ DurationFreeze floor (S9)
 ```
 
-One contaminated price input fans out to **four** value sinks. The defenses are layered: fair-LP math (LP), the
-deviation band + freshness (CRE legs), the lock/release topology (rate), the DC bound (provision), and the
+One contaminated price input fans out to **four** value sinks. The defenses are layered: fair-LP math (LP),
+freshness + shape/monotonicity guards (CRE legs), the lock/release topology (rate), the DC bound (provision), and the
 spot/TWAP bracket (everything). The only input with no on-chain bound is the raw-balance donation seam (S7).
+
+**Changed 2026-07-31 — the CRE-leg layer is no longer a magnitude defense.** The `maxDeviationBps` deviation band
+was removed from `SzipNavOracle` and `SzipNavOracleDemoVAMM`. A per-push band on a
+SPOT feed rejects the truth — an 11% real move cannot be published against a 10% band — and the CRE producer's
+`bandClamp` workaround pushed the band EDGE, i.e. a knowingly-wrong number, silently. Magnitude is now guarded at the
+**source**: the CRE publishes a TWAP of the subnet-46 pool reserves, so an implausible jump never arises. It is
+**not** replaced by another on-chain check. What survives on the leg-push path is shape, timing, and identity
+(`InvalidReportType`, `LengthMismatch`, `FutureTimestamp`, `InvalidLeg`, `ZeroPrice`, `StaleReport`, Forwarder-only +
+author/workflow identity). `StaleReport` (strictly-newer) is correspondingly *more* load-bearing — it catches the
+same-price backdated replay a magnitude check never could.
 
 ---
 
@@ -144,24 +154,41 @@ spot/TWAP bracket (everything). The only input with no on-chain bound is the raw
 | Cross-chain conservation = deploy choice | S2 | item-10 deploy wires the lock/release pool on 964 + asserts decimals==18 |
 | Donation into a counted Safe moves NAV | S7 | by design — the Gate's denominator + round-down absorb it; verify the Gate side |
 | Build-phase wiring re-pointable | S6, S11, S13 | the deferred pre-prod **immutable re-freeze** (process step) |
+| `juniorTrancheEngine == juniorTrancheSafe` is a deploy convention, not an on-chain invariant (seam-class 3) | S6, S13 | one equality check in `setJuniorTrancheEngine` + a deploy assert |
 | Roles scope is the real warehouse boundary | S11 | the deployed scope tree (audit it directly; parity now tested) |
-| CRE rate job: reverting read = no push, never "push 0" | S14 | the `cre/szalpha-rate` job is written WITH this in its spec (`SN46-BRIDGE-MVP-V2.md` §B5) + a job test |
-| Hotkey-drift DETECTION latency (the halt is on-chain; the alarm is not) | S1 | Phase C monitoring (`SN46-BRIDGE-MVP-V2.md`): 4 alarms + `HotkeySwappedOnSubnet` subscription, before the second depositor |
-| `SzipNavOracle` consumer-side breaker on a well-formed wrong-VALUE rate push | S3, S4 | recorded pre-lending gate (MVP-V2 next-steps #7) — deferred with the rate-oracle wiring |
+| CRE rate job: reverting read = no push, never "push 0" | S14 | **BUILT 2026-08-02, NOT DEPLOYED.** `cre/szalpha-rate` enforces it: a reverting `exchangeRate()` read returns a loud errored run and never reaches the encode path, pinned by `TestSimRevertingReadNoPush`. Closes on deploy of the job + the Base `SzAlphaRateOracle`. |
+| Hotkey-drift DETECTION latency (the halt is on-chain; the alarm is not) | S1 | **BUILT 2026-08-02, NOT RUNNING.** `cre/szalpha-watch` — the 4 alarms (a reverting rate classified as alarm-1-equivalent, not a script error) + `hotkey_swap_watch.py` for the `HotkeySwappedOnSubnet` subscription (untested against the live chain). Closes when it runs against the production wrapper with a real paging channel — required before the second depositor. |
+| The xALPHA rate leg is unbanded on both sides: `SzAlphaRateOracle` publishes what it is given, and `SzipNavOracle` multiplies it in without a consumer-side bound | S3, S4 | a one-directional TWAP on the rate leg, consuming `min(spot, twap)` so a downward move still lands instantly. Ratified 2026-08-02, not yet built |
+| `twapNavPerShare()` falls back to `spot` when the accumulator has been idle for `W` | S3, S4 | nothing on-chain. `poke()` is permissionless and books the current spot across the whole gap, so a read-path guard does not close it. Mitigated by keeper liveness, which is an operational assumption. Mechanics and the reverted fix attempt are recorded in the `twapNavPerShare` NatSpec |
+| No minimum wall-clock interval between leg pushes | S1, S4 | ruled 2026-08-02: no change. Push frequency only matters against a hostile publisher, which is out of scope per the same ruling |
 
 ---
 
 ## 7. Verification next steps (ordered)
 
-1. **X-Ray `SzipNavOracle`** — the hub; not yet done. Confirm: the donation seam (S7) bound on the Gate side, the
-   provision writer gate (S5), the LP/debt accounting, the bracket + freshness logic. Highest leverage in the repo.
+1. ~~**X-Ray `SzipNavOracle`**~~ — **DONE 2026-07-30**, verdict ADEQUATE
+   (`contracts/src/supply/x-ray/SzipNavOracle.md`). All four named items are covered there: the donation seam (S7)
+   on the Gate side, the provision writer gate (S5, I-9), the LP/debt accounting (`pathLockedLpEquity()`, I-16
+   decomposition identity), and the bracket + freshness logic (I-1, I-5). The **stateful fuzz invariant** on
+   `spotNavPerShare()` conservation once listed here as remaining hardening now **exists** —
+   `contracts/test/supply/SzipNavOracleInvariant.t.sol`, a 10-action `targetContract` handler carrying 7
+   `invariant_*` properties (incl. `invariant_spotNavConservation`) plus 1 deterministic pin, green at 12,800 calls
+   per invariant with 0 reverts over an unconstrained `[0.01e18, 100e18]` price walk. What remains on the keystone
+   is the external audit.
 2. **Audit the deployed Roles scope tree** (S11) — the warehouse's real control lives off-chain; the bytecode is proven.
-3. **Cross-module integration / invariant tests** for one full flow (deposit → LP → harvest → loss → exit) — the
-   cross-contract value conservation (the §2 edges) is currently proven only node-by-node, never end-to-end.
+3. ~~**Cross-module integration / invariant tests** for one full flow~~ — **DONE 2026-08-02.** The deliverable was
+   one fork harness wiring the REAL `SzipNavOracle` into `RecycleModule`, `DefaultCoordinator`, `LienXAlphaEscrow`,
+   `DurationFreezeModule` and `ExerciseModule` over relaying Safes, replacing mocks that structurally could not
+   express cross-module value conservation. It exists and is green. Eight seams were attacked and recorded sound;
+   the open items it produced are tracked in the internal work log.
 4. **Confirm the pre-prod immutable re-freeze** is scripted (S6/S11/S13) — the single process step that closes the
    protocol-wide build-phase residual.
-5. **Aggregate-CRE-compromise review** (S4) — model all engine + loss + warehouse reports firing correlated under
-   one compromised workflow; confirm the union is still bounded to grief.
+5. ~~**Aggregate-CRE-compromise review** (S4)~~ — **CLOSED 2026-08-02 BY RULING, not by test.** A publisher that
+   lies is out of scope: it already controls provisions, every NAV mark, and the senior draw, so the protocol is
+   lost before any single lane matters and bounding one more buys nothing. `WarehouseAdminModule` was separately
+   confirmed to route no value to a publisher-named address. The follow-on multi-receiver adversarial harness that
+   this item used to require is **cancelled** under the same ruling. Every residual still listed above is reachable
+   with an honest publisher.
 
 ## Provenance
 

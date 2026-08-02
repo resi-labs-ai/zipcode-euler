@@ -97,7 +97,7 @@ contract MockFeeERC20 {
 
 /// @notice Exit Gate + szipUSD — Base-mainnet fork test against the LIVE Baal substrate (8-B1 `_summon`) + the
 /// real `SzipNavOracle`, with mock basket assets. Proves: NAV-proportional issuance, the two-token invariant
-/// (`szipUSD.totalSupply == loot.balanceOf(gate)`), the manager-grant gate (8-B1 F4.2 obligation), windowed
+/// (`szipUSD.totalSupply() == loot.balanceOf(gate)`), the manager-grant gate (8-B1 F4.2 obligation), windowed
 /// ragequit exit paid in zipUSD at navExit (partial-fill = the freeze), the paired buy-and-burn, and zero Shares.
 contract ExitGateTest is ForkConfig, SummonSubstrate {
     uint256 internal constant SALT = uint256(keccak256("zipcode.exitgate.test.salt.a"));
@@ -153,8 +153,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
             sub.juniorTrancheSafe,
             sub.juniorTrancheSidecar,
             W,
-            MAX_AGE,
-            DEV_BPS
+            MAX_AGE
         );
 
         // 4. Gate + szipUSD (deploy-order circularity: Gate first, szipUSD takes the Gate).
@@ -331,7 +330,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         vm.stopPrank();
         SzipNavOracle o2 = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx), address(ohydx),
-            s2.juniorTrancheSafe, s2.juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
+            s2.juniorTrancheSafe, s2.juniorTrancheSidecar, W, MAX_AGE
         );
         ExitGate g2 = new ExitGate(s2.baal, address(o2), address(zip), address(xa), TVL_CAP);
         SzipUSD sz2 = new SzipUSD(address(g2));
@@ -584,7 +583,7 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         // Fresh oracle whose zipUSD leg IS the FoT token (the oracle's legs are immutable), over the same Safes.
         SzipNavOracle o3 = new SzipNavOracle(
             forwarder, address(fot), address(usdc), address(xa), address(hydx), address(ohydx),
-            sub.juniorTrancheSafe, sub.juniorTrancheSidecar, W, MAX_AGE, DEV_BPS
+            sub.juniorTrancheSafe, sub.juniorTrancheSidecar, W, MAX_AGE
         );
         ExitGate g3 = new ExitGate(sub.baal, address(o3), address(fot), address(xa), TVL_CAP);
         SzipUSD sz3 = new SzipUSD(address(g3));

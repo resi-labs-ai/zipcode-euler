@@ -41,7 +41,7 @@ prod oracle + modules stay wired and untouched.
 
 ## Wiring — internal (the diffs from prod; everything else per 8-B4 / 8-B6)
 **`SzipNavOracleDemoVAMM`** — same ctor as `SzipNavOracle` `(forwarder, zipUSD, usdc, xAlpha, hydx, oHydx, juniorTrancheSafe,
-juniorTrancheSidecar, W, maxAge, maxDeviationBps)`. The LP block in `grossBasketValue()` / `_grossValueOf(safe)` reads
+juniorTrancheSidecar, W, maxAge)`. The LP block in `grossBasketValue()` / `_grossValueOf(safe)` reads
 `IVammPair(ichiVault).getReserves()` (not `IICHIVault.getTotalAmounts()`), then the same pro-rata
 `amt = reserve * heldShares / supplyLp` and `_tokenValue(token, amt)`. `_legPriceOfToken` adds:
 `token == hydx → legCache[LEG_HYDX_USD].price` (18-dp $/HYDX), `token == usdc → 1e30` (folds the 6→18dp scaling into
@@ -61,19 +61,19 @@ then `_exec(pair, IVammPair.mint(juniorTrancheEngine))`, decode `shares`, `share
   `setExpectedWorkflowName "zip-sharefeeds"`, CTR-16 — the `workflowId` pin is dropped), so the existing reportType-7 HYDX leg push feeds `legCache[LEG_HYDX_USD]` (used to
   price the LP's HYDX reserve). It also reads the szipUSD `shareToken` + `juniorTrancheEngine` (= the prod ones).
 - **Demo oracle ← `SzAlphaRateOracle` (REQUIRED — build-discovered).** `setXAlphaRateOracle(0x7251A305…)` MUST be wired
-  or `grossBasketValue` reverts on the juniorTrancheSidecar's xALPHA leg (the fallback reads the mock mirror, which has no
+  or `grossBasketValue()` reverts on the juniorTrancheSidecar's xALPHA leg (the fallback reads the mock mirror, which has no
   `exchangeRate()`). Folded into the deploy script.
 - **Demo LP module → enabled on the existing engine Safe** via `enableModule` (the team-owner `execTransaction` path,
   identical to how the prod modules are enabled). operator = `creOperator`, owner = team (so the team can re-point /
   retire the showcase without a timelock dance).
 - **No overlap with the prod oracle.** The vAMM LP token + gauge are DIFFERENT addresses than the prod oracle's wired
-  `ichiVault` (WETH/USDC ICHI) + gauge — so the showcase position is **invisible to the prod oracle** (`grossBasketValue`
+  `ichiVault` (WETH/USDC ICHI) + gauge — so the showcase position is **invisible to the prod oracle** (`grossBasketValue()`
   unaffected, no `UnknownLpToken`). No isolation needed because the pair differs from prod's. (Contrast: putting the
   prod oracle's *own* WETH/USDC ICHI LP in the Safe WOULD brick it — that's the SP-06 trap; the vAMM pair avoids it.)
 
 ## Deploy facts (`DeployShowcaseVAMM.s.sol`, run after the main deploy, as the team)
-- `new SzipNavOracleDemoVAMM(...)` (same ctor/params as the live prod oracle: `W=3600`, `maxAge=86400`,
-  `maxDeviationBps=1000`); then `setShareToken` / `setJuniorTrancheEngine` / `setLpPosition(pair, gauge)` /
+- `new SzipNavOracleDemoVAMM(...)` (same ctor/params as the live prod oracle: `W=3600`, `maxAge=86400` — the
+  `maxDeviationBps` arg is gone as of 2026-07-31,); then `setShareToken` / `setJuniorTrancheEngine` / `setLpPosition(pair, gauge)` /
   `setXAlphaRateOracle(SzAlphaRateOracle)` / `setExpectedAuthor` / `setExpectedWorkflowName` (CTR-16).
 - `_cloneModule(new LpStrategyModuleDemoVAMM(), setUp(team, juniorTrancheSafe, op, pair, gauge), juniorTrancheSafe)` via the Zodiac
   `ModuleProxyFactory` (distinct salt), then `enableModule` on the main Safe via the team's 1-of-n pre-validated

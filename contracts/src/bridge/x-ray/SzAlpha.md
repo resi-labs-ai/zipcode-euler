@@ -1,6 +1,25 @@
 # X-Ray — `SzAlpha.sol` (single-contract, test-connected)
 
-> SzAlpha | 256 nSLOC | `main`, working tree | Foundry | 31/07/26 | **Verdict: ADEQUATE**
+> SzAlpha | 277 nSLOC | `main`, working tree | Foundry | 31/07/26 (evening) | **Verdict: ADEQUATE**
+
+> **Update 2026-07-31 evening (the mainnet drill + `migrateTo`):**
+> - **`migrateTo(newHotkey)`** — the third recovery lever: a VOLUNTARY validator switch (`retarget`
+>   refuses a lower-stake target by design; `migrateFrom` is inbound-only, so the pair could not express
+>   "move because we prefer the other validator"). Full-stake `moveStake`, destination-conservation-checked,
+>   then re-point. Gap surfaced by the live drill, not review.
+> - **`MOVE_ROUNDING_RAO = 1`** — the live 964 pallet credits `moveStake` transfers exactly 1 rao short
+>   (integer rounding; measured on mainnet when the strict conservation check FAIL-CLOSED a real
+>   `migrateTo`). Both migrate checks tolerate exactly 1 rao; the mock now shaves 1 rao too
+>   (runtime-faithful), so every happy-path test exercises the tolerance.
+> - **Mainnet execution record:** deposit/UUPS-upgrade(×2)/`migrateTo`/floor-deposit/redeem/`retarget`-refusal
+>   all executed against the real 964 runtime (drill instance `0xe5a1Af…`, see `SN46-BRIDGE-MVP-V2.md`
+>   drill record). The `moveStake` recovery path is no longer merely tested — it has run in production
+>   conditions.
+> - **`RubiconIncidentReplay.t.sol`** — the 12 Jun 2026 xSN9 timeline replayed step-for-step as a
+>   permanent regression (fake-par → revert; 56x window mint → refused; freeze → exit arithmetic-gated;
+>   26-day recovery → one exact-restore `retarget`).
+> - Octane-7 pin extended: all three recovery levers now run under a bricked `0x808`.
+> - Suites: SzAlphaBridgeTest 65; full bridge run **95/95**.
 
 Dedicated single-contract X-Ray for `contracts/src/bridge/SzAlpha.sol`, superseding its slice of the bundled
 `bridge/x-ray/x-ray.md`. Connected to `test/bridge/SzAlphaBridge.t.sol` (mocked precompiles + mocked CCIP).
@@ -8,7 +27,7 @@ The other four bridge contracts (rate oracle = own pass; the 3 thin pool/mirror 
 out of scope here.
 
 > **Update 2026-07-31 (Phase 0, `bridge/SN46-BRIDGE-MVP-V2.md` — the Rubicon hotkey-drift response,
-> uncommitted working tree):** four deltas + 11 tests, derived from `bridge/rubicon-incident-2026-06-12.md`
+> uncommitted working tree):** four deltas + 11 tests, derived from `audit/reviewed/rubicon-incident-2026-06-12.md`
 > and the Octane dispositions. **SzAlphaBridge suite 63 unit + 2 invariant + 1 fork + 2 handoff green; full
 > bridge run 91/91.**
 > - **`BackingVanished` guard** (`deposit:211`, `exchangeRate:325`): `supply != 0 && stake == 0` — the exact
@@ -55,7 +74,8 @@ burned* on 964, so `exchangeRate() = stake/supply` stays truthful cross-chain �
 | `setCCIPAdmin(newAdmin)` | `onlyCcipAdmin` | — | rotate registrar |
 | `pause()` / `unpause()` | `onlyOwner` (Timelock) | — | pauses deposit only |
 | `retarget(newHotkey)` | `onlyOwner` (Timelock) | — | drift recovery: pointer update, no stake movement; `RetargetLosesStake` guard |
-| `migrateFrom(sourceHotkey)` | `onlyOwner` (Timelock) | — | consolidate stranded stake via `moveStake`, netuid-pinned both sides; `MigrationLostStake` conservation check |
+| `migrateFrom(sourceHotkey)` | `onlyOwner` (Timelock) | — | consolidate stranded stake via `moveStake`, netuid-pinned both sides; `MigrationLostStake` conservation check (1-rao tolerance) |
+| `migrateTo(newHotkey)` | `onlyOwner` (Timelock) | — | VOLUNTARY switch: full-stake `moveStake` + re-point; destination conservation check (1-rao tolerance); mainnet-executed |
 | `_authorizeUpgrade(impl)` | `onlyOwner` (Timelock) | — | UUPS; empty body = full impl swap |
 | `initialize(...)` | `initializer` | — | one-time; caches `wrapperColdkey` |
 
@@ -66,7 +86,7 @@ burned* on 964, so `exchangeRate() = stake/supply` stays truthful cross-chain �
 | I-1 | `exchangeRate = (stake18+1)·1e18/(supply+1)` (virtual-offset 1/1); REVERTS `BackingVanished` at `supply>0 && stake==0` (genesis still serves 1:1) | Yes | `test_rateRisesWithRewards`, `test_firstDeposit_oneToOne_noDivByZero`, **`test_backingVanished_exchangeRateRevertsButGenesisServes`**, **`invariant_rateNeverBelowGenesisAbsentSlash`** |
 | I-2 | shares minted/burned only against the measured stake delta; NO mint in the vanished state | Yes | `test_deposit_offParPrice_mintsMeasuredDelta`, `test_redeem_offParPrice_paysMeasuredTao`, **`test_backingVanished_depositReverts`**, **`invariant_supplyEqualsNetMintedBurned`** |
 | I-4 | `netuid ≤ uint16.max` (one write site, init) | Yes | `test_initRejectsNetuidOverUint16` |
-| I-5 | hotkey repoint conserves stake: `retarget` requires `stakeAtNew ≥ stakeAtCurrent`; `migrateFrom` requires `after ≥ before + amount` | Yes | **`test_retarget_recoversFromDrift`** (exact rate restore), `test_retarget_losesStakeReverts`, `test_migrateFrom_consolidatesStrandedStake`, `test_migrateFrom_lostStakeReverts`, `test_retargetAndMigrate_onlyOwner` |
+| I-5 | hotkey repoint conserves stake: `retarget` requires `stakeAtNew ≥ stakeAtCurrent`; both migrates require destination `after + 1 rao ≥ before + amount` (the measured pallet rounding, nothing more) | Yes | **`test_retarget_recoversFromDrift`** (exact rate restore), `test_retarget_losesStakeReverts`, `test_migrateFrom_consolidatesStrandedStake`, `test_migrateFrom_lostStakeReverts`, **`test_migrateTo_switchesValidatorWithFullStake`**, `test_migrateTo_lostStakeReverts_andEmptyReverts`, `test_retargetAndMigrate_onlyOwner`, + the mainnet drill (real `moveStake`, real 1-rao shave) |
 | I-6 | `redeemTo` burns from the caller only; receiver is a payout redirect, never a share authority | Yes | `test_redeemTo_paysNamedReceiver`, `test_redeemTo_rejectsZeroAndNonPayableReceiver` |
 | I-7 | state paths never read the `0x808` quote precompile (Octane-7 stays not-inherited) | Yes | **`test_statePaths_neverTouchAlphaQuotePrecompile`** (round trip with `0x808` bricked; previews fail closed) |
 | X-1 | precompile **magnitude** is trusted (only sign guarded) — now characterized BOTH directions | **No** | **`test_lyingPrecompile_overReportInflatesShares`** (2× over-report → 2× issuance) + **the drift sim** (under-report to ZERO → `BackingVanished`, the direction that fired in production at Rubicon) |
@@ -91,7 +111,7 @@ burned* on 964, so `exchangeRate() = stake/supply` stays truthful cross-chain �
 | G-16 PrecompileCallFailed | `test_g16_precompileCallFailed_onEmptyStakingCode` |
 | G-17 AmountOverflowsUint64 | `test_g17_amountOverflowsUint64_onPreview` |
 | G-19 BackingVanished (deposit + exchangeRate) | `test_backingVanished_depositReverts`, `test_backingVanished_exchangeRateRevertsButGenesisServes` |
-| G-20 RetargetLosesStake / MigrationLostStake / migrate-empty-source | `test_retarget_losesStakeReverts`, `test_migrateFrom_lostStakeReverts`, `test_migrateFrom_consolidatesStrandedStake` (ZeroAmount re-migrate) |
+| G-20 RetargetLosesStake / MigrationLostStake / migrate-empty-source | `test_retarget_losesStakeReverts`, `test_migrateFrom_lostStakeReverts`, `test_migrateTo_lostStakeReverts_andEmptyReverts`, `test_migrateFrom_consolidatesStrandedStake` (ZeroAmount re-migrate); RetargetLosesStake also proven LIVE (mainnet drill) |
 | G-21 redeemTo receiver ≠ 0 / payable | `test_redeemTo_rejectsZeroAndNonPayableReceiver` |
 
 Also covered: reentrancy (`test_reentrancyBlocked`), pause asymmetry (`test_pauseBlocksDepositButNotRedeem`,
@@ -146,9 +166,10 @@ off-chain residuals — drift-detection latency (Phase C monitoring) and the CRE
 requirement (MVP-V2 §B5), neither closable in this contract.
 
 **Structural facts:**
-1. 256 nSLOC, UUPS-upgradeable; 4 permissionless entry points (`deposit`/`redeem`/`redeemTo`/`receive`); 4 owner functions (pause/unpause/retarget/migrateFrom) + UUPS.
-2. Tests: 63 unit + 1 fuzz + 2 invariant in the SzAlpha suites; full bridge run 91/91 green.
-3. X-1 characterized both directions: over-report → proportional over-issuance; under-report-to-zero → `BackingVanished` halt, `retarget` restores the exact rate.
-4. `validatorHotkey` is a timelock-repointable pointer with conservation guards; `wrapperColdkey` stays immutable; `ccipAdmin` is a separate registrar role.
+1. 277 nSLOC, UUPS-upgradeable; 4 permissionless entry points (`deposit`/`redeem`/`redeemTo`/`receive`); 5 owner functions (pause/unpause/retarget/migrateFrom/migrateTo) + UUPS.
+2. Tests: 65 unit + 1 fuzz + 2 invariant in the SzAlpha suites + the Rubicon incident replay; full bridge run 95/95 green.
+3. X-1 characterized both directions: over-report → proportional over-issuance; under-report-to-zero → `BackingVanished` halt, `retarget` restores the exact rate — and the full 12 Jun 2026 timeline is a standing regression (`RubiconIncidentReplay.t.sol`).
+4. `validatorHotkey` is a timelock-repointable pointer with conservation guards (drift recovery AND voluntary switch); `wrapperColdkey` stays immutable; `ccipAdmin` is a separate registrar role.
 5. Fail-closed rate: reverts on precompile outage AND on vanished backing — the CRE-push failure + Base `fresh()` gate form the cross-chain breaker (no deviation band).
-6. Coverage % still uninstrumentable (project-wide stack-too-deep) — test *existence* confirmed by scan + run.
+6. The `moveStake` recovery path has EXECUTED on 964 mainnet (2026-07-31 drill), including surviving the pallet's measured 1-rao rounding (`MOVE_ROUNDING_RAO`).
+7. Coverage % still uninstrumentable (project-wide stack-too-deep) — test *existence* confirmed by scan + run.

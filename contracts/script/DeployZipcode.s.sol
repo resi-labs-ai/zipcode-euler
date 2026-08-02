@@ -133,7 +133,6 @@ contract DeployZipcode is SummonSubstrate {
             // loop pauses ~1 window (the ratified halt-over-degrade posture) — no trusted spot-mark fallback.
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV pushed-leg staleness
-        uint256 maxDeviationBps; // NAV per-push deviation circuit-break
         uint256 tvlCap; // ExitGate TVL cap
         uint256 recoveryFloor; // DefaultCoordinator recovery floor (< 1e18)
         uint256 borrowCap; // FarmUtilityLoopModule borrow cap
@@ -337,8 +336,7 @@ contract DeployZipcode is SummonSubstrate {
             d.sub.juniorTrancheSafe,
             d.sub.juniorTrancheSidecar,
             i.W,
-            i.maxAge,
-            i.maxDeviationBps
+            i.maxAge
         );
 
         // 15-16. ExitGate + SzipUSD (Gate is SzipUSD's owner-deployer); wire the share token both ways.
@@ -618,6 +616,13 @@ contract DeployZipcode is SummonSubstrate {
         d.coord.transferOwnership(tl);
         d.siloRegistry.transferOwnership(tl); // CTR-02 catalog → Timelock (slot-accounting `controller` stays the controller)
         d.seniorNav.transferOwnership(tl); // CTR-05 senior-solvency aggregator → Timelock
+        // The zipUSD ESynth. ADDED 2026-08-02 — it was MISSING from this block while thirteen siblings were in it.
+        // `ESynth.setCapacity(minter, cap)` is `onlyOwner`, and `mint()` is open to any address holding capacity, so
+        // whoever owns the synth can authorize itself and mint UNBOUNDED senior dollars against the USDC backing.
+        // Left unset, that power stays with this script's broadcaster forever — the single most dangerous key in the
+        // system, retained by the party the handoff exists to remove. Capacity for the deposit module is granted
+        // earlier in P4 (step 12) while the broadcaster still owns it, so this transfer is ordering-safe.
+        d.zipUSD.transferOwnership(tl);
         // ZipDepositModule has NO ownable surface — its sole admin (the set-once `setGate`) is the IMMUTABLE
         // `deployer` (this script). No transfer path; a known build-phase limitation (re-deploy to re-home, or the
         // Timelock simply never needs it since setGate is re-settable only by the immutable deployer). Not transferred.
@@ -729,7 +734,6 @@ contract DeployZipcode is SummonSubstrate {
         if (i.lpTwapWindow == 0) revert LpTwapWindowZero();
         i.W = uint32(vm.envUint("NAV_W"));
         i.maxAge = vm.envUint("NAV_MAX_AGE");
-        i.maxDeviationBps = vm.envUint("NAV_MAX_DEVIATION_BPS");
         i.tvlCap = vm.envUint("TVL_CAP");
         i.recoveryFloor = vm.envUint("RECOVERY_FLOOR");
         i.borrowCap = vm.envUint("BORROW_CAP");

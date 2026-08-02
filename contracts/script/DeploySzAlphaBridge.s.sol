@@ -203,11 +203,24 @@ contract DeploySzAlphaBridge is Script {
         // (Chainlink Ownable2Step keeps the pending owner private — no on-chain getter to assert here;
         // the 2-step handoff is verified behaviorally in the fork test via acceptOwnership.)
         // Hand the mirror's mint-control + ccipAdmin view to the timelock; revoke the deployer. The mirror's
-        // constructor granted DEFAULT_ADMIN_ROLE + ccipAdmin to THIS contract (the `new SzAlphaMirror`
-        // caller), so the revoke target is `address(this)`, not the external caller.
+        // constructor granted DEFAULT_ADMIN_ROLE + ccipAdmin to its DEPLOY CONTEXT — `address(this)` when
+        // this function is invoked directly (the fork tests), but the BROADCASTER EOA under
+        // `forge script --broadcast` (state-changing frames run AS the broadcaster / tx.origin, so this
+        // contract never holds the role). The old unconditional `revokeRole(…, address(this))` silently
+        // no-opped under broadcast and LEAKED admin to the EOA — foundry's guard caught it in the Phase-B
+        // deploy (executed as cast steps instead). Revoke whichever context holds it, and PROVE both clean.
+        bytes32 adminRole = token.DEFAULT_ADMIN_ROLE();
         token.setCCIPAdmin(timelock);
-        token.grantRole(token.DEFAULT_ADMIN_ROLE(), timelock);
-        token.revokeRole(token.DEFAULT_ADMIN_ROLE(), address(this));
+        token.grantRole(adminRole, timelock);
+        if (address(this) != timelock && token.hasRole(adminRole, address(this))) {
+            token.revokeRole(adminRole, address(this));
+        }
+        if (tx.origin != timelock && token.hasRole(adminRole, tx.origin)) {
+            token.revokeRole(adminRole, tx.origin);
+        }
+        require(address(this) == timelock || !token.hasRole(adminRole, address(this)), "script admin not revoked");
+        require(tx.origin == timelock || !token.hasRole(adminRole, tx.origin), "broadcaster admin not revoked");
+        require(token.hasRole(adminRole, timelock), "timelock admin missing");
     }
 
     // ================================================================

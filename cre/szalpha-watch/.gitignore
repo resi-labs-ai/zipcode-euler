@@ -1,0 +1,9 @@
+# Built artifacts
+/cre-szalpha-watch
+/szalpha-watch
+__pycache__/
+*.pyc
+
+# Local secrets / env (never commit)
+/.env
+secrets.yaml

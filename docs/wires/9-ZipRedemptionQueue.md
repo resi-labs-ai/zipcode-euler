@@ -16,13 +16,13 @@
 > surface were **removed**. With `requestRedeem` gated to a single requester (the rq Safe, C4), pro-rata computed a
 > fraction over a set of size one — dead code. What remains is the **par-burn core**: escrow → `min(available,
 > pending)` fill + burn → claim at par. Par redemption is treasury-internal plumbing (it refills the CoW buy-burn
-> bid via the rq Safe), not a holder-facing exit — see `build/wires/8-B14-SzipBuyBurnModule.md` for the buy-burn side.
+> bid via the rq Safe), not a holder-facing exit — see `docs/wires/8-B14-SzipBuyBurnModule.md` for the buy-burn side.
 
 ## Role
 The **SENIOR par-burn sink**: **zipUSD → USDC at strict par ($1)** through an **on-demand settle**. The rq Safe
 escrows its own idle basket zipUSD, the CRE delivers USDC (warehouse REDEEM → REPAY), `settleEpoch` burns the
 zipUSD against that USDC at par, and the rq Safe claims it back to fund the CoW buy-burn bid. A real holder
-**never redeems here** — they exit by selling szipUSD on CoW (`build/wires/8-B14-SzipBuyBurnModule.md`). It is the inverse of the
+**never redeems here** — they exit by selling szipUSD on CoW (`docs/wires/8-B14-SzipBuyBurnModule.md`). It is the inverse of the
 WOOF-06 zap's `deposit` (mint zipUSD against USDC parked in the warehouse). It is **NOT** the junior Exit Gate
 (§6.4) — different instrument (zipUSD = the senior dollar, not the szipUSD junior share), different exit,
 different pricing (**par, NOT NAV**).

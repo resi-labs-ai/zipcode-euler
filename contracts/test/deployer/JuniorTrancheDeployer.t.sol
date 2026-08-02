@@ -310,7 +310,6 @@ contract JuniorTrancheDeployerTest is ForkConfig {
             adminSafe: adminSafe,
             W: 4 hours,
             maxAge: 1 hours,
-            maxDeviationBps: 1000,
             tvlCap: 10_000_000e18,
             dBps: 50,
             buybackCap: 1_000_000e18,

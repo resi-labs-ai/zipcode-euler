@@ -17,6 +17,7 @@ import {SzAlphaMirror} from "../../src/bridge/SzAlphaMirror.sol";
 import {SzAlphaTokenPool} from "../../src/bridge/SzAlphaTokenPool.sol";
 import {SzAlphaLockReleasePool} from "../../src/bridge/SzAlphaLockReleasePool.sol";
 import {DeploySzAlphaBridge} from "../../script/DeploySzAlphaBridge.s.sol";
+import {DeploySzAlphaTestnet} from "../../script/DeploySzAlphaTestnet.s.sol";
 import {
     MockSubtensorStaking,
     MockAlphaPrecompile,
@@ -969,7 +970,8 @@ contract SzAlphaBridgeTest is Test {
         emit SzAlpha.StakeMigrated(HOTKEY2, HOTKEY, 3 * 1e9);
         token.migrateFrom(HOTKEY2);
 
-        assertEq(token.totalStaked(), 8 ether, "stranded stake consolidated onto the configured key");
+        // 1e9 wei = the 1-rao runtime rounding shave on moveStake (mock is runtime-faithful).
+        assertApproxEqAbs(token.totalStaked(), 8 ether, 1e9, "stranded stake consolidated onto the configured key");
 
         // Nothing left at the source: a second migrate is a ZeroAmount revert, not a no-op.
         vm.prank(timelock);
@@ -990,7 +992,7 @@ contract SzAlphaBridgeTest is Test {
         token.migrateFrom(HOTKEY2);
     }
 
-    // --- 0.3e: both recovery functions are timelock-only ---
+    // --- 0.3e: all three recovery functions are timelock-only ---
     function test_retargetAndMigrate_onlyOwner() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
@@ -999,6 +1001,52 @@ contract SzAlphaBridgeTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
         token.migrateFrom(HOTKEY2);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
+        token.migrateTo(HOTKEY2);
+    }
+
+    // --- 0.3f: migrateTo — the VOLUNTARY validator switch (retarget can't lower, migrateFrom is inbound) ---
+    function test_migrateTo_switchesValidatorWithFullStake() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        uint256 rateBefore = token.exchangeRate();
+
+        vm.prank(timelock);
+        vm.expectEmit(true, true, false, true);
+        emit SzAlpha.StakeMigrated(HOTKEY, HOTKEY2, 5 * 1e9);
+        token.migrateTo(HOTKEY2);
+
+        assertEq(token.validatorHotkey(), HOTKEY2, "pointer moved with the stake");
+        // 1e9 wei = the 1-rao runtime rounding shave on moveStake (mock is runtime-faithful).
+        assertApproxEqAbs(token.totalStaked(), 5 ether, 1e9, "full stake at the new key");
+        assertApproxEqAbs(token.exchangeRate(), rateBefore, 1e9, "rate invariant across the switch (1-rao dust)");
+        assertEq(_staking().getStake(HOTKEY, _coldkey(), NETUID), 0, "old key drained");
+
+        // Deposits and redeems keep working against the new key.
+        vm.prank(alice);
+        uint256 out = token.redeem(1 ether, 1, MAX_DL);
+        assertApproxEqAbs(out, 1 ether, 1e9, "redeem works post-switch");
+    }
+
+    function test_migrateTo_lostStakeReverts_andEmptyReverts() public {
+        // Empty wrapper: nothing to move.
+        vm.prank(timelock);
+        vm.expectRevert(SzAlpha.ZeroAmount.selector);
+        token.migrateTo(HOTKEY2);
+
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+
+        // A silently failing moveStake cannot pass the destination conservation check.
+        _staking().setBreakMoveStake(true);
+        vm.prank(timelock);
+        vm.expectRevert(abi.encodeWithSelector(SzAlpha.MigrationLostStake.selector, 5 * 1e9, 0));
+        token.migrateTo(HOTKEY2);
+        assertEq(token.validatorHotkey(), HOTKEY, "pointer unchanged on failure");
     }
 
     // --- 0.4a: redeemTo pays a named receiver, burns from the caller ---
@@ -1035,18 +1083,36 @@ contract SzAlphaBridgeTest is Test {
         token.redeemTo(address(r), 1 ether, 1, MAX_DL);
     }
 
-    // --- 0.5: Octane finding 7 pin — state paths never touch the 0x808 quote precompile ---
+    // --- 0.5: Octane finding 7 pin — NO state path touches the 0x808 quote precompile ---
     function test_statePaths_neverTouchAlphaQuotePrecompile() public {
         // Rubicon's _updateTVL made stake/redeem/emergency-withdraw revert when the IAlpha quote
-        // precompile failed (Octane 7). Brick 0x808 entirely: our state paths must be unaffected.
+        // precompile failed (Octane 7). Brick 0x808 entirely: every state path must be unaffected —
+        // including the three recovery levers, because a dead quote precompile AT RECOVERY TIME is
+        // finding 7's scenario at the worst possible moment.
         vm.etch(ALPHA_PRECOMPILE, hex"fe"); // INVALID opcode — any call reverts
 
         vm.deal(alice, 10 ether);
         vm.startPrank(alice);
-        uint256 shares = token.deposit{value: 5 ether}(1, MAX_DL);
-        uint256 out = token.redeem(shares, 1, MAX_DL);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+        uint256 out = token.redeem(2 ether, 1, MAX_DL);
         vm.stopPrank();
-        assertEq(out, 5 ether, "full round trip with the quote precompile dead");
+        assertEq(out, 2 ether, "deposit + redeem with the quote precompile dead");
+
+        // migrateTo (voluntary switch) with 0x808 dead.
+        vm.prank(timelock);
+        token.migrateTo(HOTKEY2);
+        assertEq(token.validatorHotkey(), HOTKEY2, "migrateTo unaffected");
+
+        // retarget (drift recovery) with 0x808 dead.
+        _staking().driftHotkey(HOTKEY2, HOTKEY, _coldkey(), NETUID);
+        vm.prank(timelock);
+        token.retarget(HOTKEY);
+        assertEq(token.validatorHotkey(), HOTKEY, "retarget unaffected");
+
+        // migrateFrom (stranded-stake consolidation) with 0x808 dead.
+        _staking().addReward(HOTKEY2, _coldkey(), NETUID, 1e9);
+        vm.prank(timelock);
+        token.migrateFrom(HOTKEY2);
 
         // Sanity: the ADVISORY previews DO read 0x808 — and fail closed, not silently.
         vm.expectRevert(SzAlpha.PrecompileCallFailed.selector);
@@ -1234,6 +1300,41 @@ contract SzAlphaAdminHandoffTest is Test {
             )
         );
         reg.setPool(address(token), address(0xBEEF));
+    }
+}
+
+/// @title Phase-A testnet deploy script smoke test (MOCKED precompiles — no CCT, matching the script's
+///        no-CCIP scope). Proves `DeploySzAlphaTestnet.run()` deploys, seeds genesis in-broadcast, burns
+///        the seed shares, and leaves a 1:1 rate — BEFORE real testnet TAO touches it (MVP-V2 §A6).
+contract DeploySzAlphaTestnetTest is Test {
+    address internal constant STAKING_V2 = 0x0000000000000000000000000000000000000805;
+    address internal constant ALPHA_PRECOMPILE = 0x0000000000000000000000000000000000000808;
+    address internal constant ADDRESS_MAPPING = 0x000000000000000000000000000000000000080C;
+
+    function test_testnetDeploy_seedsGenesisAndServesRate() public {
+        vm.etch(STAKING_V2, address(new MockSubtensorStaking()).code);
+        vm.etch(ALPHA_PRECOMPILE, address(new MockAlphaPrecompile()).code);
+        vm.etch(ADDRESS_MAPPING, address(new MockAddressMapping()).code);
+        MockSubtensorStaking(payable(STAKING_V2)).setPrice(1e9);
+        MockAlphaPrecompile(ALPHA_PRECOMPILE).setPrice(1e9);
+        vm.deal(STAKING_V2, 1_000 ether);
+
+        vm.setEnv("NETUID", "46");
+        vm.setEnv("VALIDATOR_HOTKEY", "0x9867c7af9c5242c73b06e306ec6c22474ec5fa20f3b3d8b23652b3edcf48e35e");
+
+        DeploySzAlphaTestnet deployer = new DeploySzAlphaTestnet();
+        vm.deal(address(deployer), 1 ether); // the seed TAO (test context: the script instance is the caller)
+        SzAlpha token = deployer.run();
+
+        assertEq(token.netuid(), 46);
+        assertEq(
+            token.validatorHotkey(),
+            bytes32(0x9867c7af9c5242c73b06e306ec6c22474ec5fa20f3b3d8b23652b3edcf48e35e)
+        );
+        assertEq(token.balanceOf(address(0xdead)), 0.1 ether, "seed shares burnt (default 0.1 TAO at par)");
+        assertEq(token.balanceOf(address(deployer)), 0, "script keeps no position");
+        assertEq(token.exchangeRate(), 1e18, "1:1 genesis rate after seed");
+        assertGt(token.totalStaked(), 0, "backing staked");
     }
 }
 

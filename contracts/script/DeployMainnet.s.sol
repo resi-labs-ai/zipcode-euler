@@ -90,7 +90,6 @@ contract DeployMainnet is DeployZipcode {
         if (i.lpTwapWindow == 0) revert LpTwapWindowZero();
         i.W = uint32(vm.envOr("NAV_W", uint256(3600)));
         i.maxAge = vm.envOr("NAV_MAX_AGE", uint256(86_400));
-        i.maxDeviationBps = vm.envOr("NAV_MAX_DEVIATION_BPS", uint256(1000));
         i.tvlCap = vm.envOr("TVL_CAP", uint256(100_000_000e18));
         i.recoveryFloor = vm.envOr("RECOVERY_FLOOR", uint256(0.5e18));
         i.borrowCap = vm.envOr("BORROW_CAP", uint256(1_000_000e6));

@@ -766,8 +766,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
             makeAddr("oracMainSEC13"),
             makeAddr("oracSideSEC13"),
             4 hours,
-            maxAge_,
-            2000
+            maxAge_
         );
     }
 
@@ -1253,7 +1252,7 @@ contract SzipBuyBurnModuleTest is ForkConfig {
         address ohydx = address(new OracleMockOHydx(30));
         address main = makeAddr("oracMain");
         address side = makeAddr("oracSide");
-        o = new SzipNavOracle(fwd, zip, usdcM, xa, hydx, ohydx, main, side, 4 hours, 1 days, 2000);
+        o = new SzipNavOracle(fwd, zip, usdcM, xa, hydx, ohydx, main, side, 4 hours, 1 days);
     }
 
     function _pushBoth(SzipNavOracle o, address fwd, uint256 a, uint256 h) internal {

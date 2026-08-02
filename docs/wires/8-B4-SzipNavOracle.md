@@ -1,8 +1,9 @@
 # 8-B4 — SzipNavOracle (wiring map)
 
 > **X-Ray (security verdict):** rated **ADEQUATE** (a hair from HARDENED) — the economic keystone of the junior
-> vault and the best-tested contract in `supply/` (64 tests). The bracket asymmetry (issuance `max`, exit `min`)
-> defeats sub-window spot manipulation; the `committedValue()+freeValue()==grossBasketValue()` decomposition the
+> vault and the best-tested contract in `supply/` (86 tests: 78 deterministic + 8 stateful-fuzz). The bracket
+> asymmetry (issuance `max`, exit `min`) defeats sub-window spot manipulation; the
+> `committedValue+freeValue==grossBasketValue` decomposition the
 > freeze floor relies on is pinned. Report: `contracts/src/supply/x-ray/SzipNavOracle.md`. ELI20:
 > `docs/supply/SzipNavOracle.md`. This doc is the code-truth wiring map.
 
@@ -26,20 +27,20 @@ over a governed window `W`. Consumers read a **bracketed** 18-dp share price (`1
 
 The bracket defends the profitable direction both ways: a one-block spot spike UP only makes minting more
 expensive (`max`) and is ignored on exit (`min`); a DOWN spike is ignored on entry. **It ATTENUATES, not
-eliminates:** `twapNavPerShare` values the leading `[lastUpdate, now]` segment at the current
+eliminates:** `twapNavPerShare()` values the leading `[lastUpdate, now]` segment at the current
 spot with weight `g/W` (`g = now − lastUpdate`), so a one-block move on an in-block-manipulable leg still leaks
 `~(g/W)·Δspot`; `poke()` keeps `g` small only under honest keeper liveness, it cannot un-weight a spot already
 moved this block. The only in-block-manipulable leg is the ICHI LP spot reserves when `lpTwapWindow == 0`; its
 STRUCTURAL defense is `lpTwapWindow != 0` (the fair-reserves TWAP tick), not the bracket. Consumers SHOULD
-`poke()` (permissionless) before every issuance/exit read — the Gate (`navEntry`) and the buy-burn module
-(`navExit`) both do. The third consumer is the loss side: the
-`DefaultCoordinator` writes the recoverable impairment `provision` here (M2), which `spotNavPerShare` subtracts
+`poke()` (permissionless) before every issuance/exit read — the Gate (`navEntry()`) and the buy-burn module
+(`navExit()`) both do. The third consumer is the loss side: the
+`DefaultCoordinator` writes the recoverable impairment `provision` here (M2), which `spotNavPerShare()` subtracts
 from gross.
 
 ## Contracts involved
 | Contract | What it does |
 |---|---|
-| `SzipNavOracle` (`is ReceiverTemplate`) | The whole primitive. Flat-ctor immutables for the basket tokens + both Safes + W/maxAge/maxDeviationBps; the `_processReport` reportType-7 leg-push path (Forwarder-gated by the base); `poke()`/`_accumulate()` TWAP ring; `grossBasketValue()` (counts escrow-collateralized LP + subtracts farm utility debt) + per-leg valuation + `pathLockedLpEquity()`/`lpShareValue()`; `writeProvision` (DC-only); the wiring setters (`setShareToken`/`setLpPosition`/`setFarmUtilityLeg`/`setJuniorTrancheEngine`/`setDefaultCoordinator` + `setXAlphaRateOracle`); the consumer reads `navEntry`/`navExit`/`spotNavPerShare`/`twapNavPerShare`/`fresh`/`valueOf`/`oldestRequiredLegTs` (SEC-13 — the oldest required-leg push ts, min of `LEG_ALPHA_USD`/`LEG_HYDX_USD` + the wired rate's `lastUpdate()` when seeded; the buy-burn fence anchors `validTo` to it). |
+| `SzipNavOracle` (`is ReceiverTemplate`) | The whole primitive. Flat-ctor immutables for the basket tokens + both Safes + W/maxAge; the `_processReport` reportType-7 leg-push path (Forwarder-gated by the base); `poke()`/`_accumulate()` TWAP ring; `grossBasketValue()` (counts escrow-collateralized LP + subtracts farm utility debt) + per-leg valuation + `pathLockedLpEquity()`/`lpShareValue()`; `writeProvision()` (DC-only); the wiring setters (`setShareToken`/`setLpPosition`/`setFarmUtilityLeg`/`setJuniorTrancheEngine`/`setDefaultCoordinator` + `setXAlphaRateOracle`); the consumer reads `navEntry()`/`navExit()`/`spotNavPerShare()`/`twapNavPerShare()`/`fresh()`/`valueOf()`/`oldestRequiredLegTs()` (SEC-13 — the oldest required-leg push ts, min of `LEG_ALPHA_USD`/`LEG_HYDX_USD` + the wired rate's `lastUpdate()` when seeded; the buy-burn fence anchors `validTo` to it). |
 | `DurationFreezeModule` (8-B / §6.4 freeze) | Reads `committedValue()` (= `_grossValueOf(juniorTrancheSidecar)`), `freeValue()` (= `_grossValueOf(juniorTrancheSafe)`), AND `pathLockedLpEquity()` — its coverage numerator is `committedValue() + pathLockedLpEquity()`, and `lpBurnKeepsCovered` reads `lpShareValue()`. `grossBasketValue()` now counts the escrow LP + subtracts farm utility debt (no longer "unchanged"), but the freeze module never moves the LP, so it stays rotation-invariant under `commit`/`release` (which move only the 5 plain legs). |
 | `IFarmUtilityEscrow` / `IFarmUtilityDebt` (declared inline in the .sol) | Minimal faces for the 8-B5 escrow vault (`balanceOf`/`convertToAssets` — the escrow-collateralized LP) and the borrow vault (`debtOf` — the strike debt subtracted). |
 | `IXAlphaRate` (`contracts/src/interfaces/bridge/IXAlphaRate.sol`) | The `exchangeRate()` face the xALPHA NAV leg reads (LST stake-accounting; non-manipulable in production, M1 stand-in mock). |
@@ -51,19 +52,20 @@ from gross.
 constructor(
     address forwarder, address zipUSD_, address usdc_, address xAlpha_,
     address hydx_, address oHydx_, address juniorTrancheSafe_, address juniorTrancheSidecar_,
-    uint32 W_, uint256 maxAge_, uint256 maxDeviationBps_
+    uint32 W_, uint256 maxAge_
 )
 ```
-All token/Safe addresses + `W_` + `maxAge_` are zero/`0`-guarded (`ZeroAddress`); `maxDeviationBps_` is **not**
-guarded (0 = no deviation tolerance is a valid governed value). The ctor seeds `observations[0]=(now,0)` and
+All token/Safe addresses + `W_` + `maxAge_` are zero/`0`-guarded (`ZeroAddress`) — every ctor arg is guarded now
+that the unguarded `maxDeviationBps_` is gone (removed 2026-07-31,). The ctor
+seeds `observations[0]=(now,0)` and
 `lastUpdate=now`. `forwarder` is zero-guarded by the base and is **Timelock-re-pointable** (`setForwarderAddress`
 is NOT renounce-frozen here, §17).
 
 **The basket legs** (summed across `juniorTrancheSafe` + `juniorTrancheSidecar` via `_bal`):
 1. `zipUSD` — 18-dp, valued $1 (added as raw balance).
 2. `usdc` — 6-dp, scaled `× 1e12` to 18-dp $1.
-3. `xAlpha` — `balanceOf × _xAlphaUSD() / 1e18`, where `_xAlphaUSD = IXAlphaRate(rateSrc).exchangeRate() × legCache[LEG_ALPHA_USD].price / 1e18` (the two-layer mark; `rateSrc` resolved below). **Fail-closed on an UNSEEDED rate (SEC-04 / H5):** `_xAlphaUSD()` captures `rate = exchangeRate()` and reverts `RateUnseeded()` if `rate == 0` — the never-pushed genesis zero can no longer be silently served (which underpriced every consumer: `navExit`, `grossBasketValue`, freeze `coverageValue`, `ExitGate` tvlCap, all of which route through this shared internal). This is distinct from STALENESS: a stale-but-nonzero rate is NOT gated here (exit keeps pricing off the last good mark — the §7 max-entry/min-exit asymmetry; freshness is gated only at issuance, `navEntry`/`fresh`).
-4. `hydx` — **marked $0 by design.** HYDX is pure sale inventory (harvest → exercise → dump); a spot mark overstates realizable value by the dump slippage (which scales with size on a thin market). The `LEG_HYDX_USD` feed is deliberately KEPT — pushes, deviation band, and the staleness gates (`navEntry`/`fresh`/`oldestRequiredLegTs`) still cover it — because the live HYDX mark is the input for deciding whether exercising oHYDX is profitable. Feed = decision input; never a NAV input.
+3. `xAlpha` — `balanceOf × _xAlphaUSD() / 1e18`, where `_xAlphaUSD = IXAlphaRate(rateSrc).exchangeRate() × legCache[LEG_ALPHA_USD].price / 1e18` (the two-layer mark; `rateSrc` resolved below). **Fail-closed on an UNSEEDED rate (SEC-04 / H5):** `_xAlphaUSD()` captures `rate = exchangeRate()` and reverts `RateUnseeded()` if `rate == 0` — the never-pushed genesis zero can no longer be silently served (which underpriced every consumer: `navExit()`, `grossBasketValue()`, freeze `coverageValue()`, `ExitGate` tvlCap, all of which route through this shared internal). This is distinct from STALENESS: a stale-but-nonzero rate is NOT gated here (exit keeps pricing off the last good mark — the §7 max-entry/min-exit asymmetry; freshness is gated only at issuance, `navEntry()`/`fresh()`).
+4. `hydx` — **marked $0 by design.** HYDX is pure sale inventory (harvest → exercise → dump); a spot mark overstates realizable value by the dump slippage (which scales with size on a thin market). The `LEG_HYDX_USD` feed is deliberately KEPT — pushes and the staleness gates (`navEntry()`/`fresh()`/`oldestRequiredLegTs()`) still cover it — because the live HYDX mark is the input for deciding whether exercising oHYDX is profitable. Feed = decision input; never a NAV input. In PROD the leg's *price* is never read (only its `.ts`, for freshness); the DEMO fork is asymmetric here — `SzipNavOracleDemoVAMM._legPriceOfToken` marks the vAMM LP's HYDX reserve off leg 1, making it a live NAV input there.
 5. `oHydx` — **marked $0 by design** (and veHYDX is never read at all). The former intrinsic mark (`HYDX/USD × (100 − discount)/100`) could not track Hydrex's actual strike — `max(getDiscountedPrice, getMinPaymentAmount)`, a $0.01/HYDX floor that binds at current prices — nor sale slippage on the thin HYDX market, and `exerciseVe` absorbs value into permalocked voting power that never returns to the basket. NAV recognizes emission value only when realized proceeds (stables) land in a Safe; exercise-profitability accounting is a separate system, not a NAV input.
 6. **LP leg** (only if `ichiVault != 0`): held shares = loose ICHI share + gauge-staked + **escrow-collateralized**
    across BOTH Safes — `_lpShares(safe) = IICHIVault.balanceOf(safe) + IGauge(gauge).balanceOf(safe) +
@@ -93,9 +95,9 @@ juniorTrancheEngine balance` (the transient pre-burn szipUSD excluded), 0 if `sh
 
 **`poke()` / `_accumulate()`** — books the OLD spot over `[lastUpdate, now]` into `cumNav` + the
 `CARDINALITY=65` observation ring, idempotent within a block (`dt==0 ⇒ no-op`). Called first inside both
-`_processReport` (before applying new prices) and `writeProvision` (before the provision step). `twapNavPerShare`
+`_processReport` (before applying new prices) and `writeProvision()` (before the provision step). `twapNavPerShare()`
 walks the ring back to the observation at-or-before `now − W`, falling back to `spot` before `W` of history.
-The integral (`cumNav`/`lastUpdate`) advances on EVERY `dt>0`, but a NEW ring slot is consumed only once the
+The integral (`cumNav`/`lastUpdate()`) advances on EVERY `dt>0`, but a NEW ring slot is consumed only once the
 immutable `obsSpacing` (`= ceil(1.25·W/(CARDINALITY−1))`, derived in the ctor) has elapsed since the newest
 checkpoint — otherwise the head slot refreshes in place. This bounds ring consumption so the `CARDINALITY−1`
 frozen checkpoints always span `≥ W` regardless of poke frequency, making the window immune to permissionless
@@ -108,14 +110,14 @@ asserts a price (§3.4/§7).
 **`writeProvision(newProvision)`** — `msg.sender == defaultCoordinator` only (`NotDefaultCoordinator`).
 **Unbounded at the oracle by design**: the bound (down ≤ `atRisk×(1−recoveryFloor)`, up by realized receipts)
 lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wired it is the zero address ⇒
-`writeProvision` reverts for everyone (fail-closed).
+`writeProvision()` reverts for everyone (fail-closed).
 
 **The wiring setters** (`onlyOwner`, Timelock; each emits an event; all zero-guarded). Every NAV-input setter
 first runs a **best-effort TWAP checkpoint** (`try this.poke() {} catch {}`): elapsed history is booked at the OLD
 configuration's spot so a re-point can't retroactively re-weight the TWAP window. Best-effort, never mandatory —
 during an outage the basket walk reverts and a hard checkpoint would brick the recovery levers
 (`setFarmUtilityLeg(0,0)`, `setLpTwapWindow(0)`, rate re-points); the skip's residue is bounded by the
-`navEntry`/`navExit` brackets.
+`navEntry()`/`navExit()` brackets.
 - `setShareToken(szipUSD_)` → `shareToken` (the supply denominator).
 - `setLpPosition(ichiVault_, gauge_)` → `ichiVault` + `gauge` (the LP reserves + staked-LP source). Re-pointable;
   if a non-zero `lpTwapWindow` is live, re-asserts SEC-10 readiness against the new vault.
@@ -127,7 +129,7 @@ during an outage the basket walk reverts and a hard checkpoint would brick the r
   unset drops BOTH loop legs from the basket (understates NAV by the loop equity — an entry-side arb while
   engaged); pause issuance first, re-wire once the dependency is healthy.
 - `setJuniorTrancheEngine(juniorTrancheEngine_)` → `juniorTrancheEngine` (the 8-B14 buy-and-burn Safe, denominator-excluded).
-- `setDefaultCoordinator(dc_)` → `defaultCoordinator` (the sole `writeProvision` caller).
+- `setDefaultCoordinator(dc_)` → `defaultCoordinator` (the sole `writeProvision()` caller).
 - `setLpTwapWindow(window_)` → `lpTwapWindow` (`0` = the valid "use spot `getTotalAmounts()`" default, always
   accepted; non-zero = fair-LP TWAP reconstruction). **SEC-10:** a NON-ZERO window is validated
   at set-time — reverts `error LpTwapPluginNotReady()` unless `ichiVault` is wired AND
@@ -143,14 +145,14 @@ during an outage the basket walk reverts and a hard checkpoint would brick the r
   be frozen).
 
 (A **fifth** setter `setXAlphaRateOracle(rateOracle_)` exists — `onlyOwner`, **not** zero-guarded because
-`address(0)` is the valid "use M1 fallback" value. When set, `rateSrc = xAlphaRateOracle` and `navEntry`/`fresh`
+`address(0)` is the valid "use M1 fallback" value. When set, `rateSrc = xAlphaRateOracle` and `navEntry()`/`fresh()`
 additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
 
 ## Wiring — cross-component (who points at whom)
 - **ExitGate → oracle.** The Gate reads `navEntry()` (mint, round down) and `navExit()` (exit), `poke()`s before
   reading, and is the address passed to `setShareToken` (so the Gate's minted szipUSD becomes the denominator).
   The Gate is the **first minter** (no first-depositor guard here — see Gotchas).
-- **DefaultCoordinator → oracle.** Wired in via `setDefaultCoordinator`; it is the **sole** `writeProvision`
+- **DefaultCoordinator → oracle.** Wired in via `setDefaultCoordinator`; it is the **sole** `writeProvision()`
   caller, pushing `totalProvision = Σ per-lien provision` after each loss/recovery change (§11/§4.6). The oracle
   stores it unbounded; the DC enforces the bound.
 - **8-B14 buy-and-burn engine Safe → oracle.** Wired via `setJuniorTrancheEngine`; its transient pre-burn szipUSD is
@@ -166,10 +168,14 @@ additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
   write the oracle. The LP-dissolution + buy-burn exit gates read the freeze module's `covered()` (which reads
   these views).
 - **CRE Forwarder → oracle.** Pushes reportType 7 `(uint8[] legs, uint256[] prices, uint32 ts)` for
-  `{LEG_ALPHA_USD=0, LEG_HYDX_USD=1}`, all-or-nothing, deviation-circuit-broken per leg (`maxDeviationBps`), and
-  **strictly-newer monotonic-guarded per leg (SEC-01): `prior.ts != 0 && ts <= prior.ts → StaleReport`, checked after
-  the deviation band (so a same-`ts` price jump still surfaces `DeviationExceeded`); the price-only band can't catch a
-  backdated same-price replay, the ts guard does.**
+  `{LEG_ALPHA_USD=0, LEG_HYDX_USD=1}`, all-or-nothing, valid-leg + non-zero-price guarded, and
+  **strictly-newer monotonic-guarded per leg (SEC-01): `prior.ts != 0 && ts <= prior.ts → StaleReport`.** There is
+  **no per-push magnitude band** — `maxDeviationBps` was removed 2026-07-31: a band
+  on a spot feed rejects the truth (an 11% real move can't be published against a 10% band), and the producer's
+  `bandClamp` workaround silently pushed the band EDGE, a knowingly-wrong number. Magnitude is guarded at the SOURCE
+  instead — the CRE publishes a TWAP of the subnet-46 pool reserves, so an implausible jump never arises — and is NOT
+  replaced by another on-chain check. **`StaleReport` is now the load-bearing push guard:** it catches the backdated
+  same-price replay a magnitude check never could.
 - **SzAlphaRateOracle → oracle (production).** Optionally wired via `setXAlphaRateOracle`; supplies the
   cross-chain xALPHA `exchangeRate()` + `fresh()`.
 
@@ -201,12 +207,15 @@ additionally gate on its `fresh()`; when zero, `rateSrc = xAlpha` directly.)
 - **No first-depositor guard.** Genesis is the Gate's responsibility: the oracle returns `GENESIS_NAV` only at
   zero effective supply, and the Gate is the first minter (rounds shares down), so a pre-deposit donation cannot
   profit an attacker. The oracle deliberately adds no inflation guard.
-- **`navExit` may price off a stale mark (by design).** Staleness/freshness gates `navEntry`/`fresh` only;
-  `navExit`/`grossBasketValue` keep pricing off the last good rate. The TWAP lag (`min(spot, twap)`) +
+- **`navExit()` may price off a stale mark (by design).** Staleness/freshness gates `navEntry()`/`fresh()` only;
+  `navExit()`/`grossBasketValue()` keep pricing off the last good rate. The TWAP lag (`min(spot, twap)`) +
   the consumer `poke()` obligation are the defense — but the bracket only ATTENUATES an in-block spot move to
   weight `g/W`, it does not eliminate it. The sole in-block-manipulable leg (the ICHI LP spot
   reserves when `lpTwapWindow == 0`) is defended STRUCTURALLY by `lpTwapWindow != 0` (fair-reserves), not the
   bracket; deploy-ordering: do not fund the LP with `lpTwapWindow == 0`, nor open exit/issuance, inside the first
   `W` of deployed life (the ring falls back to spot until it holds `W` of history).
 - **0.8.24 pin:** guards use `if (!cond) revert CustomError()`, never `require(cond, CustomError())` (≥0.8.26).
-- **`maxDeviationBps` is not zero-guarded** in the ctor (0 is a valid governed value); all other ctor args are.
+- **No magnitude guard on the push path, by design.** The `maxDeviationBps` immutable, its ctor param, and the
+  `DeviationExceeded` error are gone (2026-07-31). Do not reintroduce a per-push band
+  on this spot feed — it would reject honest large moves and invite the producer-side clamp that silently publishes a
+  wrong number. Magnitude belongs at the source (CRE-side TWAP), and the ctor is now fully zero-guarded.

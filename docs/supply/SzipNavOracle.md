@@ -21,7 +21,7 @@ Summaries:
 ==================================================================================
 Security X-Ray (audit fidelity)
 
-Rated ADEQUATE (a hair from HARDENED) — the economic keystone of the junior vault and the best-tested contract in the supply subsystem (64 tests).
+Rated ADEQUATE (a hair from HARDENED) — the economic keystone of the junior vault and the best-tested contract in the supply subsystem (86 tests: 78 deterministic + an 8-test stateful-fuzz invariant suite).
 
 [contracts/src/supply/x-ray/SzipNavOracle.md]
 
@@ -29,9 +29,9 @@ The load-bearing properties an auditor should check (full catalog + test connect
 
 * The bracket asymmetry is the whole defense: issuance prices off the higher of current/average, exit off the lower, so a one-block spike can't cheapen a mint or enrich an exit. The time-average is poke-spam-immune (a fixed minimum spacing caps how fast its history can be consumed).
 * The basket composition is exact and hand-checked across all seven legs, with the LP marked through in every state (loose, gauge-staked, borrow-collateralized) net of strike debt.
-* The off-chain price push is all-or-nothing and guarded (deviation band, future-timestamp, strictly-newer, zero-price); a stale leg pauses issuance only; an unseeded xALPHA rate fails closed.
-* The committed-plus-free decomposition equals the gross basket value exactly (to within 2 wei on a split LP) — the double-count-free split the freeze floor relies on.
-* Residuals (off-chain): no stateful fuzz invariant yet; the time-average's depth is a pool-config property (inherited from the fair-reserves library); the off-chain push is trusted; build-phase wiring awaits the pre-production immutable re-freeze.
+* The off-chain price push is all-or-nothing and guarded on shape, timing, and identity (valid-leg, future-timestamp, strictly-newer, zero-price, forwarder-only); a stale leg pauses issuance only; an unseeded xALPHA rate fails closed. There is deliberately no on-chain magnitude band — a per-push band on a spot feed rejects the truth, so magnitude is guarded at the source instead (the off-chain producer publishes a time-average, not a spot tick); see. The strictly-newer check is the load-bearing one: it catches the same-price backdated replay a magnitude check never could.
+* The committed-plus-free decomposition equals the gross basket value exactly on the plain legs, and on a split LP to within a few wei — the double-count-free split the freeze floor relies on. Two caveats an auditor should carry: the rounding tolerance is *price-dependent*, `floor(px/1e18) + 4` wei where `px` is the xALPHA dollar mark (the flat "2 wei" figure is only true at exactly $1.00, and the gap grows with the mark), and the "the sum can never exceed gross" direction is *conditional* — the gross figure floors at zero on the two Safes combined while the per-Safe figures floor individually, so a Safe whose farm-utility debt exceeds its own valued holdings can push the sum above gross with no rounding bound.
+* Residuals (off-chain): the time-average's depth is a pool-config property (inherited from the fair-reserves library); the off-chain push is trusted; build-phase wiring awaits the pre-production immutable re-freeze; and no external audit. The stateful fuzz invariant that used to head this list now exists — a 10-action handler drives 7 always-true properties (including share-price conservation) through 12,800 randomized calls apiece with prices free to jump anywhere from 1¢ to $100.
 
 ==================================================================================
 References:

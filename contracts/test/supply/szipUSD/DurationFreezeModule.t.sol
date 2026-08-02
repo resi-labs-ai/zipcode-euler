@@ -870,8 +870,9 @@ contract DurationFreezeModuleAbiNegativeTest is FreezeBase {
 // =========================================================================================== oracle parity suite
 
 /// @dev The additive `SzipNavOracle` extension: `grossBasketValue() == committedValue() + freeValue()` exactly with
-///      no LP, and within ≤2 wei with a split LP. Plus the un-changed grossBasketValue (the 42-test pins re-run
-///      green in the SzipNavOracle suite).
+///      no LP, and within `floor(px/1e18) + 4` wei with a split LP (`px` = the xALPHA USD mark; the ≤2 wei the
+///      vectors below hit is the `px == 1e18` case, not the general bound). Plus the un-changed grossBasketValue
+///      (the 42-test pins re-run green in the SzipNavOracle suite).
 contract SzipNavOracleParityTest is Test {
     SzipNavOracle internal oracle;
     MockERC20 internal zip;
@@ -893,7 +894,7 @@ contract SzipNavOracleParityTest is Test {
         ohydx = new MockOHydxToken(18, 30);
         oracle = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xalpha), address(hydx), address(ohydx), juniorTrancheSafe,
-            juniorTrancheSidecar, 4 hours, 1 hours, 1000
+            juniorTrancheSidecar, 4 hours, 1 hours
         );
     }
 
@@ -918,8 +919,10 @@ contract SzipNavOracleParityTest is Test {
         assertEq(oracle.grossBasketValue(), oracle.committedValue() + oracle.freeValue());
     }
 
-    /// @dev The ≤2-wei LP-split vector: a non-dividing `totalSupply` so the per-Safe pro-rata floors twice (once
-    ///      per Safe in committed+free) vs once (in gross). The slack is bounded by 2 wei (one per LP reserve token).
+    /// @dev The LP-split vector: a non-dividing `totalSupply` so the per-Safe pro-rata floors twice (once per Safe in
+    ///      committed+free) vs once (in gross). Both LP legs are marked at exactly $1 here, which is the only regime
+    ///      where the slack is bounded by 2 wei (one per LP reserve token) — the general bound is
+    ///      `floor(px/1e18) + 4` wei, since the outer `_tokenValue` division amplifies the doubled inner floor off $1.
     function test_parity_split_LP_within_2_wei() public {
         ParityICHIVault iv = new ParityICHIVault();
         ParityGauge g = new ParityGauge();
@@ -986,7 +989,8 @@ contract SzipNavOracleParityTest is Test {
     }
 
     /// @dev SEC-02 partition (L1 verify note): after the fix `grossBasketValue - coverageValue == Pm`, where Pm is the
-    ///      juniorTrancheSafe free liquid (plain) legs — i.e. every Safe's LP + debt is counted exactly once. Within ≤2 wei.
+    ///      juniorTrancheSafe free liquid (plain) legs — i.e. every Safe's LP + debt is counted exactly once. Within ≤2 wei
+    ///      at the $1 marks this vector uses; the general pro-rata tolerance is `floor(px/1e18) + 4` wei.
     function test_SEC02_partition_gross_minus_coverage_eq_pm() public {
         (ParityICHIVault iv,) = _wireSec02Lp();
         iv.setBalance(juniorTrancheSafe, 100e18); // main LP 30e18
@@ -1342,7 +1346,7 @@ contract DurationFreezeModuleForkTest is ForkConfig, SummonSubstrate {
         ee = new MockEulerEarn();
         oracle = new SzipNavOracle(
             BaseAddresses.CRE_KEYSTONE_FORWARDER, address(zip), address(usdc), address(xalpha), address(hydx),
-            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, 4 hours, 1 hours, 1000
+            address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, 4 hours, 1 hours
         );
 
         // clone the module via the canonical Zodiac ModuleProxyFactory; init via setUp calldata.

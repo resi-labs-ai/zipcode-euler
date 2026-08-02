@@ -78,6 +78,11 @@ contract SzAlpha is
     /// @dev 1 TAO = 1e9 rao; alpha is 9-dp on-chain. Scales 9-dp precompile units <-> 18-dp share space.
     uint256 internal constant RAO = 1e9;
 
+    /// @dev The live 964 runtime credits `moveStake` transfers 1 rao short (integer rounding in the pallet's
+    ///      stake accounting — measured on mainnet 2026-07-31: expected 2153153454, credited 2153153453).
+    ///      The migrate conservation checks tolerate EXACTLY this; anything more still fails closed.
+    uint256 internal constant MOVE_ROUNDING_RAO = 1;
+
     // --- OZ ERC-4626 virtual-offset constants (18-dp space; see the donation note above) ---
     uint256 internal constant VIRTUAL_SHARES = 1;
     uint256 internal constant VIRTUAL_STAKE = 1;
@@ -376,7 +381,7 @@ contract SzAlpha is
 
     /// @notice Re-point `validatorHotkey` at the key that actually holds our stake. No stake movement,
     ///         no swap, no slippage — a pointer update. Owner (timelock) only.
-    /// @dev THE drift recovery (`bridge/rubicon-incident-2026-06-12.md`): a substrate `swap_hotkey`
+    /// @dev THE drift recovery (`audit/reviewed/rubicon-incident-2026-06-12.md`): a substrate `swap_hotkey`
     ///      moves every delegator's stake — including ours — to the operator's new hotkey, leaving this
     ///      contract reading a dead key (`getStake` == 0, `BackingVanished` halts entry + the rate).
     ///      The stake is already AT the new key under our own coldkey, so recovery is exactly this
@@ -410,8 +415,37 @@ contract SzAlpha is
             )
         );
         uint256 stakeAfter = _readStake();
-        if (stakeAfter < stakeBefore + amountRao) revert MigrationLostStake(stakeBefore + amountRao, stakeAfter);
+        if (stakeAfter + MOVE_ROUNDING_RAO < stakeBefore + amountRao) {
+            revert MigrationLostStake(stakeBefore + amountRao, stakeAfter);
+        }
         emit StakeMigrated(sourceHotkey, validatorHotkey, amountRao);
+    }
+
+    /// @notice VOLUNTARILY move the entire stake from the configured hotkey to `newHotkey`, then re-point.
+    ///         Owner (timelock) only.
+    /// @dev The third recovery lever, for the case the drift pair cannot express: switching validators by
+    ///      CHOICE (yield degradation, operator change) while the stake still sits at the configured key.
+    ///      `retarget` refuses a lower-stake target (its conservation guard) and `migrateFrom` only moves
+    ///      TOWARD the configured key, so without this the only voluntary-switch path was redeploy-or-upgrade.
+    ///      Same `moveStake` precompile, `netuid` pinned on both sides (no AMM routing), conservation-checked
+    ///      at the DESTINATION. A same-key call fails the conservation check by arithmetic (no-op move).
+    function migrateTo(bytes32 newHotkey) external onlyOwner {
+        if (newHotkey == bytes32(0)) revert ZeroAddress();
+        uint256 amountRao = _readStake();
+        if (amountRao == 0) revert ZeroAmount();
+        uint256 destBefore = _readStakeAt(newHotkey);
+        _callStaking(
+            abi.encodeWithSelector(
+                IStakingV2.moveStake.selector, validatorHotkey, newHotkey, netuid, netuid, amountRao
+            )
+        );
+        uint256 destAfter = _readStakeAt(newHotkey);
+        if (destAfter + MOVE_ROUNDING_RAO < destBefore + amountRao) {
+            revert MigrationLostStake(destBefore + amountRao, destAfter);
+        }
+        emit StakeMigrated(validatorHotkey, newHotkey, amountRao);
+        emit ValidatorRetargeted(validatorHotkey, newHotkey, 0, destAfter);
+        validatorHotkey = newHotkey;
     }
 
     /// @notice Pause deposits. Redeem stays available (S3/S11). Owner (timelock) only.

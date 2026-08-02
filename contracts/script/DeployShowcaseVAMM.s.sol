@@ -33,10 +33,9 @@ contract DeployShowcaseVAMM is Script {
     address internal constant SZIPUSD = 0x33aD3E23ae6189055925ba2265041AcCA356b4E4; // shareToken
     address internal constant XALPHA_MIRROR = 0xF6CAAF72A788916915ce1bF111E245e0bEABCd18;
 
-    // --- governed params (mirrors the live SzipNavOracle: W / maxAge / maxDeviationBps) ---
+    // --- governed params (mirrors the live SzipNavOracle: W / maxAge) ---
     uint32 internal constant W = 3600;
     uint256 internal constant MAX_AGE = 86400;
-    uint256 internal constant MAX_DEV_BPS = 1000;
 
     // --- CRE identity (so the same reportType-7 sharefeeds leg pushes feed the demo oracle) ---
     // CTR-16: author + workflowName (the shared `workflowId` pin is dropped). The demo NAV oracle is fed by the
@@ -69,8 +68,7 @@ contract DeployShowcaseVAMM is Script {
             MAIN_SAFE,
             SIDECAR,
             W,
-            MAX_AGE,
-            MAX_DEV_BPS
+            MAX_AGE
         );
         oracle.setShareToken(SZIPUSD); // supply denominator for spotNavPerShare
         oracle.setJuniorTrancheEngine(MAIN_SAFE); // the buy-burn denominator-excluded address (mirrors prod)

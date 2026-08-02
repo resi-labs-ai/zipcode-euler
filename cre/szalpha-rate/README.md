@@ -1,8 +1,8 @@
 # cre/szalpha-rate — the xALPHA exchange-rate cross-chain pull (8x-02)
 
 The CRE workflow that **pulls `SzAlpha.exchangeRate()` from Subtensor (964) and pushes the raw rate to
-`SzAlphaRateOracle` on Base** every ~minute. It transports the one fact that lives only on Bittensor — the
-exchange rate — and nothing else.
+`SzAlphaRateOracle` on Base** on an hourly cron. It transports the one fact that lives only on Bittensor —
+the exchange rate — and nothing else.
 
 ## The shape (and why)
 
@@ -14,37 +14,51 @@ Base 8453:      SzAlphaRateOracle  (push-cache, IXAlphaRate)  — exchangeRate()
       │  on-chain reads (no bridge)
       ├─►  SzipNavOracle xALPHA NAV leg   (reads exchangeRate(), gates on fresh())
       ├─►  Euler price-oracle adapter      (NAV / quote)
-      └─►  SzAlphaRateOracle.intrinsicAprBps()  — APR DERIVED on-chain from the rate history (UI / 8-B12 / 8-B11)
+      └─►  SzAlphaRateOracle.intrinsicAprBps()  — APR DERIVED on-chain from the rate history
 ```
 
-- **CRE transports the PRIMITIVE (the rate), the chain DERIVES the rest.** NAV and APR are computed on Base from
-  the pushed rate — never pushed pre-computed. This is the whole correction over the first draft (which pushed a
-  finished APR + defended it with adversarial bands).
-- The rate is **ground truth from 964**, so the receiver has **no deviation band** (a validator slash legitimately
-  lowers it). The receiver enforces only non-zero / not-future / strictly-newer; consumers fail-closed on
-  **staleness** (`fresh()`).
+- **CRE transports the PRIMITIVE (the rate), the chain DERIVES the rest.** NAV and APR are computed on Base
+  from the pushed rate — never pushed pre-computed.
+- The rate is **ground truth from 964**, so the receiver has **no deviation band** (a validator slash
+  legitimately lowers it). The receiver enforces only non-zero / not-future / strictly-newer; consumers
+  fail-closed on **staleness** (`fresh()`).
+- **S14 (the rule this job exists to honor): a REVERTING `exchangeRate()` read means NO PUSH — never
+  "push 0".** `SzAlpha` reverts `BackingVanished` on hotkey drift (the Rubicon state); the revert must
+  propagate as SILENCE on Base so the feed goes stale and every consumer fails closed. The handler maps a
+  read error to a loud errored run and never reaches the encode path. Pinned by
+  `TestSimRevertingReadNoPush`; recorded as seam S14 in `docs/wires/SYSTEM-SEAM-MAP.md`.
 
-## Status / build boundary
+## Status (2026-08-02)
 
 - **On-chain `SzAlphaRateOracle`: DONE + forge-green** — `contracts/src/bridge/SzAlphaRateOracle.sol` +
-  `contracts/test/bridge/SzAlphaRateOracle.t.sol` (17/17). The verifiable, kept artifact.
-- **This workflow (`main.go`): the CRE-03 integration artifact — not compiled in the Foundry repo** (no Go
-  toolchain there). Pinned EXACT: the payload `abi.encode(uint256 rate, uint48 ts)` + the `uint8 RATE=8` envelope
-  (byte-matching the receiver).
-- Until 8x-01's lane is live, point the 964 read at the 18-dp xALPHA **stand-in** (same `IXAlphaRate` surface).
+  `contracts/test/bridge/SzAlphaRateOracle.t.sol`. Deployed nowhere yet (deploy is gated on the go-live
+  decision).
+- **This workflow: BUILT + host-tested (6/6) + wasip1-builds.** `workflow.go` (untagged logic) +
+  `workflow_test.go` (sim harness on the sharefeeds model: two chain mocks, capture-and-decode handshake,
+  the S14 revert pin, zero-rate / unset-wiring no-ops, schedule pin). Encoding via the shared
+  `cre/zipreport` library (`zipreport.Rate`) — this slice does not re-implement the handshake.
+- Timestamps are stamped **DON-side** (`runtime.Now()`), never the 964 block time — the receiver judges
+  `ts` against Base time, so a remote stamp would import 964's clock skew (and a ms-vs-s producer bug must
+  fail loudly on the first push, not poison the strictly-newer cursor).
 
-## Open risks (tracked in the ticket, NOT buried here)
+## Open residuals (pre-deploy)
 
-The full table is in `tickets/bridge/8x-02-xalpha-apr-cre.md` → "OPEN / BLOCKING RISKS". The two that matter:
-- **R-1 (BLOCKING):** can CRE even read 964? `exchangeRate()` staticcalls the `0x805` precompile — the "8x
-  exception" says a typed precompile call may never reach the runtime. **Prove it before building on this read.**
-- **R-2 (HIGH, fund-safety):** `SzipNavOracle` reads the rate with no `fresh()` gate today — wiring it to this
-  pushed oracle without that gate lets a stale rate mis-mark a fund-moving NAV.
-- R-4 (wiring): go.mod, 964/8453 selectors + RPC, config unmarshal, the exact `exchangeRate()` read.
+- **R-1 — the 964 read is unproven against the live chain.** `exchangeRate()` staticcalls the `0x805`
+  precompile inside the node's `eth_call`. Expected to work (it is an ordinary `eth_call` to the DON's RPC),
+  but prove it in a staging run before relying on it. Both chain selectors are config-driven, so the job can
+  rehearse single-chain by pointing `subtensorChainSelector` at Base and `szAlpha` at the 18-dp xALPHA
+  stand-in (same `IXAlphaRate` surface).
+- **R-2 — consumer gate.** `SzipNavOracle` must gate its xALPHA rate read on `fresh()` when it is wired to
+  this oracle; a stale rate mis-marks a fund-moving NAV. (Freshness is separate from the value guard on the
+  rate leg, which is the one-directional TWAP ratified 2026-08-02.)
+- **Cadence ↔ staleness coupling.** `defaultSchedule` is hourly; the receiver's `maxStaleness` is a
+  deploy-time immutable. Choose them together (staleness ≈ 6× cadence gives ~6 missed pushes of slack
+  before consumers fail closed).
 
-## Item-10 wiring
+## Deploy wiring (when go-live is called)
 
-Deploy `SzAlphaRateOracle` on **Base** (forwarder = the CRE Forwarder; `maxStaleness`/`window`/`aprCap` under the
-Timelock). Run this workflow on the CRE DON. Point `SzipNavOracle`'s xALPHA **rate** read at this oracle (its NAV
-xALPHA leg currently reads `IXAlphaRate(xAlpha)` directly — in production that rate source is `SzAlphaRateOracle`;
-the token address stays the mirror for balances). That split is the resolution of the §8.6 cross-chain rate seam.
+Deploy `SzAlphaRateOracle` on **Base** (forwarder = the CRE Forwarder; `maxStaleness`/`window`/`aprCap`
+chosen against the cadence above). Run this workflow on the CRE DON with config: `subtensorChainSelector`
+(964 = `2135107236357186872`), `szAlpha` (the production proxy), `baseChainSelector`, `szAlphaRateOracle`.
+Then point `SzipNavOracle`'s xALPHA **rate** read at this oracle behind its `fresh()` gate (the token
+address stays the mirror for balances).

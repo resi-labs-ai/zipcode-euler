@@ -1090,8 +1090,7 @@ contract DefaultCoordinatorIntegrationTest is Test {
             juniorTrancheSafe,
             oracleSidecar,
             4 hours, // W
-            1 hours, // maxAge
-            1000 // maxDeviationBps
+            1 hours // maxAge
         );
         coordinator = new DefaultCoordinator(forwarder, address(oracle), address(xalpha), FLOOR);
         // escrow coordinator = this coordinator

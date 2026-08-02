@@ -17,7 +17,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         interface `IGauge.deposit/withdraw(uint256)` is the same; the pair IS the LP token). Wire it to the live
 ///         vAMM HYDX/USDC pair + its gauge; enable it on the EXISTING engine Safe via Zodiac `enableModule` for the
 ///         show, `disableModule` after. The prod `LpStrategyModule` stays enabled + untouched. Pairs with the demo
-///         oracle `SzipNavOracleDemoVAMM` (the paired oracle fork). See `build/wires/SHOWCASE-VAMM.md`.
+///         oracle `SzipNavOracleDemoVAMM` (the paired oracle fork). See `docs/wires/SHOWCASE-VAMM.md`.
 ///
 /// @notice [prod docstring, unchanged below] The on-chain seam of the 8-B6 LP strategy (§4.5.1): the third engine
 ///         Zodiac Module, CRE-operator-gated, enabled on the szipUSD engine Safe (`avatar == target == juniorTrancheEngine`).

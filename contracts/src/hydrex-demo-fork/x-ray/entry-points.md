@@ -36,7 +36,7 @@ Scope: `SzipNavOracleDemoVAMM`, `LpStrategyModuleDemoVAMM`. View/pure functions 
 | Caller | Any keeper / the Gate / zap |
 | Parameters | none |
 | Call chain | `→ _accumulate()` (books spot over [lastUpdate, now] into `cumNav` + ring) |
-| State modified | `cumNav`, `obsIndex`, `observations`, `lastUpdate` |
+| State modified | `cumNav`, `obsIndex`, `observations`, `lastUpdate()` |
 | Value flow | none |
 | Reentrancy guard | no (view-only reads inside; no external value transfer) |
 
@@ -79,8 +79,8 @@ Scope: `SzipNavOracleDemoVAMM`, `LpStrategyModuleDemoVAMM`. View/pure functions 
 | Visibility | internal override (reached via forwarder-gated `onReport`) |
 | Caller | Chainlink Forwarder |
 | Parameters | report → (reportType, legs[] (keeper-provided), prices[] (keeper-provided), ts (keeper-provided)) |
-| Call chain | `→ _accumulate()` `→ per-leg deviation check` `→ set legCache[leg]` |
-| State modified | `legCache`, `cumNav`, `obsIndex`, `observations`, `lastUpdate` |
+| Call chain | `→ _accumulate()` `→ per-leg valid-leg / non-zero / strictly-newer checks` `→ set legCache[leg]` (no magnitude band — removed 2026-07-31) |
+| State modified | `legCache`, `cumNav`, `obsIndex`, `observations`, `lastUpdate()` |
 | Value flow | none |
 | Reentrancy guard | n/a |
 

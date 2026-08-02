@@ -28,7 +28,7 @@ import {ISeniorPool} from "../../interfaces/supply/ISeniorPool.sol";
 ///      senior LIABILITY (`min(illiquidSeniorValue, grossBasketValue)`), read live and donation-immune from
 ///      EulerEarn and not outsider-manipulable (§4.3/§8.2) — so a compromised operator cannot open the run hatch
 ///      while debt is outstanding; the floor is pinned to ABSOLUTE debt, not a junior-basket fraction, so shrinking
-///      the basket cannot lower it (structural — no governed knob; build/wires/DurationFreezeModule.md); (c) `utilization()`/`requiredFraction()` are
+///      the basket cannot lower it (structural — no governed knob; docs/wires/DurationFreezeModule.md); (c) `utilization()`/`requiredFraction()` are
 ///      retained only as the §12 liquidity-run metric — no longer the floor; (d) only oracle-valued assets are
 ///      movable (no unvalued-asset leak). A compromised operator can
 ///      **grief** (over-commit free equity, delaying exits; §12 metrics + governance watch it) but **cannot steal**

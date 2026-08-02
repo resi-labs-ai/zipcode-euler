@@ -112,7 +112,6 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         // -- numeric knobs --
         uint32 W; // NAV TWAP window
         uint256 maxAge; // NAV
-        uint256 maxDeviationBps; // NAV
         uint256 tvlCap; // ExitGate
         uint16 dBps; // buy-burn discount
         uint256 buybackCap; // buy-burn
@@ -170,8 +169,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
             sub.juniorTrancheSafe,
             sub.juniorTrancheSidecar,
             p.W,
-            p.maxAge,
-            p.maxDeviationBps
+            p.maxAge
         );
 
         // -- 3. ExitGate + SzipUSD (Gate is SzipUSD's owner-deployer); wire the share token both ways + window ctrl.
