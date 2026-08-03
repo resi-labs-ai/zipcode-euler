@@ -94,6 +94,8 @@ contract DeployLocal is DeployZipcode {
         i.rateMaxStaleness = 6 hours;
         i.rateWindow = 30 days;
         i.rateAprCap = 50_000;
+        // The exchangeRate() smoothing window. NON-ZERO or the ctor reverts ZeroTwapWindow.
+        i.rateTwapWindow = uint32(24 hours);
     }
 
     /// @notice Provision the stand-ins inside the broadcast. The EE pool + base USDC market are REAL contracts (a live

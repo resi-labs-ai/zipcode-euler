@@ -113,6 +113,10 @@ contract DeployMainnet is DeployZipcode {
         i.rateMaxStaleness = vm.envOr("RATE_MAX_STALENESS", uint256(6 hours));
         i.rateWindow = uint32(vm.envOr("RATE_WINDOW", uint256(30 days)));
         i.rateAprCap = vm.envOr("RATE_APR_CAP", uint256(50_000));
+        // The exchangeRate() smoothing window (24h = 24 samples at the hourly push cadence). NON-ZERO or the ctor
+        // reverts ZeroTwapWindow. This loader is SEPARATE from DeployZipcode._loadInputs — a field added there does
+        // not appear here, which is exactly how this was missed until the anvil run.
+        i.rateTwapWindow = uint32(vm.envOr("RATE_TWAP_WINDOW", uint256(24 hours)));
     }
 
     /// @notice Create the seams left zero by `_loadMainnetInputs`. IRM: a 0%-rate model (farm utility borrowing is

@@ -15,14 +15,15 @@ links to the section or file that covers it.
 | # | Step | Where | Script / doc |
 |---|---|---|---|
 | 1 | Fork dry-run of the FULL orchestrator | Base fork | `forge test --match-contract DeployMainnetForkTest` |
-| 2 | Simulate against live state, no broadcast | Base | §4 |
-| 3 | Broadcast the protocol | Base 8453 | §5 — `DeployMainnet:runMainnet()` |
-| 4 | Post-deploy wiring (5 manual hookups) | Base | §7 |
-| 5 | Deploy the 964 side of the bridge | Subtensor 964 | `bridge/PHASE-B-964-RUNBOOK.md` — ALREADY EXECUTED |
-| 6 | Point the rate job at the Base oracle and staging-prove the 964 read | off-chain | `cre/szalpha-rate` |
-| 7 | Staging-prove the price leg's 964 EMA + Ethereum Chainlink reads | off-chain | `cre/sharefeeds` |
-| 8 | Start the monitor BEFORE pushing test values | off-chain | `cre/szalpha-watch` |
-| 9 | Timelock handoff out of god mode, both chains | both | §6 + the 964 runbook step 0 |
+| 2 | Anvil BROADCAST rehearsal — not just a simulation | anvil fork of Base | §4 |
+| 3 | Simulate against live state, no broadcast | Base | §4 |
+| 4 | Broadcast the protocol | Base 8453 | §5 — `DeployMainnet:runMainnet()` |
+| 5 | Post-deploy wiring (5 manual hookups) | Base | §7 |
+| 6 | Deploy the 964 side of the bridge | Subtensor 964 | `bridge/PHASE-B-964-RUNBOOK.md` — ALREADY EXECUTED |
+| 7 | Point the rate job at the Base oracle and staging-prove the 964 read | off-chain | `cre/szalpha-rate` |
+| 8 | Staging-prove the price leg's 964 EMA + Ethereum Chainlink reads | off-chain | `cre/sharefeeds` |
+| 9 | Start the monitor BEFORE pushing test values | off-chain | `cre/szalpha-watch` |
+| 10 | Timelock handoff out of god mode, both chains | both | §6 + the 964 runbook step 0 |
 
 Step 1 is new as of 2026-08-03 and replaces "dry-run on anvil" as the cheapest gate: `DeployMainnetForkTest`
 runs `runMainnetWith` on a Base fork, creating a REAL EulerEarn pool off the live factory and executing the
@@ -31,7 +32,20 @@ scripts had only ever had a green `forge build` and every seam assert inside the
 Still stood in for on the fork: the ICHI vault, its gauge, and the LP oracle — the pair is zipUSD/xALPHA and the
 script deploys the zipUSD, so a live pool cannot exist yet. Step 2 is where those first meet real addresses.
 
-Step 8 is ordered before any test traffic deliberately. `szalpha-watch` alarm 5 compares the value that landed on
+Step 2 is a separate gate from step 1 and from step 3, and skipping it is how the two bugs found on 2026-08-03
+would have reached Base: a missing `rateTwapWindow` in `DeployLocal`/`DeployMainnet`'s own input loaders (each is
+separate from `DeployZipcode._loadInputs`, so a field added in one does not appear in the others), and a
+gas-estimation failure that only exists under sequential broadcast. Neither shows up in a fork test or a
+simulation. Run it as:
+```
+anvil --fork-url $BASE_RPC_URL --fork-block-number <recent> --port 8545   # in another shell
+forge script script/DeployLocal.s.sol:DeployLocal --sig "runLocal()" \
+  --rpc-url http://127.0.0.1:8545 --broadcast --slow --gas-estimate-multiplier 300 \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+Expect `ONCHAIN EXECUTION COMPLETE & SUCCESSFUL`, then read the post-state back rather than trusting it.
+
+Step 9 is ordered before any test traffic deliberately. `szalpha-watch` alarm 5 compares the value that landed on
 Base against the 964 source, which must be EQUAL because the job transports the rate unchanged. It is the only
 check that catches a transport or scaling fault, and it is worth nothing armed after the traffic it was meant to
 watch. Needs `WATCH_SZALPHA`, `WATCH_RATE_ORACLE` and `WATCH_BASE_RPC_URL`.
@@ -99,11 +113,22 @@ TWAP live; no seed mark. Pre-flight: the pool's plugin must hold ≥ this much h
 
 ```
 forge script script/DeployMainnet.s.sol:DeployMainnet --sig "runMainnet()" \
-  --rpc-url base --broadcast --slow --private-key $DEPLOYER_PRIVATE_KEY
+  --rpc-url base --broadcast --slow --gas-estimate-multiplier 300 \
+  --private-key $DEPLOYER_PRIVATE_KEY
 ```
 
 (Prefer `--account <keystore>` or `--ledger` over a raw key. `--slow` serialises txs — required for the
 summon/Safe-exec ordering.)
+
+⚠️ **`--gas-estimate-multiplier 300` is NOT optional.** Measured on an anvil Base fork 2026-08-03: without it
+the run dies mid-deploy on `SzipNavOracle.setJuniorTrancheEngine`, out of gas, `gasUsed == gasLimit` with empty
+revert data — which reads like a revert and is not one. Forge estimates each transaction against the SIMULATED
+state, where `_checkpointBestEffort()` early-returns; by the time the same call is broadcast sequentially the
+accumulator has real work to do and writes an observation, so the true cost exceeds the estimate. Any phase
+whose gas grows between simulation and execution has the same shape. Simulation passing tells you nothing about
+this — the simulation was green on the run that then failed on-chain.
+
+Leaving a partial deploy behind is the expensive failure here, so buy the buffer.
 
 ## 6. Post-deploy posture
 
