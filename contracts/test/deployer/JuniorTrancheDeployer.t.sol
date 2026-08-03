@@ -138,10 +138,17 @@ contract MockLpToken {
 
     address public token0;
     address public token1;
+    /// @dev The Algebra pool behind the vault. Only read by the fair-LP TWAP path (`AlgebraIchiFairLpOracle`,
+    ///      `SzipNavOracle.setLpTwapWindow`'s readiness gate); left zero by suites that keep the LP leg on spot.
+    address public pool;
 
     function setTokens(address t0, address t1) external {
         token0 = t0;
         token1 = t1;
+    }
+
+    function setPool(address p) external {
+        pool = p;
     }
 
     function mint(address to, uint256 amount) external {

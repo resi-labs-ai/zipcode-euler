@@ -134,6 +134,13 @@ contract DeployZipcode is SummonSubstrate {
         // numeric knobs
         uint256 validityWindow; // registry read-staleness window
         uint32 lpTwapWindow; // LP_TWAP_WINDOW (required non-zero, default 3600) — the trustless fair-LP TWAP window
+        // FORK-HARNESS ONLY. Zero in production, and the script builds the real `AlgebraIchiFairLpOracle` from
+        // `polIchiVault` as it always has. A fork test cannot: that oracle's constructor requires a live Algebra
+        // pool with an initialized, warmed-up plugin, and the farm-utility deployer then does a birth-time
+        // `getQuote` against it — neither is reachable for a zipUSD/xALPHA pair whose zipUSD this script is in the
+        // middle of deploying. Injecting a fixed-mark stand-in is the only way to execute the phases at all, and
+        // it mirrors `JuniorTrancheDeployer`, which already takes its LP oracle as a parameter.
+        address lpOracleOverride;
             // (AlgebraIchiFairLpOracle) for the farm utility collateral AND the NAV LP leg. The CRE-push twin
             // (SzipFarmUtilityLpOracle) was DELETED: on a visible plugin swap the TWAP halts closed and the farm
             // loop pauses ~1 window (the ratified halt-over-degrade posture) — no trusted spot-mark fallback.
@@ -207,6 +214,49 @@ contract DeployZipcode is SummonSubstrate {
         _loadInputs();
 
         vm.startBroadcast(); // broadcaster MUST be TEAM_MULTISIG (Safe pre-validated v==1 path)
+        _runPhases();
+        vm.stopBroadcast();
+    }
+
+    /// @notice The same deploy with inputs INJECTED and NO broadcast — the fork-harness entrypoint.
+    /// @dev  Exists because the two things that made `deploy()` untestable are both about the wrapper, not the
+    ///       work: it reads its inputs from the environment, and it wraps everything in `vm.startBroadcast()`,
+    ///       under which `msg.sender` is the broadcaster rather than the caller. The Safe pre-validated `v == 1`
+    ///       path needs `msg.sender == TEAM_MULTISIG`, which a test satisfies with `vm.prank(team)` — and a prank
+    ///       does not survive `startBroadcast`. Splitting the phase body out lets the harness inject stand-ins and
+    ///       drive as the team Safe owner, while `deploy()` keeps its exact production behaviour.
+    /// @dev  The phase ORDER is shared, so this cannot drift from what production runs. If it could, the harness
+    ///       would be proving a sequence nothing deploys.
+    function deployWith(Inputs memory inputs) external {
+        i = inputs;
+        _injected = true;
+        _runPhases();
+    }
+
+    /// @dev Set only by `deployWith`. See `_actor()`.
+    bool internal _injected;
+
+    /// @notice Who is acting as the transaction sender for this run.
+    /// @dev  Under `deploy()` every state-changing call is broadcast as its OWN transaction from the broadcaster
+    ///       EOA, so the script's `msg.sender` and the sender the callee observes are the same address. Inside
+    ///       `deployWith` the whole run is one call stack, so the callee observes the SCRIPT while `msg.sender` is
+    ///       the test. Anything that records an owner in one phase and is then called back in a later phase — the
+    ///       warehouse adapter is handed to `receiverAdmin` in P4 and sealed in P9 — needs those two to agree, or
+    ///       the seal reverts `OwnableUnauthorizedAccount` against an address that is correct in production.
+    ///       This collapses the difference to one function rather than scattering test branches through the phases.
+    function _actor() internal view returns (address) {
+        return _injected ? address(this) : msg.sender;
+    }
+
+    /// @notice Read the deployed handles. `Deployment` is internal state; the harness needs it to assert the
+    ///         post-state seams, and there is no event carrying the full set.
+    function getDeployment() external view returns (Deployment memory) {
+        return d;
+    }
+
+    /// @dev The phase sequence, shared by `deploy()` and `deployWith`. Order is load-bearing and commented at
+    ///      each call site rather than here.
+    function _runPhases() internal {
         _phaseP0();
         _phaseP1();
         _phaseP2();
@@ -217,17 +267,16 @@ contract DeployZipcode is SummonSubstrate {
         _phaseP7();
         _phaseP8();
         _phaseP9();
-        vm.stopBroadcast();
     }
 
     // ================================================================= P0 — roots
     function _phaseP0() internal {
         // 1. Timelock: 2-day delay, deployer = sole proposer/executor + retained admin for the build phase.
         address[] memory deployerArr = new address[](1);
-        deployerArr[0] = msg.sender;
+        deployerArr[0] = _actor();
         address[] memory openExec = new address[](1);
         openExec[0] = address(0); // open executor role (anyone can execute a queued op)
-        d.timelock = new TimelockController(2 days, deployerArr, openExec, msg.sender);
+        d.timelock = new TimelockController(2 days, deployerArr, openExec, _actor());
 
         // 2. eePool: created off the LIVE EulerEarnFactory in a pre-step (fork-only; ABI not compiled). Taken as
         //    env input `EE_POOL`. On a non-fork build this call site is intentionally absent — the script compiles
@@ -302,7 +351,7 @@ contract DeployZipcode is SummonSubstrate {
 
         d.warehouse = new CreditWarehouseDeployer().deploy(
             i.godOwner,
-            msg.sender, // receiverAdmin — the adapter (a CRE ReceiverTemplate) is handed to the item-10 broadcaster
+            _actor(), // receiverAdmin — the adapter (a CRE ReceiverTemplate) is handed to the item-10 broadcaster
             i.eePool,
             BaseAddresses.USDC,
             BaseAddresses.CRE_KEYSTONE_FORWARDER,
@@ -378,8 +427,13 @@ contract DeployZipcode is SummonSubstrate {
         // 23. LP oracle — the trustless fair-LP (Algebra TWAP) oracle, always. It reads the price live on-chain, so
         //     it needs NO seed before the step-24 `setLTV` getQuote (it resolves immediately on a live Algebra pool
         //     whose plugin has ≥ `lpTwapWindow` of history — a deploy-sequencing precondition, see the x-ray).
-        d.lpOracle = new AlgebraIchiFairLpOracle(i.polIchiVault, i.lpTwapWindow);
-        address lpOracleAddr = address(d.lpOracle);
+        address lpOracleAddr;
+        if (i.lpOracleOverride == address(0)) {
+            d.lpOracle = new AlgebraIchiFairLpOracle(i.polIchiVault, i.lpTwapWindow);
+            lpOracleAddr = address(d.lpOracle);
+        } else {
+            lpOracleAddr = i.lpOracleOverride; // fork harness (see the Inputs field)
+        }
 
         // 24. farm utility market (governor = the Timelock; juniorTrancheEngine = the main basket Safe).
         (d.escrowVault, d.borrowVault, d.router) = new FarmUtilityMarketDeployer().deploy(

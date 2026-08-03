@@ -45,7 +45,7 @@ use). `DeployLocal` = anvil fork only. `DeployMainnet` = THIS, the live-network 
 
 `VALIDITY_WINDOW=31536000` `NAV_W=3600` `NAV_MAX_AGE=86400`
 `TVL_CAP=100000000e18` `RECOVERY_FLOOR=0.5e18` `BORROW_CAP=1000000e6` `BORROW_LTV=8000` `LIQ_LTV=9000`
-`BUYBURN_DBPS=100` `BUYBACK_CAP=1000000e18` `RATE_MAX_STALENESS=21600` `RATE_WINDOW=2592000` `RATE_APR_CAP=50000`
+`BUYBURN_DBPS=100` `BUYBACK_CAP=1000000e18` `RATE_MAX_STALENESS=21600` `RATE_WINDOW=2592000` `RATE_APR_CAP=50000` `RATE_TWAP_WINDOW=86400`
 (the three `RATE_*` knobs are `SzAlphaRateOracle` IMMUTABLES — 6h staleness / 30d APR window / 500% cap, the
 8x-02 doc+test fixtures; do not lower the window or raise the staleness without re-reading 8x-02's gotchas)
 `LP_TWAP_WINDOW=3600` (the fair-LP TWAP window, required non-zero — the LP oracle reads the pool's Algebra

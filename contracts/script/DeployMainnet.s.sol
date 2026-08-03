@@ -35,19 +35,29 @@ contract DeployMainnet is DeployZipcode {
         _loadMainnetInputs();
 
         vm.startBroadcast(); // broadcaster MUST be TEAM_MULTISIG (Safe pre-validated v==1 path)
-        _provisionStandins();
-        _phaseP0();
-        _phaseP1();
-        _phaseP2();
-        _phaseP4(); // warehouse BEFORE the P3 deposit module (immutable warehouse ctor arg)
-        _phaseP3();
-        _phaseP5();
-        _phaseP6();
-        _phaseP7();
-        _phaseP8();
-        _phaseP9();
-        if (_eeProvisioned) _configureEulerEarn(); // only when we own the freshly-created EE pool
+        _runMainnetBody();
         vm.stopBroadcast();
+    }
+
+    /// @notice The same run with inputs INJECTED and NO broadcast — the fork-harness entrypoint, mirroring
+    ///         `DeployZipcode.deployWith`.
+    /// @dev  Leave `eePool` / `usdcReservoir` / `irm` / `xAlphaMirror` ZERO in `inputs` to exercise the real
+    ///       provisioning: a live-factory EVK reservoir and a REAL EulerEarn pool, followed by the real curator
+    ///       config. That is the half a hand-written EulerEarn mock cannot prove, and it is the half most likely
+    ///       to break against mainnet, since `fund()` reallocates through the pool's own accounting.
+    function runMainnetWith(Inputs memory inputs) external {
+        i = inputs;
+        _injected = true;
+        _runMainnetBody();
+    }
+
+    /// @dev Shared by both entrypoints so the fork proof cannot drift from what production runs. This previously
+    ///      re-listed the phases by hand next to an identical list in `DeployZipcode.deploy()`; two copies of a
+    ///      load-bearing order is one copy too many.
+    function _runMainnetBody() internal {
+        _provisionStandins();
+        _runPhases();
+        if (_eeProvisioned) _configureEulerEarn(); // only when we own the freshly-created EE pool
     }
 
     // ----------------------------------------------------------------- env load
