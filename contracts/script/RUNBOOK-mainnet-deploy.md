@@ -7,6 +7,35 @@ and runs the EulerEarn curator config. One team-broadcast. This is irreversible 
 Scripts: `DeployZipcode` = env-driven, assumes stand-ins pre-exist, skips EE config (raw, not for direct mainnet
 use). `DeployLocal` = anvil fork only. `DeployMainnet` = THIS, the live-network path.
 
+## 0. RUNMAP — which script, in what order, on which chain
+
+The pieces live on two chains and the ordering between them matters. This is the whole map; each numbered step
+links to the section or file that covers it.
+
+| # | Step | Where | Script / doc |
+|---|---|---|---|
+| 1 | Fork dry-run of the FULL orchestrator | Base fork | `forge test --match-contract DeployMainnetForkTest` |
+| 2 | Simulate against live state, no broadcast | Base | §4 |
+| 3 | Broadcast the protocol | Base 8453 | §5 — `DeployMainnet:runMainnet()` |
+| 4 | Post-deploy wiring (5 manual hookups) | Base | §7 |
+| 5 | Deploy the 964 side of the bridge | Subtensor 964 | `bridge/PHASE-B-964-RUNBOOK.md` — ALREADY EXECUTED |
+| 6 | Point the rate job at the Base oracle and staging-prove the 964 read | off-chain | `cre/szalpha-rate` |
+| 7 | Staging-prove the price leg's 964 EMA + Ethereum Chainlink reads | off-chain | `cre/sharefeeds` |
+| 8 | Start the monitor BEFORE pushing test values | off-chain | `cre/szalpha-watch` |
+| 9 | Timelock handoff out of god mode, both chains | both | §6 + the 964 runbook step 0 |
+
+Step 1 is new as of 2026-08-03 and replaces "dry-run on anvil" as the cheapest gate: `DeployMainnetForkTest`
+runs `runMainnetWith` on a Base fork, creating a REAL EulerEarn pool off the live factory and executing the
+curator config, then reads `curator()` and `supplyQueueLength()` back off the pool. Before that existed, these
+scripts had only ever had a green `forge build` and every seam assert inside them was unexecuted.
+Still stood in for on the fork: the ICHI vault, its gauge, and the LP oracle — the pair is zipUSD/xALPHA and the
+script deploys the zipUSD, so a live pool cannot exist yet. Step 2 is where those first meet real addresses.
+
+Step 8 is ordered before any test traffic deliberately. `szalpha-watch` alarm 5 compares the value that landed on
+Base against the 964 source, which must be EQUAL because the job transports the rate unchanged. It is the only
+check that catches a transport or scaling fault, and it is worth nothing armed after the traffic it was meant to
+watch. Needs `WATCH_SZALPHA`, `WATCH_RATE_ORACLE` and `WATCH_BASE_RPC_URL`.
+
 ## 1. What YOU must supply
 
 ### Funded broadcaster
@@ -54,8 +83,11 @@ TWAP live; no seed mark. Pre-flight: the pool's plugin must hold ≥ this much h
 ## 4. Pre-flight (do NOT skip)
 
 - [ ] `forge build` green.
-- [ ] Dry-run the full orchestrator on a Base-mainnet fork first: `DeployLocal:runLocal()` against
-      `anvil --fork-url $BASE_RPC_URL`. Confirms P0..P9 + EE config are green against real deps before live gas.
+- [ ] `forge test --match-contract DeployMainnetForkTest` green. This is the real dry-run: it executes
+      `runMainnetWith` on a Base fork with a REAL EulerEarn pool created off the live factory, plus the curator
+      config, and asserts the post-state seams. Cheaper and stricter than the anvil route below.
+- [ ] Optional, heavier: `DeployLocal:runLocal()` against `anvil --fork-url $BASE_RPC_URL`, if you want a
+      persistent local chain to poke at afterwards rather than a test-process fork.
 - [ ] `.env` filled with all REQUIRED vars above; broadcaster EOA == `TEAM_MULTISIG` and funded.
 - [ ] Simulate WITHOUT `--broadcast` (forge runs the script against a live state read but sends nothing):
       ```

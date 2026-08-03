@@ -46,17 +46,10 @@ contract DeployLocal is DeployZipcode {
         _loadLocalInputs();
 
         vm.startBroadcast();
+        // Shared `_runPhases()` rather than a third hand-copy of the order — this file, `DeployZipcode.deploy()`
+        // and `DeployMainnet` each used to re-list it, so a reorder had three places to miss.
         _provisionStandins();
-        _phaseP0();
-        _phaseP1();
-        _phaseP2();
-        _phaseP4(); // warehouse BEFORE the P3 deposit module (immutable warehouse ctor arg)
-        _phaseP3();
-        _phaseP5();
-        _phaseP6();
-        _phaseP7();
-        _phaseP8();
-        _phaseP9();
+        _runPhases();
         _configureEulerEarn(); // real-EE curator/allocator config (needs adapter[P1], warehouse[P4], borrowVault[P5])
         vm.stopBroadcast();
     }

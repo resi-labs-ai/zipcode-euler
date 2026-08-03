@@ -703,7 +703,7 @@ contract DeployZipcode is SummonSubstrate {
         // No module transfer is needed — they enter the post-deploy state owned by the Timelock directly.
 
         // The warehouse adapter is a `ReceiverTemplate` (OZ-Ownable). `CreditWarehouseDeployer` hands its ownership to
-        // the item-10 broadcaster (`receiverAdmin == msg.sender`, P4) — distinct from the Safe/Roles which go to
+        // the item-10 broadcaster (`receiverAdmin == _actor()`, P4) — distinct from the Safe/Roles which go to
         // GOD_OWNER — so this script seals its CRE identity (above) and re-homes it to the Timelock uniformly with
         // every other receiver, in this same team-broadcast.
         IOwnableLike(d.warehouse.adapter).transferOwnership(tl);
