@@ -14,11 +14,12 @@ contract SzAlphaRateOracleTest is Test {
     uint256 internal constant MAX_STALENESS = 6 hours;
     uint32 internal constant WINDOW = 30 days;
     uint256 internal constant APR_CAP = 50_000; // 500% bps
+    uint32 internal constant TWAP_WINDOW = 24 hours; // exchangeRate() smoothing window
     uint256 internal constant T0 = 1_000_000;
 
     function setUp() public {
         vm.warp(T0);
-        oracle = new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, APR_CAP);
+        oracle = new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, APR_CAP, TWAP_WINDOW);
     }
 
     function _pushTo(SzAlphaRateOracle o, uint256 rate, uint48 ts) internal {
@@ -34,24 +35,24 @@ contract SzAlphaRateOracleTest is Test {
     // --------------------------------------------------------------------- ctor guards
     function test_ctor_reverts_zeroForwarder() public {
         vm.expectRevert(ReceiverTemplate.InvalidForwarderAddress.selector);
-        new SzAlphaRateOracle(address(0), MAX_STALENESS, WINDOW, APR_CAP);
+        new SzAlphaRateOracle(address(0), MAX_STALENESS, WINDOW, APR_CAP, TWAP_WINDOW);
     }
 
     function test_ctor_reverts_zeroMaxStaleness() public {
         vm.expectRevert(SzAlphaRateOracle.ZeroMaxStaleness.selector);
-        new SzAlphaRateOracle(forwarder, 0, WINDOW, APR_CAP);
+        new SzAlphaRateOracle(forwarder, 0, WINDOW, APR_CAP, TWAP_WINDOW);
     }
 
     function test_ctor_reverts_zeroWindow() public {
         vm.expectRevert(SzAlphaRateOracle.ZeroWindow.selector);
-        new SzAlphaRateOracle(forwarder, MAX_STALENESS, 0, APR_CAP);
+        new SzAlphaRateOracle(forwarder, MAX_STALENESS, 0, APR_CAP, TWAP_WINDOW);
     }
 
     function test_ctor_reverts_capZeroOrOverUint32() public {
         vm.expectRevert(SzAlphaRateOracle.InvalidAprCap.selector);
-        new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, 0);
+        new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, 0, TWAP_WINDOW);
         vm.expectRevert(SzAlphaRateOracle.InvalidAprCap.selector);
-        new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, uint256(type(uint32).max) + 1);
+        new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, uint256(type(uint32).max) + 1, TWAP_WINDOW);
     }
 
     function test_deploy_state() public view {
@@ -76,11 +77,76 @@ contract SzAlphaRateOracleTest is Test {
 
     /// @notice No deviation band: the chain's value is published as-is. A big legit jump (e.g. a real emission hike
     ///         doubling the rate in one push) LANDS — a band would have wrongly rejected it as "garbage".
-    function test_large_legit_jump_is_published() public {
+    /// @dev The push still PUBLISHES any magnitude — no band, unchanged. What changed 2026-08-02 is that the
+    ///      consumer-facing `exchangeRate()` smooths UPWARD moves over `twapWindow`, so a mis-scaled push needs the
+    ///      whole window to land. The raw value is published instantly and is what Phase C alarm 3 watches.
+    function test_large_legit_jump_is_published_raw_but_smoothed_to_consumers() public {
         _push(1e18, uint48(T0));
         vm.warp(T0 + 1);
         _push(2e18, uint48(T0 + 1)); // +100% in one push — real or not, publish it
-        assertEq(oracle.exchangeRate(), 2e18);
+
+        assertEq(oracle.rawExchangeRate(), 2e18, "the raw push lands in full, immediately");
+        assertEq(oracle.exchangeRate(), 1e18, "consumers still see the old average: min(spot, twap) picks the twap");
+    }
+
+    /// @dev The upward move is delayed, not rejected. It arrives as successive pushes CLOSE their intervals, which
+    ///      is what makes one hourly push worth 1/24 of a 24h window. Warping alone does not move it, deliberately.
+    function test_upward_move_arrives_as_pushes_close_intervals() public {
+        _push(1e18, uint48(T0));
+        uint256 t = T0;
+        for (uint256 i = 0; i < 24; i++) {
+            t += 1 hours;
+            vm.warp(t);
+            _push(2e18, uint48(t));
+        }
+        // 24 pushes in, the seed hour at 1e18 is still the oldest slice inside the window: (1 + 2*23)/24.
+        assertEq(oracle.exchangeRate(), uint256(47e18) / 24, "one honest hour still in the window");
+
+        t += 1 hours;
+        vm.warp(t);
+        _push(2e18, uint48(t));
+        assertEq(oracle.exchangeRate(), 2e18, "once it rolls out, the new rate has fully landed");
+    }
+
+    /// @dev A single push carries NO weight until the next one closes its interval — the trailing segment is
+    ///      excluded on purpose, because booking it at the newest rate leaks a large jump straight through.
+    function test_fresh_push_carries_no_weight_until_its_interval_closes() public {
+        _push(1e18, uint48(T0));
+        vm.warp(T0 + 1 hours);
+        _push(1_000_000e18, uint48(T0 + 1 hours));
+
+        assertEq(oracle.twapRate(), 1e18, "the inflated push has zero weight while its interval is still open");
+        vm.warp(T0 + 6 hours);
+        assertEq(oracle.twapRate(), 1e18, "and merely waiting does not give it weight");
+    }
+
+    /// @dev A SLASH must not be delayed. `min(spot, twap)` takes the lower number, so a downward move is immediate —
+    ///      this is the whole reason the smoothing is one-directional rather than a symmetric band.
+    function test_downward_move_lands_instantly() public {
+        _push(1e18, uint48(T0));
+        vm.warp(T0 + 1 hours);
+        _push(0.5e18, uint48(T0 + 1 hours));
+
+        assertEq(oracle.exchangeRate(), 0.5e18, "the slash reaches consumers on the first push");
+        assertGt(oracle.twapRate(), 0.5e18, "...even though the trailing average is still high");
+    }
+
+    /// @dev NO SPOT FALLBACK before the window fills. `SzipNavOracle.twapNavPerShare` degrades to raw spot when it
+    ///      lacks history, which is the fails-open shape. Here a partial window smooths over whatever exists.
+    function test_partial_window_smooths_rather_than_falling_back_to_spot() public {
+        _push(1e18, uint48(T0));
+        vm.warp(T0 + 1 hours);
+        _push(10e18, uint48(T0 + 1 hours)); // 3 hours into a 24h window: nowhere near full
+
+        assertLt(oracle.exchangeRate(), 10e18, "the partial window still bites - it did NOT fall back to spot");
+        assertEq(oracle.exchangeRate(), 1e18, "and it is the honest trailing value, not the inflated one");
+    }
+
+    /// @dev The seed push is the one genuinely unsmoothed moment: nothing precedes it to average against.
+    function test_seed_push_is_unsmoothed_and_that_is_the_only_one() public {
+        _push(1e18, uint48(T0));
+        assertEq(oracle.exchangeRate(), 1e18, "the seed value serves itself");
+        assertEq(oracle.genesisTs(), uint48(T0), "genesis recorded");
     }
 
     function test_push_non_forwarder_reverts() public {
@@ -168,7 +234,7 @@ contract SzAlphaRateOracleTest is Test {
     ///         the true ~11.4% (1137 bps). Verified against the on-chain read in the 8x-02 report.
     function test_derives_real_validator_short_window() public {
         uint32 tempo = 4320;
-        SzAlphaRateOracle o = new SzAlphaRateOracle(forwarder, 2 hours, tempo, 1_000_000);
+        SzAlphaRateOracle o = new SzAlphaRateOracle(forwarder, 2 hours, tempo, 1_000_000, TWAP_WINDOW);
         uint256 rPrev = 1_351_726e9;
         uint256 rNow = rPrev + 21_066_000_000;
 
@@ -255,10 +321,11 @@ contract SzAlphaRateOracleInvariantTest is Test {
     uint256 internal constant MAX_STALENESS = 6 hours;
     uint32 internal constant WINDOW = 30 days;
     uint256 internal constant APR_CAP = 50_000;
+    uint32 internal constant TWAP_WINDOW = 24 hours;
 
     function setUp() public {
         vm.warp(1_000_000);
-        oracle = new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, APR_CAP);
+        oracle = new SzAlphaRateOracle(forwarder, MAX_STALENESS, WINDOW, APR_CAP, TWAP_WINDOW);
         handler = new RateOracleHandler(oracle, forwarder);
         targetContract(address(handler));
     }

@@ -203,6 +203,9 @@ func buildDefault(ev LossEvent) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("default: atRisk: %w", err)
 	}
+	if err := checkUsd18("atRisk", atRisk); err != nil {
+		return nil, fmt.Errorf("default: %w", err)
+	}
 	return zipreport.CoordDefault(lienID, atRisk)
 }
 
@@ -216,6 +219,9 @@ func buildRecovery(ev LossEvent) ([]byte, error) {
 	recoveryProceeds, err := parseNonNegBig(ev.RecoveryProceeds) // required, present, may be 0
 	if err != nil {
 		return nil, fmt.Errorf("recovery: recoveryProceeds: %w", err)
+	}
+	if err := checkUsd18("recoveryProceeds", recoveryProceeds); err != nil {
+		return nil, fmt.Errorf("recovery: %w", err)
 	}
 	return zipreport.CoordRecovery(lienID, recoveryProceeds)
 }
@@ -304,6 +310,47 @@ func parseAddress(s string) (common.Address, error) {
 
 // parsePositiveBig parses a base-10 integer string and requires it to be > 0 (lock Amount → escrow ZeroAmount;
 // default AtRisk → contract ZeroAtRisk). Reused verbatim from CRE-01b (cre/controller/workflow.go:288-299).
+// ──────────────────────────────────────────────────────────────────────── 18-dp USD unit check
+
+// The plausibility band for a USD amount expressed in 18-dp wei-dollars. This is a UNIT check, not a business
+// limit: it exists to catch a value that was scaled wrong, and the band is set so wide that no real amount can
+// reach either edge.
+//
+// The failure it catches. `atRisk` and `recoveryProceeds` are 18-dp USD, but the loan principal they derive from
+// is 6-dp USDC, so something upstream has to multiply by 1e12. Get that wrong and the number is off by a factor
+// of a trillion in one direction or the other, and every guard downstream passes it: the report is well-formed,
+// the value is non-zero, and `DefaultCoordinator._default` writes `atRisk × (1 − recoveryFloor)` straight into
+// the provision. A $1e12 `atRisk` against a $10M basket takes NAV to zero and pays every exiter nothing.
+//
+//	forgot the 1e12:  $1,000,000 arrives as 1e12  →  reads as $0.000001   → below usdMin18
+//	applied it twice: $1,000,000 arrives as 1e36  →  reads as $1e18       → above usdMax18
+//
+// It REJECTS rather than corrects. A wrong magnitude is a producer bug, and publishing a "fixed" version of a
+// number we do not understand is how a bad value becomes an authoritative one.
+const (
+	usdMin18 = "1000000000000000"                // $0.001  — anything smaller is an unscaled 6-dp value
+	usdMax18 = "1000000000000000000000000000000" // $1e12   — anything larger is a double-scaled one
+)
+
+// checkUsd18 asserts a parsed 18-dp USD magnitude is inside the plausibility band. Zero is allowed through
+// untouched: it is a legal value for recoveryProceeds and carries no unit ambiguity.
+func checkUsd18(field string, v *big.Int) error {
+	if v.Sign() == 0 {
+		return nil
+	}
+	lo, _ := new(big.Int).SetString(usdMin18, 10)
+	hi, _ := new(big.Int).SetString(usdMax18, 10)
+	if v.Cmp(lo) < 0 {
+		return fmt.Errorf("%s=%s is below $0.001 in 18-dp USD — looks like an UNSCALED 6-dp USDC value "+
+			"(multiply by 1e12); refusing to publish a magnitude we cannot trust", field, v.String())
+	}
+	if v.Cmp(hi) > 0 {
+		return fmt.Errorf("%s=%s exceeds $1e12 in 18-dp USD — looks DOUBLE-SCALED (1e12 applied twice); "+
+			"refusing to publish a magnitude we cannot trust", field, v.String())
+	}
+	return nil
+}
+
 func parsePositiveBig(s string) (*big.Int, error) {
 	v, ok := new(big.Int).SetString(strings.TrimSpace(s), 10)
 	if !ok {

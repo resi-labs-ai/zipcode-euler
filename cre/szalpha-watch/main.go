@@ -58,8 +58,30 @@ func main() {
 	netuid := uint16(envUint("WATCH_NETUID", 46, log))
 	poll := time.Duration(envUint("WATCH_POLL_SECONDS", 60, log)) * time.Second
 	th := Thresholds{
-		StakeDropBps: envUint("WATCH_STAKE_DROP_BPS", 200, log),
-		RateMoveBps:  envUint("WATCH_RATE_MOVE_BPS", 100, log),
+		StakeDropBps:      envUint("WATCH_STAKE_DROP_BPS", 200, log),
+		RateMoveBps:       envUint("WATCH_RATE_MOVE_BPS", 100, log),
+		TransportDriftBps: envUint("WATCH_TRANSPORT_DRIFT_BPS", 50, log),
+	}
+
+	// Alarm 5 (optional): the Base-side receiver. Unset ⇒ single-chain rehearsal, transport check skipped.
+	rateOracleRaw := os.Getenv("WATCH_RATE_ORACLE")
+	baseRPCURL := os.Getenv("WATCH_BASE_RPC_URL")
+	var baseW *baseWatcher
+	if rateOracleRaw != "" || baseRPCURL != "" {
+		if !common.IsHexAddress(rateOracleRaw) {
+			log.Error("WATCH_RATE_ORACLE missing or not an address (required with WATCH_BASE_RPC_URL)", "value", rateOracleRaw)
+			os.Exit(1)
+		}
+		if baseRPCURL == "" {
+			log.Error("WATCH_BASE_RPC_URL required with WATCH_RATE_ORACLE")
+			os.Exit(1)
+		}
+		baseClient, err := ethclient.Dial(baseRPCURL)
+		if err != nil {
+			log.Error("Base dial failed", "rpc", baseRPCURL, "err", err)
+			os.Exit(1)
+		}
+		baseW = newBaseWatcher(baseClient, common.HexToAddress(rateOracleRaw))
 	}
 	metagraphTicks := envUint("WATCH_METAGRAPH_TICKS", 10, log)
 	webhook := os.Getenv("WATCH_ALERT_WEBHOOK_URL")
@@ -76,6 +98,7 @@ func main() {
 
 	log.Info("szalpha-watch running", "szAlpha", szRaw, "rpc", rpcURL, "netuid", netuid,
 		"poll", poll.String(), "stakeDropBps", th.StakeDropBps, "rateMoveBps", th.RateMoveBps,
+		"transportDriftBps", th.TransportDriftBps, "rateOracle", rateOracleRaw,
 		"metagraphTicks", metagraphTicks, "webhook", webhook != "")
 
 	emit := func(alerts []Alert) {
@@ -110,6 +133,16 @@ func main() {
 			emit(evaluate(prev, cur, th, func(from, to uint64) (bool, error) {
 				return w.hadRedeem(ctx, from, to)
 			}))
+			// Alarm 5 — does what landed on Base match the source? A Base read failure must NOT suppress
+			// the 964 alarms above, so it is logged and the tick continues.
+			if baseW != nil {
+				b, berr := baseW.snapshot(ctx)
+				if berr != nil {
+					log.Error("Base rate-oracle read failed — transport check skipped this tick", "err", berr)
+				} else {
+					emit(evaluateTransport(cur, b, th))
+				}
+			}
 			if metagraphTicks > 0 && tick%metagraphTicks == 0 {
 				alerts, err := w.checkMetagraph(ctx, cur.Hotkey)
 				if err != nil {

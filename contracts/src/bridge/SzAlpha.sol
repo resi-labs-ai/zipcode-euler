@@ -58,6 +58,18 @@ import {IStakingV2, IAlpha, IAddressMapping} from "../interfaces/bridge/ISubtens
 ///      it gates `_authorizeUpgrade` + pause. `ccipAdmin` is a SEPARATE, lower-privilege registrar role
 ///      (returned by `getCCIPAdmin()`); it has no mint, no upgrade, no fund power.
 ///
+/// @dev THIRD-PARTY DEPOSITORS. `deposit`/`redeem`/`redeemTo` are permissionless, and the Base mirror is a plain
+///      ERC-20, so anyone can use this by construction. Four things they are accepting, stated here because the
+///      moment someone else's money is in it `validatorHotkey` is a governance question rather than a config value.
+///      (1) They stake under OUR validator: the hotkey was chosen at init, so their yield is our choice, and if it
+///      degrades their remedy is redeeming or our `retarget` under the timelock. (2) They trust our timelock: this
+///      is UUPS, so `owner()` can replace the whole mint/redeem/rate surface and re-point `validatorHotkey`; the
+///      delay is the only thing between them and all of it. (3) They share our rate limits: one whale bridging out
+///      can consume the per-period CCIP cap and throttle everyone. (4) We earn nothing — fees are zero by design and
+///      the rate is raw stake/supply, so a revenue leg would change the rate math, not sit beside it.
+///      `redeem` being non-pausable is the deliberate counterweight: two Rubicon token sets have now been frozen
+///      47+ days behind a pausable redeem. The exit never closes.
+///
 /// @dev v2 candidate (deliberately out of scope): a `getMovingAlphaPrice`-based EMA view for NAV-grade
 ///      pricing; the previews below use the spot `simSwap*` quotes (advisory only).
 contract SzAlpha is

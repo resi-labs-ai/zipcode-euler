@@ -237,10 +237,26 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     }
 
     // --------------------------------------------------------------------- gates
-    /// @notice Only the FIVE oracle-valued plain legs may rotate. Releasing/committing an unvalued asset is barred — a
-    ///         release of an unvalued asset would leave the juniorTrancheSidecar without moving `committedValue()`, so the floor
-    ///         would pass while real value exits the freeze (the non-basket-asset leak, security #6). The ICHI LP
-    ///         share is deliberately NOT here: it is fenced in place, not rotated.
+    /// @notice Only the five plain legs the ORACLE KNOWS may rotate — read live off it at construction. Anything
+    ///         outside that set is barred, because rotating an asset the oracle cannot see would move the
+    ///         juniorTrancheSidecar without moving `committedValue()`, letting the floor pass while real value exits
+    ///         the freeze (the non-basket-asset leak, security #6). The ICHI LP share is deliberately NOT here: it is
+    ///         fenced in place, not rotated.
+    /// @dev  CORRECTED 2026-08-02 — this used to say "the five oracle-VALUED legs", which stopped being true on
+    ///       2026-07-30 when `hydx` and `oHydx` were marked $0 in NAV. "Known to the oracle" and "carries value" were
+    ///       the same set when the live-read idiom was adopted to kill drift; that change split them, and the
+    ///       docstring did not follow. Two of the five admitted legs are now unvalued.
+    /// @dev  That divergence is INERT, which is why the whitelist is left as-is rather than narrowed. For `hydx` and
+    ///       `oHydx` the post-move floor check is size-blind — they move neither `coverageValue()` nor
+    ///       `grossBasketValue()`, so it passes for any amount whenever it would pass for zero. Nothing is lost by
+    ///       that: marked $0, they contributed nothing to `committedValue()` in the first place, so neither committing
+    ///       nor releasing them changes the coverage the floor is defending. Realizing them SELLS them, and the
+    ///       proceeds land as counted USDC in the juniorTrancheSafe, so gross rises. Both `commit` and `release` are
+    ///       gated on the SAME single `operator` key, so the sequence is one actor moving its own inventory between
+    ///       two pockets it already controls — not a party depriving another of anything.
+    /// @dev  Do NOT "fix" this by dropping `hydx`/`oHydx` from the set. The modifier guards `commit` as well as
+    ///       `release`, so removing them bars both directions and permanently strands any balance already sitting in
+    ///       the sidecar, trading an inert mismatch for a real one-way trap.
     modifier onlyValued(address asset) {
         if (asset != zipUSD && asset != usdc && asset != xAlpha && asset != hydx && asset != oHydx) {
             revert UnvaluedAsset(asset);

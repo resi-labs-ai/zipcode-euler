@@ -148,7 +148,7 @@ func run(log *slog.Logger) error {
 	quoter := quote.NewProdQuoter(c, hydxUsdcPool, uint32(cfg.TwapPeriod/time.Second))
 	strikeLoop := job.NewStrikeLoopJob(job.StrikeLoopConfig{
 		Harvest:            harvest,
-		FarmUtility:          farmUtility,
+		FarmUtility:        farmUtility,
 		Exercise:           exerciseMod,
 		Sell:               sellMod,
 		Recycle:            recycleMod,
@@ -200,6 +200,15 @@ func run(log *slog.Logger) error {
 	if aggAddr, ok := cfg.Modules["SeniorNavAggregator"]; ok && aggAddr != (common.Address{}) {
 		jobs = append(jobs, job.NewSolvencyProbeJob(aggAddr))
 		log.Info("solvency probe armed", "SeniorNavAggregator", aggAddr.Hex())
+	}
+	// NAV poke backstop: keeps the TWAP accumulator inside its window when the NAV feed is down. Idle in the
+	// steady state, because every `sharefeeds` leg push already calls `_accumulate()`; this only fires in the
+	// gap where that feed has stopped but the legs have not yet aged past `maxAge`, during which the entry/exit
+	// bracket is disarmed while every consumer still reads the oracle as fresh. Optional wiring, same shape as
+	// the solvency probe: registered only when the address is set.
+	if navAddr, ok := cfg.Modules["SzipNavOracle"]; ok && navAddr != (common.Address{}) {
+		jobs = append(jobs, job.NewPokeJob(navAddr, cfg.NavPokeAfterSeconds))
+		log.Info("nav poke backstop armed", "SzipNavOracle", navAddr.Hex(), "pokeAfterSeconds", cfg.NavPokeAfterSeconds)
 	}
 	runner := job.NewRunner(c, jobs, cfg.PollInterval, log)
 	runner.Run(ctx)

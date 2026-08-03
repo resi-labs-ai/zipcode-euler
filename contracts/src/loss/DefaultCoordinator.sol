@@ -100,6 +100,11 @@ contract DefaultCoordinator is ReceiverTemplate {
     ///         circular); re-pointable by the Timelock owner via `setEscrow` (§17 build phase — NOT renounce-frozen).
     ILienXAlphaEscrow public escrow;
 
+    /// @notice The one contract allowed to call `settleFromJunior`: the junior's `RecycleModule`, whose `divert`
+    ///         pays cash against a recognized hole. Timelock-settable (§17). Zero until wired, which fails
+    ///         `settleFromJunior` closed rather than leaving the write open.
+    address public recycleModule;
+
     // --------------------------------------------------------------------- errors (no string reverts)
     error ZeroAddress();
     error InvalidRecoveryFloor();
@@ -107,6 +112,12 @@ contract DefaultCoordinator is ReceiverTemplate {
     error InvalidAction(uint8 action);
     error BadStatus();
     error ZeroAtRisk();
+    /// @notice `settleFromJunior` called by anything other than the wired `recycleModule` (or while it is unwired,
+    ///         where `address(0) != msg.sender` fails closed).
+    error NotRecycleModule();
+    /// @notice `settleFromJunior` against a lien whose provision is already 0 — nothing to settle, and a silent
+    ///         no-op would let `divert` move junior cash against a hole that does not exist.
+    error NothingToSettle();
     /// @notice A zero-capital RESOLVE/WRITEOFF found NO bond in the CURRENT escrow. Every Bonded lien holds a
     ///         `> 0` bond in its escrow (`lockXAlpha` rejects zero) and nothing consumes it while `Defaulted`
     ///         (RECOVERY only adjusts provision) — so `bondAmount == 0` here can ONLY mean the escrow was
@@ -127,6 +138,11 @@ contract DefaultCoordinator is ReceiverTemplate {
     event Recovered(bytes32 indexed lienId, uint256 recoveryProceeds, uint256 remainingProvision);
     event Resolved(bytes32 indexed lienId, uint256 capitalSlashAmount);
     event WrittenOff(bytes32 indexed lienId, uint256 capitalSlashAmount);
+    event RecycleModuleSet(address indexed recycleModule);
+    /// @notice The junior settled `applied` (18-dp USD) of `lienId`'s markdown with its own cash. Deliberately a
+    ///         SEPARATE event from `Recovered`: that one means realized receipts from the borrower, this one means
+    ///         the junior paid. Same arithmetic, different economics — the history must keep them apart.
+    event JuniorSettled(bytes32 indexed lienId, uint256 applied, uint256 remainingProvision);
 
     /// @param forwarder    The Chainlink Forwarder (the base reverts `InvalidForwarderAddress` on zero).
     /// @param navOracle_   The set-once-deployed-already NAV oracle (sole provision sink).
@@ -177,6 +193,13 @@ contract DefaultCoordinator is ReceiverTemplate {
     ///         engine modules' CRE flows). Bounded `< 1e18` like the ctor. Does NOT retroactively re-mark existing
     ///         provisions (each lien was marked at the floor in force at its recognition); applies to subsequent
     ///         DEFAULT recognitions only.
+    /// @notice Wire the `RecycleModule` permitted to settle a markdown with junior cash. onlyOwner (Timelock, §17).
+    function setRecycleModule(address recycleModule_) external onlyOwner {
+        if (recycleModule_ == address(0)) revert ZeroAddress();
+        recycleModule = recycleModule_;
+        emit RecycleModuleSet(recycleModule_);
+    }
+
     function setRecoveryFloor(uint256 newFloor) external onlyOwner {
         if (newFloor >= 1e18) revert InvalidRecoveryFloor();
         uint256 old = recoveryFloor;
@@ -325,5 +348,43 @@ contract DefaultCoordinator is ReceiverTemplate {
         if (escrow.bondAmount(lienId) != 0) escrow.slashXAlphaToCohort(lienId);
 
         emit WrittenOff(lienId, capitalSlashAmount);
+    }
+
+    // --------------------------------------------------------------------- JUNIOR CASH SETTLEMENT
+    /// @notice Write a recognized hole down by the junior's own CASH settlement of it. Callable only by the wired
+    ///         `recycleModule`, from inside the same `divert` transaction that moves the cash.
+    /// @dev WHY THIS EXISTS. `RecycleModule.divert` moves COUNTED junior USDC out of the main Safe into the senior
+    ///      pool, bounded by the live `provision()`. It used to leave the provision untouched, so the junior was
+    ///      charged the same loss TWICE — once as the markdown, once as the outflow — and every NAV read came in
+    ///      `provision/supply` below the truth. A WRITEOFF then made that permanent: `_recovery` and `_resolve` both
+    ///      require `Defaulted`, nothing leaves `WrittenOff`, and `divert` stayed unlocked because it only reverts
+    ///      `NoHole` at zero. Settling here, atomically with the cash, is what keeps the two ledgers in step.
+    /// @dev NOT `Recovery`, deliberately. That lane is specified as "up only by realized receipts" from the
+    ///      defaulted borrower. The junior's own cash is not a receipt. The arithmetic coincides; the economics do
+    ///      not, and `JuniorSettled` vs `Recovered` is what keeps them separable after the fact.
+    /// @dev `WrittenOff` IS an accepted source here, unlike every other heal path. A written-off loss is realized,
+    ///      and cash paid against a realized loss still settles it — that is precisely what stops the double-count
+    ///      from being permanent. It cannot resurrect value: the bound below is the lien's own remaining provision.
+    /// @dev Bound: `min(amount18, lienLoss[lienId].provision)`. Never writes NAV above the un-impaired basket, and
+    ///      preserves invariant (b) — `totalProvision == Σ lienLoss.provision == oracle.provision()` — because the
+    ///      per-lien slot and the aggregate move by the same `applied`.
+    /// @param lienId  The defaulted or written-off lien whose markdown this cash settles.
+    /// @param amount18 The cash paid, in 18-dp USD (the caller scales USDC 6-dp up by 1e12).
+    /// @return applied The provision actually retired, `<= amount18`.
+    function settleFromJunior(bytes32 lienId, uint256 amount18) external returns (uint256 applied) {
+        if (msg.sender != recycleModule) revert NotRecycleModule();
+        LienStatus s = lienLoss[lienId].status;
+        if (s != LienStatus.Defaulted && s != LienStatus.WrittenOff) revert BadStatus();
+
+        uint256 cur = lienLoss[lienId].provision;
+        if (cur == 0) revert NothingToSettle();
+        applied = amount18 >= cur ? cur : amount18;
+
+        lienLoss[lienId].provision = cur - applied;
+        totalProvision -= applied;
+
+        navOracle.writeProvision(totalProvision);
+
+        emit JuniorSettled(lienId, applied, lienLoss[lienId].provision);
     }
 }

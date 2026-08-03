@@ -49,9 +49,6 @@ FUCK_UR_MOM.md
 fable.md
 carry-risk.md
 
-# Local only, by decision. Re-evaluate the entry below when the work it covers is finished.
-contracts/test/supply/ClaimVerification.t.sol
-
 # Local only, by decision. LOCAL-ONLY MEANS ONE DISK: no private-repo copy of these exists, and
 # their cited sources are memory files that do not either. Back them up out-of-band.
 DISPOSITIONS.md

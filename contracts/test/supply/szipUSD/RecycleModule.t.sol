@@ -176,9 +176,39 @@ contract RevertEmpty {
 /// @dev A settable `SzipNavOracle.provision()` stand-in (the Stream-2 hole size).
 contract MockNavProvision {
     uint256 public provision;
+    /// @dev `divert` reads its settlement target live off the oracle, mirroring the real `SzipNavOracle`.
+    address public defaultCoordinator;
 
     function setProvision(uint256 p) external {
         provision = p;
+    }
+
+    function setDefaultCoordinator(address c) external {
+        defaultCoordinator = c;
+    }
+}
+
+/// @dev Stands in for `DefaultCoordinator.settleFromJunior`. These tests model a single-lien world, so the mock
+///      clamps against the whole aggregate provision exactly as the real coordinator clamps against one lien's
+///      slot, and writes the reduced total back to the NAV mock — the atomic settle `divert` now depends on.
+contract MockDefaultSettlement {
+    MockNavProvision public immutable nav;
+    /// @dev Set true to model a lien with nothing left to settle (the real contract reverts `NothingToSettle`).
+    bool public settleNothing;
+
+    constructor(MockNavProvision nav_) {
+        nav = nav_;
+    }
+
+    function setSettleNothing(bool v) external {
+        settleNothing = v;
+    }
+
+    function settleFromJunior(bytes32, uint256 amount18) external returns (uint256 applied) {
+        if (settleNothing) return 0;
+        uint256 cur = nav.provision();
+        applied = amount18 >= cur ? cur : amount18;
+        nav.setProvision(cur - applied);
     }
 }
 
@@ -676,7 +706,10 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
     MockERC20 internal usdc;
     EEMock internal ee;
     MockNavProvision internal nav;
+    MockDefaultSettlement internal coord;
     ZipDepositModule internal zdmReal;
+
+    bytes32 internal constant LIEN = keccak256("lien-1");
 
     function setUp() public {
         _selectBaseFork();
@@ -685,6 +718,7 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
         usdc = new MockERC20(6);
         ee = new EEMock(address(usdc));
         nav = new MockNavProvision();
+        coord = new MockDefaultSettlement(nav);
         zdmReal = new ZipDepositModule(address(zip), address(usdc), address(ee), WAREHOUSE);
         zip.setCapacity(address(zdmReal), type(uint128).max);
     }
@@ -704,6 +738,7 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
         m = _cloneRecycleModule();
         juniorTrancheEngine = _summonAndEnable(m);
         m.setUp(abi.encode(owner, juniorTrancheEngine, operator, address(zdmReal), address(usdc), address(nav), address(ee), WAREHOUSE));
+        nav.setDefaultCoordinator(address(coord));
     }
 
     function test_fork_recycle_against_real_safe() public {
@@ -731,7 +766,7 @@ contract RecycleModuleForkTest is ForkConfig, SummonSubstrate {
         nav.setProvision(2_000e6 * 1e12); // hole large enough for the full divert
 
         vm.prank(operator);
-        uint256 sent = m.divert(1_000e6);
+        uint256 sent = m.divert(LIEN,1_000e6);
 
         assertEq(sent, 1_000e6, "sent == usdcAmount");
         assertEq(usdc.balanceOf(juniorTrancheEngine), 0, "USDC left the REAL Safe into EE");
@@ -751,7 +786,9 @@ contract RecycleModuleDivertTest is Test {
     MockERC20 internal usdc;
     EEMock internal ee;
     MockNavProvision internal nav;
+    MockDefaultSettlement internal coord;
 
+    bytes32 internal constant LIEN = keccak256("lien-1");
     address internal constant ZDM = address(0xD00); // unused by divert; nonzero for setUp
     address internal constant WAREHOUSE = address(0xBEEF);
     address internal owner = makeAddr("timelockOwner");
@@ -768,6 +805,7 @@ contract RecycleModuleDivertTest is Test {
         usdc = new MockERC20(6);
         ee = new EEMock(address(usdc));
         nav = new MockNavProvision();
+        coord = new MockDefaultSettlement(nav);
         (m, safe) = _rigWith(address(ee));
     }
 
@@ -777,6 +815,7 @@ contract RecycleModuleDivertTest is Test {
         s.setLive(true);
         mod = _cloneRecycleModule();
         mod.setUp(abi.encode(owner, address(s), operator, ZDM, address(usdc), address(nav), pool, WAREHOUSE));
+        nav.setDefaultCoordinator(address(coord));
         usdc.mint(address(s), SEED);
         vm.prank(operator);
         mod.creditFreeValue(SEED);
@@ -800,8 +839,10 @@ contract RecycleModuleDivertTest is Test {
         vm.expectEmit(false, false, false, true, address(m));
         emit FreeValueSpent(amt, SEED - amt);
         vm.expectEmit(true, false, false, true, address(m));
-        emit Filled(amt, WAREHOUSE, BIG_HOLE);
-        uint256 sent = m.divert(amt);
+        // `provisionAfter` is now the TRUE post-settle provision. It used to emit the hole read at entry, which was
+        // the pre-settle value under a field named "after" — accurate only because divert never settled anything.
+        emit Filled(amt, WAREHOUSE, BIG_HOLE - amt * 1e12);
+        uint256 sent = m.divert(LIEN, amt);
 
         assertEq(sent, amt, "sent == usdcAmount");
         // exec-shape: exactly three recorded calls, each value 0 / Call.
@@ -822,7 +863,7 @@ contract RecycleModuleDivertTest is Test {
     function test_divert_zero_amount_reverts() public {
         vm.prank(operator);
         vm.expectRevert(RecycleModule.ZeroAmount.selector);
-        m.divert(0);
+        m.divert(LIEN,0);
         assertEq(safe.callCount(), 0);
         assertEq(m.freeValueAccrued(), SEED, "ledger untouched");
     }
@@ -830,14 +871,14 @@ contract RecycleModuleDivertTest is Test {
     function test_divert_only_operator() public {
         vm.prank(rando);
         vm.expectRevert(RecycleModule.NotOperator.selector);
-        m.divert(1e6);
+        m.divert(LIEN,1e6);
     }
 
     function test_divert_no_hole_reverts() public {
         nav.setProvision(0);
         vm.prank(operator);
         vm.expectRevert(RecycleModule.NoHole.selector);
-        m.divert(1e6);
+        m.divert(LIEN,1e6);
         assertEq(safe.callCount(), 0, "no exec before the gate");
         assertEq(m.freeValueAccrued(), SEED, "ledger untouched");
     }
@@ -847,7 +888,7 @@ contract RecycleModuleDivertTest is Test {
         // exact fill (hole == amt * 1e12) -> ALLOWED
         nav.setProvision(amt * 1e12);
         vm.prank(operator);
-        m.divert(amt);
+        m.divert(LIEN,amt);
         assertEq(ee.balanceOf(WAREHOUSE), amt, "exact fill allowed");
 
         // hole == amt*1e12 - 1 -> ExceedsHole (revert before spend/exec)
@@ -857,14 +898,14 @@ contract RecycleModuleDivertTest is Test {
         nav.setProvision(amt * 1e12 - 1);
         vm.prank(operator);
         vm.expectRevert(RecycleModule.ExceedsHole.selector);
-        m2.divert(amt);
+        m2.divert(LIEN,amt);
         assertEq(s2.callCount(), 0, "no exec on over-hole");
         assertEq(m2.freeValueAccrued(), SEED, "ledger untouched on over-hole");
 
         // hole == amt*1e12 + 1 -> ALLOWED
         nav.setProvision(amt * 1e12 + 1);
         vm.prank(operator);
-        m2.divert(amt);
+        m2.divert(LIEN,amt);
         assertEq(m2.freeValueAccrued(), SEED - amt, "plus-one fill allowed");
     }
 
@@ -873,7 +914,7 @@ contract RecycleModuleDivertTest is Test {
         uint256 huge = type(uint256).max / 1e12 + 1;
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", uint256(0x11)));
-        m.divert(huge);
+        m.divert(LIEN,huge);
         assertEq(safe.callCount(), 0);
         assertEq(m.freeValueAccrued(), SEED, "ledger untouched");
     }
@@ -885,14 +926,14 @@ contract RecycleModuleDivertTest is Test {
         nav.setProvision(50_000e6 * 1e12);
         vm.prank(operator);
         vm.expectRevert(RecycleModule.ExceedsHole.selector);
-        m.divert(60_000e6);
+        m.divert(LIEN,60_000e6);
         assertEq(safe.callCount(), 0);
 
         // Case B: the LEDGER binds first. hole huge, freeValueAccrued small -> InsufficientFreeValue.
         nav.setProvision(BIG_HOLE);
         vm.prank(operator);
         vm.expectRevert(RecycleModule.InsufficientFreeValue.selector);
-        m.divert(SEED + 1);
+        m.divert(LIEN,SEED + 1);
         assertEq(safe.callCount(), 0);
         assertEq(m.freeValueAccrued(), SEED, "ledger untouched on over-ledger");
     }
@@ -905,7 +946,7 @@ contract RecycleModuleDivertTest is Test {
         (RecycleModule mod,) = _rigWith(address(fm));
         vm.prank(operator);
         vm.expectRevert(RecycleModule.BackingShortfall.selector);
-        mod.divert(100_000e6);
+        mod.divert(LIEN,100_000e6);
         assertEq(mod.freeValueAccrued(), SEED, "ledger rolled back atomically (the guard reverts the whole divert)");
     }
 
@@ -915,7 +956,7 @@ contract RecycleModuleDivertTest is Test {
         (RecycleModule mod,) = _rigWith(address(st));
         vm.prank(operator);
         vm.expectRevert(RecycleModule.NoSharesMinted.selector);
-        mod.divert(100_000e6);
+        mod.divert(LIEN,100_000e6);
         assertEq(mod.freeValueAccrued(), SEED, "ledger rolled back atomically (the guard reverts the whole divert)");
     }
 
@@ -925,7 +966,7 @@ contract RecycleModuleDivertTest is Test {
         safe.setFailOnCallIndex(1); // the deposit exec reverts "forced-fail"
         vm.prank(operator);
         vm.expectRevert(bytes("forced-fail"));
-        m.divert(100_000e6);
+        m.divert(LIEN,100_000e6);
         assertEq(m.freeValueAccrued(), SEED, "ledger unchanged after a reverted divert");
     }
 
@@ -942,7 +983,7 @@ contract RecycleModuleDivertTest is Test {
         nav.setProvision(BIG_HOLE);
         vm.prank(operator);
         vm.expectRevert(RecycleModule.ExecFailed.selector);
-        x.divert(100_000e6);
+        x.divert(LIEN,100_000e6);
     }
 
     // ----------------------------------------------------------------- CEI: decrement lands BEFORE the deposit exec
@@ -954,7 +995,7 @@ contract RecycleModuleDivertTest is Test {
 
         uint256 amt = 300_000e6;
         vm.prank(operator);
-        mod.divert(amt);
+        mod.divert(LIEN,amt);
 
         assertTrue(rb.did(), "readback ran");
         assertEq(rb.observed(), SEED - amt, "the spend was applied BEFORE the deposit exec (effects-before-interaction)");
@@ -967,7 +1008,7 @@ contract RecycleModuleDivertTest is Test {
         // divert spends part into the bank; recycle spends more into the basket; the ledger ends at the remainder.
         uint256 diverted = 250_000e6;
         vm.prank(operator);
-        m.divert(diverted);
+        m.divert(LIEN,diverted);
         assertEq(m.freeValueAccrued(), SEED - diverted, "ledger after divert");
         assertEq(ee.balanceOf(WAREHOUSE), diverted, "divert filled the bank");
 
@@ -986,30 +1027,38 @@ contract RecycleModuleDivertTest is Test {
     }
 
     // ----------------------------------------------------------------- SEC-09: cumulative hole bound across calls
+    //
+    // These four tests used to pin the per-provision-epoch TALLY (`lastSeenProvision` /
+    // `divertedSinceProvisionChange`), removed 2026-08-02 with the F1 fix. Two of them —
+    // `test_SEC09_reset_on_remark_allows_fresh_budget` and `test_SEC09_stale_value_remark_does_not_resurrect_tally`
+    // — tested reset-on-re-mark and the stale-value-key bug, both of which are properties of machinery that no
+    // longer exists, so they are deleted rather than rewritten. The property they were protecting (repeated diverts
+    // cannot over-fill the senior pool) survives, enforced by the hole itself, and is pinned by the two below.
 
-    /// @dev Two diverts that each individually pass (`amount*1e12 <= H`) but together exceed `H`: the second reverts
-    ///      ExceedsHole. Pre-fix (per-call check only) both pass and over-fill. H < SEED*1e12 so the hole binds first.
+    /// @dev The cumulative bound now comes from the hole SHRINKING, not from a tally. Two diverts that each pass
+    ///      individually but together exceed the original hole: the second reverts, because the first already
+    ///      retired its share of the markdown.
     function test_SEC09_cumulative_overfill_blocked() public {
         uint256 H = 100_000e6 * 1e12; // < SEED*1e12, so ExceedsHole binds before InsufficientFreeValue
         nav.setProvision(H);
 
-        uint256 first = 60_000e6; // 60_000e6*1e12 <= H -> passes per-call
-        uint256 second = 60_000e6; // also <= H per-call, but 60k+60k=120k > 100k cumulatively
+        uint256 first = 60_000e6; // passes: 60k*1e12 <= H
+        uint256 second = 60_000e6; // would pass a naive per-call check, but the hole is only 40k now
 
         vm.prank(operator);
-        m.divert(first);
+        m.divert(LIEN, first);
         assertEq(ee.balanceOf(WAREHOUSE), first, "first divert filled");
-        assertEq(m.divertedSinceProvisionChange(), first * 1e12, "tally tracks the first divert");
+        assertEq(nav.provision(), H - first * 1e12, "the hole fell by exactly the first fill");
 
         vm.prank(operator);
         vm.expectRevert(RecycleModule.ExceedsHole.selector);
-        m.divert(second);
+        m.divert(LIEN, second);
         assertEq(safe.callCount(), 3, "no further exec on the over-fill (only the first divert's 3 execs)");
         assertEq(m.freeValueAccrued(), SEED - first, "ledger untouched by the blocked divert");
-        assertEq(m.divertedSinceProvisionChange(), first * 1e12, "tally unchanged by the blocked divert");
+        assertEq(nav.provision(), H - first * 1e12, "hole untouched by the blocked divert");
     }
 
-    /// @dev Exact cumulative fill (sum*1e12 == H) is allowed; one wei of hole short reverts ExceedsHole.
+    /// @dev Exact cumulative fill (sum*1e12 == H) is allowed and exhausts the hole to zero; one wei short reverts.
     function test_SEC09_exact_cumulative_fill_and_one_wei_over() public {
         uint256 a = 40_000e6;
         uint256 b = 60_000e6; // a+b = 100_000e6 -> *1e12 == H exactly
@@ -1017,85 +1066,64 @@ contract RecycleModuleDivertTest is Test {
         nav.setProvision(H);
 
         vm.prank(operator);
-        m.divert(a);
+        m.divert(LIEN, a);
         vm.prank(operator);
-        m.divert(b); // exact cumulative fill -> allowed
+        m.divert(LIEN, b); // exact cumulative fill -> allowed
         assertEq(ee.balanceOf(WAREHOUSE), a + b, "exact cumulative fill allowed");
-        assertEq(m.divertedSinceProvisionChange(), H, "tally == hole exactly");
+        assertEq(nav.provision(), 0, "the hole is exactly exhausted, so nothing more can go");
+        vm.prank(operator);
+        vm.expectRevert(RecycleModule.NoHole.selector);
+        m.divert(LIEN, 1e6);
 
         // a fresh rig, hole one wei short of the cumulative sum -> the second divert tips over and reverts.
         (RecycleModule m2, RecordingSafe s2) = _rigWith(address(ee));
         nav.setProvision(H - 1);
         vm.prank(operator);
-        m2.divert(a);
+        m2.divert(LIEN, a);
         vm.prank(operator);
         vm.expectRevert(RecycleModule.ExceedsHole.selector);
-        m2.divert(b); // a+b == H but hole is H-1 -> one wei over
+        m2.divert(LIEN, b); // the remaining hole is one wei short of b
         assertEq(s2.callCount(), 3, "only the first divert executed");
         assertEq(m2.freeValueAccrued(), SEED - a, "ledger untouched by the one-wei-over divert");
     }
 
-    /// @dev Reset-on-re-mark: filling toward H, then re-marking to a fresh H' resets the tally so a fresh divert up to
-    ///      H' is allowed (not permanently stuck).
-    function test_SEC09_reset_on_remark_allows_fresh_budget() public {
-        uint256 H = 100_000e6 * 1e12;
-        nav.setProvision(H);
-        vm.prank(operator);
-        m.divert(80_000e6); // tally = 80k (of 100k)
-        assertEq(m.divertedSinceProvisionChange(), 80_000e6 * 1e12, "tally after first fill");
-
-        // Without a re-mark, only 20k more would fit; a 50k divert would exceed H. Re-mark to a fresh H' first.
-        uint256 Hp = 90_000e6 * 1e12;
-        nav.setProvision(Hp);
-        vm.prank(operator);
-        m.divert(50_000e6); // would exceed the OLD epoch (80k+50k>100k) but the tally reset on the re-mark
-        assertEq(m.lastSeenProvision(), Hp, "lastSeenProvision adopted H'");
-        assertEq(m.divertedSinceProvisionChange(), 50_000e6 * 1e12, "tally reset, then tracks only the post-remark fill");
-        assertEq(ee.balanceOf(WAREHOUSE), 80_000e6 + 50_000e6, "both diverts filled across the re-mark");
-    }
-
-    /// @dev Stale-value re-mark H -> H'' -> H does NOT resurrect the old tally (the value-key bug the ticket forbids).
-    ///      After filling 80k of H, re-marking away and BACK to H starts a fresh epoch: a 50k divert is allowed even
-    ///      though 80k+50k > H, proving the tally is keyed on last-observed change, not on the hole value.
-    function test_SEC09_stale_value_remark_does_not_resurrect_tally() public {
-        uint256 H = 100_000e6 * 1e12;
-        nav.setProvision(H);
-        vm.prank(operator);
-        m.divert(80_000e6); // epoch-1 tally = 80k
-        assertEq(m.divertedSinceProvisionChange(), 80_000e6 * 1e12, "epoch-1 tally");
-
-        // re-mark to a DIFFERENT value, then BACK to the original H.
-        uint256 Hpp = 120_000e6 * 1e12;
-        nav.setProvision(Hpp); // observed only when divert next reads it
-        nav.setProvision(H); // back to the original value WITHOUT a divert in between
-
-        // The next divert observes H, which != lastSeenProvision (still H from epoch-1? NO: lastSeenProvision==H,
-        // hole==H so hole==lastSeenProvision and NO reset would fire). Guard against that false-negative by checking
-        // the value-key bug directly: re-mark through Hpp so lastSeenProvision moves, then back to H.
-        vm.prank(operator);
-        m.divert(10_000e6); // observes H==lastSeenProvision (no reset): tally 80k+10k=90k <= 100k, allowed
-        assertEq(m.divertedSinceProvisionChange(), 90_000e6 * 1e12, "same-value (no change) keeps accumulating");
-
-        // Now actually move the observed provision to Hpp (a real change), then back to H -> each is a fresh epoch.
-        nav.setProvision(Hpp);
-        vm.prank(operator);
-        m.divert(10_000e6); // observes Hpp != lastSeenProvision(H) -> reset; tally = 10k
-        assertEq(m.lastSeenProvision(), Hpp, "adopted Hpp");
-        assertEq(m.divertedSinceProvisionChange(), 10_000e6 * 1e12, "tally reset at Hpp");
-
-        nav.setProvision(H);
-        vm.prank(operator);
-        m.divert(50_000e6); // observes H != lastSeenProvision(Hpp) -> reset; 50k allowed though prior H epoch had 90k
-        assertEq(m.lastSeenProvision(), H, "re-adopted H as a FRESH epoch (no stale tally resurrected)");
-        assertEq(m.divertedSinceProvisionChange(), 50_000e6 * 1e12, "fresh H epoch tally, not 90k+50k");
-    }
-
     /// @dev Divert never WRITES provision: provision() is unchanged across a successful divert.
-    function test_SEC09_divert_never_writes_provision() public {
+    /// @dev INVERTED. This test used to pin `divert` NOT writing provision as intended behaviour, which is exactly
+    ///      what let the junior be charged the same loss twice — once as the markdown, once as this outflow. The
+    ///      settle is now atomic with the cash, so the provision falls by precisely the amount paid.
+    function test_SEC09_divert_settles_provision_by_the_amount_paid() public {
         uint256 H = 100_000e6 * 1e12;
         nav.setProvision(H);
         vm.prank(operator);
-        m.divert(50_000e6);
-        assertEq(nav.provision(), H, "provision() unchanged across a successful divert");
+        m.divert(LIEN, 50_000e6);
+        // was: assertEq(nav.provision(), H, "provision() unchanged across a successful divert")
+        assertEq(nav.provision(), H - 50_000e6 * 1e12, "provision fell by exactly the USDC diverted, scaled to 18-dp");
+    }
+
+    /// @dev `divert` fails CLOSED when the coordinator is unwired — without it the markdown cannot be settled
+    ///      atomically, which is the whole point of the call.
+    function test_divert_reverts_when_coordinator_unwired() public {
+        MockNavProvision bareNav = new MockNavProvision(); // coordinator never wired on this one
+        RecycleModule fresh = _cloneRecycleModule();
+        RecordingSafe s = new RecordingSafe();
+        s.setLive(true);
+        fresh.setUp(abi.encode(owner, address(s), operator, ZDM, address(usdc), address(bareNav), address(ee), WAREHOUSE));
+        usdc.mint(address(s), SEED);
+        vm.prank(operator);
+        fresh.creditFreeValue(SEED);
+        bareNav.setProvision(BIG_HOLE);
+
+        vm.prank(operator);
+        vm.expectRevert(RecycleModule.CoordinatorUnwired.selector);
+        fresh.divert(LIEN, 1_000e6);
+    }
+
+    /// @dev A coordinator that retires nothing must revert the WHOLE divert — cash never leaves against a hole
+    ///      that is not there.
+    function test_divert_reverts_when_nothing_settles() public {
+        coord.setSettleNothing(true);
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(RecycleModule.SettlementShortfall.selector, 1_000e6 * 1e12, 0));
+        m.divert(LIEN, 1_000e6);
     }
 }

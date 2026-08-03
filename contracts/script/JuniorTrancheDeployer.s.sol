@@ -56,12 +56,17 @@ contract JuniorTrancheDeployer is SummonSubstrate {
     error SeamGateShareToken();
     error SeamCoverageGate();
     error SeamEngineSafe();
+    /// @notice `juniorTrancheEngine != juniorTrancheSafe` on the NAV oracle. They are one address with two role
+    ///         names; a divergence makes NAV count the safe while excluding the engine from supply.
+    error SeamEngineNotSafe();
     /// @notice The buy-burn module's Zodiac exec pointers diverge from its engine (`avatar`/`target` != `juniorTrancheEngine`) —
     ///         the uid `owner` would differ from the presigning Safe, so every post/cancel would revert at CoW's owner check.
     error SeamEngineAvatar();
     error SeamSharedLp();
     error SeamOneBank();
     error SeamEscrowCoordinator();
+    /// @notice The RecycleModule↔DefaultCoordinator settlement seam is not wired both ways.
+    error SeamRecycleCoordinator();
     error SeamNavShareTokenUnset();
     /// @notice §2 topology / non-commingling (Key req 5): the junior `juniorTrancheSafe`/`juniorTrancheSidecar` collide with the warehouse.
     error SeamWarehouseCommingled();
@@ -223,6 +228,9 @@ contract JuniorTrancheDeployer is SummonSubstrate {
             SzipBuyBurnModule(t.buyBurn).juniorTrancheEngine() != t.gate.juniorTrancheEngine()
                 || t.gate.juniorTrancheEngine() != t.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
+        // The engine and the basket Safe are ONE address with two role names (docs/safe-identities.md). NAV counts
+        // the safe and excludes the engine from supply, so a divergence zeroes NAV with every token intact.
+        if (t.navOracle.juniorTrancheEngine() != t.navOracle.juniorTrancheSafe()) revert SeamEngineNotSafe();
         if (
             SzipBuyBurnModule(t.buyBurn).avatar() != juniorTrancheEngine
                 || SzipBuyBurnModule(t.buyBurn).target() != juniorTrancheEngine
@@ -289,6 +297,7 @@ contract JuniorTrancheDeployer is SummonSubstrate {
                 p.usdc,
                 p.zipUSD,
                 p.xAlphaMirror,
+                p.oHydx,
                 uint256(300_000e18)
             ),
             juniorTrancheEngine
@@ -322,7 +331,11 @@ contract JuniorTrancheDeployer is SummonSubstrate {
         t.escrow = new LienXAlphaEscrow(p.xAlphaMirror, address(t.coord), p.adminSafe, sub.juniorTrancheSafe);
         t.coord.setEscrow(address(t.escrow));
         t.navOracle.setDefaultCoordinator(address(t.coord));
+        // Junior-cash settlement seam (see DeployZipcode): `divert` reads the coordinator live off the oracle, so
+        // only the coordinator's acceptance side needs wiring.
+        t.coord.setRecycleModule(t.recycle);
         if (t.escrow.coordinator() != address(t.coord)) revert SeamEscrowCoordinator();
+        if (t.coord.recycleModule() != t.recycle) revert SeamRecycleCoordinator();
 
         // -- 15. NAV final wiring (M1: do NOT setLpTwapWindow — the LP leg uses the CRE-push stand-in).
         t.navOracle.setLpPosition(p.polIchiVault, p.polGauge);

@@ -18,6 +18,17 @@ interface IZipDepositModule {
 /// @dev The `SzipNavOracle` impairment-provision read (the hole size, 18-dp USD). `provision` is `uint256 public`
 ///      (`contracts/src/supply/SzipNavOracle.sol:135`), sole writer = the `DefaultCoordinator`. Local interface only —
 ///      `divert` READS it (the bound) and never writes it.
+/// @dev The `DefaultCoordinator` seam used to settle a markdown with the cash `divert` pays against it.
+interface IDefaultSettlement {
+    function settleFromJunior(bytes32 lienId, uint256 amount18) external returns (uint256 applied);
+}
+
+interface ISzipNavCoordinator {
+    /// @dev The oracle's sole `writeProvision` caller. Read LIVE so this module can never drift from the contract
+    ///      that actually owns the provision ledger — there is no second copy of the pairing to keep in sync.
+    function defaultCoordinator() external view returns (address);
+}
+
 interface ISzipNavProvision {
     function provision() external view returns (uint256);
 }
@@ -93,13 +104,12 @@ contract RecycleModule is MastercopyInitLock {
     ///         8-B10-owned — no other module writes it.
     uint256 public freeValueAccrued;
 
-    /// @notice The last `provision()` hole observed by `divert` (18-dp USD). Pairs with `divertedSinceProvisionChange`
-    ///         to bound diverts CUMULATIVELY against the live hole across calls (SEC-09). `0` is a safe "never observed"
-    ///         sentinel: `divert` reverts `NoHole` on `hole == 0`, so the reset block can never set this to 0.
-    uint256 public lastSeenProvision;
-    /// @notice Running tally (18-dp USD) of USDC diverted into the senior pool since the last provision re-mark — reset
-    ///         to 0 whenever `divert` observes a changed `provision()`. Bounds the cumulative divert per provision-epoch.
-    uint256 public divertedSinceProvisionChange;
+    // NOTE: `lastSeenProvision` + `divertedSinceProvisionChange` (the SEC-09 per-provision-epoch tally) were REMOVED
+    // 2026-08-02 with the F1 fix. They existed to bound diverts cumulatively across calls precisely BECAUSE `divert`
+    // left the provision standing, so the live hole never fell and nothing else stopped repeated fills from
+    // over-supplying the senior pool. `divert` now settles the markdown atomically, so the hole falls by exactly what
+    // was paid and the cumulative bound is enforced by the hole itself — tighter than the tally ever was, and with no
+    // epoch semantics to reason about. The tally would have reset on every call and bound nothing.
 
     // --------------------------------------------------------------------- errors
     error NotOperator();
@@ -117,6 +127,13 @@ contract RecycleModule is MastercopyInitLock {
     error NoSharesMinted();
     /// @notice The deposit did not pull exactly `usdcAmount` USDC from the engine Safe (hard-backing / value guard).
     error BackingShortfall();
+    /// @notice `divert` called while `defaultCoordinator` is unwired. Fails closed: without the coordinator the
+    ///         markdown cannot be settled atomically, which is the whole point of the call.
+    error CoordinatorUnwired();
+    /// @notice The coordinator could not retire the FULL amount paid against this lien — wrong `lienId`, or the cash
+    ///         exceeds that lien's remaining provision. Reverts the whole `divert`: settling less than was paid would
+    ///         reintroduce the double-count for the difference.
+    error SettlementShortfall(uint256 paid, uint256 applied);
 
     // --------------------------------------------------------------------- events
     event FreeValueCredited(uint256 amount, uint256 newAccrued);
@@ -283,48 +300,43 @@ contract RecycleModule is MastercopyInitLock {
     ///         crediting the **warehouseSafe** — `eePool.deposit(usdcAmount, warehouseSafe)`, **NO zipUSD minted** — so the
     ///         warehouseSafe's USDC backing rises toward ≥ zipUSD owed, filling the capital hole a default left behind. A
     ///         SECOND spend of `freeValueAccrued` (distinct from `recycle`'s backed-mint-into-the-basket sink); both
-    ///         debit the same ledger and leave the other working on the remainder. Bounded CUMULATIVELY by the LIVE hole
-    ///         (`provision()`): the total diverted across calls can never over-fill it WITHIN a provision-epoch (SEC-09).
+    ///         debit the same ledger and leave the other working on the remainder. Bounded by the LIVE hole
+    ///         (`provision()`), which this call itself retires by the amount paid.
     ///
-    /// @dev ORDER is load-bearing — **bounds-before-spend, then CEI**: (a) `usdcAmount > 0`; (b) read the hole, revert
-    ///      `NoHole` if 0; (c) **reset-on-change** — if the observed `hole != lastSeenProvision` the provision was
-    ///      re-marked, so adopt it (`lastSeenProvision = hole`) and zero the tally (`divertedSinceProvisionChange = 0`);
-    ///      (d) revert `ExceedsHole` if `divertedSinceProvisionChange + usdcAmount * 1e12 > hole` (`1e12` scales USDC
-    ///      6-dp → USD 18-dp; strict `>` allows an EXACT cumulative fill, never an over-fill) — these checks land BEFORE
-    ///      any ledger debit, so an over-hole/no-hole divert records no exec and leaves the ledger untouched; (e)
-    ///      `_spendFreeValue` (effects first — the policy gate), then `divertedSinceProvisionChange += scaled` (also
-    ///      effects-phase, so a reentrant divert sees the updated tally — it rolls back atomically with the ledger if a
-    ///      post-deposit guard reverts); (f) the Safe drives `approve(eePool, usdcAmount)` → `deposit(usdcAmount,
-    ///      warehouseSafe)` → `approve(eePool, 0)`. TWO value guards after the deposit: **hard backing** — the Safe's USDC
-    ///      MUST have fallen by exactly `usdcAmount` (`BackingShortfall`, proves real value moved, not a trusted-pool
-    ///      no-op); and **liveness** — the warehouseSafe's EE-share balance MUST have risen (`NoSharesMinted`, the
-    ///      false-return/FoT guard, since the Safe swallows inner reverts). Divert never WRITES `provision` (the CRE
-    ///      reduces the hole later via `DefaultCoordinator.Recovery`); the cumulative bound is enforced by OBSERVING
-    ///      `provision()` and resetting the tally on any change.
+    /// @dev ORDER is load-bearing — **bounds-before-spend, then CEI**: (a) `usdcAmount > 0`; (b) resolve the
+    ///      coordinator off the oracle, revert `CoordinatorUnwired` if unset — without it the markdown cannot be
+    ///      settled atomically, which is the point of the call; (c) read the hole, revert `NoHole` if 0; (d) revert
+    ///      `ExceedsHole` if `usdcAmount * 1e12 > hole` (`1e12` scales USDC 6-dp → USD 18-dp; strict `>` allows an
+    ///      EXACT fill, never an over-fill) — these land BEFORE any ledger debit, so a rejected divert records no
+    ///      exec and leaves the ledger untouched; (e) `_spendFreeValue` (effects first — the policy gate); (f) the
+    ///      Safe drives `approve(eePool, usdcAmount)` → `deposit(usdcAmount, warehouseSafe)` → `approve(eePool, 0)`,
+    ///      with TWO value guards after the deposit: **hard backing** — the Safe's USDC MUST have fallen by exactly
+    ///      `usdcAmount` (`BackingShortfall`, proves real value moved, not a trusted-pool no-op); and **liveness** —
+    ///      the warehouseSafe's EE-share balance MUST have risen (`NoSharesMinted`, the false-return/FoT guard, since
+    ///      the Safe swallows inner reverts); (g) settle the markdown through the coordinator for exactly what was
+    ///      paid, reverting `SettlementShortfall` if the lien could not absorb all of it.
     ///
-    /// @dev CUMULATIVE GUARANTEE is **per-provision-epoch** (between re-marks): because the tally resets whenever a new
-    ///      hole is observed, total diverted ≤ hole holds within each epoch but NOT across re-marks — a `$100 → $80 →
-    ///      $100` re-mark does NOT resurrect the prior `$100`-epoch tally (the value-key approach would; this last-seen +
-    ///      single-counter approach does not). Cross-epoch over-supply of the senior pool is possible but benign — extra
-    ///      USDC backing only strengthens the peg, and every spend is hard-capped by `freeValueAccrued` (a finite
-    ///      CRE-credited budget) + the trusted single CRE writer (§17). `lastSeenProvision == 0` is a safe "never
-    ///      observed" sentinel because `hole == 0` reverts `NoHole`, so the reset block can never set it to 0.
+    /// @dev CUMULATIVE SAFETY needs no tally. Each call retires the hole by precisely the cash it moves, so the live
+    ///      `provision()` read in (c) IS the remaining budget and repeated calls cannot over-fill the senior pool.
+    ///      This replaced a per-provision-epoch counter (`lastSeenProvision`/`divertedSinceProvisionChange`) that was
+    ///      only ever needed because `divert` used to leave the hole standing; it also leaked across re-marks, which
+    ///      this does not.
+    /// @param lienId   The defaulted or written-off lien whose markdown this cash settles.
+    /// @param usdcAmount The USDC to supply (6-dp).
     /// @return sent The USDC supplied (== `usdcAmount`).
-    function divert(uint256 usdcAmount) external onlyOperator returns (uint256 sent) {
+    function divert(bytes32 lienId, uint256 usdcAmount) external onlyOperator returns (uint256 sent) {
         if (usdcAmount == 0) revert ZeroAmount();
+        // Read the coordinator LIVE off the oracle rather than keeping a second copy here: the oracle already pins
+        // its sole `writeProvision` caller, and that is exactly the contract entitled to retire this markdown.
+        address coordinator = ISzipNavCoordinator(navOracle).defaultCoordinator();
+        if (coordinator == address(0)) revert CoordinatorUnwired();
         uint256 hole = ISzipNavProvision(navOracle).provision(); // read fresh each call (no memoization)
         if (hole == 0) revert NoHole();
-        // reset-on-change: a re-marked provision starts a fresh epoch budget (never keyed by value — see docstring).
-        if (hole != lastSeenProvision) {
-            lastSeenProvision = hole;
-            divertedSinceProvisionChange = 0;
-        }
-        // bounds-before-spend, CUMULATIVE: USDC 6-dp -> USD 18-dp; strict `>` so an exact cumulative fill is allowed.
+        // bounds-before-spend: USDC 6-dp -> USD 18-dp; strict `>` so an exact fill is allowed, never an over-fill.
         uint256 scaled = usdcAmount * 1e12;
-        if (divertedSinceProvisionChange + scaled > hole) revert ExceedsHole();
+        if (scaled > hole) revert ExceedsHole();
 
         _spendFreeValue(usdcAmount); // effects first (the policy gate; the CEI decrement)
-        divertedSinceProvisionChange += scaled; // effects-phase tally bump (before the value-moving execs)
 
         address pool = eePool;
         address wh = warehouseSafe;
@@ -340,8 +352,18 @@ contract RecycleModule is MastercopyInitLock {
         if (IERC20(pool).balanceOf(wh) <= beforeShares) revert NoSharesMinted();
         _exec(usdc, abi.encodeWithSelector(IERC20.approve.selector, pool, uint256(0)));
 
+        // Settle the markdown with the cash that just paid it, in this same transaction. Without this the junior
+        // eats the loss twice — once as the provision, once as this outflow — and a later WRITEOFF freezes the
+        // understatement permanently, because both heal paths require `Defaulted`. Settling AFTER the backing and
+        // liveness asserts means a hole is only ever retired against value provably moved.
+        // EXACT, not best-effort: the coordinator clamps to the lien's own remaining provision, so a short apply
+        // means this cash would have exceeded the markdown on THIS lien — pick a different lien or a smaller amount.
+        // Anything less than exact reintroduces the double-count for the unsettled remainder.
+        uint256 applied = IDefaultSettlement(coordinator).settleFromJunior(lienId, scaled);
+        if (applied != scaled) revert SettlementShortfall(scaled, applied);
+
         sent = usdcAmount;
-        emit Filled(usdcAmount, wh, hole);
+        emit Filled(usdcAmount, wh, ISzipNavProvision(navOracle).provision());
     }
 
     // --------------------------------------------------------------------- exec (Call-only, value 0, bubble-on-fail)

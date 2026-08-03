@@ -56,6 +56,11 @@ var redeemedTopic = crypto.Keccak256Hash([]byte("Redeemed(address,address,uint25
 type Thresholds struct {
 	StakeDropBps uint64 // alarm 2: a drop beyond this fraction of the previous stake (default 200 = 2%)
 	RateMoveBps  uint64 // alarm 3: a rate move beyond this between polls (default 100 = 1%)
+	// alarm 5: how far the value on Base may sit from the 964 source before it is a transport fault.
+	// Small by design — the job transports the rate UNCHANGED, so the only legitimate gap is one poll of
+	// emission accrual (sub-bps per 72-min tempo). Default 50 = 0.5%, which is ~two orders of magnitude of
+	// headroom over real drift and still catches any scaling error by many orders.
+	TransportDriftBps uint64
 }
 
 // Snapshot is one poll's view of the wrapper.
@@ -66,6 +71,14 @@ type Snapshot struct {
 	Hotkey       common.Hash // validatorHotkey()
 	Rate         *big.Int    // exchangeRate(); nil when RateReverted
 	RateReverted bool        // the vanished state seen from the rate side
+}
+
+// BaseSnapshot is one poll's view of the Base-side receiver, SzAlphaRateOracle. Optional: nil whenever
+// WATCH_RATE_ORACLE / WATCH_BASE_RPC_URL are unset, which is the single-chain rehearsal shape.
+type BaseSnapshot struct {
+	Raw      *big.Int // rawExchangeRate() — the last value the CRE actually pushed, UNSMOOTHED
+	Smoothed *big.Int // exchangeRate() — min(spot, twap), what NAV consumes
+	Fresh    bool     // fresh() — consumers fail closed when false
 }
 
 // Alert is one page-worthy finding. Severity: CRITICAL pages, WARN notifies, INFO records.
@@ -138,6 +151,64 @@ func evaluate(prev, cur *Snapshot, th Thresholds, hadRedeem func(fromBlock, toBl
 			fmt.Sprintf("validatorHotkey changed %s → %s — expected ONLY from a timelocked retarget/migrateTo; verify the timelock executed it.", prev.Hotkey.Hex(), cur.Hotkey.Hex())})
 	}
 
+	return alerts
+}
+
+// evaluateTransport is the pure alarm-5 core: does the value that LANDED on Base equal the value the
+// source actually reports?
+//
+// Why this alarm exists. `SzAlphaRateOracle.exchangeRate()` serves `min(spot, twap)` over a 24h window, so a
+// wrong pushed value takes a full window to reach NAV. That delay is only worth something if somebody looks
+// during it — otherwise it just postpones the same outcome. This is the look.
+//
+// It is an EQUALITY check, not a threshold, and that is the point. Every other rate alarm here is a
+// heuristic guessing whether a move is "too big"; a real slash is large and legitimate, so those thresholds
+// can only ever be tuned badly. This one has a correct answer: the raw pushed value on Base must equal
+// `SzAlpha.exchangeRate()` on 964, because the job transports the number unchanged with no scaling. Any
+// inequality beyond one poll's worth of legitimate drift is a transport fault — a mis-scaled encode, a read
+// against the wrong contract or chain, or a stalled job.
+//
+// It reads the RAW view deliberately. `exchangeRate()` is designed to hide exactly this signal for a window,
+// which is protective for consumers and useless for a monitor.
+func evaluateTransport(src *Snapshot, base *BaseSnapshot, th Thresholds) []Alert {
+	var alerts []Alert
+	if base == nil || src == nil {
+		return alerts // Base side not configured — the single-chain rehearsal shape
+	}
+
+	// Not fresh means every consumer is already failing closed. That is the designed safe state, not a
+	// silent one: page it, because it means the job has stopped and nobody is marking xALPHA.
+	if !base.Fresh {
+		alerts = append(alerts, Alert{"CRITICAL", "rate-feed-stale",
+			"SzAlphaRateOracle.fresh() is false — the push job has stopped and every Base consumer is failing " +
+				"closed on the xALPHA leg. Issuance is paused; exits still price off the last good mark."})
+	}
+
+	// The equality check. Skipped while the source is in the vanished state (it reverts by design, and
+	// alarm 1/3a already page that) or before the receiver has ever been seeded.
+	if src.RateReverted || src.Rate == nil || base.Raw == nil || base.Raw.Sign() == 0 {
+		return alerts
+	}
+	diff := new(big.Int).Abs(new(big.Int).Sub(base.Raw, src.Rate))
+	if diff.Sign() != 0 {
+		beyond := new(big.Int).Mul(diff, big.NewInt(10_000)).Cmp(
+			new(big.Int).Mul(src.Rate, new(big.Int).SetUint64(th.TransportDriftBps))) > 0
+		if beyond {
+			alerts = append(alerts, Alert{"CRITICAL", "rate-transport-mismatch",
+				fmt.Sprintf("the value on Base does not match the source: 964 exchangeRate()=%s vs Base "+
+					"rawExchangeRate()=%s (beyond %d bps). The job transports the number UNCHANGED, so these must "+
+					"agree — suspect a mis-scaled encode, a read against the wrong contract/chain, or a stalled "+
+					"job. The 24h smoothing is buying time right now; use it.", src.Rate, base.Raw, th.TransportDriftBps)})
+		}
+	}
+
+	// How much of a bad value is still being withheld from consumers. Not itself a fault: it is the
+	// smoothing working, and it tells the responder how long they have left.
+	if base.Smoothed != nil && base.Smoothed.Cmp(base.Raw) != 0 {
+		alerts = append(alerts, Alert{"INFO", "rate-smoothing-active",
+			fmt.Sprintf("consumers are seeing %s while the last push was %s — the TWAP is still absorbing the "+
+				"difference.", base.Smoothed, base.Raw)})
+	}
 	return alerts
 }
 
@@ -231,6 +302,36 @@ type watcher struct {
 	metagraph common.Address
 	netuid    uint16
 	cachedUID int64 // -1 = unknown; the last uid the configured hotkey was found at
+}
+
+// baseWatcher reads the Base-side receiver for alarm 5. Separate from `watcher` because it is a different
+// chain and a different client, and because a Base outage must never suppress the 964 alarms.
+type baseWatcher struct {
+	client     caller
+	rateOracle common.Address
+}
+
+func newBaseWatcher(client caller, rateOracle common.Address) *baseWatcher {
+	return &baseWatcher{client: client, rateOracle: rateOracle}
+}
+
+// snapshot reads the receiver's raw + smoothed rate and its freshness. `rawExchangeRate()` is the one that
+// matters for the transport check: `exchangeRate()` is the smoothed value and is designed to withhold
+// exactly the discrepancy this alarm is looking for.
+func (b *baseWatcher) snapshot(ctx context.Context) (*BaseSnapshot, error) {
+	raw, err := callUint(ctx, b.client, b.rateOracle, "rawExchangeRate()")
+	if err != nil {
+		return nil, err
+	}
+	smoothed, err := callUint(ctx, b.client, b.rateOracle, "exchangeRate()")
+	if err != nil {
+		return nil, err
+	}
+	freshWord, err := callUint(ctx, b.client, b.rateOracle, "fresh()")
+	if err != nil {
+		return nil, err
+	}
+	return &BaseSnapshot{Raw: raw, Smoothed: smoothed, Fresh: freshWord.Sign() != 0}, nil
 }
 
 func newWatcher(client caller, szAlpha common.Address, netuid uint16) *watcher {

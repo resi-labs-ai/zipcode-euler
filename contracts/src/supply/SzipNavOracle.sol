@@ -186,6 +186,9 @@ contract SzipNavOracle is ReceiverTemplate {
     error StalePrice(uint8 leg);
     error UnknownLpToken(address token);
     error ZeroAddress();
+    /// @notice `setJuniorTrancheEngine` was given anything other than `juniorTrancheSafe`. The NAV numerator counts
+    ///         the safe while the denominator excludes the engine, so the two must be the same address.
+    error EngineMustEqualSafe(address given, address juniorTrancheSafe);
     error StaleRate(); // the wired xALPHA rate oracle is stale — issuance halts (exit still prices off last rate)
     error StaleReport(); // a leg push not strictly newer than the cached mark (replay / out-of-order). Mirrors `SzAlphaRateOracle`.
     error RateUnseeded(); // the xALPHA exchange rate was never seeded (genesis/uninitialized, ≠ stale) — fail closed rather than silently value xALPHA at 0
@@ -342,8 +345,20 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     /// @notice Wire/re-point the engine Safe (its transient pre-burn szipUSD is excluded). `onlyOwner` (Timelock).
+    /// @dev  MUST equal `juniorTrancheSafe`. They are ONE address with two role names — see
+    ///       `docs/safe-identities.md`: "the SAME address as juniorTrancheSafe, but a distinct role... Deploy wires
+    ///       it equal to the basket Safe; kept distinct for role clarity." Nothing enforced that until now.
+    ///       WHY IT MATTERS: `grossBasketValue` counts assets on `juniorTrancheSafe`/`juniorTrancheSidecar`, while
+    ///       `_effectiveSupply` subtracts szipUSD held by `juniorTrancheEngine`. The two agree ONLY because the
+    ///       addresses coincide. Diverge them and the engine's LP, escrow collateral, farm-utility debt and every
+    ///       Sell/Exercise/Recycle proceed go uncounted while the denominator still shrinks: `grossBasketValue`,
+    ///       `spotNavPerShare` and `navExit` all read 0 with every token intact, and the resting buy-burn bid
+    ///       retires the whole supply for dust. `juniorTrancheSafe` is immutable, so this makes the setter a no-op
+    ///       against anything but the one legal value. That is the point — it forecloses nothing, because a
+    ///       distinct engine Safe was never the design.
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        if (juniorTrancheEngine_ != juniorTrancheSafe) revert EngineMustEqualSafe(juniorTrancheEngine_, juniorTrancheSafe);
         _checkpointBestEffort();
         juniorTrancheEngine = juniorTrancheEngine_;
         emit EngineSafeSet(juniorTrancheEngine_);

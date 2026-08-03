@@ -85,9 +85,15 @@ contract DeployZipcode is SummonSubstrate {
     error SeamOneBank();
     error SeamSharedLp();
     error SeamEngineSafe();
+    /// @notice `juniorTrancheEngine != juniorTrancheSafe` on the NAV oracle. They are one address with two role
+    ///         names; a divergence makes NAV count the safe while excluding the engine from supply.
+    error SeamEngineNotSafe();
     /// @notice The buy-burn module's Zodiac exec pointers diverge from its engine (`avatar`/`target` != `juniorTrancheEngine`).
     error SeamEngineAvatar();
     error SeamEscrowCoordinator();
+    /// @notice The RecycleModule↔DefaultCoordinator settlement seam is not wired both ways, so `divert` would fail
+    ///         closed and the markdown could not be retired with the cash that pays it.
+    error SeamRecycleCoordinator();
     error SeamNavShareTokenUnset();
     error LpTwapWindowZero();
     error SeamCoverageGate();
@@ -144,6 +150,7 @@ contract DeployZipcode is SummonSubstrate {
         uint256 rateMaxStaleness; // SzAlphaRateOracle max staleness
         uint32 rateWindow; // SzAlphaRateOracle window
         uint256 rateAprCap; // SzAlphaRateOracle APR cap
+        uint32 rateTwapWindow; // SzAlphaRateOracle exchangeRate() smoothing window (24h at the hourly push cadence)
     }
 
     /// @notice The full deployment handle (one storage struct — avoids stack-too-deep across the phase helpers).
@@ -276,8 +283,9 @@ contract DeployZipcode is SummonSubstrate {
     // ================================================================= P2 — bridge rate oracle (Base side of 8x-02)
     function _phaseP2() internal {
         // 10.
-        d.rateOracle =
-            new SzAlphaRateOracle(BaseAddresses.CRE_KEYSTONE_FORWARDER, i.rateMaxStaleness, i.rateWindow, i.rateAprCap);
+        d.rateOracle = new SzAlphaRateOracle(
+            BaseAddresses.CRE_KEYSTONE_FORWARDER, i.rateMaxStaleness, i.rateWindow, i.rateAprCap, i.rateTwapWindow
+        );
     }
 
     // ================================================================= P4 — warehouse (before the P3 deposit module)
@@ -433,6 +441,9 @@ contract DeployZipcode is SummonSubstrate {
             SzipBuyBurnModule(d.buyBurn).juniorTrancheEngine() != d.gate.juniorTrancheEngine()
                 || d.gate.juniorTrancheEngine() != d.navOracle.juniorTrancheEngine()
         ) revert SeamEngineSafe();
+        // The engine and the basket Safe are ONE address with two role names (docs/safe-identities.md). NAV counts
+        // the safe and excludes the engine from supply, so a divergence zeroes NAV with every token intact.
+        if (d.navOracle.juniorTrancheEngine() != d.navOracle.juniorTrancheSafe()) revert SeamEngineNotSafe();
         if (
             SzipBuyBurnModule(d.buyBurn).avatar() != juniorTrancheEngine
                 || SzipBuyBurnModule(d.buyBurn).target() != juniorTrancheEngine
@@ -476,7 +487,7 @@ contract DeployZipcode is SummonSubstrate {
         // -- SellModule (juniorTrancheEngine) --
         d.sell = _cloneModule(
             address(new SellModule()),
-            abi.encode(tl, juniorTrancheEngine, op, BaseAddresses.ALGEBRA_SWAP_ROUTER, BaseAddresses.HYDX, BaseAddresses.USDC, address(d.zipUSD), i.xAlphaMirror, uint256(300_000e18)),
+            abi.encode(tl, juniorTrancheEngine, op, BaseAddresses.ALGEBRA_SWAP_ROUTER, BaseAddresses.HYDX, BaseAddresses.USDC, address(d.zipUSD), i.xAlphaMirror, BaseAddresses.OHYDX, uint256(300_000e18)),
             juniorTrancheEngine
         );
 
@@ -526,7 +537,12 @@ contract DeployZipcode is SummonSubstrate {
         d.coord.setEscrow(address(d.escrow));
         d.navOracle.setDefaultCoordinator(address(d.coord));
 
+        // The junior-cash settlement seam. Only ONE side needs wiring: `divert` reads the coordinator live off the
+        // oracle, so the coordinator just has to name the module it will accept that settle from.
+        d.coord.setRecycleModule(d.recycle);
+
         if (d.escrow.coordinator() != address(d.coord)) revert SeamEscrowCoordinator();
+        if (d.coord.recycleModule() != d.recycle) revert SeamRecycleCoordinator();
     }
 
     // ================================================================= P8 — NAV oracle final wiring + rate seam
@@ -745,6 +761,7 @@ contract DeployZipcode is SummonSubstrate {
         i.rateMaxStaleness = vm.envUint("RATE_MAX_STALENESS");
         i.rateWindow = uint32(vm.envUint("RATE_WINDOW"));
         i.rateAprCap = vm.envUint("RATE_APR_CAP");
+        i.rateTwapWindow = uint32(vm.envOr("RATE_TWAP_WINDOW", uint256(24 hours)));
     }
 }
 

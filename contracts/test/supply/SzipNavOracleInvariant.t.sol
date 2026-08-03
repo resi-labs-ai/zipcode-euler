@@ -254,7 +254,8 @@ contract SzipNavOracleInvariantTest is Test {
     address internal juniorTrancheSafe = makeAddr("invJuniorTrancheSafe");
     address internal juniorTrancheSidecar = makeAddr("invJuniorTrancheSidecar");
     address internal dc = makeAddr("invDefaultCoordinator");
-    address internal juniorTrancheEngine = makeAddr("invJuniorTrancheEngine");
+    /// @dev ONE address with two role names — the oracle now enforces `engine == safe`.
+    address internal juniorTrancheEngine = juniorTrancheSafe;
 
     MockToken internal zip;
     MockToken internal usdc;

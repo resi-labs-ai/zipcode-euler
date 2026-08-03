@@ -18,6 +18,7 @@ package main
 import (
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -451,5 +452,49 @@ func TestParseAddress(t *testing.T) {
 		if _, err := parseAddress(s); err == nil {
 			t.Fatalf("expected parseAddress(%q) to error", s)
 		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────── 18-dp USD unit checks
+//
+// `atRisk` / `recoveryProceeds` are 18-dp USD derived from 6-dp USDC principal, so something upstream
+// multiplies by 1e12. These pin that a mis-scaled magnitude is REFUSED rather than published: on-chain
+// nothing catches it, and `_default` writes `atRisk × (1 − recoveryFloor)` straight into the provision.
+
+func TestAtRiskUnscaledSixDecimalIsRejected(t *testing.T) {
+	// $1,000,000 sent as 6-dp USDC (1e12) instead of 18-dp USD (1e24) — reads as $0.000001.
+	_, err := buildDefault(LossEvent{LienID: hash32(0x01), AtRisk: "1000000000000"})
+	if err == nil {
+		t.Fatal("an unscaled 6-dp atRisk must be refused")
+	}
+	if !strings.Contains(err.Error(), "UNSCALED") {
+		t.Fatalf("error should name the unit fault, got: %v", err)
+	}
+}
+
+func TestAtRiskDoubleScaledIsRejected(t *testing.T) {
+	// 1e12 applied twice to $1,000,000: 1e36 — reads as $1e18.
+	_, err := buildDefault(LossEvent{LienID: hash32(0x01), AtRisk: "1000000000000000000000000000000000000"})
+	if err == nil {
+		t.Fatal("a double-scaled atRisk must be refused")
+	}
+	if !strings.Contains(err.Error(), "DOUBLE-SCALED") {
+		t.Fatalf("error should name the unit fault, got: %v", err)
+	}
+}
+
+func TestAtRiskCorrectlyScaledIsAccepted(t *testing.T) {
+	// $1,000,000 in 18-dp USD.
+	if _, err := buildDefault(LossEvent{LienID: hash32(0x01), AtRisk: "1000000000000000000000000"}); err != nil {
+		t.Fatalf("a correctly scaled atRisk must pass, got: %v", err)
+	}
+}
+
+func TestRecoveryProceedsUnitCheckedButZeroAllowed(t *testing.T) {
+	if _, err := buildRecovery(LossEvent{LienID: hash32(0x01), RecoveryProceeds: "0"}); err != nil {
+		t.Fatalf("zero recoveryProceeds is legal and carries no unit ambiguity, got: %v", err)
+	}
+	if _, err := buildRecovery(LossEvent{LienID: hash32(0x01), RecoveryProceeds: "1000000000000"}); err == nil {
+		t.Fatal("an unscaled 6-dp recoveryProceeds must be refused")
 	}
 }

@@ -244,7 +244,8 @@ contract SzipNavOracleTest is Test {
     address juniorTrancheSafe = makeAddr("juniorTrancheSafe");
     address juniorTrancheSidecar = makeAddr("juniorTrancheSidecar");
     address dc = makeAddr("defaultCoordinator");
-    address juniorTrancheEngine = makeAddr("juniorTrancheEngine");
+    /// @dev ONE address with two role names — the oracle now enforces `engine == safe`.
+    address juniorTrancheEngine = juniorTrancheSafe;
 
     MockToken zip;
     MockToken usdc;
@@ -386,10 +387,12 @@ contract SzipNavOracleTest is Test {
     function test_setJuniorTrancheEngine_and_setDefaultCoordinator_setOnce() public {
         oracle.setJuniorTrancheEngine(juniorTrancheEngine);
         assertEq(oracle.juniorTrancheEngine(), juniorTrancheEngine);
-        // re-settable (build phase, §17)
+        // NOT re-settable to anything else: engine and safe are one address with two role names, and the numerator
+        // counts the safe while the denominator excludes the engine, so a divergence would zero NAV.
         address es2 = makeAddr("es2");
+        vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.EngineMustEqualSafe.selector, es2, juniorTrancheSafe));
         oracle.setJuniorTrancheEngine(es2);
-        assertEq(oracle.juniorTrancheEngine(), es2);
+        assertEq(oracle.juniorTrancheEngine(), juniorTrancheSafe, "unchanged by the rejected re-point");
         oracle.setDefaultCoordinator(dc);
         assertEq(oracle.defaultCoordinator(), dc);
         address dc2 = makeAddr("dc2");

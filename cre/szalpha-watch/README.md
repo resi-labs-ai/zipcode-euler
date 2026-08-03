@@ -27,6 +27,14 @@ WATCH_ALERT_WEBHOOK_URL=https://hooks.slack.com/... \
 ./szalpha-watch
 ```
 
+Alarm 5 (transport, optional) compares the value that LANDED on Base against the 964 source. The push job
+moves the rate unchanged, so `SzAlphaRateOracle.rawExchangeRate()` on Base must EQUAL
+`SzAlpha.exchangeRate()` on 964. It is an equality check, not a threshold: a real slash is large and
+legitimate, so a "too big a move" alarm cannot distinguish one from a scaling error, and this can. It reads
+the RAW view because `exchangeRate()` is smoothed and is designed to withhold exactly this signal for a
+window. Enable with `WATCH_RATE_ORACLE` + `WATCH_BASE_RPC_URL`; unset means single-chain rehearsal and the
+check is skipped. A Base read failure never suppresses the 964 alarms.
+
 Env (all optional except `WATCH_SZALPHA`): `WATCH_RPC_URL` (default `https://lite.chain.opentensor.ai`),
 `WATCH_NETUID` (46), `WATCH_POLL_SECONDS` (60), `WATCH_STAKE_DROP_BPS` (200), `WATCH_RATE_MOVE_BPS`
 (100), `WATCH_METAGRAPH_TICKS` (10; 0 disables alarm 4), `WATCH_ALERT_WEBHOOK_URL` (JSON

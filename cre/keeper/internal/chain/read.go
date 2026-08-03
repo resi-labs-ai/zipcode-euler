@@ -22,6 +22,12 @@ func selector(sig string) []byte {
 	return crypto.Keccak256([]byte(sig))[:4]
 }
 
+// Selector is the exported form of `selector`, for jobs that build their own calldata for a no-argument
+// state-changing call (e.g. the NAV `poke()` backstop) rather than reading through a Call* helper.
+func Selector(sig string) []byte {
+	return selector(sig)
+}
+
 // callView dispatches a view call (From left zero) and returns the raw ABI bytes.
 func callView(ctx context.Context, r Reader, to common.Address, data []byte) ([]byte, error) {
 	return r.CallContract(ctx, ethereum.CallMsg{To: &to, Data: data}, nil)

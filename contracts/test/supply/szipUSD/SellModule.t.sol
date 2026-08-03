@@ -169,6 +169,7 @@ contract SellModuleUnitTest is Test {
     MockERC20 internal usdc;
     MockERC20 internal zipUSD;
     MockERC20 internal xAlpha;
+    MockOption internal oHydx; // exerciseAndSell's option token
 
     address internal owner = makeAddr("timelockOwner");
     address internal operator = makeAddr("creOperator");
@@ -183,6 +184,7 @@ contract SellModuleUnitTest is Test {
         usdc = new MockERC20();
         zipUSD = new MockERC20();
         xAlpha = new MockERC20();
+        oHydx = new MockOption(address(usdc), address(hydx));
         safe = new RecordingSafe();
         m = _cloneSellModule();
         m.setUp(_params(owner, address(safe), operator));
@@ -205,6 +207,7 @@ contract SellModuleUnitTest is Test {
             address(usdc),
             address(zipUSD),
             address(xAlpha),
+            address(oHydx),
             MAX_SELL
         );
     }
@@ -267,15 +270,16 @@ contract SellModuleUnitTest is Test {
 
     /// @dev (qa iv) enumerate the 8 zero-address setUp reverts (one per address). For the swapRouter==0 case assert the
     ///      selector is SellModule.ZeroAddress specifically (the order-guard fires before any use).
-    function test_setUp_rejects_zero_in_each_of_eight() public {
-        _expectZero(abi.encode(address(0), address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // owner
-        _expectZero(abi.encode(owner, address(0), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // juniorTrancheEngine
-        _expectZero(abi.encode(owner, address(safe), address(0), address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // operator
-        _expectZero(abi.encode(owner, address(safe), operator, address(0), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // swapRouter
-        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(0), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL)); // hydx
-        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(0), address(zipUSD), address(xAlpha), MAX_SELL)); // usdc
-        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(0), address(xAlpha), MAX_SELL)); // zipUSD
-        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(0), MAX_SELL)); // xAlpha
+    function test_setUp_rejects_zero_in_each_of_nine() public {
+        _expectZero(abi.encode(address(0), address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL)); // owner
+        _expectZero(abi.encode(owner, address(0), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL)); // juniorTrancheEngine
+        _expectZero(abi.encode(owner, address(safe), address(0), address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL)); // operator
+        _expectZero(abi.encode(owner, address(safe), operator, address(0), address(hydx), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL)); // swapRouter
+        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(0), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL)); // hydx
+        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(0), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL)); // usdc
+        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(0), address(xAlpha), address(oHydx), MAX_SELL)); // zipUSD
+        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(0), address(oHydx), MAX_SELL)); // xAlpha
+        _expectZero(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), address(0), MAX_SELL)); // oHYDX
     }
 
     function _expectZero(bytes memory params) internal {
@@ -288,14 +292,14 @@ contract SellModuleUnitTest is Test {
     function test_setUp_zero_swapRouter_is_ZeroAddress() public {
         SellModule x = _cloneSellModule();
         vm.expectRevert(SellModule.ZeroAddress.selector);
-        x.setUp(abi.encode(owner, address(safe), operator, address(0), address(hydx), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL));
+        x.setUp(abi.encode(owner, address(safe), operator, address(0), address(hydx), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL));
     }
 
     /// @dev (cap) setUp rejects a zero `maxSellHydx` (a zero cap would brick `sellHydx`).
     function test_setUp_rejects_zero_maxSellHydx() public {
         SellModule x = _cloneSellModule();
         vm.expectRevert(SellModule.ZeroAmount.selector);
-        x.setUp(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), uint256(0)));
+        x.setUp(abi.encode(owner, address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), uint256(0)));
     }
 
     function test_operator_cannot_redirect_safe() public {
@@ -618,6 +622,72 @@ contract SellModuleUnitTest is Test {
         m.sellHydx(1e18, 1, block.timestamp + 1 hours);
     }
 
+    // ----------------------------------------------------------------- exerciseAndSell (F5 + F7)
+
+    /// @dev The happy path: one transaction pays the strike and sells the proceeds, so there is no window in which
+    ///      the basket holds a paid strike against $0-marked HYDX.
+    function test_exerciseAndSell_is_one_transaction() public {
+        (SellModule x, RecordingSafe lsafe,,) = _liveRigForOption();
+        usdc.mint(address(lsafe), 1_000e18);
+
+        vm.prank(operator);
+        (uint256 paid, uint256 out) = x.exerciseAndSell(1e18, 100e18, 1, block.timestamp + 1 hours);
+
+        assertEq(paid, 100e18, "the strike was paid");
+        assertGt(out, 0, "and the proceeds came back in the same call");
+    }
+
+    /// @dev THE F7 HALF. A failing sell leg reverts the exercise with it, so a paid strike can never be stranded
+    ///      against unsold inventory waiting for a human to notice.
+    function test_exerciseAndSell_failed_sell_reverts_the_exercise() public {
+        (SellModule x, RecordingSafe lsafe,, MockSwapRouter lrouter) = _liveRigForOption();
+        usdc.mint(address(lsafe), 1_000e18);
+        uint256 usdcBefore = usdc.balanceOf(address(lsafe));
+        lrouter.setRevertOnSwap(true);
+
+        vm.prank(operator);
+        vm.expectRevert();
+        x.exerciseAndSell(1e18, 100e18, 1, block.timestamp + 1 hours);
+
+        assertEq(usdc.balanceOf(address(lsafe)), usdcBefore, "the strike was rolled back with the failed sell");
+    }
+
+    /// @dev The size backstop applies to the MEASURED proceeds, so the atomic path cannot dump more than the
+    ///      standalone one per transaction.
+    function test_exerciseAndSell_respects_maxSellHydx() public {
+        (SellModule x, RecordingSafe lsafe,,) = _liveRigForOption();
+        usdc.mint(address(lsafe), 10_000_000e18);
+
+        vm.prank(operator);
+        vm.expectRevert(SellModule.ExceedsMaxSell.selector);
+        x.exerciseAndSell(MAX_SELL + 1, 100e18, 1, block.timestamp + 1 hours);
+    }
+
+    function test_exerciseAndSell_is_operator_only() public {
+        (SellModule x,,,) = _liveRigForOption();
+        vm.prank(rando);
+        vm.expectRevert(SellModule.NotOperator.selector);
+        x.exerciseAndSell(1e18, 100e18, 1, block.timestamp + 1 hours);
+    }
+
+    /// @dev A live-Safe rig whose HYDX token is the one the MockOption mints, so the measured delta is real.
+    function _liveRigForOption()
+        internal
+        returns (SellModule x, RecordingSafe lsafe, MockERC20 lhydx, MockSwapRouter lrouter)
+    {
+        lsafe = new RecordingSafe();
+        lsafe.setLive(true);
+        lhydx = new MockERC20();
+        lrouter = new MockSwapRouter();
+        lrouter.setAmountOut(250e18); // the swap's reported proceeds
+        MockOption opt = new MockOption(address(usdc), address(lhydx));
+        x = _cloneSellModule();
+        x.setUp(abi.encode(
+            owner, address(lsafe), operator, address(lrouter), address(lhydx), address(usdc), address(zipUSD),
+            address(xAlpha), address(opt), MAX_SELL
+        ));
+    }
+
     // ----------------------------------------------------------------- atomicity (production bubble path)
 
     function test_exec_bubbles_custom_error() public {
@@ -638,7 +708,7 @@ contract SellModuleUnitTest is Test {
         MockSwapRouter lrouter = new MockSwapRouter();
         SellModule x = _cloneSellModule();
         x.setUp(abi.encode(
-            owner, address(lsafe), operator, address(lrouter), address(badIn), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL
+            owner, address(lsafe), operator, address(lrouter), address(badIn), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL
         ));
         vm.prank(operator);
         vm.expectRevert(SellModule.ExecFailed.selector);
@@ -686,7 +756,7 @@ contract SellModuleUnitTest is Test {
         lsafe.setLive(true);
         x = _cloneSellModule();
         x.setUp(abi.encode(
-            owner, address(lsafe), operator, address(lrouter), address(ltoken), address(usdc), address(zipUSD), address(xAlpha), MAX_SELL
+            owner, address(lsafe), operator, address(lrouter), address(ltoken), address(usdc), address(zipUSD), address(xAlpha), address(oHydx), MAX_SELL
         ));
     }
 
@@ -761,6 +831,7 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
             BaseAddresses.USDC,
             zipUSD,
             xAlpha,
+            BaseAddresses.OHYDX,
             uint256(300_000e18)
         ));
     }
@@ -888,5 +959,27 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
         vm.prank(operator);
         vm.expectRevert();
         m.sellHydx(amountIn, minOut, block.timestamp - 1);
+    }
+}
+
+/// @dev Minimal oHYDX stand-in for `exerciseAndSell`: pulls `maxPaymentAmount` of the payment token from the
+///      caller and mints `amount` HYDX to `recipient`, mirroring the real option's observable effects.
+contract MockOption {
+    address public immutable paymentToken;
+    MockERC20 public immutable hydx;
+    uint256 public strikePerUnit = 1; // payment = amount / strikeDivisor, set trivially for the tests
+
+    constructor(address paymentToken_, address hydx_) {
+        paymentToken = paymentToken_;
+        hydx = MockERC20(hydx_);
+    }
+
+    function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient, uint256)
+        external
+        returns (uint256 paymentAmount)
+    {
+        paymentAmount = maxPaymentAmount;
+        MockERC20(paymentToken).transferFrom(msg.sender, address(this), paymentAmount);
+        hydx.mint(recipient, amount);
     }
 }

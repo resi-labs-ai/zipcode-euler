@@ -6,6 +6,7 @@ import {Operation} from "@gnosis-guild/zodiac-core/core/Operation.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ISwapRouter} from "../../interfaces/algebra/ISwapRouter.sol";
+import {IOptionToken} from "../../interfaces/hydrex/IOptionToken.sol";
 
 /// @title SellModule
 /// @notice The on-chain swap seam of the 8-B9 market-sell leg (§4.5.1): the sixth engine Zodiac Module (after the
@@ -51,6 +52,9 @@ contract SellModule is MastercopyInitLock {
     address public zipUSD;
     /// @notice xALPHA — the `buyXAlpha` output token (the bridge stand-in, wired at deploy).
     address public xAlpha;
+    /// @notice oHYDX — the option token `exerciseAndSell` exercises. Held here so the exercise and the sale can be
+    ///         ONE transaction; `ExerciseModule` keeps the standalone exercise for the cases that need it.
+    address public oHYDX;
     /// @notice The HARD per-call ceiling on `sellHydx`'s `amountIn` (HYDX, 18-dp). A defense-in-depth SIZE backstop:
     ///         `minOut` bounds only PRICE (slippage), never SIZE, so a compromised operator could otherwise dump the
     ///         whole HYDX basket in one tx (`minOut = 1`) and crater HYDX (we are long it via veHYDX + the LP). This
@@ -68,6 +72,11 @@ contract SellModule is MastercopyInitLock {
     error ZeroAmount();
     /// @notice `sellHydx`'s `amountIn` exceeded the governed per-call `maxSellHydx` size ceiling.
     error ExceedsMaxSell();
+    /// @notice `exerciseAndSell` decoded a `paymentAmount` above the authorized `maxPayment`.
+    error PaymentExceedsMax();
+    /// @notice The exercise landed but the Safe's HYDX balance did not rise — nothing to sell, so the whole
+    ///         transaction reverts rather than leaving a paid strike with no proceeds.
+    error NoHydxReceived();
     /// @notice An `exec` through the Safe returned `false` (the Safe swallows inner reverts) with no revert data.
     error ExecFailed();
 
@@ -96,14 +105,16 @@ contract SellModule is MastercopyInitLock {
             address usdc_,
             address zipUSD_,
             address xAlpha_,
+            address oHYDX_,
             uint256 maxSellHydx_
         ) = abi.decode(
-            initParams, (address, address, address, address, address, address, address, address, uint256)
+            initParams, (address, address, address, address, address, address, address, address, address, uint256)
         );
 
         if (
             owner_ == address(0) || juniorTrancheEngine_ == address(0) || operator_ == address(0) || swapRouter_ == address(0)
                 || hydx_ == address(0) || usdc_ == address(0) || zipUSD_ == address(0) || xAlpha_ == address(0)
+                || oHYDX_ == address(0)
         ) {
             revert ZeroAddress();
         }
@@ -121,6 +132,7 @@ contract SellModule is MastercopyInitLock {
         usdc = usdc_;
         zipUSD = zipUSD_;
         xAlpha = xAlpha_;
+        oHYDX = oHYDX_;
         maxSellHydx = maxSellHydx_;
         emit MaxSellHydxSet(maxSellHydx_);
 
@@ -218,6 +230,56 @@ contract SellModule is MastercopyInitLock {
     {
         if (amountIn > maxSellHydx) revert ExceedsMaxSell();
         amountOut = _swap(hydx, usdc, amountIn, minOut, deadline);
+    }
+
+    /// @notice Exercise `oHydxAmount` of oHYDX and sell the resulting HYDX for USDC, ATOMICALLY.
+    /// @dev  WHY THIS EXISTS. `ExerciseModule.exercise` and `sellHydx` are two transactions joined only by an
+    ///       off-chain keeper plan, and the gap between them is a real exposure in two directions.
+    ///       (1) NAV dips for the whole gap: the strike USDC leaves a counted leg while the HYDX that replaces it
+    ///       marks $0, so gross falls by the full strike. Anyone exiting inside the window pays that strike and
+    ///       receives none of the profit it was spent to earn. The mark is correct — that is what makes it a
+    ///       SEQUENCING exposure rather than a pricing bug — but the transfer from exiter to stayer is real.
+    ///       (2) If the sell leg fails (slippage, deadline, a dropped RPC) the keeper plan aborts on first error and
+    ///       never re-schedules it, so the dip persists until a human notices and fires `sellHydx` by hand.
+    ///       One transaction closes both: there is no window to exit inside, and a failed sell reverts the exercise
+    ///       instead of stranding a paid strike.
+    /// @dev  `sellHydx` and `ExerciseModule.exercise` REMAIN as standalone entrypoints. This does not replace them —
+    ///       leftover inventory from any source still needs a way out, and that path is the F7 manual recovery.
+    /// @dev  The `maxSellHydx` size backstop applies to the MEASURED proceeds, not to a caller-supplied number, so
+    ///       the atomic path cannot be used to dump more HYDX per transaction than the standalone one.
+    /// @param oHydxAmount The oHYDX to exercise.
+    /// @param maxPayment The strike ceiling (the option contract enforces it; re-asserted on the decoded return).
+    /// @param minOut The USDC slippage floor on the sale leg.
+    /// @param deadline Applies to BOTH legs.
+    /// @return paymentAmount The strike actually paid. @return amountOut The USDC received.
+    function exerciseAndSell(uint256 oHydxAmount, uint256 maxPayment, uint256 minOut, uint256 deadline)
+        external
+        onlyOperator
+        returns (uint256 paymentAmount, uint256 amountOut)
+    {
+        if (oHydxAmount == 0 || maxPayment == 0) revert ZeroAmount();
+        address engine = juniorTrancheEngine;
+        address option = oHYDX;
+        // Read the strike token LIVE off the option, the same way `ExerciseModule.setUp` does — no second copy to drift.
+        address pay = IOptionToken(option).paymentToken();
+
+        uint256 hydxBefore = IERC20(hydx).balanceOf(engine);
+
+        _exec(pay, abi.encodeWithSelector(IERC20.approve.selector, option, maxPayment));
+        bytes memory ret =
+            _exec(option, abi.encodeCall(IOptionToken.exercise, (oHydxAmount, maxPayment, engine, deadline)));
+        _exec(pay, abi.encodeWithSelector(IERC20.approve.selector, option, uint256(0)));
+
+        paymentAmount = abi.decode(ret, (uint256));
+        if (paymentAmount > maxPayment) revert PaymentExceedsMax();
+
+        // Sell the MEASURED delta, never a caller-supplied amount: it cannot overstate what the exercise produced,
+        // and it cannot reach pre-existing inventory the caller did not just create.
+        uint256 received = IERC20(hydx).balanceOf(engine) - hydxBefore;
+        if (received == 0) revert NoHydxReceived();
+        if (received > maxSellHydx) revert ExceedsMaxSell();
+
+        amountOut = _swap(hydx, usdc, received, minOut, deadline);
     }
 
     /// @notice Buy `amountOut` xALPHA with `amountIn` zipUSD on our POL (the Mode-B/C buy leg, consumed by 8-B10/8-B13).

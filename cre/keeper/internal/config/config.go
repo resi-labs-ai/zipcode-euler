@@ -37,6 +37,12 @@ type Config struct {
 	// here (no Validate rule).
 	RedeemTargetPending *big.Int `json:"-"`
 
+	// NavPokeAfterSeconds is the accumulator age at which the NAV poke backstop fires. Must sit comfortably
+	// below the oracle's `W` (3600 at the deployed default), because a tick can be missed and the transaction
+	// still has to land. Being early costs one idempotent, permissionless `poke()`; being late disarms the
+	// entry/exit bracket entirely.
+	NavPokeAfterSeconds uint64 `json:"nav_poke_after_seconds"`
+
 	// ---- StrikeLoopJob knobs (KEEPER-01b, §8.7; TUNABLE / C4 reviewer-flagged) ----
 	// Pinned M1 defaults applied before env+Validate; an explicit env 0 is rejected
 	// for the bps/price knobs (mirrors the GasBufferBps rule).
@@ -89,6 +95,7 @@ func defaults() Config {
 		Modules:          map[string]common.Address{},
 
 		RedeemTargetPending: big.NewInt(0), // 0 = escrow disabled (explicit 0 is valid)
+		NavPokeAfterSeconds: 1200,          // 20 min: two further ticks of margin inside a 3600s W
 
 		// StrikeLoopJob M1 defaults (TUNABLE, C4).
 		CushionBps:         200,
