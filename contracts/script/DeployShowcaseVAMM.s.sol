@@ -26,12 +26,14 @@ contract DeployShowcaseVAMM is Script {
     address internal constant TEAM = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266; // broadcaster + Safe owner + demo owner
     address internal constant OPERATOR = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; // creOperator (engine ops)
 
-    // --- already-deployed protocol addresses (from the main deploy; see build/anvil/contract-map.md) ---
+    // --- already-deployed protocol addresses (from the main deploy; regenerate with build/anvil/smoketest/regen-addresses.sh
+    //     after EVERY main redeploy — these drift with the bytecode; on 2026-08-03 the stale SZIPUSD constant here
+    //     pointed at the LIVE SzipNavOracle and bricked the demo oracle's spotNavPerShare) ---
     address internal constant MAIN_SAFE = 0x0B9C95c7fc6048Bd4B568b637707D7dC5381B2ac; // engine Safe (avatar)
     address internal constant SIDECAR = 0x39D229610e52A1229cF5728CAb0A862F650AF6f0;
-    address internal constant ZIPUSD = 0xC5bd67f769bC0bEc5077c15E23d7AD707D5c45aF;
-    address internal constant SZIPUSD = 0x33aD3E23ae6189055925ba2265041AcCA356b4E4; // shareToken
-    address internal constant XALPHA_MIRROR = 0xF6CAAF72A788916915ce1bF111E245e0bEABCd18;
+    address internal constant ZIPUSD = 0xabe34eC6072F35F956450159D7238bCB719Fde6a;
+    address internal constant SZIPUSD = 0x783A08cb688a94cb6bCaE9f74eDe6762b44f3ACd; // shareToken
+    address internal constant XALPHA_MIRROR = 0x237C95e376FCA422316a18264936C426BBc686B6;
 
     // --- governed params (mirrors the live SzipNavOracle: W / maxAge) ---
     uint32 internal constant W = 3600;
@@ -49,7 +51,7 @@ contract DeployShowcaseVAMM is Script {
 
     // --- the deployed SzAlphaRateOracle (so the demo oracle can value the juniorTrancheSidecar's xALPHA leg; else grossBasketValue
     //     reverts on the mock mirror, which has no exchangeRate()) ---
-    address internal constant SZALPHA_RATE_ORACLE = 0x7251A305FE860099CdC842fcFbde8aB6002Afe72;
+    address internal constant SZALPHA_RATE_ORACLE = 0x46C89c1A4E86b7F025871C35f08aa7da95F79d8f;
 
     // --- a distinct clone salt (the demo module is a different mastercopy, so it can't collide — but be explicit) ---
     uint256 internal constant SALT = uint256(keccak256("zipcode-showcase-vamm-v1"));
