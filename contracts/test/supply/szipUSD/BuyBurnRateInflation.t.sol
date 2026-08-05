@@ -119,6 +119,10 @@ contract BuyBurnRateInflationTest is Test {
         // seed the two pushed NAV legs (in-band, single push) + the xALPHA rate at 1.0
         _pushLegs(1e18, 1e18);
         _pushRate(1e18);
+        // warm the rate oracle: `exchangeRate()` serves 0 until the seed's interval is closed by a second push
+        // (the warm-up gate — an unwarmed oracle fails NAV closed instead of serving the raw seed).
+        vm.warp(block.timestamp + 72);
+        _pushRate(1e18);
 
         // the REAL buy-burn module, wired to the REAL NAV oracle
         module = SzipBuyBurnModule(Clones.clone(address(new SzipBuyBurnModule())));

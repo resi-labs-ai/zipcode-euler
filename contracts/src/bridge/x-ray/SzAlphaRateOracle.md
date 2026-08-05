@@ -6,6 +6,29 @@ Dedicated single-contract X-Ray for `contracts/src/bridge/SzAlphaRateOracle.sol`
 `test/bridge/SzAlphaRateOracle.t.sol`. This is the real-logic bridge contract (vs the thin pool/mirror
 wrappers), so it gets the full treatment.
 
+> **Update 2026-08-04 (ring-miss fix on the TWAP fallback):**
+> - Since `01efa48` the contract carries a `min(spot, twap)` smoothing leg: `exchangeRate()` serves the lower of
+>   the last push and a `twapWindow` average built from a `CARDINALITY` (32) observation ring, closed intervals
+>   only, no spot fallback. `rawExchangeRate()` stays unsmoothed for the monitor.
+> - **Fixed:** on a ring miss (more than 32 pushes inside `twapWindow`, i.e. cadence faster than ~46 min at the
+>   24h window), `twapRate()` fell through to `cumRate / (now - genesisTs)` — a since-genesis lifetime average
+>   diverging from the window without bound. It now averages from the oldest surviving ring observation, so the
+>   window degrades to the ring's span instead. The genesis path remains only for the young, not-yet-full ring.
+>   Regression: `test_ring_miss_averages_over_ring_span_not_since_genesis` (pre-fix value 1.075e18 vs true 2e18).
+> - This also retires the first-cycle depth question (31 vs 32 usable slots): the miss path no longer changes
+>   regime, it only shortens the span by one slot's interval.
+> - Cadence ↔ `twapWindow`/`CARDINALITY` coupling documented in `cre/szalpha-rate/README.md` next to the
+>   staleness coupling.
+> - **Fixed (warm-up gate):** the seed push was the one value `min(spot, twap)` could not attenuate, and the
+>   deploy wires this oracle into `SzipNavOracle` before any push exists — so a mis-scaled first push (the exact
+>   producer-bug class the smoothing prices) would have marked NAV at full magnitude for one cadence period,
+>   with `navExit` ungated on freshness. `exchangeRate()` now serves 0 until the seed's interval is closed
+>   (`latest.ts != genesisTs`), routing the unwarmed state into the consumers' `RateUnseeded` fail-closed path;
+>   `rawExchangeRate()` still serves the seed for alarm 5. Cost: NAV closed ~one cadence period after wiring or
+>   any re-point onto a fresh oracle. Regression: `test_seed_push_serves_zero_to_consumers_until_interval_closes`
+>   (pre-fix served the raw 5e18 seed). The `BuyBurnRateInflation` fixture now warms with a second push, which is
+>   the production shape. Suite **29/29 green**; buy-burn inflation harness 5/5; NAV oracle 87/87.
+>
 > **Update 2026-07-31 (two items, no code change to guards):**
 > - **`ts` semantics pinned (Octane remote-timestamp finding, commit `7551f5b`, NatSpec-only):** the pushed `ts`
 >   is the **DON push time** (`cre/szalpha-rate` stamps `runtime.Now()`, the sharefeeds pattern) — NEVER the 964

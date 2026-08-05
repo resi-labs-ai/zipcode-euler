@@ -54,6 +54,11 @@ Base 8453:      SzAlphaRateOracle  (push-cache, IXAlphaRate)  — exchangeRate()
 - **Cadence ↔ staleness coupling.** `defaultSchedule` is hourly; the receiver's `maxStaleness` is a
   deploy-time immutable. Choose them together (staleness ≈ 6× cadence gives ~6 missed pushes of slack
   before consumers fail closed).
+- **Cadence ↔ TWAP-window coupling.** The receiver's observation ring holds `CARDINALITY` (32) pushes and
+  `twapWindow` is a deploy-time immutable (24h shipped). Keep the cadence slower than `twapWindow / 32`
+  (~46 min at 24h) so the ring spans the full window. A faster cadence does not break the receiver — it
+  averages over the ring's shortened span — but the smoothing soak-time shrinks proportionally, so a bad
+  push soaks into NAV faster than the intended full window.
 
 ## Deploy wiring (when go-live is called)
 
@@ -61,4 +66,7 @@ Deploy `SzAlphaRateOracle` on **Base** (forwarder = the CRE Forwarder; `maxStale
 chosen against the cadence above). Run this workflow on the CRE DON with config: `subtensorChainSelector`
 (964 = `2135107236357186872`), `szAlpha` (the production proxy), `baseChainSelector`, `szAlphaRateOracle`.
 Then point `SzipNavOracle`'s xALPHA **rate** read at this oracle behind its `fresh()` gate (the token
-address stays the mirror for balances).
+address stays the mirror for balances). Wiring before the first push is safe: `exchangeRate()` serves 0
+until the seed push's interval is closed by push 2, so NAV fails closed (`RateUnseeded`) for roughly one
+cadence period after wiring instead of marking against an unsmoothed seed value. The same one-period
+closure applies to any later Timelock re-point onto a fresh oracle.

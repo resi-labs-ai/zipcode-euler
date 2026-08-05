@@ -291,6 +291,17 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
         assertFalse(ready, "1min of history is not 1h");
         assertEq(readyAt, uint256(oldest) + WINDOW);
 
+        // Ample history but the feed has gone quiet: the depth gate is satisfied and the probe must STILL report
+        // not-ready, because the average would be extrapolated end-to-end and equal spot.
+        plugin.configure(1, false, uint32(block.timestamp) - 10 * WINDOW);
+        plugin.setNewest(uint32(block.timestamp) - WINDOW); // nothing inside the window
+        (ready,, readyAt) = status.call(vault, WINDOW);
+        assertFalse(ready, "quiet feed is not ready even with ample depth");
+
+        plugin.setNewest(uint32(block.timestamp) - WINDOW + 1); // one point just inside
+        (ready,,) = status.call(vault, WINDOW);
+        assertTrue(ready, "a single timepoint inside the window is enough");
+
         address pluginlessVault = address(new MockVaultNoPlugin(address(new MockPoolNoPlugin())));
         (ready, p, readyAt) = status.call(pluginlessVault, WINDOW);
         assertFalse(ready, "no plugin => not ready");
@@ -303,6 +314,27 @@ contract AlgebraIchiFairLpOracleForkTest is ForkConfig {
     ///         `BadTimepoints` rather than indexing a malformed array. A conforming Algebra plugin always returns
     ///         length-2 (the lib builds `secondsAgos` as `new uint32[](2)`), so this exercises the otherwise-dead
     ///         shape guard — the one fail-closed path the suite previously left untested.
+    /// @notice A plugin with ample stored history that has recorded NOTHING inside the window reverts
+    ///         `LpTwapNoRecentTimepoint`, not a silent spot price. Algebra extrapolates both requested endpoints
+    ///         from the newest stored timepoint at the live tick, so with an empty window the "average" IS spot and
+    ///         the manipulation resistance is gone while the depth gate still passes. Reachable if the pool stops
+    ///         writing timepoints — `pluginConfig`'s before-swap bit is Hydrex-controlled.
+    function test_fairReserves_revert_noRecentTimepoint() public {
+        MockHistoryPlugin plugin = new MockHistoryPlugin();
+        address mockPool = address(new MockPoolWithPlugin(address(plugin)));
+        address vault = address(new MockVaultNoPlugin(mockPool));
+        FairReservesCaller caller = new FairReservesCaller();
+
+        uint32 quiet = uint32(block.timestamp) - WINDOW; // last write exactly at the window edge
+        plugin.configure(1, false, uint32(block.timestamp) - 10 * WINDOW); // depth gate satisfied
+        plugin.setNewest(quiet);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IchiAlgebraFairReserves.LpTwapNoRecentTimepoint.selector, address(plugin), quiet)
+        );
+        caller.call(vault, WINDOW);
+    }
+
     function test_fairReserves_revert_badTimepoints() public {
         address plugin = address(new MockBadTimepointsPlugin());
         address mockPool = address(new MockPoolWithPlugin(plugin));
@@ -461,17 +493,19 @@ contract MockBadTimepointsPlugin {
         return true;
     }
 
-    // History surface: oldest slot at ts 0 ⇒ the depth gate passes for any fork-era block.timestamp, so the
-    // malformed-set path below is still reachable.
+    // History surface: oldest slot at ts 0 ⇒ the depth gate passes for any fork-era block.timestamp; the HEAD slot
+    // (index 1) carries `block.timestamp` so the freshness gate also passes, keeping the malformed-set path below
+    // reachable. Both gates must be satisfied for `BadTimepoints` to be the revert under test.
     function timepointIndex() external pure returns (uint16) {
         return 1;
     }
 
     function timepoints(uint256 index)
         external
-        pure
+        view
         returns (bool initialized, uint32, int56, uint88, int24, int24, uint16)
     {
+        if (index == 1) return (true, uint32(block.timestamp), 0, 0, 0, 0, 0);
         return (index == 0, 0, 0, 0, 0, 0, 0);
     }
 
@@ -488,11 +522,20 @@ contract MockHistoryPlugin {
     uint16 public timepointIndex;
     bool internal wrapped;
     uint32 internal oldestTs;
+    /// @dev The HEAD slot's timestamp. The freshness gate reads this, so it must be modelled separately from
+    ///      `oldestTs` — a mock that only carries the oldest slot cannot express "ample history, gone quiet".
+    uint32 internal newestTs;
 
     function configure(uint16 head_, bool wrapped_, uint32 oldestTs_) external {
         timepointIndex = head_;
         wrapped = wrapped_;
         oldestTs = oldestTs_;
+        newestTs = uint32(block.timestamp); // default: the feed is live
+    }
+
+    /// @notice Park the newest timepoint in the past without touching the depth gate — the quiet-feed state.
+    function setNewest(uint32 newestTs_) external {
+        newestTs = newestTs_;
     }
 
     function isInitialized() external pure returns (bool) {
@@ -508,6 +551,7 @@ contract MockHistoryPlugin {
         unchecked {
             next = timepointIndex + 1;
         }
+        if (index == timepointIndex) return (true, newestTs, 0, 0, 0, 0, 0); // the write head = newest
         if (wrapped && index == next) return (true, oldestTs, 0, 0, 0, 0, 0);
         if (!wrapped && index == 0) return (true, oldestTs, 0, 0, 0, 0, 0);
         return (false, 0, 0, 0, 0, 0, 0);

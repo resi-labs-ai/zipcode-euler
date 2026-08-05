@@ -206,6 +206,17 @@ contract SellModule is MastercopyInitLock {
         emit WiringSet("xAlpha", xAlpha_);
     }
 
+    /// @notice Re-point `oHYDX` (build phase, §17). onlyOwner (Timelock). Keep in lock-step with
+    ///         `ExerciseModule.setOHYDX` on an option migration — the two modules exercise the same option and
+    ///         must never diverge. Probes `paymentToken()` non-zero on the incoming option (the sibling's
+    ///         fail-closed shape) so a broken option is refused at wire-time, not discovered at exercise-time.
+    function setOHYDX(address oHYDX_) external onlyOwner {
+        if (oHYDX_ == address(0)) revert ZeroAddress();
+        if (IOptionToken(oHYDX_).paymentToken() == address(0)) revert ZeroAddress();
+        oHYDX = oHYDX_;
+        emit WiringSet("oHYDX", oHYDX_);
+    }
+
     // --------------------------------------------------------------------- gates
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator();
@@ -260,8 +271,12 @@ contract SellModule is MastercopyInitLock {
         if (oHydxAmount == 0 || maxPayment == 0) revert ZeroAmount();
         address engine = juniorTrancheEngine;
         address option = oHYDX;
-        // Read the strike token LIVE off the option, the same way `ExerciseModule.setUp` does — no second copy to drift.
+        // Read the strike token LIVE off the option — no second copy to drift across an oHYDX re-point — and
+        // zero-assert it like `ExerciseModule.setUp` does. Without the assert a broken option answering
+        // address(0) makes the approve below a silent no-op through the Safe (execTransactionFromModuleReturnData
+        // returns (true, "") on a codeless target) — fail-open, against the wired-targets-only doctrine.
         address pay = IOptionToken(option).paymentToken();
+        if (pay == address(0)) revert ZeroAddress();
 
         uint256 hydxBefore = IERC20(hydx).balanceOf(engine);
 

@@ -178,6 +178,9 @@ contract MockNavProvision {
     uint256 public provision;
     /// @dev `divert` reads its settlement target live off the oracle, mirroring the real `SzipNavOracle`.
     address public defaultCoordinator;
+    /// @dev The counted Safe — `setJuniorTrancheEngine` pins the engine to this (the EngineMustEqualSafe parity
+    ///      the real oracle exposes as a public immutable).
+    address public juniorTrancheSafe;
 
     function setProvision(uint256 p) external {
         provision = p;
@@ -185,6 +188,10 @@ contract MockNavProvision {
 
     function setDefaultCoordinator(address c) external {
         defaultCoordinator = c;
+    }
+
+    function setJuniorTrancheSafe(address s) external {
+        juniorTrancheSafe = s;
     }
 }
 
@@ -209,6 +216,12 @@ contract MockDefaultSettlement {
         uint256 cur = nav.provision();
         applied = amount18 >= cur ? cur : amount18;
         nav.setProvision(cur - applied);
+    }
+
+    /// @dev Single-lien world: this lien's own hole == the whole-book hole. `divert` reads this to bound `scaled`
+    ///      per-lien (finding L5); `settleNothing` models a zeroed lien slot. Status 2 == Defaulted.
+    function lienLoss(bytes32) external view returns (uint8 status, uint256 provision) {
+        return (2, settleNothing ? 0 : nav.provision());
     }
 }
 
@@ -480,7 +493,16 @@ contract RecycleModuleUnitTest is Test {
         vm.expectRevert(RecycleModule.ZeroAddress.selector);
         m.setUsdc(address(0));
 
+        // engine re-point is parity-gated against the wired oracle (EngineMustEqualSafe): the engine is the Safe
+        // `divert` spends and the settle retires markdowns against, so it must be the Safe the oracle counts.
+        // Migration order is therefore oracle-side first, then this setter.
+        MockNavProvision navMock = new MockNavProvision();
+        m.setNavOracle(address(navMock));
+        vm.expectRevert(abi.encodeWithSelector(RecycleModule.EngineMustEqualSafe.selector, x, address(0)));
+        m.setJuniorTrancheEngine(x); // the oracle counts address(0) != x -> refused
+
         // owner re-points, each emits WiringSet with the correct slot label, and takes effect
+        navMock.setJuniorTrancheSafe(x); // the oracle side moved first; now the module may follow
         vm.expectEmit(true, false, false, true, address(m));
         emit WiringSet("juniorTrancheEngine", x);
         m.setJuniorTrancheEngine(x);
@@ -1118,12 +1140,13 @@ contract RecycleModuleDivertTest is Test {
         fresh.divert(LIEN, 1_000e6);
     }
 
-    /// @dev A coordinator that retires nothing must revert the WHOLE divert — cash never leaves against a hole
-    ///      that is not there.
+    /// @dev A lien with nothing to settle must revert the WHOLE divert — cash never leaves against a hole that is
+    ///      not there. Since the L5 per-lien bound (2026-08-05) this now fails EARLY with `ExceedsHole` (the lien's
+    ///      own hole is 0, so any `scaled > 0` trips before the settle) instead of late with `SettlementShortfall`.
     function test_divert_reverts_when_nothing_settles() public {
-        coord.setSettleNothing(true);
+        coord.setSettleNothing(true); // models a zeroed lien slot: lienLoss(LIEN).provision == 0
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(RecycleModule.SettlementShortfall.selector, 1_000e6 * 1e12, 0));
+        vm.expectRevert(RecycleModule.ExceedsHole.selector);
         m.divert(LIEN, 1_000e6);
     }
 }

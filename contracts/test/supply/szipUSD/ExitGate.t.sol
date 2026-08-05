@@ -110,7 +110,8 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
 
     address internal team = makeAddr("teamMultisig");
     address internal keeper = makeAddr("windowKeeper");
-    address internal engine = makeAddr("juniorTrancheEngine");
+    address internal engine; // == juniorTrancheSafe (the production topology; the oracle counts one address, and
+    //                           the 2026-08-05 parity guard on setJuniorTrancheEngine pins the Gate's engine to it)
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
     address internal forwarder = makeAddr("forwarder");
@@ -155,6 +156,10 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
             W,
             MAX_AGE
         );
+
+        // The engine Safe the buy-burn holds bought-back szipUSD on IS the counted main Safe (one address, two role
+        // names); the Gate's `setJuniorTrancheEngine` parity guard pins it to `oracle.juniorTrancheSafe()`.
+        engine = sub.juniorTrancheSafe;
 
         // 4. Gate + szipUSD (deploy-order circularity: Gate first, szipUSD takes the Gate).
         gate = new ExitGate(sub.baal, address(oracle), address(zip), address(xa), TVL_CAP);
@@ -251,6 +256,23 @@ contract ExitGateTest is ForkConfig, SummonSubstrate {
         // zero-address rejected
         vm.expectRevert(ExitGate.ZeroAddress.selector);
         g.setShareToken(address(0));
+    }
+
+    /// @dev REGRESSION (parity with SzipNavOracle): `setJuniorTrancheEngine` must equal the wired oracle's
+    ///      `juniorTrancheSafe()` — the Safe the oracle excludes from `_effectiveSupply`. A divergent engine would
+    ///      leave szipUSD resting between a CoW fill and the burn counted in the NAV denominator (depressed NAV,
+    ///      cheap `navEntry`, under-paid `navExit`). Timelock-misconfig-bounded; the guard makes it fail closed.
+    function test_setJuniorTrancheEngine_must_equal_counted_safe() public {
+        ExitGate g = new ExitGate(sub.baal, address(oracle), address(zip), address(xa), TVL_CAP);
+        address counted = oracle.juniorTrancheSafe();
+
+        address wrong = makeAddr("someOtherSafe");
+        vm.expectRevert(abi.encodeWithSelector(ExitGate.EngineMustEqualSafe.selector, wrong, counted));
+        g.setJuniorTrancheEngine(wrong);
+
+        // the counted Safe is accepted
+        g.setJuniorTrancheEngine(counted);
+        assertEq(g.juniorTrancheEngine(), counted);
     }
 
     function test_szipUSD_mint_burn_onlyGate() public {

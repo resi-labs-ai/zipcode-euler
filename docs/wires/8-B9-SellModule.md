@@ -30,7 +30,7 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
 ## Contracts involved (what each does)
 | Contract | What it does |
 |---|---|
-| `SellModule` (`is Module`) | The swap driver. `setUp(bytes)`-under-`initializer` decodes **8 addresses + 1 uint256**; three `onlyOperator` entrypoints `sellHydx`/`buyXAlpha`/`sellXAlpha` sharing a private `_swap` (approve→`exactInputSingle`→reset-approve); private bubbling `_exec`; an `onlyOwner` `setMaxSellHydx`; 7 Timelock (`onlyOwner`) address-wiring setters. Set-once storage `juniorTrancheEngine`/`operator`/`swapRouter`/`hydx`/`usdc`/`zipUSD`/`xAlpha` + the `maxSellHydx` cap — **not `immutable`** (§18.6 clone fact: a `ModuleProxyFactory` clone shares mastercopy bytecode, so per-clone config must be `setUp` storage). |
+| `SellModule` (`is Module`) | The swap driver. `setUp(bytes)`-under-`initializer` decodes **8 addresses + 1 uint256**; three `onlyOperator` entrypoints `sellHydx`/`buyXAlpha`/`sellXAlpha` sharing a private `_swap` (approve→`exactInputSingle`→reset-approve); private bubbling `_exec`; an `onlyOwner` `setMaxSellHydx`; 8 Timelock (`onlyOwner`) address-wiring setters. Set-once storage `juniorTrancheEngine`/`operator`/`swapRouter`/`hydx`/`usdc`/`zipUSD`/`xAlpha`/`oHYDX` + the `maxSellHydx` cap — **not `immutable`** (§18.6 clone fact: a `ModuleProxyFactory` clone shares mastercopy bytecode, so per-clone config must be `setUp` storage). |
 | `ISwapRouter` (`src/interfaces/algebra/ISwapRouter.sol`) | The minimal Algebra **Integral** `SwapRouter` surface the module calls — only `exactInputSingle(ExactInputSingleParams)`. The struct carries `(tokenIn, tokenOut, deployer, recipient, deadline, amountIn, amountOutMinimum, limitSqrtPrice)` — **no `fee` field**, a `deployer` field, and `limitSqrtPrice` (NOT `sqrtPriceLimitX96`) ⇒ Algebra Integral, not Uniswap V3. On-chain-verified selector `0x1679c792` against the deployed router `0x6f4bE24d7dC93b6ffcBAb3Fd0747c5817Cea3F9e`. |
 | `IERC20` (`@openzeppelin/contracts/token/ERC20/IERC20.sol`) | Supplies the `approve.selector` for the swap-allowance set + reset legs of `_swap`. |
 
@@ -89,7 +89,7 @@ xALPHA** for incentive/LM strategies. See `SzipBuyBurnModule` for the wind-down 
   capped. **It is set-once config, NOT a running accumulator** — the module stays stateless beyond wiring (sibling
   symmetry). `setMaxSellHydx(uint256 newMax) external onlyOwner` (the Timelock, NOT the hot operator) re-sizes it to
   track pool depth, reverts `ZeroAmount` on zero; both `setUp` and the setter `emit MaxSellHydxSet`.
-- **Timelock-settable wiring (build phase, §17).** Each of the 7 address slots has an `onlyOwner` setter,
+- **Timelock-settable wiring (build phase, §17).** Each of the 8 address slots has an `onlyOwner` setter (`setOHYDX` added 2026-08-05 — it had shipped setter-less, frozen on the clone against the ratified posture; keep it in lock-step with `ExerciseModule.setOHYDX` on an option migration),
   `ZeroAddress`-guarded, emitting `WiringSet(bytes32 slot, address value)`: `setJuniorTrancheEngine` (**also re-points
   avatar+target in lock-step**), `setOperator`, `setSwapRouter`, `setHydx`, `setUsdc`, `setZipUSD`, `setXAlpha`. Slots
   are **re-pointable, not set-once-frozen** (§17 build-phase doctrine). `setOperator` additionally re-checks

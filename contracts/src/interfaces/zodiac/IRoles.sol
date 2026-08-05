@@ -28,16 +28,28 @@ interface IRoles {
         bytes compValue;
     }
 
-    /// @notice The address that ultimately executes forwarded calls (Zodiac `Module.avatar`, Module.sol:
-    ///         `address public avatar`). The warehouse policy pins `receiver == avatar` in its scope, so the
-    ///         adapter's injected `warehouseSafe` MUST equal this — enforced on-chain by
-    ///         `WarehouseAdminModule.setWarehouseSafe` (reverts `AvatarMismatch` otherwise).
+    /// @notice The scope-comparison operand for `Operator.EqualToAvatar` (Zodiac `Module.avatar`;
+    ///         `PermissionLoader.sol` patches `EqualToAvatar` to `EqualTo(keccak256(abi.encode(avatar)))`). The
+    ///         warehouse policy pins `receiver == avatar` in its scope, so the adapter's injected `warehouseSafe`
+    ///         MUST equal this — enforced on-chain by `WarehouseAdminModule` (reverts `AvatarMismatch` otherwise).
+    ///         NOTE: this is NOT the address that executes forwarded calls — see `target()`.
     function avatar() external view returns (address);
+
+    /// @notice The Safe that ACTUALLY executes forwarded calls: Zodiac `Module.exec` is
+    ///         `IAvatar(target).execTransactionFromModule(...)` (`Module.sol:50`). Parity on `avatar()` alone is
+    ///         insufficient — `Roles.setTarget` re-points which Safe pays while leaving `avatar()` untouched, so
+    ///         `WarehouseAdminModule` checks BOTH and reverts `TargetMismatch` when this is not `warehouseSafe`.
+    function target() external view returns (address);
 
     /// @notice Re-point the avatar (Zodiac `Module.setAvatar`, Module.sol: `onlyOwner`). In an avatar-parity
     ///         re-point this MUST run on the modifier BEFORE `WarehouseAdminModule.setWarehouseSafe`, which reverts
     ///         unless `avatar() == warehouseSafe_`.
     function setAvatar(address avatar_) external;
+
+    /// @notice Re-point the target (Zodiac `Module.setTarget`, Module.sol: `onlyOwner`). A Safe migration MUST run
+    ///         this alongside `setAvatar` on the modifier BEFORE `WarehouseAdminModule.setWarehouseSafe`, which
+    ///         reverts unless BOTH `avatar()` and `target()` equal `warehouseSafe_`.
+    function setTarget(address target_) external;
 
     function assignRoles(address module, bytes32[] calldata roleKeys, bool[] calldata memberOf) external;
 

@@ -129,7 +129,11 @@ contract MockAlgebraPool {
 ///      ready-pool case reads through `fairReserves` without reverting in TickMath.
 contract MockAlgebraPlugin {
     bool public isInitialized;
-    uint32 public oldestTs; // slot-0 timestamp — drives the history-depth gate (default 0 ⇒ history since genesis)
+    uint32 public oldestTs; // slot-0 timestamp — drives the history-DEPTH gate (default 0 ⇒ history since genesis)
+    /// @dev Head-slot timestamp — drives the FRESHNESS gate. `0` would mean "the feed has written nothing since
+    ///      the epoch", so it defaults live via `_newest()`; `setNewestTs` parks it in the past to model a quiet
+    ///      feed. Modelled separately from `oldestTs` because the two gates are independent.
+    uint32 public newestTs;
 
     function setInitialized(bool v) external {
         isInitialized = v;
@@ -137,6 +141,14 @@ contract MockAlgebraPlugin {
 
     function setOldestTs(uint32 v) external {
         oldestTs = v;
+    }
+
+    function setNewestTs(uint32 v) external {
+        newestTs = v;
+    }
+
+    function _newest() internal view returns (uint32) {
+        return newestTs == 0 ? uint32(block.timestamp) : newestTs;
     }
 
     // Pre-wrap ring shape: head = 1, slot head+1 uninitialized ⇒ the gate reads slot 0 as the oldest.
@@ -149,6 +161,7 @@ contract MockAlgebraPlugin {
         view
         returns (bool initialized, uint32 blockTimestamp, int56, uint88, int24, int24, uint16)
     {
+        if (index == 1) return (true, _newest(), 0, 0, 0, 0, 0); // the write head = newest
         if (index == 0) return (true, oldestTs, 0, 0, 0, 0, 0);
         return (false, 0, 0, 0, 0, 0, 0);
     }
@@ -449,12 +462,16 @@ contract SzipNavOracleTest is Test {
     // ----------------------------------------------------------------- SEC-13 (L12): oldestRequiredLegTs view
     /// @notice The new additive view returns the MIN of the two required pushed-leg timestamps — the anchor the §7
     ///         buy-burn fence uses (SEC-13 / kill-list L12). Push the legs at different times and assert the older.
-    function test_SEC13_oldestRequiredLegTs_min_of_two_legs() public {
+    /// @dev L10 (2026-08-05): `oldestRequiredLegTs` folds ONLY `LEG_ALPHA_USD` (+ the wired rate), NOT
+    ///      `LEG_HYDX_USD`. HYDX prices nothing in NAV and no longer gates issuance, so a resting bid's `validTo`
+    ///      must not be anchored to it. An OLDER HYDX push must therefore leave the anchor at the ALPHA ts.
+    function test_SEC13_oldestRequiredLegTs_ignores_hydx_leg() public {
         uint48 t0 = uint48(block.timestamp);
-        _push(1, 5e17); // HYDX at t0 (older)
+        _push(1, 5e17); // HYDX at t0 (older) — must NOT lower the anchor
         vm.warp(t0 + 3 hours);
-        _push(0, 1e18); // ALPHA at t0+3h (newer)
-        assertEq(oracle.oldestRequiredLegTs(), t0, "anchor = older (HYDX) leg ts");
+        uint48 tAlpha = uint48(block.timestamp);
+        _push(0, 1e18); // ALPHA at t0+3h
+        assertEq(oracle.oldestRequiredLegTs(), tAlpha, "anchor = ALPHA leg ts; older HYDX ignored");
     }
 
     /// @notice When the xALPHA rate oracle is wired, its `lastUpdate()` is folded into the min when older than both
@@ -733,19 +750,35 @@ contract SzipNavOracleTest is Test {
         oracle.setRedemptionQueue(address(q));
     }
 
-    /// @dev Setter: onlyOwner, re-pointable, zero-allowed (unset), emits.
+    /// @dev Setter: onlyOwner, re-pointable, zero-allowed (unset), emits; validates the wired address at set time.
     function test_setRedemptionQueue_onlyOwner_and_zeroAllowed() public {
+        MockRedemptionQueue q = new MockRedemptionQueue();
+
         vm.prank(makeAddr("rando"));
         vm.expectRevert();
-        oracle.setRedemptionQueue(address(0xBEEF));
+        oracle.setRedemptionQueue(address(q));
 
         vm.expectEmit(true, false, false, false);
-        emit RedemptionQueueSet(address(0xBEEF));
-        oracle.setRedemptionQueue(address(0xBEEF));
-        assertEq(oracle.redemptionQueue(), address(0xBEEF));
+        emit RedemptionQueueSet(address(q));
+        oracle.setRedemptionQueue(address(q));
+        assertEq(oracle.redemptionQueue(), address(q));
 
         oracle.setRedemptionQueue(address(0)); // unset is valid
         assertEq(oracle.redemptionQueue(), address(0));
+    }
+
+    /// @dev REGRESSION: a codeless address (an EOA fat-finger) is rejected at SET time. Without this, the wiring is
+    ///      accepted and every NAV read then reverts on the compiler's extcodesize check inside `_queueReceivables`
+    ///      — bricking grossBasketValue/spot/twap/navEntry/navExit/committedValue/freeValue. Mirrors the LP side's
+    ///      SEC-10 `_assertLpTwapReady` set-time validation.
+    function test_setRedemptionQueue_rejects_codeless_address() public {
+        vm.expectRevert(SzipNavOracle.RedemptionQueueNotReady.selector);
+        oracle.setRedemptionQueue(address(0xBEEF)); // no code
+
+        // and a real queue with the receivables surface is accepted, so NAV still reads
+        MockRedemptionQueue q = new MockRedemptionQueue();
+        oracle.setRedemptionQueue(address(q));
+        oracle.grossBasketValue(); // does not revert with the queue wired
     }
 
     /// @dev Unwired (v0) and wired-but-empty both contribute exactly 0 — no spurious NAV movement.
@@ -1103,7 +1136,10 @@ contract SzipNavOracleTest is Test {
         assertEq(oracle.navExit(), oracle.spotNavPerShare() < oracle.twapNavPerShare() ? oracle.spotNavPerShare() : oracle.twapNavPerShare());
     }
 
-    function test_staleness_single_leg_hydx_stale() public {
+    /// @dev L10 (2026-08-05): a STALE HYDX leg no longer gates issuance. HYDX is $0 in `grossBasketValue`, so its
+    ///      staleness prices nothing; `navEntry`/`fresh` must NOT halt on it. HYDX is kept only as the
+    ///      exercise-profitability input. ALPHA remains the required leg.
+    function test_staleness_hydx_stale_does_not_gate_issuance() public {
         oracle.setShareToken(address(szip));
         szip.setTotalSupply(1000e18);
         zip.setBalance(juniorTrancheSafe, 1000e18);
@@ -1112,8 +1148,15 @@ contract SzipNavOracleTest is Test {
         vm.warp(block.timestamp + 6 hours);
         _push(0, 1e18); // alpha at T+6h
         vm.warp(block.timestamp + MAX_AGE - 5 hours); // hydx age ~13h (stale), alpha age ~7h (fresh)
-        assertFalse(oracle.fresh());
-        vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.StalePrice.selector, uint8(1)));
+
+        // HYDX is stale but ALPHA is fresh: issuance stays OPEN (was: fresh()==false + navEntry reverts StalePrice(1))
+        assertTrue(oracle.fresh(), "HYDX staleness must not close fresh() - it prices nothing");
+        oracle.navEntry(); // does not revert
+
+        // and once ALPHA goes stale too, issuance closes on ALPHA (the required leg)
+        vm.warp(block.timestamp + MAX_AGE);
+        assertFalse(oracle.fresh(), "ALPHA now stale -> closed");
+        vm.expectRevert(abi.encodeWithSelector(SzipNavOracle.StalePrice.selector, uint8(0)));
         oracle.navEntry();
     }
 
@@ -1357,19 +1400,30 @@ contract SzipNavOracleTest is Test {
         assertEq(twapGross, spotGross, "TWAP reconstruction == spot reserves (idle balances match)");
     }
 
-    /// @notice Escape always open: `setLpTwapWindow(0)` succeeds regardless of pool state (recovers a bricked NAV).
-    function test_SEC10_escape_zero_always_succeeds() public {
-        (,, MockAlgebraPool pool,) = _wireLpForTwap();
-        pool.setPlugin(address(0)); // worst case: no plugin
-        oracle.setLpTwapWindow(0); // must NOT revert
-        assertEq(oracle.lpTwapWindow(), 0);
+    /// @notice Spot is NOT an escape once an LP position is wired. Zeroing the window used to be the documented
+    ///         recovery from a halted TWAP, and it is the wrong one: it prices counted LP off live pool reserves,
+    ///         which an in-block swap moves. If the plugin dies while the LP holds most of the treasury, that
+    ///         hands an attacker the mark for the majority of NAV. Halting is the correct end state; recovery is
+    ///         `setLpPosition` onto a working pool, or unwinding the LP.
+    function test_SEC10_zeroWindow_rejected_once_lp_is_wired() public {
+        (,, MockAlgebraPool pool, MockAlgebraPlugin plugin) = _wireLpForTwap();
+        pool.setPlugin(address(plugin));
+        plugin.setInitialized(true);
+        oracle.setLpTwapWindow(W); // arm the TWAP while the plugin is still live
+        pool.setPlugin(address(0)); // the plugin dies; every LP-containing read is now halted
+        vm.expectRevert(SzipNavOracle.LpWiredCannotUseSpot.selector);
+        oracle.setLpTwapWindow(0);
+        assertEq(oracle.lpTwapWindow(), W, "window unchanged after the rejected escape");
+    }
 
-        // also succeeds before the LP is even wired (ichiVault could be 0 on a fresh oracle).
+    /// @notice Zero stays legal BEFORE the LP cutover — the M1 posture ships with no LP, where `_lpValue` returns
+    ///         at the `lpShares == 0` guard and never reaches the spot branch.
+    function test_SEC10_zeroWindow_allowed_before_lp_is_wired() public {
         SzipNavOracle freshOracle = new SzipNavOracle(
             forwarder, address(zip), address(usdc), address(xa), address(hydx),
             address(ohydx), juniorTrancheSafe, juniorTrancheSidecar, W, MAX_AGE
         );
-        freshOracle.setLpTwapWindow(0); // unconditionally valid
+        freshOracle.setLpTwapWindow(0); // ichiVault unwired -> valid
         assertEq(freshOracle.lpTwapWindow(), 0);
     }
 

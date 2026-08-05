@@ -23,7 +23,7 @@ balance read is the literal `juniorTrancheEngine`.
 **`removeLiquidity` is the LP→legs dissolution hop, now COVERAGE-GATED (LP path-lock).** It is the
 global-wind-down feeder (`unstake` → `removeLiquidity` → `SellModule.sellXAlpha` → zipUSD → senior par queue →
 buy-burn bid). It is the ONLY path that turns the fenced LP into exitable legs, so it is bounded to the coverage
-EXCESS: `removeLiquidity` reverts `Undercovered` unless `coverageGate.lpBurnKeepsCovered(shares)` (i.e.
+NO DISSOLUTION GATE (2026-08-04): `removeLiquidity` is not coverage-gated. It formerly reverted `Undercovered` unless (i.e.
 `coverageValue − lpShareValue(shares) >= requiredCommittedValue`). With debt outstanding the floor is tight and
 the excess is ~0, so it reverts (making the "wind-down only" NatSpec TRUE); as debt amortizes the floor drops and
 LP becomes dissolvable. `coverageGate == 0` is the M1 pre-wiring / kill-switch state (ungated, legacy).
@@ -40,7 +40,7 @@ the staked LP.
 | Contract / Interface | What it does |
 |---|---|
 | `LpStrategyModule` (`is Module`, zodiac-core) | The seam. `setUp` initializer (6 args, +`coverageGate`) + 7 `onlyOwner` build-phase wiring setters (incl. `setCoverageGate`) + 4 `onlyOperator` entrypoints (`addLiquidity`/`removeLiquidity` (coverage-gated)/`stake`/`unstake`) + 2 views (`stakedBalance`/`lpBalance`). Private `_exec` drives the Safe via inherited `execAndReturnData` (Call, value 0) and bubbles inner reverts. |
-| `ICoverageGate` (declared inline in the .sol) | The coverage seam `removeLiquidity` reads (the `DurationFreezeModule`): `lpBurnKeepsCovered(uint256 lpShares) → bool`. Zero ⇒ gate OFF. |
+| ~~`ICoverageGate`~~ | REMOVED 2026-08-04 along with the dissolution gate. `coverageGate` survives as an unread wiring slot for the deploy seam assert. |
 | `IICHIVault` (`src/interfaces/ichi/IICHIVault.sol`) | The managed LP vault for zipUSD/xALPHA. `deposit(deposit0, deposit1, to) → shares`; `withdraw(shares, to) → (amount0, amount1)`; `token0()`/`token1()`/`balanceOf()` read live. The vault contract **is** the LP share token. `allowToken0/1()` is where single-sidedness lives (fail-closed). |
 | `IGauge` (`src/interfaces/hydrex/IGauge.sol`) | The Hydrex gauge over our pool. `deposit(amount)`/`withdraw(amount)` stake/unstake the LP; `balanceOf(safe)` is the staked balance. Staking is REQUIRED to earn oHYDX (bare LP earns only swap fees). Must be `ALM_ICHI_UNIV3` type. |
 | `IERC20` (OZ 4.x) | `approve` selector encoded for the exact-amount approve / reset on both legs (token0/token1 → ichiVault; ichiVault → gauge). |
@@ -75,7 +75,7 @@ coverageGate)`. Order is load-bearing:
 - **`removeLiquidity(shares, minAmount0, minAmount1) → (amount0, amount1)`** — `ZeroAmount` guard (shares); then
   the **ZERO-FLOOR GUARD**: `if minAmount0 == 0 && minAmount1 == 0 → ZeroMinAmount` (the ICHI
   `withdraw` self-protects with nothing, so this floor is the SOLE sandwich guard; at least one leg must be
-  floored). Then the **COVERAGE GATE**: `if coverageGate != 0 && !ICoverageGate(coverageGate).lpBurnKeepsCovered(shares) →
+  floored). There is no coverage gate: a dissolution returns zipUSD and xALPHA to the same Safe and `SzipNavOracle.mainSpotEquity` counts them at the LP's value, so the burn cannot move the floor. (Removed text: `if coverageGate != 0 && !ICoverageGate(coverageGate).lpBurnKeepsCovered(shares) →
   Undercovered` (only the coverage EXCESS may be liquefied). Then exactly 1 `exec`: `IICHIVault.withdraw(shares,
   juniorTrancheEngine)`, `abi.decode` the two leg amounts, then `amount0 < minAmount0 || amount1 < minAmount1 → Slippage`.
   **No approval needed** — the LP shares are already in the Safe (unstaked first via `unstake`), and the vault

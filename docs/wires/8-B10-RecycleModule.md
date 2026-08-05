@@ -1,15 +1,16 @@
 # 8-B10 — RecycleModule (single-sink recycle/payout engine + S1 divert) (wiring map)
 
 > **X-Ray (security verdict):** rated **ADEQUATE** — the only engine module with real mutable state (the
-> free-value ledger); two-layer enforcement (policy ceiling + hard-backing) and the cumulative divert bound
-> tested (40 unit + 2 fork, incl. a 5-test bound suite). Report:
+> free-value ledger); two-layer enforcement (policy ceiling + hard-backing) and the divert bound tested
+> (40 unit + 2 fork = 42, incl. a dedicated bound suite). Report:
 > `contracts/src/supply/szipUSD/x-ray/RecycleModule.md` (scope: `portfolio-map.md`). ELI20:
 > `docs/supply/szipUSD/RecycleModule.md`. This doc is the code-truth wiring map.
 
 > Source of truth = the kept code `contracts/src/supply/szipUSD/RecycleModule.sol`. Tickets
 > `tickets/sodo/8-B10-recycle.md` + `tickets/sodo/S1-recycle-divert.md` and reports
 > `reports/8-B10-report.md` + `reports/S1-report.md` are intent — **code wins**. Spec: `claude-zipcode.md`
-> §4.5.1 (8-B10) + §8.7 / §17 (the trust boundary). Test: `contracts/test/RecycleModule.t.sol`.
+> §4.5.1 (8-B10) + §8.7 / §17 (the trust boundary). Test: `contracts/test/supply/szipUSD/RecycleModule.t.sol`.
+> Loss-side funding procedure (where the divert USDC comes from): `docs/solvency.md`.
 
 ## Role
 The 8-B10 engine module (§4.5.1) — the auto-compounder's **free-value ledger** and the two spends that draw it
@@ -24,10 +25,12 @@ writer, §8 inv. 3) — and spends it through **two sinks that both debit the sa
    holds it in place, **no `gate.depositFor`, no share issuance**) → `approve(…, 0)`. 8-B6 then single-sides the
    minted zipUSD into the gauge-staked ICHI LP next (CRE-sequenced). The basket grows, share count is flat →
    **NAV-per-share rises for every holder**.
-2. **`divert(usdcAmount)` (S1 / loss-side Stream 2, `solvency.md` §C.S1).** Debits the same ledger, then supplies
-   the free-value USDC as **raw USDC** into the senior pool crediting the warehouse —
+2. **`divert(lienId, usdcAmount)` (S1 / loss-side Stream 2, `docs/solvency.md`).** Debits the same ledger, then
+   supplies the free-value USDC as **raw USDC** into the senior pool crediting the warehouse —
    `eePool.deposit(usdcAmount, warehouse)`, **NO zipUSD minted, NO senior claim** — filling the capital hole a
-   default left behind so depositors stay whole. Bounded by the **live `SzipNavOracle.provision()` hole**.
+   default left behind so depositors stay whole. Bounded by the **live `SzipNavOracle.provision()` hole**, and it
+   retires that hole atomically: the same transaction calls `DefaultCoordinator.settleFromJunior(lienId, …)`,
+   which reduces the lien's provision by exactly the amount paid (exact-apply, else `SettlementShortfall`).
 
 The prior Mode A/B/C framing + the 8-B13 compounder + the whole payout/distributor path were **removed** in the
 single-sink rework — single-sided LP makes the balanced-add/swap machinery moot (see Gotchas).
@@ -37,7 +40,8 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
 |---|---|
 | `RecycleModule` (`is Module`, `RecycleModule.sol`) | The 8-B10 module. Holds `freeValueAccrued` + the 7 set-once wiring slots; exposes `creditFreeValue`/`recycle`/`divert` (`onlyOperator`) + 7 `onlyOwner` re-point setters. Drives the Safe via inherited `execAndReturnData` (Call-only, value 0, bubble-on-fail). |
 | `IZipDepositModule` (local iface; `ZipDepositModule.sol:115`) | The WOOF-06 zap. `deposit(usdcIn)` `safeTransferFrom`s `usdcIn` USDC from the caller (the engine Safe), mints `usdcIn*scaleUp` BACKED zipUSD to the caller, parks the USDC into the venue pool with the warehouse as EE-share receiver. The `recycle` mint path. |
-| `ISzipNavProvision` (local iface; `SzipNavOracle.sol:135`) | The impairment-provision read (the hole size, 18-dp USD). `provision()` is `uint256 public`, sole writer = the `DefaultCoordinator`. `divert` READS it (the bound) and **never writes it**. |
+| `ISzipNavProvision` (local iface; `SzipNavOracle.sol:135`) | The impairment-provision read (the hole size, 18-dp USD). `provision()` is `uint256 public`, sole writer = the `DefaultCoordinator`. `divert` READS it (the bound) and **never writes it directly** — it retires it through `settleFromJunior`, and the coordinator does the write. |
+| `ISzipNavCoordinator` / `IDefaultSettlement` (local ifaces) | `divert` reads the settlement coordinator LIVE off the oracle (`ISzipNavCoordinator(navOracle).defaultCoordinator()` — no second wired copy to drift; `CoordinatorUnwired` if unset) and calls `IDefaultSettlement.settleFromJunior(lienId, scaled)` to retire the markdown atomically. |
 | `IEulerEarn` (local iface; `reference/euler-earn/src/EulerEarn.sol:560`) | The senior pool (ERC-4626 over USDC). `deposit(assets, receiver)` pulls `assets` from the Safe, mints shares to `receiver` (the warehouse). The `divert` Stream-2 sink — same surface `ZipDepositModule` uses. |
 
 ## Wiring — internal
@@ -54,37 +58,40 @@ single-sink rework — single-sided LP makes the balanced-add/swap machinery moo
   - `recycle(usdcAmount) returns (uint256 zipMinted)` — `_spendFreeValue(usdcAmount)` (effects first) → Safe execs
     `approve(zdm, usdcAmount)` → `deposit(usdcAmount)` → `approve(zdm, 0)`; decodes `zipMinted` from the deposit
     return; emits `Recycled`.
-  - `divert(usdcAmount) returns (uint256 sent)` — Stream 2 (see bounds below).
+  - `divert(lienId, usdcAmount) returns (uint256 sent)` — Stream 2 (see bounds below).
 - **`freeValueAccrued` ledger** — the ONLY mutable state. `creditFreeValue` is the sole increment; `recycle` AND
   `divert` BOTH debit it via the single private gate `_spendFreeValue(amount)` (`amount==0`→`ZeroAmount`;
   `amount > freeValueAccrued` → `InsufficientFreeValue`; decrement; emit `FreeValueSpent`). **Effects-before-
   interaction**: the decrement lands BEFORE any value-moving `_exec` (the reentrancy safety — no OZ `ReentrancyGuard`
   on a clone; see Gotchas).
-- **`divert` bounds — bounds-before-spend, then CEI** (order load-bearing; **CUMULATIVE** since SEC-09):
+- **`divert` bounds — bounds-before-spend, then CEI, then the atomic settle** (order load-bearing; the SEC-09
+  per-epoch tally was REMOVED 2026-08-02 with the F1 fix — the hole itself is now the cumulative bound, because
+  each divert retires `provision()` by exactly what it paid):
   1. `usdcAmount == 0` → `ZeroAmount`.
-  2. read `hole = navOracle.provision()` fresh each call (no memoization); `hole == 0` → `NoHole`.
-  3. **reset-on-change:** `if (hole != lastSeenProvision) { lastSeenProvision = hole; divertedSinceProvisionChange = 0; }`
-     — a re-marked provision starts a fresh epoch budget. `lastSeenProvision == 0` is a safe "never observed"
-     sentinel (the `hole == 0` → `NoHole` check means the reset block can never set it to 0).
-  4. `scaled = usdcAmount * 1e12` (USDC 6-dp → USD 18-dp); **cumulative** bound
-     `divertedSinceProvisionChange + scaled > hole` → `ExceedsHole` (**strict `>`** allows an EXACT cumulative fill,
-     never an over-fill). The cumulative check subsumes the old per-call `usdcAmount * 1e12 > hole` (strictly
-     tighter; SEC-09 replaced the per-call line). Both pre-spend checks land BEFORE any ledger debit, so an
-     over-hole/no-hole divert records no exec and leaves the ledger untouched.
-  5. `_spendFreeValue(usdcAmount)` — the CEI decrement (effects first, the policy gate) — then
-     `divertedSinceProvisionChange += scaled` (effects-phase tally bump, before the value-moving execs; rolls back
-     atomically with the ledger if a post-deposit guard reverts). **`divert` never writes `provision`** — the
-     tally is enforced by OBSERVING `provision()`, not by mutating it (the CRE owns the hole reduction). Guarantee
-     is **per-provision-epoch** (between re-marks); cross-re-mark over-supply is possible but benign (peg-strengthening,
-     hard-capped by `freeValueAccrued` + the trusted single CRE writer, §17). The `lastSeenProvision`/
-     `divertedSinceProvisionChange` state is `uint256 public` (free getters), 18-dp USD.
-  6. Safe execs `approve(eePool, usdcAmount)` → `eePool.deposit(usdcAmount, warehouse)` → `approve(eePool, 0)`.
-  7. **TWO value guards** captured around the deposit: **hard backing** — `beforeUsdc − balanceOf(safe)` MUST
+  2. read the settlement coordinator LIVE off the oracle (`ISzipNavCoordinator(navOracle).defaultCoordinator()`);
+     `address(0)` → `CoordinatorUnwired`.
+  3. read `hole = navOracle.provision()` fresh each call (no memoization); `hole == 0` → `NoHole`.
+  4. `scaled = usdcAmount * 1e12` (USDC 6-dp → USD 18-dp); `scaled > hole` → `ExceedsHole` (**strict `>`** allows
+     an EXACT fill, never an over-fill). Because every prior divert already shrank the hole, the live read IS the
+     remaining budget — tighter than the old tally, with no epoch semantics. Both pre-spend checks land BEFORE any
+     ledger debit, so an over-hole/no-hole divert records no exec and leaves the ledger untouched.
+  5. `_spendFreeValue(usdcAmount)` — the CEI decrement (effects first, the policy gate).
+  6. `IDefaultSettlement(coordinator).settleFromJunior(lienId, scaled)` — retires the markdown **BEFORE the cash
+     moves**. Order is load-bearing for the TWAP: the settle reaches `writeProvision`, whose `_accumulate()`
+     samples spot over the whole `[lastUpdate, now]` gap — settling after the deposit sampled the one instant
+     where the cash was gone but the hole still open, booking a depressed spot into the TWAP and under-paying
+     `navExit` for up to `W` after every honest divert. EXACT apply required: the coordinator clamps to the
+     lien's own remaining provision, so `applied != scaled` → `SettlementShortfall` (pick a different lien or a
+     smaller amount). `divert` still never writes `provision` itself — the coordinator does, through its
+     sole-writer seam.
+  7. Safe execs `approve(eePool, usdcAmount)` → `eePool.deposit(usdcAmount, warehouse)` → `approve(eePool, 0)`.
+  8. **TWO value guards** captured around the deposit: **hard backing** — `beforeUsdc − balanceOf(safe)` MUST
      equal exactly `usdcAmount` (`BackingShortfall`, proves real value moved, not a trusted-pool no-op); and
      **liveness** — the warehouse's EE-share balance MUST have risen (`NoSharesMinted`, the false-return/FoT guard,
-     since the Safe swallows inner reverts).
-  8. emit `Filled(usdcAmount, warehouse, hole)` — `provisionAfter == hole` (the pre-spend read): **divert never
-     writes `provision`** (the CRE reduces the hole later via `DefaultCoordinator.Recovery`).
+     since the Safe swallows inner reverts). Both roll the WHOLE call back — settlement included — so "a hole is
+     only ever retired against value provably moved" holds at transaction granularity.
+  9. emit `Filled(usdcAmount, warehouse, provision())` — the third field is the POST-settle hole (the reduced
+     remaining budget).
 - **The internal `_spendFreeValue` gate** is `private` — there is NO public `spendFreeValue` and NO compounder
   seam (both deleted in the rework). The only paths that draw the ledger down are `recycle` and `divert`.
 - **`_exec(to, data)`** drives the Safe via inherited `execAndReturnData(to, 0, data, Operation.Call)` and

@@ -715,37 +715,28 @@ contract LpStrategyModuleUnitTest is Test {
         assertEq(a0, 100e18, "single non-zero floor passes the guard");
     }
 
-    function test_removeLiquidity_coverage_gate() public {
+    /// @dev `removeLiquidity` no longer consults the coverage gate (2026-08-04). Dissolving LP returns zipUSD and
+    ///      xALPHA to the same Safe, which `SzipNavOracle.mainSpotEquity` counts at the value the LP was counted
+    ///      at, so the withdrawal cannot move the freeze floor. The gate also read NAV, which reads the LP price,
+    ///      so a dead Algebra plugin used to lock the LP in place behind the same failure that made it unpriceable.
+    ///      `coverageGate` remains a wiring slot for the deploy seam assert but is not read here.
+    function test_removeLiquidity_is_not_coverage_gated() public {
         safe.setLive(true);
         token0.mint(address(safe), 100e18);
         vm.prank(operator);
         uint256 shares = m.addLiquidity(100e18, 0, 1);
 
+        // A gate that would have refused every dissolution is wired and ignored.
         MockCoverageGate gate = new MockCoverageGate();
+        gate.set(false);
         vm.prank(owner);
         m.setCoverageGate(address(gate));
+        assertEq(m.coverageGate(), address(gate), "slot still wired");
 
-        // gate says dissolution would breach coverage -> revert Undercovered
-        gate.set(false);
-        vm.prank(operator);
-        vm.expectRevert(LpStrategyModule.Undercovered.selector);
-        m.removeLiquidity(shares, 1, 0);
-
-        // gate says still covered (excess) -> dissolution clears
-        gate.set(true);
         vm.prank(operator);
         (uint256 a0,) = m.removeLiquidity(shares, 1, 0);
-        assertEq(a0, 100e18, "dissolved once within the excess");
-
-        // gate OFF (address 0) -> ungated legacy behavior
-        vm.prank(owner);
-        m.setCoverageGate(address(0));
-        token0.mint(address(safe), 100e18);
-        vm.prank(operator);
-        uint256 s2 = m.addLiquidity(100e18, 0, 1);
-        vm.prank(operator);
-        m.removeLiquidity(s2, 1, 0); // no gate -> ok
-        assertEq(m.lpBalance(), 0, "ungated dissolution ok");
+        assertEq(a0, 100e18, "dissolution proceeds regardless of the gate");
+        assertEq(m.lpBalance(), 0, "LP fully dissolved");
     }
 
     function test_removeLiquidity_only_operator() public {

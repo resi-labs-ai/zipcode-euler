@@ -84,6 +84,15 @@ contract WarehouseAdminModule is ReceiverTemplate {
     ///         FIRST (`Roles.setAvatar` / deploy the new Roles on the right Safe), then re-point here. See
     ///         `docs/roles.md`.
     error AvatarMismatch(address warehouseSafe, address avatar);
+    /// @notice The Roles modifier's `target()` does not equal `warehouseSafe` — raised by the same four sites as
+    ///         `AvatarMismatch`. `target` is the slot that MATTERS for custody: Zodiac's `Module.exec` is
+    ///         `IAvatar(target).execTransactionFromModule(...)` (`Module.sol:50`), while `avatar` is only the
+    ///         scope-comparison operand for `Operator.EqualToAvatar`. `Roles.setTarget` (Roles-owner-gated, a
+    ///         DIFFERENT key from the Timelock that owns this adapter) re-points which Safe pays and leaves
+    ///         `avatar()` untouched, so an avatar-only guard passes while REPAY moves the WRONG Safe's USDC to the
+    ///         `redemptionBox` and SUPPLY/APPROVE push the wrong Safe's USDC into `eePool`. Checking both slots
+    ///         makes that redirect require the Roles owner AND the Timelock rather than the Roles owner alone.
+    error TargetMismatch(address warehouseSafe, address target);
     /// @notice The inner `execTransactionWithRole` returned false (unreachable defense-in-depth: with
     ///         `shouldRevert=true` the modifier already reverts `ModuleTransactionFailed` on a failed exec).
     error RoleExecFailed();
@@ -118,11 +127,13 @@ contract WarehouseAdminModule is ReceiverTemplate {
             revert ZeroAddress();
         }
         if (roleKey_ == bytes32(0)) revert ZeroRoleKey();
-        // AVATAR PARITY at birth (same invariant `setRoles`/`setWarehouseSafe` enforce): the Roles instance must
-        // already be attached to `warehouseSafe_`. `CreditWarehouseDeployer` builds the Roles (avatar = safe)
-        // before this ctor runs, so the check is deploy-order-compatible.
+        // AVATAR + TARGET PARITY at birth (same invariant `setRoles`/`setWarehouseSafe` enforce): the Roles instance
+        // must already be attached to `warehouseSafe_` on BOTH slots. `CreditWarehouseDeployer` builds the Roles
+        // (avatar == target == safe) before this ctor runs, so the check is deploy-order-compatible.
         address av = IRoles(roles_).avatar();
         if (av != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av);
+        address tg = IRoles(roles_).target();
+        if (tg != warehouseSafe_) revert TargetMismatch(warehouseSafe_, tg);
         roles = IRoles(roles_);
         roleKey = roleKey_;
         warehouseSafe = warehouseSafe_;
@@ -144,6 +155,8 @@ contract WarehouseAdminModule is ReceiverTemplate {
         if (roles_ == address(0)) revert ZeroAddress();
         address av = IRoles(roles_).avatar();
         if (av != warehouseSafe) revert AvatarMismatch(warehouseSafe, av);
+        address tg = IRoles(roles_).target();
+        if (tg != warehouseSafe) revert TargetMismatch(warehouseSafe, tg);
         roles = IRoles(roles_);
         emit WiringSet("roles", roles_);
     }
@@ -167,6 +180,8 @@ contract WarehouseAdminModule is ReceiverTemplate {
         if (warehouseSafe_ == address(0)) revert ZeroAddress();
         address av = roles.avatar();
         if (av != warehouseSafe_) revert AvatarMismatch(warehouseSafe_, av);
+        address tg = roles.target();
+        if (tg != warehouseSafe_) revert TargetMismatch(warehouseSafe_, tg);
         warehouseSafe = warehouseSafe_;
         emit WiringSet("warehouseSafe", warehouseSafe_);
     }
@@ -197,12 +212,16 @@ contract WarehouseAdminModule is ReceiverTemplate {
     ///         call, and forwards it through the Roles modifier. Reverts `UnsupportedOpType` on any other byte.
     /// @param report The shared envelope `abi.encode(uint8 opType, bytes payload)`.
     function _processReport(bytes calldata report) internal override {
-        // Use-time parity re-check (the third leg of the guard): the wiring-site checks (ctor/`setRoles`/
-        // `setWarehouseSafe`) cannot see an EXTERNAL `Roles.setAvatar` on the modifier itself, so re-assert at
-        // every effect. This makes parity a MAINTAINED invariant — no op (REPAY included) can ever execute
-        // against a modifier attached to the wrong Safe. One `avatar()` staticcall per report.
+        // Use-time parity re-check (the fourth leg of the guard): the wiring-site checks (ctor/`setRoles`/
+        // `setWarehouseSafe`) cannot see an EXTERNAL `Roles.setAvatar`/`Roles.setTarget` on the modifier itself, so
+        // re-assert BOTH slots at every effect. This makes parity a MAINTAINED invariant — no op (REPAY included)
+        // can ever execute against a modifier attached to the wrong Safe. `target` is the load-bearing half: it is
+        // the Safe `Module.exec` actually calls, so an avatar-only check would let `Roles.setTarget` redirect whose
+        // USDC moves. Two staticcalls per report.
         address av = roles.avatar();
         if (av != warehouseSafe) revert AvatarMismatch(warehouseSafe, av);
+        address tg = roles.target();
+        if (tg != warehouseSafe) revert TargetMismatch(warehouseSafe, tg);
 
         (uint8 opType, bytes memory payload) = abi.decode(report, (uint8, bytes));
 

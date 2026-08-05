@@ -4,8 +4,19 @@
 
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/SellModule.sol`, the 8-B9 market-sell leg — pure
 Algebra `SwapRouter` swap mechanism (no EVC, no oracle, no LP, no veNFT, no repay). Connected to
-`test/SellModule.t.sol`: **34 unit + 4 base-fork = 38 tests, all passing** (0 fuzz, 0 invariant — deterministic
-3-exec swaps). **Every mutator is exercised** (all 7 setters + the 3 swap legs).
+`test/supply/szipUSD/SellModule.t.sol`: **40 unit + 4 base-fork = 44 tests, all passing** (0 fuzz, 0 invariant —
+deterministic 3-exec swaps). **Every mutator is exercised** (all 8 setters + the swap legs; `setOHYDX` added
+2026-08-05 — the one wired slot that shipped setter-less, frozen on a clone against the ratified wiring posture).
+
+> **Update 2026-08-05 — `exerciseAndSell`'s live `paymentToken` read is now zero-asserted.** The atomic
+> exercise+sell leg (post-Octane delta; not yet covered by the body below) reads the strike token LIVE off the
+> option and used it as an `_exec` target unchecked. A trapped option answering `address(0)` turned the strike
+> approve into a silent no-op through the Safe (`execTransactionFromModuleReturnData` returns `(true, "")` on a
+> codeless target) — fail-open, surfacing later as a dataless revert. Now: `ZeroAddress` at the read, and the new
+> `setOHYDX` probes `paymentToken()` non-zero on the incoming option (the `ExerciseModule` fail-closed shape), so
+> a broken option is refused at wire-time. Regressions `test_exerciseAndSell_zero_paymentToken_reverts` (via a
+> re-armable `TrapOption`) + `test_setOHYDX_probes_paymentToken_nonzero`, both proven failing with the guards
+> removed (the first reverting WITHOUT DATA — the exact confusing-failure shape the guard replaces).
 
 > Distinctive control: a **per-call HYDX size cap** (`maxSellHydx`). `minOut` bounds *price* (slippage), not *size* —
 > without the cap a compromised operator could dump the whole HYDX basket in one tx (`minOut=1`) and crater HYDX,
@@ -60,7 +71,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 | `ZeroAmount` (amountIn / minOut, ×3 legs) | `test_*_guards_zero_amountIn_and_zero_minOut` |
 | `ExceedsMaxSell` + `setMaxSellHydx` (owner-only, zero-guard, resize) | `test_sellHydx_reverts_above_cap`, `test_setMaxSellHydx_owner_resizes`/`_only_owner`/`_rejects_zero` |
 | operator cannot redirect Safe | `test_operator_cannot_redirect_safe` |
-| 6 wiring setters (`setJuniorTrancheEngine`/`setSwapRouter`/`setHydx`/`setUsdc`/`setZipUSD`/`setXAlpha`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` — onlyOwner + effect + zero-guard (all 6), incl. the `setJuniorTrancheEngine` avatar/target sync |
+| 7 wiring setters (`setJuniorTrancheEngine`/`setSwapRouter`/`setHydx`/`setUsdc`/`setZipUSD`/`setXAlpha`/`setOHYDX`) | `test_wiring_setters_onlyOwner_effect_and_zeroGuard` — onlyOwner + effect + zero-guard (all 7), incl. the `setJuniorTrancheEngine` avatar/target sync |
 
 ## 5. Attack surfaces
 
@@ -73,7 +84,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
   exec-shape tests decode the `ExactInputSingleParams` to pin recipient/deployer/limitSqrtPrice.
 - **Slippage + deadline abort (I-3/I-6)** — a too-high `minOut` or a past deadline reverts on the real router with
   state unchanged, so a bad-price or stale swap aborts rather than dumping.
-- **The 6 wiring setters — now covered** — `test_wiring_setters_onlyOwner_effect_and_zeroGuard` exercises
+- **The 7 wiring setters — now covered** — `test_wiring_setters_onlyOwner_effect_and_zeroGuard` exercises
   `setJuniorTrancheEngine`/`setSwapRouter`/`setHydx`/`setUsdc`/`setZipUSD`/`setXAlpha` for onlyOwner + effect +
   zero-guard, including the `setJuniorTrancheEngine` avatar/target sync (`:146-152`). With `setOperator` (SEC-15) and
   `setMaxSellHydx`, **every mutator on the contract is now exercised**.
@@ -92,7 +103,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 
 | Category | Count | Notes |
 |---|---|---|
-| Unit | 34 | setUp/guards, SEC-14/15, all 7 wiring setters (onlyOwner/effect/zero-guard + avatar/target sync), the fully-pinned exec-shape proof for all 3 legs, the size-cap matrix (above/at/uncapped legs), `setMaxSellHydx`, the bubble/atomicity matrix, zero-amount/minOut edges |
+| Unit | 34 | setUp/guards, SEC-14/15, all 8 wiring setters (onlyOwner/effect/zero-guard + avatar/target sync), the fully-pinned exec-shape proof for all 3 legs, the size-cap matrix (above/at/uncapped legs), `setMaxSellHydx`, the bubble/atomicity matrix, zero-amount/minOut edges |
 | Base-fork | 4 | real Algebra router: sig-verify, real `sellHydx` (USDC to the Safe, allowance reset), minOut-too-high abort, past-deadline revert |
 | Stateless fuzz / invariant | 0 | deterministic swaps; fork is the higher-value check |
 
@@ -105,7 +116,7 @@ stack-too-deep); green run confirmed.
 **ADEQUATE** — a clean swap-leg fleet module whose load-bearing controls are well-covered: the recipient/pair pin
 (proven on the real Algebra router), the `maxSellHydx` size cap (the defense against dumping the HYDX basket), the
 `minOut`/deadline slippage abort, approval hygiene, and bubbled reverts. **Every mutator is now exercised** (all 7
-setters + the 3 swap legs; the 6-setter gap, incl. the avatar/target sync, was filled). Capped at
+setters + the 3 swap legs; the 6-setter gap, incl. the avatar/target sync, was filled, and `setOHYDX` closed the last setter-less slot). Capped at
 ADEQUATE by: no fuzz/invariant (correctly low-value for deterministic swaps), the §10.1 operator-sizing residual
 (bounded by the size cap + `minOut` + the pins), and the build-phase mutable wiring pending the pre-prod re-freeze —
 neither a coverage gap.

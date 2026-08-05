@@ -21,12 +21,21 @@ interface IZipDepositModule {
 /// @dev The `DefaultCoordinator` seam used to settle a markdown with the cash `divert` pays against it.
 interface IDefaultSettlement {
     function settleFromJunior(bytes32 lienId, uint256 amount18) external returns (uint256 applied);
+    /// @dev The per-lien loss record `(status, provision)`. `settleFromJunior` clamps to THIS lien's own
+    ///      `provision`, so `divert` bounds against it (not the whole-book `provision()`) to fail early rather than
+    ///      late with `SettlementShortfall` when the named lien cannot absorb the full payment.
+    function lienLoss(bytes32 lienId) external view returns (uint8 status, uint256 provision);
 }
 
 interface ISzipNavCoordinator {
     /// @dev The oracle's sole `writeProvision` caller. Read LIVE so this module can never drift from the contract
     ///      that actually owns the provision ledger — there is no second copy of the pairing to keep in sync.
     function defaultCoordinator() external view returns (address);
+    /// @dev The Safe the oracle counts. `setJuniorTrancheEngine` pins the engine to this address so `divert` can
+    ///      only ever spend COUNTED cash — the oracle enforces the same equality on its own twin slot
+    ///      (`EngineMustEqualSafe`), and a module-side desync would retire a markdown against USDC the oracle
+    ///      never counted (a NAV inflation through one wiring mistake).
+    function juniorTrancheSafe() external view returns (address);
 }
 
 interface ISzipNavProvision {
@@ -130,6 +139,10 @@ contract RecycleModule is MastercopyInitLock {
     /// @notice `divert` called while `defaultCoordinator` is unwired. Fails closed: without the coordinator the
     ///         markdown cannot be settled atomically, which is the whole point of the call.
     error CoordinatorUnwired();
+    /// @notice `setJuniorTrancheEngine` given a Safe that is not the wired oracle's `juniorTrancheSafe`. Mirrors the
+    ///         oracle's own `EngineMustEqualSafe`: the engine is the Safe `divert` spends from and the oracle counts,
+    ///         so a mismatch would pay a markdown from uncounted cash while still retiring it (NAV inflation).
+    error EngineMustEqualSafe(address given, address juniorTrancheSafe);
     /// @notice The coordinator could not retire the FULL amount paid against this lien — wrong `lienId`, or the cash
     ///         exceeds that lien's remaining provision. Reverts the whole `divert`: settling less than was paid would
     ///         reintroduce the double-count for the difference.
@@ -206,6 +219,12 @@ contract RecycleModule is MastercopyInitLock {
     ///         that guard measure a non-executing Safe. Matches the syncing siblings (Sell/Exercise/LpStrategy/FarmUtilityLoop).
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        // Parity with the oracle (set-time, like the oracle's own EngineMustEqualSafe): the engine is the Safe
+        // `divert` spends from, and `settleFromJunior` retires the markdown on that spend — so the engine MUST be
+        // the Safe the oracle counts, or the settle fires against uncounted cash. A migration batch therefore
+        // re-points the oracle's `juniorTrancheSafe` first, then this.
+        address counted = ISzipNavCoordinator(navOracle).juniorTrancheSafe();
+        if (juniorTrancheEngine_ != counted) revert EngineMustEqualSafe(juniorTrancheEngine_, counted);
         juniorTrancheEngine = juniorTrancheEngine_;
         avatar = juniorTrancheEngine_;
         target = juniorTrancheEngine_;
@@ -305,10 +324,12 @@ contract RecycleModule is MastercopyInitLock {
     ///
     /// @dev ORDER is load-bearing — **bounds-before-spend, then CEI**: (a) `usdcAmount > 0`; (b) resolve the
     ///      coordinator off the oracle, revert `CoordinatorUnwired` if unset — without it the markdown cannot be
-    ///      settled atomically, which is the point of the call; (c) read the hole, revert `NoHole` if 0; (d) revert
-    ///      `ExceedsHole` if `usdcAmount * 1e12 > hole` (`1e12` scales USDC 6-dp → USD 18-dp; strict `>` allows an
-    ///      EXACT fill, never an over-fill) — these land BEFORE any ledger debit, so a rejected divert records no
-    ///      exec and leaves the ledger untouched; (e) `_spendFreeValue` (effects first — the policy gate); (f) the
+    ///      settled atomically, which is the point of the call; (c) read the whole-book hole, revert `NoHole` if 0;
+    ///      (d) revert `ExceedsHole` if `usdcAmount * 1e12 > ` the NAMED lien's OWN remaining provision (not the
+    ///      whole-book `provision()` — the settle in (g) clamps per-lien, so bounding on the lien's own hole fails
+    ///      early and legibly instead of late with `SettlementShortfall`; strict `>` allows an EXACT fill) — these
+    ///      land BEFORE any ledger debit, so a rejected divert records no exec and leaves the ledger untouched;
+    ///      (e) `_spendFreeValue` (effects first — the policy gate); (f) the
     ///      Safe drives `approve(eePool, usdcAmount)` → `deposit(usdcAmount, warehouseSafe)` → `approve(eePool, 0)`,
     ///      with TWO value guards after the deposit: **hard backing** — the Safe's USDC MUST have fallen by exactly
     ///      `usdcAmount` (`BackingShortfall`, proves real value moved, not a trusted-pool no-op); and **liveness** —
@@ -321,6 +342,12 @@ contract RecycleModule is MastercopyInitLock {
     ///      This replaced a per-provision-epoch counter (`lastSeenProvision`/`divertedSinceProvisionChange`) that was
     ///      only ever needed because `divert` used to leave the hole standing; it also leaked across re-marks, which
     ///      this does not.
+    /// @dev FAIL-CLOSED ON A STALE FEED (L10-adjacent, by design). The atomic settle in (g) reaches
+    ///      `writeProvision → _accumulate → spotNavPerShare → grossBasketValue`, so `divert` now transitively prices
+    ///      the WHOLE basket. An unseeded/absent NAV input — the xALPHA rate before its first push, or the LP TWAP
+    ///      plugin mid-re-accumulation — reverts the whole call. This is deliberate: NAV is already closed in those
+    ///      states, and a default is not time-critical, so waiting out a transient feed outage before diverting is
+    ///      correct. It is NOT a silent failure — the revert bubbles the underlying leg error (`RateUnseeded`, etc.).
     /// @param lienId   The defaulted or written-off lien whose markdown this cash settles.
     /// @param usdcAmount The USDC to supply (6-dp).
     /// @return sent The USDC supplied (== `usdcAmount`).
@@ -334,9 +361,30 @@ contract RecycleModule is MastercopyInitLock {
         if (hole == 0) revert NoHole();
         // bounds-before-spend: USDC 6-dp -> USD 18-dp; strict `>` so an exact fill is allowed, never an over-fill.
         uint256 scaled = usdcAmount * 1e12;
-        if (scaled > hole) revert ExceedsHole();
+        // Bound against the NAMED lien's own remaining provision, NOT the whole-book `provision()`. `settleFromJunior`
+        // clamps to this lien's slot and reverts `SettlementShortfall` on a short apply, so bounding on the book would
+        // pass a payment aimed at ONE lien that exceeds that lien's markdown, only to revert LATE after the value
+        // guards ran. The lien's own hole is always <= the book hole (totalProvision == Σ per-lien), so this is
+        // strictly tighter and fails early with a legible `ExceedsHole`. A zero-provision lien (wrong id / already
+        // settled) trips here too, rather than deep inside the coordinator.
+        (, uint256 lienHole) = IDefaultSettlement(coordinator).lienLoss(lienId);
+        if (scaled > lienHole) revert ExceedsHole();
 
         _spendFreeValue(usdcAmount); // effects first (the policy gate; the CEI decrement)
+
+        // Settle the markdown BEFORE moving the cash. The settle reaches `writeProvision`, which runs the oracle's
+        // `_accumulate()` — and that samples spot NAV over the whole [lastUpdate, now] gap. Settling after the
+        // deposit sampled the one instant where the cash was gone but the hole still open, booking a depressed spot
+        // into the TWAP retroactively and under-paying `navExit` for up to a window after every honest divert.
+        // Settling first samples the true pre-divert spot; spot is identical before and after the transaction.
+        // "A hole is only ever retired against value provably moved" survives this ordering at transaction
+        // granularity: the backing and liveness asserts below still roll the ENTIRE call back — settlement
+        // included — if the deposit misbehaves.
+        // EXACT, not best-effort: the coordinator clamps to the lien's own remaining provision, so a short apply
+        // means this cash would have exceeded the markdown on THIS lien — pick a different lien or a smaller amount.
+        // Anything less than exact reintroduces the double-count for the unsettled remainder.
+        uint256 applied = IDefaultSettlement(coordinator).settleFromJunior(lienId, scaled);
+        if (applied != scaled) revert SettlementShortfall(scaled, applied);
 
         address pool = eePool;
         address wh = warehouseSafe;
@@ -351,16 +399,6 @@ contract RecycleModule is MastercopyInitLock {
         // liveness: the warehouseSafe MUST have been credited new senior shares (catches a no-op / FoT / false-return pool).
         if (IERC20(pool).balanceOf(wh) <= beforeShares) revert NoSharesMinted();
         _exec(usdc, abi.encodeWithSelector(IERC20.approve.selector, pool, uint256(0)));
-
-        // Settle the markdown with the cash that just paid it, in this same transaction. Without this the junior
-        // eats the loss twice — once as the provision, once as this outflow — and a later WRITEOFF freezes the
-        // understatement permanently, because both heal paths require `Defaulted`. Settling AFTER the backing and
-        // liveness asserts means a hole is only ever retired against value provably moved.
-        // EXACT, not best-effort: the coordinator clamps to the lien's own remaining provision, so a short apply
-        // means this cash would have exceeded the markdown on THIS lien — pick a different lien or a smaller amount.
-        // Anything less than exact reintroduces the double-count for the unsettled remainder.
-        uint256 applied = IDefaultSettlement(coordinator).settleFromJunior(lienId, scaled);
-        if (applied != scaled) revert SettlementShortfall(scaled, applied);
 
         sent = usdcAmount;
         emit Filled(usdcAmount, wh, ISzipNavProvision(navOracle).provision());

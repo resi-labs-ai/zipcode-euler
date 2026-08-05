@@ -85,12 +85,15 @@ contract ZipcodeController is ReceiverTemplate {
         address lineRef;
         bool open;
         bytes32 siloId; // CTR-03: the silo this line was originated into; draws/closes re-resolve the venue from it.
-        // SEC/L-4 (defense-in-depth): set true on an RT_DEFAULT/RT_LIQUIDATION report; ONE-WAY — never cleared (the
-        // lienId is single-use forever, F-12: close flips `open=false` but keeps the record, so a closed line already
-        // fails `_draw`'s `!open` guard and the flag is moot post-close). Blocks `_draw` on-chain so a defaulted line
-        // can never be re-drawn, hardening the trust assumption that the CRE never sends a post-default draw. Does NOT
-        // free the slot or the capital (repay+close still do that); it only fences the draw path. Economic loss is
-        // handled by the DefaultCoordinator.
+        // SEC/L-4 (defense-in-depth): set true on an RT_DEFAULT/RT_LIQUIDATION report; ONE-WAY — never cleared. A
+        // marker filed against a lienId whose origination reverted lands on a zeroed record, and `_origination`
+        // CARRIES the flag forward (it does not overwrite with a literal `false`), so a marker-then-origination-retry
+        // ordering keeps the line fenced rather than silently clearing it. The lienId is single-use forever
+        // (F-12: close flips `open=false` but keeps the record, so a closed line already fails `_draw`'s `!open`
+        // guard and the flag is moot post-close). Blocks `_draw` on-chain so a defaulted line can never be re-drawn,
+        // hardening the trust assumption that the CRE never sends a post-default draw. Does NOT free the slot or the
+        // capital (repay+close still do that); it only fences the draw path. Economic loss is handled by the
+        // DefaultCoordinator.
         bool defaulted;
     }
 
@@ -225,8 +228,12 @@ contract ZipcodeController is ReceiverTemplate {
             _close(payload);
         } else if (reportType == RT_DEFAULT || reportType == RT_LIQUIDATION) {
             // M1: status-marker only — no markdown / escrow / venue.liquidate (§4.4d/e; DefaultCoordinator is M2).
-            // SEC/L-4: ALSO set the one-way `defaulted` flag so `_draw` fails closed on-chain for this lien (defense-
-            // in-depth over the trusted-CRE assumption). No-op on an unknown lien (flag on a zeroed record is inert).
+            // SEC/L-4: ALSO set the `defaulted` flag so `_draw` fails closed on-chain for this lien (defense-in-depth
+            // over the trusted-CRE assumption). The flag is TRULY one-way: a marker filed BEFORE the lien is
+            // originated (its origination reverted — SiloFull/over-LTV/StaleReport — and the CRE retries) sets the
+            // flag on a zeroed record, and `_origination` PRESERVES it (carries `liens[id].defaulted` into the new
+            // record, not a literal `false`), so the retried line stays fenced. Without that carry the flag was
+            // silently cleared by the very re-origination it was meant to fence.
             (bytes32 lienId, uint8 status) = abi.decode(payload, (bytes32, uint8));
             liens[lienId].defaulted = true;
             emit LienStatusUpdated(lienId, status);
@@ -272,7 +279,11 @@ contract ZipcodeController is ReceiverTemplate {
         IZipcodeVenue(venue_).draw(lineRef, p.drawAmount, erebor);
 
         // 8: store + event (the liens write is LAST — last-write reentrancy safety, F-10).
-        liens[p.lienId] = LienRecord({lien: lien, lineRef: lineRef, open: true, siloId: p.siloId, defaulted: false});
+        // `defaulted` is CARRIED, not reset: a default marker filed against this lienId before origination (a retry
+        // after a reverted origination) must survive the re-origination — SEC/L-4 one-way. Normal flow reads `false`
+        // here (no marker yet), so this is a no-op except in the marker-first ordering.
+        liens[p.lienId] =
+            LienRecord({lien: lien, lineRef: lineRef, open: true, siloId: p.siloId, defaulted: liens[p.lienId].defaulted});
         emit LienOriginated(p.lienId, lien, lineRef, p.proofRef, p.equityMark, p.drawAmount, p.siloId);
 
         // 9: bump the registry slot count as the FINAL statement (fail-closed — a SiloFull revert rolls back the

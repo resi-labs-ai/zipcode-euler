@@ -13,12 +13,12 @@
 > `setQuote` (and the since-deleted push-LP-oracle sibling). This is hardening, not a bug-fix — a zero
 > `quote_` already deployed fail-closed (every read reverted `NotSupported` at `:172`; never fail-open) and was
 > recoverable via `setQuote` while owner-live; the guard shifts a silent inert-deploy to an explicit deploy-time
-> revert. Pinned by `test_Ctor_ZeroQuote_Reverts`; 41/41 green. (Surfaced by the core/zipcodeoracleregistry
+> revert. Pinned by `test_Ctor_ZeroQuote_Reverts`; 44/44 green. (Surfaced by the core/zipcodeoracleregistry
 > adversarial-review cycle, which otherwise confirmed HARDENED — no other actionable finding.)
 
 Per-contract X-Ray for `contracts/src/ZipcodeOracleRegistry.sol`, the **multi-asset Proof-of-Value push-cache** that
 prices every lien token at its appraised-value-minus-senior-debt mark. The EVK read-adapter
-(`BaseAdapter`/`IPriceOracle`) and CRE receiver (`ReceiverTemplate`) in one contract. Exercised by `ZipcodeOracleRegistry.t.sol` — a **41-test** suite. This is the LAST loose
+(`BaseAdapter`/`IPriceOracle`) and CRE receiver (`ReceiverTemplate`) in one contract. Exercised by `ZipcodeOracleRegistry.t.sol` — a **44-test** suite. This is the LAST loose
 top-level contract in `src/`.
 
 > Two write paths feed one venue-neutral cache: a **controller-gated origination seed** (`seedPrice`, single lien,
@@ -34,9 +34,9 @@ top-level contract in `src/`.
 A 97-nSLOC dual `ReceiverTemplate, BaseAdapter`. Per-lien `Cache{price, timestamp}` keyed on the lien address; three
 Timelock-settable slots (`controller`, `quote`, `validityWindow`) + the derived `scale`.
 
-- **`seedPrice(lien, price)`** — `controller`-only; one mark, `ts = now`; → `_writePrice` + event.
-- **`_processReport`** (reportType `REVALUATION=3`) — Forwarder-gated batch: length-match → loop `_writePrice`; all-or-nothing.
-- **`_writePrice`** (shared guards) — `price != 0` (`InvalidAnswer`), `price <= uint208.max` (`Overflow`), `ts <= now` (`FutureTimestamp`), `ts` strictly newer than cached (`StaleReport`, SEC-01), `_strictDecimals(lien) == 18` (`InvalidLienDecimals`).
+- **`seedPrice(lien, price, ts)`** — `controller`-only; one mark, `ts` = the mark's measured-at time (producer-supplied, NOT `block.timestamp`); always writes; → `_writePrice` + event.
+- **`_processReport`** (reportType `REVALUATION=3`) — Forwarder-gated batch: length-match → per-lien strictly-newer check (`StaleReport`, SEC-01) → `_writePrice`; all-or-nothing.
+- **`_writePrice`** (shared guards) — `price != 0` (`InvalidAnswer`), `price <= uint208.max` (`Overflow`), `ts <= now` (`FutureTimestamp`), `_strictDecimals(lien) == 18` (`InvalidLienDecimals`). The strictly-newer check (`StaleReport`, SEC-01) is NOT here — it lives in `_processReport` and applies to revaluations only.
 - **`_getQuote`** — only `(lien, quote)`; unset cache / wrong quote → `NotSupported`; `now-ts > validityWindow` → `TooStale`; else `calcOutAmount(..., false)` (rounds down).
 - **setters** — `setController`/`setQuote` (re-derives `scale`)/`setValidityWindow`, all `onlyOwner`.
 
@@ -44,7 +44,7 @@ Timelock-settable slots (`controller`, `quote`, `validityWindow`) + the derived 
 
 | Function | Access | Notes |
 |---|---|---|
-| `seedPrice(lien, price)` | `controller`-only | `NotController`; origination seed |
+| `seedPrice(lien, price, ts)` | `controller`-only | `NotController`; origination/draw seed; unordered against revaluations |
 | `onReport` → `_processReport` | Forwarder-gated | reportType 3 batch; all-or-nothing |
 | `getQuote / getQuotes` → `_getQuote` | public view | only `(lien, quote)`; fail-closed on unset/stale; forward-only |
 | `setController` / `setQuote` / `setValidityWindow` | `onlyOwner` (Timelock) | re-points; `setQuote` re-derives `scale` |
@@ -59,7 +59,7 @@ Timelock-settable slots (`controller`, `quote`, `validityWindow`) + the derived 
 | I-3 | **revaluation all-or-nothing batch** — Forwarder-gated, reportType 3, length-match, empty-ok, a duplicate lien in-batch reverts the whole report (`StaleReport`) | Yes | **`test_RevaluationForwarderPath`**, `_ForwarderGate`, `_InvalidReportTypes`, `_LengthMismatch`, `_EmptyBatchNoRevert`, `_DuplicateLiensInBatchRevertStale`, `_RevaluationOverwritesSeed` |
 | I-4 | **write value guards** — `price==0`→`InvalidAnswer`; `>uint208.max`→`Overflow`; `ts>now`→`FutureTimestamp` — on BOTH seed + reval; the uint208 boundary succeeds | Yes | **`test_WriteGuard_ZeroPrice_{Seed,Reval}`**, `_Overflow_{Seed,Reval}`, `_Uint208Boundary_Succeeds_{Seed,Reval}`, `_FutureTimestamp_Reval` |
 | I-5 | **strict 18-dp key guard** — a 6-dp lien and a code-less EOA both reject (`InvalidLienDecimals`), on BOTH paths | Yes | **`test_StrictDecimals_6dp_Rejected_{Seed,Reval}`**, `_EOA_Rejected_{Seed,Reval}` |
-| I-6 | **SEC-01 strictly-newer** — seed equal-ts, reval backdated, reval equal-ts all revert `StaleReport`; strictly-newer succeeds | Yes | **`test_SEC01_seedPrice_equalTs_reverts`**, `_reval_backdated_reverts`, `_reval_equalTs_reverts`, `_strictlyNewer_succeeds` |
+| I-6 | **SEC-01 strictly-newer, REVALUATIONS ONLY** — a backdated or equal-ts revaluation reverts `StaleReport`; strictly-newer succeeds. The seed path is deliberately unordered against it (see §6) and always writes | Yes | **`test_reval_with_stale_ts_still_reverts`**, `_reval_backdated_reverts`, `_reval_equalTs_reverts`, `_strictlyNewer_succeeds`, **`test_seed_with_older_sourceTs_still_writes`**, `test_seedPrice_equalTs_writes` |
 | I-7 | **read guards** — unset cache / wrong quote → `NotSupported`; `s > window` → `TooStale(s, window)`; boundary `s == window` still fresh | Yes | **`test_ReadGuard_UncachedNotSupported`**, `_WrongQuoteNotSupported`, `_TooStale_ExactArgs`, `_BoundaryStillFresh` |
 | I-8 | **no on-chain value band** — a big mark drop is accepted (integrity is upstream) | Yes | **`test_NoValueBand_BigDrop_Succeeds`** |
 | I-9 | **identity / renounce** — wrong workflowId reverts pre-renounce; renounce freezes setters but the identity gate stays live; renounced-without-controller → seed forever reverts; forwarder immutable after renounce | Yes | **`test_IdentityGate_WrongWorkflowId_BeforeRenounce`**, `_Renounce_FreezesSettersButIdentityStaysLive`, `_RenouncedWithoutController_SeedForeverReverts`, `_ForwarderImmutableAfterRenounce` |
@@ -72,7 +72,7 @@ Timelock-settable slots (`controller`, `quote`, `validityWindow`) + the derived 
 |---|---|---|
 | `NotController` (seed) | `:114` | `test_SeedAuthorityAndEvent` |
 | `InvalidReportType` / `LengthMismatch` | `:130,133` | `test_InvalidReportTypes`, `_LengthMismatch` |
-| `InvalidAnswer` / `Overflow` / `FutureTimestamp` / `StaleReport` | `_writePrice:142-145` | `test_WriteGuard_*`, `_SEC01_*` |
+| `InvalidAnswer` / `Overflow` / `FutureTimestamp` / `StaleReport` | `_writePrice` / `_processReport` | `test_WriteGuard_*`, `_SEC01_*` |
 | `InvalidLienDecimals` (strict, both paths) | `_strictDecimals:154` | `test_StrictDecimals_*` |
 | `NotSupported` (wrong quote / unset) / `TooStale` | `_getQuote:172-177` | `test_ReadGuard_*` |
 | Forwarder / identity gate | `ReceiverTemplate` | `test_ForwarderGate`, `_IdentityGate_*`, `_Renounce_*` |
@@ -94,8 +94,22 @@ are now exercised — no untested surface.
   future/stale ts, off-decimal) reverts the whole reportType-3 batch — proven via the duplicate-lien-in-batch test
   (the second write hits `StaleReport` and rolls back the batch). A per-key try/catch would weaken this and is
   deliberately omitted; blast radius is bounded off-chain by the producer's sharding + the long validity window.
-- **SEC-01 strictly-newer is the replay/clobber defense (I-6).** A backdated or equal-ts write (seed or reval)
-  reverts `StaleReport`, covering both a seed-clobber and out-of-order reportType-3 — the value-only guards can't
+- **The two write paths do not share a clock, and are no longer ordered against each other (2026-08-04).**
+  `_processReport` stamps one DON `runtime.Now()` per sweep (`cre/revaluation/workflow.go`); `seedPrice` carries the
+  equity mark's measured-at time, supplied on the producer payload (`cre/controller/README.md`: "appraisal as-of
+  time … NOT emit time"). SEC/L-3 fed both into one strictly-newer guard on the claim that this put them "on one
+  clock". It did not — it ordered them by when each mark was MEASURED rather than by which write arrived last, so a
+  draw carrying a mark older than the last sweep's run time reverted `StaleReport` and rolled back the entire
+  origination/draw batch. That is a fail-closed liveness break on the revolving product (CTR-08 structure 2), and it
+  is the same false-revert-on-sequential-draws failure the auditor's own proposed fix was rejected for. The guard
+  now sits in `_processReport` only. `seedPrice` always writes, which restores the pre-SEC/L-3 behaviour (the seed
+  then stamped `block.timestamp` and always won) while keeping the measured-at time for the `validityWindow` read.
+  The trade is that a controller seed can overwrite a newer mark with an older one; ordering on that path is the
+  atomic batch plus `onlyController`, and the mark originates from the same CRE either way. Reviewed against the
+  original finding: a stale-high mark neither unlocks borrowing (the per-line `cap` binds) nor blocks liquidation
+  (there is none on-chain — ratified `defaulted-lines`).
+- **SEC-01 strictly-newer is the replay/clobber defense for revaluations (I-6).** A backdated or equal-ts
+  revaluation reverts `StaleReport`, covering out-of-order and replayed reportType-3 shards — the value-only guards can't
   catch a same-price replay, so the monotonic-ts check is load-bearing and tested four ways.
 - **No on-chain value band is a deliberate design point (I-8), tested.** Integrity is upstream (Proof + DON + the
   Timelock-pinned Forwarder), so a big mark drop is accepted as a real revaluation — `test_NoValueBand_BigDrop`
@@ -121,10 +135,10 @@ are now exercised — no untested surface.
 | Write guards (value + strict decimals) | 11 | zero/overflow/uint208-boundary/future-ts (seed+reval) + 6dp/EOA strict-decimals (seed+reval) |
 | Read guards + no-value-band | 5 | uncached, wrong-quote, too-stale exact-args, boundary-fresh, big-drop |
 | Identity / renounce | 4 | wrong-id, renounce-freezes, renounced-no-controller, forwarder-immutable |
-| SEC-01 strictly-newer | 4 | seed equal-ts, reval backdated/equal-ts, strictly-newer |
+| SEC-01 strictly-newer (revaluations) | 5 | reval backdated/equal-ts, strictly-newer, plus the two seed-always-writes cases |
 | `setController` / `setQuote` / `setValidityWindow` | 3 | onlyOwner + zero + effect/event across all three setters |
 
-Coverage % uninstrumentable (project-wide `Stack too deep`); **41 tests green**. The two write paths, the read path,
+Coverage % uninstrumentable (project-wide `Stack too deep`); **44 tests green**. The two write paths, the read path,
 every value/decimals/staleness guard, SEC-01, the identity/renounce surface, and all three setters are exhaustively
 covered — no coverage gap.
 
@@ -142,6 +156,6 @@ audit.
 **Structural facts:**
 1. 97 nSLOC; dual `ReceiverTemplate` + `BaseAdapter`; per-lien push-cache; two write paths (controller seed + Forwarder reportType-3 batch) → one stale-checked read.
 2. One shared `scale` (`baseDecimals=18`) + strict-18-dp key guard make a non-18-dp lien unreachable by design (load-bearing; never relax in isolation).
-3. All-or-nothing revaluation (a poison key reverts the batch); SEC-01 strictly-newer ts (replay/clobber defense); no on-chain value band (integrity is upstream).
+3. All-or-nothing revaluation (a poison key reverts the batch); SEC-01 strictly-newer ts on revaluations (replay/clobber defense; the seed path is deliberately unordered); no on-chain value band (integrity is upstream).
 4. Forward-only `_getQuote` (only `(lien, quote)`; reverse pair fails closed); fail-closed on unset/stale.
-5. Tests: 41 (scale, both write paths, full guard matrix, SEC-01, read guards, identity/renounce, all three setters incl. `setQuote` scale re-derive, ctor `quote_` zero-guard). No coverage gap; capped only by the pre-prod re-freeze + no audit.
+5. Tests: 44 (scale, both write paths, full guard matrix, SEC-01, read guards, identity/renounce, all three setters incl. `setQuote` scale re-derive, ctor `quote_` zero-guard). No coverage gap; capped only by the pre-prod re-freeze + no audit.

@@ -136,6 +136,9 @@ contract MockNavBasket {
     uint256 public committedValue;
     uint256 public grossBasketValue;
     uint256 public pathLockedLpEquity; // default 0 -> coverageValue == committedValue (unchanged for legacy tests)
+    /// @dev Main-Safe zipUSD + xALPHA counted as coverage. Default 0 so the legacy unit cases keep
+    ///      `coverageValue == committedValue`; the shape-independence cases set it explicitly.
+    uint256 public mainSpotEquity;
 
     address public zipUSD;
     address public usdc;
@@ -163,6 +166,10 @@ contract MockNavBasket {
 
     function setPathLockedLpEquity(uint256 v) external {
         pathLockedLpEquity = v;
+    }
+
+    function setMainSpotEquity(uint256 v) external {
+        mainSpotEquity = v;
     }
 
     /// @dev 1:1 for clean gate math in the unit suite (dissolving `shares` removes `shares` of coverage value).
@@ -586,14 +593,21 @@ contract DurationFreezeModuleMathTest is FreezeBase {
         assertFalse(m.covered(), "60 < 70 -> price-drift breach");
     }
 
-    function test_lpBurnKeepsCovered_excess_bound() public {
+    /// @dev `lpBurnKeepsCovered` is gone (2026-08-04). Dissolving LP returns zipUSD and xALPHA to the same Safe,
+    ///      where `mainSpotEquity` counts them at the value the LP was counted at, so coverage does not move. The
+    ///      old excess bound subtracted the burn without adding the proceeds back, which blocked withdrawals that
+    ///      take nothing away. What replaces it here is the assertion that the two forms are interchangeable.
+    function test_coverage_is_shape_independent_across_a_dissolution() public {
         _setDebt(70e18); // floor 70
         basket.setValues(40e18, 100e18); // committed 40
-        basket.setPathLockedLpEquity(50e18); // LP 50 -> coverage 90; excess over floor = 20
-        // dissolving 15 (1:1 mock) -> 90 - 15 = 75 >= 70 -> allowed
-        assertTrue(m.lpBurnKeepsCovered(15e18), "dissolve within the 20 excess");
-        // dissolving 25 -> 90 - 25 = 65 < 70 -> NOT allowed (would eat into the floor-backing LP)
-        assertFalse(m.lpBurnKeepsCovered(25e18), "dissolve beyond the excess");
+        basket.setPathLockedLpEquity(50e18); // LP 50 -> coverage 90
+        assertEq(m.coverageValue(), 90e18, "LP counted");
+
+        // dissolve 15: the LP leg falls by 15 and the same value lands as main-Safe spot legs.
+        basket.setPathLockedLpEquity(35e18);
+        basket.setMainSpotEquity(15e18);
+        assertEq(m.coverageValue(), 90e18, "coverage unchanged by the shape change");
+        assertTrue(m.covered(), "still above the 70 floor");
     }
 
     function test_freeValue_is_gross_minus_committed() public {
@@ -1027,15 +1041,17 @@ contract SzipNavOracleParityTest is Test {
         );
 
         assertEq(m.requiredCommittedValue(), 100e18, "floor pinned to senior liability (< gross 135)");
-        assertEq(m.coverageValue(), 95e18, "single-counted coverage = (juniorTrancheSidecar 65) + (main LP 30)");
-        assertFalse(m.covered(), "post-fix: 95 < 100 floor -> breach surfaces (NOT covered)");
 
-        // pre-fix the juniorTrancheSidecar LP (15e18) was double-counted -> coverage 110e18 >= 100 -> covered() would have lied.
-        uint256 prefixCoverage = m.coverageValue() + oracle.lpShareValue(50e18);
-        assertGe(prefixCoverage, m.requiredCommittedValue(), "pre-fix double-count WOULD have reported covered");
+        // SEC-02, the property under test: the sidecar's LP (15e18) is counted EXACTLY ONCE. `committedValue`
+        // already owns it, so `pathLockedLpEquity` is main-only. Coverage = sidecar 65 + main LP 30 + main
+        // zipUSD 40 = 135; the pre-fix double-count would have read 150.
+        assertEq(m.coverageValue(), 135e18, "sidecar LP counted once");
+        assertEq(m.coverageValue() + oracle.lpShareValue(50e18), 150e18, "pre-fix double-count would have read 150");
 
-        // and the LP-dissolution gate tightens: from a breached state, burning fenced LP cannot keep coverage.
-        assertFalse(m.lpBurnKeepsCovered(1e18), "burning fenced LP from a breach stays uncovered");
+        // Coverage is shape-independent, so the main Safe's 40e18 of zipUSD backs the floor exactly as the same
+        // value would inside the LP wrapper. 135 of junior value against a 100 liability IS covered — the old
+        // model reported a breach here only because it discounted the unwrapped form to zero.
+        assertTrue(m.covered(), "135 of junior value covers a 100 floor");
     }
 
     // ----------------------------------------------------------- SEC-04: unseeded xALPHA rate fail-close (H5)
@@ -1392,7 +1408,11 @@ contract DurationFreezeModuleForkTest is ForkConfig, SummonSubstrate {
         assertEq(oracle.committedValue(), 40e18, "released 20 back to main");
     }
 
-    function test_fork_high_U_release_reverts_floorBreach() public {
+    /// @dev Coverage is shape-independent: zipUSD counts whether it sits in the sidecar (`committedValue`) or the
+    ///      main Safe (`mainSpotEquity`), so releasing it between two Safes the protocol owns moves no value and
+    ///      leaves coverage flat. The floor tracks LOSS, not rotation. USDC is the asset a release can still
+    ///      breach on, because it is excluded from coverage once it reaches the spendable main Safe.
+    function test_fork_high_U_release_zipUSD_is_shape_neutral() public {
         (DurationFreezeModule m, address juniorTrancheSafe, address juniorTrancheSidecar) = _setUpSubstrateAndModule();
 
         zip.mint(juniorTrancheSafe, 100e18);
@@ -1401,18 +1421,20 @@ contract DurationFreezeModuleForkTest is ForkConfig, SummonSubstrate {
         m.commit(address(zip), 100e18); // freeze everything
         assertEq(oracle.committedValue(), 100e18);
 
-        // now set debt huge (free 0) -> illiquidSeniorValue >> gross -> floor CAPPED at gross == 100. Any release breaches.
-        ee.setBacking(1, 100e18, 0); // free 0 -> debt = 100e18 * 1e12, capped at gross
+        // Debt huge (free 0) -> illiquidSeniorValue >> gross -> floor CAPPED at gross == 100.
+        ee.setBacking(1, 100e18, 0);
         assertEq(m.requiredFraction(), 1e18); // utilization() retained as the §12 metric
         assertEq(m.requiredCommittedValue(), 100e18); // floor capped at gross
 
+        uint256 covBefore = m.coverageValue();
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(DurationFreezeModule.FreezeFloorBreach.selector, 99e18, 100e18));
-        m.release(address(zip), 1e18);
+        m.release(address(zip), 1e18); // permitted: the zipUSD is still ours, just in the other Safe
 
-        // the breach rolled back: committedValue intact.
-        assertEq(oracle.committedValue(), 100e18, "breach rolled back");
-        assertEq(zip.balanceOf(juniorTrancheSidecar), 100e18);
+        assertEq(m.coverageValue(), covBefore, "rotation leaves coverage flat");
+        assertEq(oracle.committedValue(), 99e18, "sidecar fell by the released amount");
+        assertEq(m.mainSpotEquity(), 1e18, "main picked it up");
+        assertEq(zip.balanceOf(juniorTrancheSidecar), 99e18);
+        assertTrue(m.covered(), "still covered: no value left the protocol");
     }
 }
 

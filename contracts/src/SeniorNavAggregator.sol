@@ -80,12 +80,24 @@ contract SeniorNavAggregator is Ownable {
     ///      never suppresses its live twin. O(n²) seen-scan over the admitted-silo count (tens) — view-path cheap.
     ///
     ///      PER-SILO FAILURE ISOLATION (added ahead of the Morpho/Aave venue expansion): each pair's read runs under
-    ///      try/catch, so one broken pool cannot brick the Σ. Today every venue is EulerEarn, whose views answer from
-    ///      its own storage and cannot revert; a future third-party pool is upgradeable by ITS governance, and silos
-    ///      can never be removed from `allSiloIds()` — without isolation, one post-retirement upgrade could blind the
-    ///      solvency views forever. A broken pair counts as ZERO backing, which errs the SAFE way (understated
-    ///      backing = a breaker that trips early), and is never silent: `unreadablePairs()` reports the skip count,
-    ///      and the strict per-silo getters (`seniorBackingOf`) still revert loudly for diagnosis.
+    ///      try/catch, so one broken pool cannot brick the Σ. EulerEarn's views do NOT answer from their own storage —
+    ///      both legs fan out over the `withdrawQueue`, and `maxWithdraw` (the illiquid leg only) additionally
+    ///      simulates withdrawal across every strategy, so its external-call surface strictly contains the senior
+    ///      leg's and the two legs can break INDEPENDENTLY. A future third-party pool is upgradeable by ITS
+    ///      governance, and silos can never be removed from `allSiloIds()` — without isolation, one post-retirement
+    ///      upgrade could blind the solvency views forever. A broken pair counts as ZERO backing, which errs the SAFE
+    ///      way (understated backing = a breaker that trips early), and is never silent: each aggregate exposes its
+    ///      OWN skip counter (`unreadablePairs` / `unreadableIlliquidPairs` / `unreadableActivePairs`), and the strict
+    ///      per-silo getters (`seniorBackingOf`) still revert loudly for diagnosis.
+    ///
+    ///      SCOPE OF THE ISOLATION (L10-sibling, stated honestly): try/catch isolates a pair that REVERTS, not one
+    ///      that EXHAUSTS GAS. Under EIP-150 the sub-call receives 63/64 of the remaining gas, so a pool view that
+    ///      burns gas rather than reverting can still starve the outer Σ and revert `seniorBacking()` entirely. That
+    ///      is unreachable on today's all-EulerEarn board (its views cannot be made to grief). Onboarding a
+    ///      third-party pool upgradeable by its own governance — the exact threat this isolation is FOR — requires
+    ///      adding a per-pair gas stipend (`try this.pairX{gas: N}(...)`, N generous; a starved read skips, which
+    ///      errs the same SAFE way) before that pool is admitted. The aggregate is telemetry only (no on-chain
+    ///      consumer), so the exposure is a blinded operator signal, never funds.
     function _aggregate(bool activeOnly, bool illiquid) private view returns (uint256 total, uint256 skipped) {
         if (address(registry) == address(0)) revert RegistryUnset();
         bytes32[] memory ids = registry.allSiloIds();
@@ -132,12 +144,26 @@ contract SeniorNavAggregator is Ownable {
         return _illiquidValue(eePool, warehouseSafe);
     }
 
-    /// @notice How many physical `(eePool, warehouseSafe)` pairs the all-silos senior Σ currently CANNOT read (their
-    ///         views revert). Zero means every aggregate above is complete. Non-zero means the totals understate by
-    ///         the broken pairs' backing — pollers must treat the aggregates as a conservative lower bound and probe
-    ///         the strict per-silo getters to find the broken venue.
+    /// @notice How many physical `(eePool, warehouseSafe)` pairs the all-silos SENIOR Σ currently cannot read (their
+    ///         views revert). Zero means `seniorBacking()`/`systemCollateralization()` are complete — and ONLY those:
+    ///         each aggregate runs its own leg and has its own counter, because a pair can break for one leg only
+    ///         (`maxWithdraw` reverting while `convertToAssets` answers breaks the illiquid Σ alone). Non-zero means
+    ///         that total understates by the broken pairs' backing — pollers must treat it as a conservative lower
+    ///         bound and probe the strict per-silo getters to find the broken venue.
     function unreadablePairs() external view returns (uint256 skipped) {
         (, skipped) = _aggregate(false, false);
+    }
+
+    /// @notice Skip counter for the ILLIQUID Σ (`illiquidSeniorValue()`) — the only leg that calls `maxWithdraw`,
+    ///         whose call surface strictly contains the senior leg's, so this can be non-zero while
+    ///         `unreadablePairs()` is 0. Zero means `illiquidSeniorValue()` is complete.
+    function unreadableIlliquidPairs() external view returns (uint256 skipped) {
+        (, skipped) = _aggregate(false, true);
+    }
+
+    /// @notice Skip counter for the ACTIVE-ONLY Σ (`activeSeniorBacking()`). Zero means that total is complete.
+    function unreadableActivePairs() external view returns (uint256 skipped) {
+        (, skipped) = _aggregate(true, false);
     }
 
     /// @notice Σ senior par-backing over ALL silos (the §12 senior-solvency numerator while no impairment is

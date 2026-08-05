@@ -2,18 +2,31 @@
 
 > WarehouseAdminModule | 110 nSLOC | 8b7c67c (`main`, working tree) | Foundry | 20/06/26 | **Verdict: HARDENED** *(modulo the pre-prod immutable re-freeze + no external audit)*
 
-> **Update:** the X-2 residual (avatar-parity unverified on-chain) is closed as a **maintained invariant** —
-> checked at ALL THREE adapter pairing sites (the constructor, `setRoles`, `setWarehouseSafe` each revert
-> `AvatarMismatch` unless `roles.avatar() == warehouseSafe`) AND re-asserted at USE time (`_processReport`
-> reverts before dispatching any op on a mismatch, covering the external-`Roles.setAvatar` desync the wiring
-> sites can't see). The guards matter because SUPPLY/REDEEM fail closed under a mismatch at the scope's live
-> `EqualToAvatar` receiver pin, but **REPAY has no "from" parameter to scope** — a Roles instance attached to a
-> different Safe would have kept REPAY live against THAT Safe, draining it into the redemption queue (no sweep;
+> **Update:** the X-2 residual (parity unverified on-chain) is closed as a **maintained invariant** — checked at
+> ALL FOUR sites (the constructor, `setRoles`, `setWarehouseSafe`, and at USE time in `_processReport`), each
+> asserting BOTH `roles.avatar() == warehouseSafe` (`AvatarMismatch`) and `roles.target() == warehouseSafe`
+> (`TargetMismatch`). The guards matter because SUPPLY/REDEEM fail closed under an avatar mismatch at the scope's
+> live `EqualToAvatar` receiver pin, but **REPAY has no "from" parameter to scope** — a Roles instance attached to
+> a different Safe would have kept REPAY live against THAT Safe, draining it into the redemption queue (no sweep;
 > `settleEpoch` consumes any free balance). Any desync is now a liveness jam until re-paired, never an execution.
-> Re-points are order-dependent — pair the modifier to the Safe first; documented in `docs/roles.md`. `IRoles`
-> gained `avatar()`/`setAvatar()`. 32/32 fork tests green (incl. `test_Ctor_RevertsOnAvatarMismatch`,
-> `test_Parity_SetRoles_WrongAvatar_Reverts`, `test_Parity_SetRoles_MatchingAvatar_Succeeds`,
-> `test_Parity_UseTime_ExternalSetAvatar_BlocksAllOps`). Verdict: HARDENED.
+>
+> **Both slots, not just `avatar` (added 2026-08-04).** The original guard read only `avatar()`, which is the
+> *wrong* slot for custody: Zodiac's `Module.exec` is `IAvatar(target).execTransactionFromModule(...)`
+> (`Module.sol:50`), while `avatar` is only the scope-comparison operand for `Operator.EqualToAvatar`. A
+> `Roles.setTarget(otherSafe)` therefore left every avatar check passing while REPAY/SUPPLY/APPROVE executed
+> against a different Safe — proven on a Base fork against the real deployed Roles mastercopy: 500,000e6 USDC
+> drained from a second Safe by one honest REPAY report, with no `AvatarMismatch` and no scope rejection.
+> `Roles.setTarget` is gated by the Roles owner (`godOwner`), a DIFFERENT key from the Timelock that owns this
+> adapter's setters, so checking both slots turns a one-key redirect into a two-key one. Reachability was always
+> narrow — the destination Safe must have this Roles instance enabled as a module, and per-silo deploys give each
+> silo its own — but the remediation claimed a maintained invariant it did not establish.
+>
+> Re-points are order-dependent — pair BOTH modifier slots to the Safe first; documented in `docs/roles.md`.
+> `IRoles` gained `avatar()`/`setAvatar()`/`target()`/`setTarget()`. 34/34 fork tests green (incl.
+> `test_Ctor_RevertsOnAvatarMismatch`, `test_Parity_SetRoles_WrongAvatar_Reverts`,
+> `test_Parity_SetRoles_WrongTarget_Reverts`, `test_Parity_SetRoles_MatchingAvatar_Succeeds`,
+> `test_Parity_UseTime_ExternalSetAvatar_BlocksAllOps`, `test_Parity_UseTime_ExternalSetTarget_BlocksAllOps`).
+> Verdict: HARDENED.
 
 Dedicated single-contract X-Ray for `contracts/src/supply/CreditWarehouse/WarehouseAdminModule.sol`, the sole
 contract in the senior-side warehouse-admin scope (the `bridge/x-ray/x-ray.md`-style bundled `x-ray.md` is the scope
@@ -46,9 +59,9 @@ scope-pinned `EqualTo(redemptionBox)`.
 | Function | Access | Notes |
 |---|---|---|
 | `_processReport` (via `onReport`) | Forwarder-gated (CRE) | decodes `(opType, payload)` → SUPPLY/APPROVE/REDEEM/REPAY → `execTransactionWithRole`; `else revert UnsupportedOpType` |
-| `setRoles(roles_)` | `onlyOwner` (Timelock) | re-point the Roles modifier; non-zero; **avatar-parity-guarded** (`AvatarMismatch` unless `roles_.avatar() == warehouseSafe`); re-pointable (§17) |
+| `setRoles(roles_)` | `onlyOwner` (Timelock) | re-point the Roles modifier; non-zero; **parity-guarded on BOTH slots** (`AvatarMismatch` unless `roles_.avatar() == warehouseSafe`, `TargetMismatch` unless `roles_.target() == warehouseSafe`); re-pointable (§17) |
 | `setRoleKey(roleKey_)` | `onlyOwner` | re-set the assigned key; must stay non-zero (zero = `NoMembership`) |
-| `setWarehouseSafe(safe_)` | `onlyOwner` | re-point avatar/custodian; **reverts `AvatarMismatch` unless `roles.avatar() == safe_`** — pair `Roles.setAvatar` FIRST (X-2, checked here; entry-point-local — `setRoles`/external `setAvatar` re-desync fail-closed) |
+| `setWarehouseSafe(safe_)` | `onlyOwner` | re-point custodian; **reverts `AvatarMismatch`/`TargetMismatch` unless BOTH `roles.avatar()` and `roles.target()` equal `safe_`** — pair `Roles.setAvatar` AND `Roles.setTarget` FIRST (X-2); the use-time re-check in `_processReport` covers any later external desync |
 | `setEePool(eePool_)` | `onlyOwner` | re-point the EulerEarn pool |
 | `setUsdc(usdc_)` | `onlyOwner` | re-point the asset/approve/repay token |
 | `setRedemptionBox(box_)` | `onlyOwner` | re-point the REPAY sink |
@@ -63,7 +76,7 @@ No permissionless entry points. The four ops are reachable only via the Forwarde
 | I-2 | `opType ∈ {1,2,3,4}`; any other byte reverts; each op = one (target, selector) | Yes | `test_Adapter_UnsupportedOpType_Reverts` (0/5/255→`UnsupportedOpType`), `test_Supply_Happy`/`test_Redeem_Happy`/`test_Repay_Happy` (selector+target pinned per op), `test_Escalation_Blocked` (un-scoped selector on a scoped target → `FunctionNotAllowed`) |
 | I-3 | REPAY transfers to `redemptionBox` (immutable), never the payload `dest` — validated AND injected | Yes | `test_Repay_Happy` (injects `redemptionBox`), `test_Repay_RevertsOnWrongSink` (`dest=attacker`→`WrongRedemptionBox`), `test_Scope_PinsParams_TransferTo` (member transfer to any non-box → `ParameterNotAllowed`; to box → succeeds) |
 | X-1 | the real param-pinning (receiver==avatar / spender==eePool / to==redemptionBox / Call-only) lives in the **Roles scope**, not here | **No** | **fork integration** vs the live modifier: `test_Scope_PinsParams_DepositReceiver` (redirected receiver→`ParameterNotAllowed`), `test_Scope_PinsParams_TransferTo`, `test_CallOnly_RejectsValueAndDelegatecall`, `test_Escalation_Blocked` (enableModule/addOwner/wrong-target/wrong-selector all rejected), `test_NonMember_Reverts` (`NotAuthorized`), `test_NonOwner_CannotScopeOrAssign` |
-| I-4 | `warehouseSafe` (injected owner) MUST equal the modifier's `avatar` — **checked on-chain in `setWarehouseSafe`** (`AvatarMismatch`), so a one-sided re-point *through that setter* cannot be saved. Entry-point-local, NOT a standing invariant: `setRoles` + external `Roles.setAvatar` re-desync but fail-closed | **Yes** (entry-point-local) | **`test_Parity_OneSidedRepoint_RevertsAtSetter`** (one-sided re-point → `AvatarMismatch`, slot unchanged), **`test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`** (avatar-first → accepted, parity restored); the scope-level fail-closed backstop (covering the `setRoles`/external-`setAvatar` desync too) stays proven by `test_Scope_PinsParams_DepositReceiver` |
+| I-4 | `warehouseSafe` (injected owner) MUST equal BOTH the modifier's `avatar` (the scope's `EqualToAvatar` operand) and its `target` (the Safe `Module.exec` actually calls) — **checked on-chain at all four sites**, so neither a one-sided re-point nor an external `setAvatar`/`setTarget` can survive. A standing invariant, re-asserted per report | **Yes** (maintained) | **`test_Parity_OneSidedRepoint_RevertsAtSetter`**, **`test_Parity_PairedRepoint_SetAvatarFirst_Succeeds`** (both slots paired → accepted), **`test_Parity_SetRoles_WrongTarget_Reverts`** (avatar matches, target foreign → `TargetMismatch`), **`test_Parity_UseTime_ExternalSetTarget_BlocksAllOps`** (external target-only desync blocks REPAY); the scope-level fail-closed backstop stays proven by `test_Scope_PinsParams_DepositReceiver` |
 | X-3 | all six wiring slots are Timelock-re-pointable (build phase; immutable re-freeze deferred) | **No** | `test_Setters_OwnerUpdates_AndRejectsZero` (each setter takes effect + zero/zero-key guards), `test_Setters_RejectNonOwner` (all six revert `OwnableUnauthorizedAccount` for a non-owner) |
 
 ## 4. Guards — coverage
@@ -74,7 +87,8 @@ No permissionless entry points. The four ops are reachable only via the Forwarde
 | G-2 ctor `roleKey` ≠ 0 | `test_Ctor_RevertsOnZeroRoleKey` |
 | G-3…G-8 setter zero-address / zero-key | `test_Setters_OwnerUpdates_AndRejectsZero` (each setter `ZeroAddress`; `setRoleKey(0)`→`ZeroRoleKey`) |
 | G-9 REPAY self-enforced sink | `test_Repay_RevertsOnWrongSink` |
-| G-10 `setWarehouseSafe` avatar parity (`AvatarMismatch`) | `test_Parity_OneSidedRepoint_RevertsAtSetter` (revert), `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds` (paired ok) |
+| G-10 `setWarehouseSafe` parity, both slots (`AvatarMismatch` / `TargetMismatch`) | `test_Parity_OneSidedRepoint_RevertsAtSetter` (revert), `test_Parity_PairedRepoint_SetAvatarFirst_Succeeds` (paired ok) |
+| G-11 `setRoles` / use-time `target` parity (`TargetMismatch`) | `test_Parity_SetRoles_WrongTarget_Reverts`, `test_Parity_UseTime_ExternalSetTarget_BlocksAllOps` |
 | `UnsupportedOpType` allow-list | `test_Adapter_UnsupportedOpType_Reverts` |
 | `onlyOwner` on all six setters | `test_Setters_RejectNonOwner` |
 | Forwarder gate (incl. reentrancy) | `test_Adapter_NonForwarder_Reverts`, `test_Adapter_Reentrancy_RejectedByForwarderGate` |
@@ -92,19 +106,25 @@ No permissionless entry points. The four ops are reachable only via the Forwarde
   `MockMember` role member raw-calls `execTransactionWithRole` with redirected params and is rejected) — so the
   decisive control IS demonstrably exercised, not assumed. Remains On-chain=No by design; the deployed scope tree
   (receiver/spender/`EqualTo` pins, Call-only, no delegatecall) is still the primary off-chain audit artifact.
-- **`warehouseSafe ↔ roles.avatar()` parity (I-4) — checked on-chain at the `setWarehouseSafe` entry point.**
-  The contract's own #1 documented hazard: `setWarehouseSafe` previously wrote the slot without reading
-  `roles.avatar()`, so a one-sided re-point silently bricked SUPPLY/REDEEM (fail-closed liveness). It now **reverts
-  `AvatarMismatch` unless `roles.avatar() == warehouseSafe_`** — a mismatch can no longer be saved *through this
-  setter* (paired re-point order: `Roles.setAvatar` FIRST, then `setWarehouseSafe`; `docs/roles.md`). **But this is
-  entry-point-local, not a maintained invariant:** `setRoles(newModifier)` (no parity re-check) and an external
-  `Roles.setAvatar(other)` can re-desync the pair afterward without tripping `AvatarMismatch`. In every desync case
-  SUPPLY/REDEEM **fail-closed** — the deployed scope pins the receiver/owner via `OP_EQUAL_TO_AVATAR` (resolved live;
-  `CreditWarehouseDeployer.sol:185,193,194`), so the stale injected `warehouseSafe` is rejected and the pin can only
-  ever resolve to the actual current avatar, never an attacker. So the soundness rests on the scope's dynamic pin
-  (`test_Scope_PinsParams_DepositReceiver`), with the setter guard as the convenience belt; it is not the sole
-  control. (An optional `setRoles` parity re-check was considered and DECLINED — it cannot cover the external
-  `setAvatar` path, complicates build-phase re-pointing, and adds nothing over the fail-closed scope.)
+- **`warehouseSafe ↔ roles.avatar()` AND `roles.target()` parity (I-4) — a maintained invariant, checked at all
+  four sites.** The contract's own #1 documented hazard. All four sites (ctor, `setRoles`, `setWarehouseSafe`,
+  `_processReport`) now assert both slots, so neither a one-sided re-point, a `setRoles` to a mis-paired instance,
+  nor an external `Roles.setAvatar`/`setTarget` can survive — each reverts `AvatarMismatch` or `TargetMismatch`.
+  Paired re-point order: `Roles.setAvatar` AND `Roles.setTarget` first, then `setWarehouseSafe` (`docs/roles.md`).
+- **Why `target` and not just `avatar` — the fix's own correction.** The first version of this guard checked only
+  `avatar()`, which is the wrong slot for custody. Zodiac's `Module.exec` is
+  `IAvatar(target).execTransactionFromModule(...)` (`Module.sol:50`); `avatar` is only the operand
+  `PermissionLoader` patches into `Operator.EqualToAvatar`. So the avatar-only guard pinned the slot that was
+  ALREADY fail-closed — SUPPLY/REDEEM are rejected by the scope's live `OP_EQUAL_TO_AVATAR` receiver pin
+  (`CreditWarehouseDeployer.sol:185,193,194`) — and left unchecked the slot that decides whose USDC moves. REPAY
+  has no "from" to scope, so a `Roles.setTarget(otherSafe)` kept it live against that Safe. Proven on a Base fork
+  against the real deployed Roles mastercopy: 500,000e6 USDC drained from a second Safe by one honest REPAY report,
+  with every avatar check passing and no `ConditionViolation`. `Roles.setTarget` is Roles-owner-gated (`godOwner`),
+  a different key from the Timelock that owns these setters, so checking both slots makes the redirect a two-key
+  action. Reachability was narrow throughout — the destination Safe must have this Roles instance enabled, and
+  per-silo deploys give each silo its own — and `CreditWarehouseDeployer.sol:130` already asserted
+  `target() == safe` at deploy, so the launch state was never wrong. The defect was that the remediation asserted a
+  maintained invariant it did not establish.
 - **Build-phase mutable wiring (X-3)** — six `onlyOwner` setters re-point roles/roleKey/safe/pool/usdc/box; tested
   for access + effect + zero-guards. The value-routing absolutes (notably the REPAY sink) hold only after the
   deferred pre-prod immutable re-freeze (a process step, not on-chain).
@@ -116,7 +136,7 @@ No permissionless entry points. The four ops are reachable only via the Forwarde
 
 | Category | Count | Notes |
 |---|---|---|
-| Unit (fork integration) | 28 | deploy/wire, ctor guards, all four happy ops, the full **scope-rejection matrix** vs the real modifier (param pins, value+delegatecall, target/selector escalation, non-member, non-owner), self-enforced REPAY sink, inner-exec-fail → `ModuleTransactionFailed`, malformed payload, atomicity, senior NAV mark, **avatar-parity enforced at the setter** (revert + paired-ok), all six setters |
+| Unit (fork integration) | 34 | deploy/wire, ctor guards, all four happy ops, the full **scope-rejection matrix** vs the real modifier (param pins, value+delegatecall, target/selector escalation, non-member, non-owner), self-enforced REPAY sink, inner-exec-fail → `ModuleTransactionFailed`, malformed payload, atomicity, senior NAV mark, **avatar AND target parity at all four sites** (one-sided revert, paired-ok, `setRoles` wrong-target, use-time external `setAvatar`/`setTarget`), all six setters |
 | Stateless fuzz | 0 | low value — a deterministic encoder, no arithmetic |
 | Stateful invariant | 0 | no accumulated state to assert |
 

@@ -75,7 +75,7 @@ contract MockEulerEarn {
         return _backingForShares(shares);
     }
 
-    function maxWithdraw(address account) external view notBricked returns (uint256) {
+    function maxWithdraw(address account) external view notBricked maxWithdrawAnswers returns (uint256) {
         return freeOf[account];
     }
 
@@ -101,15 +101,29 @@ contract MockEulerEarn {
         sharesOf[to] += shares;
     }
 
-    // --- venue-fault switch: a bricked pool reverts on every view (the upgradeable-third-party-venue shape) ---
+    // --- venue-fault switches: a bricked pool reverts on every view (the upgradeable-third-party-venue shape);
+    //     `brickedMaxWithdraw` bricks ONLY `maxWithdraw` — the maxWithdraw-dominates shape, where the illiquid
+    //     leg's extra call surface (per-strategy withdrawal simulation) breaks while `convertToAssets` still
+    //     answers. The old single flag could not express that state, which is exactly why the per-leg skip gap
+    //     was invisible to this suite. ---
     bool public bricked;
+    bool public brickedMaxWithdraw;
 
     function setBricked(bool v) external {
         bricked = v;
     }
 
+    function setBrickedMaxWithdraw(bool v) external {
+        brickedMaxWithdraw = v;
+    }
+
     modifier notBricked() {
         require(!bricked, "venue view regressed");
+        _;
+    }
+
+    modifier maxWithdrawAnswers() {
+        require(!brickedMaxWithdraw, "maxWithdraw regressed");
         _;
     }
 }
@@ -245,6 +259,35 @@ contract SeniorNavAggregatorTest is Test {
         a.ee.setBricked(false); // venue recovers -> full totals return, no state to clean up
         assertEq(agg.seniorBacking(), (1_000e6 + 250e6) * 1e12, "self-heals on recovery");
         assertEq(agg.unreadablePairs(), 0, "no skips after recovery");
+    }
+
+    /// @notice REGRESSION for the per-leg skip gap. `maxWithdraw`'s call surface strictly contains
+    ///         `convertToAssets`'s (it additionally simulates withdrawal per strategy), so a pool can break the
+    ///         ILLIQUID leg alone. Pre-fix `unreadablePairs()` was the only counter and it runs the senior leg,
+    ///         so this state read as fully healthy while `illiquidSeniorValue()` silently dropped the pair's
+    ///         whole lent-out balance. Each Σ now carries its own counter.
+    function test_maxWithdraw_only_outage_visible_on_illiquid_counter() public {
+        Silo memory a = _addSilo("A");
+        Silo memory b = _addSilo("B");
+        a.ee.setPosition(a.warehouseSafe, 1, 1_000e6, 300e6); // 700 lent out
+        b.ee.setPosition(b.warehouseSafe, 2, 250e6, 250e6); // fully free
+        assertEq(agg.unreadableIlliquidPairs(), 0, "all readable while healthy");
+        assertEq(agg.unreadableActivePairs(), 0, "all readable while healthy (active)");
+
+        a.ee.setBrickedMaxWithdraw(true); // ONLY maxWithdraw regresses; convertToAssets still answers
+
+        // the senior leg is whole — its counter must stay 0, because its total really is complete
+        assertEq(agg.seniorBacking(), (1_000e6 + 250e6) * 1e12, "senior leg complete");
+        assertEq(agg.unreadablePairs(), 0, "senior counter correctly 0 - this was the silent state");
+        assertEq(agg.unreadableActivePairs(), 0, "active leg (convertToAssets only) also whole");
+
+        // the illiquid leg dropped the pair's whole lent-out balance - and now says so
+        assertEq(agg.illiquidSeniorValue(), 0, "the $700 lent-out balance is silently zero");
+        assertEq(agg.unreadableIlliquidPairs(), 1, "...but its own counter reports the skip");
+
+        a.ee.setBrickedMaxWithdraw(false);
+        assertEq(agg.illiquidSeniorValue(), 700e6 * 1e12, "self-heals on recovery");
+        assertEq(agg.unreadableIlliquidPairs(), 0, "no skips after recovery");
     }
 
     /// @notice The strict per-silo getters keep the loud revert for diagnosis: isolation lives ONLY in the Σ loop.

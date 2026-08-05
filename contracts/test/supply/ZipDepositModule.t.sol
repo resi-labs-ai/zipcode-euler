@@ -666,7 +666,6 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
 
     address internal team = makeAddr("teamMultisig");
     address internal keeper = makeAddr("windowKeeper");
-    address internal engine = makeAddr("juniorTrancheEngine");
     address internal forwarder = makeAddr("forwarder");
     address internal USER = makeAddr("user");
 
@@ -720,7 +719,10 @@ contract ZipDepositModuleRealGateTest is ForkConfig, SummonSubstrate {
         szip = new SzipUSD(address(gate));
         gate.setShareToken(address(szip));
         gate.setWindowController(keeper);
-        gate.setJuniorTrancheEngine(engine);
+        // juniorTrancheEngine IS juniorTrancheSafe — one address, two role names (docs/safe-identities.md).
+        // The Gate's 2026-08-05 parity guard pins its engine to the Safe the oracle excludes from
+        // _effectiveSupply, so it must be the oracle's counted Safe, not a standalone makeAddr.
+        gate.setJuniorTrancheEngine(sub.juniorTrancheSafe);
         oracle.setShareToken(address(szip));
         _grantManager(address(gate));
         _pushBoth(1e18, 5e17);

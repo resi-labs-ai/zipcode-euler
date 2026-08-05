@@ -21,6 +21,9 @@ interface ISzipNavBasket {
     ///         coverage floor (the LP is fenced — its dissolution is coverage-gated).
     function pathLockedLpEquity() external view returns (uint256);
 
+    /// @notice Main-Safe zipUSD + xALPHA, 18-dp USD — the unwrapped form of what `pathLockedLpEquity()` counts.
+    function mainSpotEquity() external view returns (uint256);
+
     /// @notice The 18-dp USD value of `lpShares` ICHI LP shares — the dissolution gate bounds `removeLiquidity` to
     ///         the coverage excess by reading this.
     function lpShareValue(uint256 lpShares) external view returns (uint256);

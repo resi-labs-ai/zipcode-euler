@@ -687,24 +687,25 @@ contract ZipcodeControllerTest is ForkConfig {
         assertEq(IEVault(lineRef).debtOf(borrowAccount), priorDebt, "debt unchanged");
     }
 
-    /// @dev SEC/L-3: an out-of-order draw whose APPRAISAL ts predates the lien's current cached mark reverts
-    ///      StaleReport and rolls back the whole atomic branch — it can no longer re-anchor an older, higher mark and
-    ///      borrow against it. (Before the fix the seed stamped block.timestamp and always won the monotonic guard.)
-    function test_Draw_StaleSourceTs_RollsBack() public {
+    /// @dev A draw whose mark was MEASURED before the lien's cached mark still lands. The registry's strictly-newer
+    ///      guard applies to revaluations only, because the two write paths do not share a clock: a revaluation
+    ///      stamps one DON run time per sweep while a draw carries its mark's measured-at time, which is routinely
+    ///      older. Ordering them together fenced the revolving-draw product out entirely — the whole atomic branch
+    ///      reverted `StaleReport` whenever the mark predated the last sweep. Ordering on this path is the atomic
+    ///      batch plus `onlyController`, and the mark comes from the same CRE either way.
+    function test_Draw_OlderSourceTs_ReAnchorsAndBorrows() public {
         _originate(LIEN_ID); // seeds cache.ts = block.timestamp (call it T0)
         address borrowAccount = _borrowAccountOf(LIEN_ID);
         address lineRef = controller.getLien(LIEN_ID).lineRef;
         address LIEN_i = controller.getLien(LIEN_ID).lien;
-        uint256 priorQuote = registry.getQuote(1e18, LIEN_i, usdc);
         uint256 priorDebt = IEVault(lineRef).debtOf(borrowAccount);
 
-        // A draw appraised BEFORE the cached mark (sourceTs = T0 - 1) must be rejected.
+        // A draw whose mark was measured BEFORE the cached one (sourceTs = T0 - 1) re-anchors and borrows.
         vm.prank(FORWARDER);
-        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
         controller.onReport("", _drawReportTs(LIEN_ID, 999_999e6, 1e6, uint48(block.timestamp - 1)));
 
-        assertEq(registry.getQuote(1e18, LIEN_i, usdc), priorQuote, "stale draw did not re-anchor the mark");
-        assertEq(IEVault(lineRef).debtOf(borrowAccount), priorDebt, "no borrow occurred");
+        assertEq(registry.getQuote(1e18, LIEN_i, usdc), 999_999e6, "draw re-anchored the mark");
+        assertEq(IEVault(lineRef).debtOf(borrowAccount), priorDebt + 1e6, "borrow landed");
     }
 
     function test_Draw_UnknownLien_Reverts() public {
@@ -900,6 +901,29 @@ contract ZipcodeControllerTest is ForkConfig {
         vm.prank(FORWARDER);
         vm.expectRevert(abi.encodeWithSelector(ZipcodeController.LienDefaulted.selector, LIEN_ID));
         controller.onReport("", _drawReport(LIEN_ID, EQUITY_MARK, 1e6));
+    }
+
+    // SEC/L-4 REGRESSION: the flag is TRULY one-way. A default marker filed against a lienId BEFORE it is
+    // originated (its first origination reverted — SiloFull/over-LTV/StaleReport — and the CRE retries) lands on a
+    // zeroed record; `_origination` must CARRY the flag into the new record, not overwrite it with `false`. Before
+    // the 2026-08-05 fix the re-origination silently cleared it and the retried line drew freely.
+    function test_MarkerBeforeOrigination_SurvivesReorigination() public {
+        // marker first, on a lienId that has no record yet (models the reverted-origination-then-retry ordering)
+        vm.prank(FORWARDER);
+        controller.onReport("", abi.encode(uint8(5), abi.encode(LIEN_ID_2, uint8(2)))); // RT_DEFAULT
+        assertTrue(controller.getLien(LIEN_ID_2).defaulted, "marker set the flag on the zeroed record");
+        assertFalse(controller.getLien(LIEN_ID_2).open, "no line yet");
+
+        // now the CRE originates that same lienId — the flag must survive
+        _originate(LIEN_ID_2);
+        assertTrue(controller.getLien(LIEN_ID_2).open, "line opened");
+        assertTrue(controller.getLien(LIEN_ID_2).defaulted, "the pre-origination default marker was CARRIED, not cleared");
+
+        // and the fence holds: a draw on the re-originated line reverts LienDefaulted
+        vm.warp(block.timestamp + 1);
+        vm.prank(FORWARDER);
+        vm.expectRevert(abi.encodeWithSelector(ZipcodeController.LienDefaulted.selector, LIEN_ID_2));
+        controller.onReport("", _drawReport(LIEN_ID_2, EQUITY_MARK, 1e6));
     }
 
     // SEC/L-4: the flag fences ONLY the draw path — repay (permissionless) and close still work, so a defaulted

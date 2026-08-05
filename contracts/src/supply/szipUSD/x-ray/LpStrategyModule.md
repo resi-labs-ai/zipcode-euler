@@ -10,7 +10,7 @@ carries the **coverage path-lock seam** back to `DurationFreezeModule`. Connecte
 
 > The distinctive property here is the **path-lock**: `removeLiquidity` may only liquefy LP that is *excess* over the
 > coverage floor — the on-chain enforcement of the same floor `DurationFreezeModule` gates `release`/exit by. That
-> seam (`lpBurnKeepsCovered`) is the highest-value thing to verify, and it is tested across all three gate states.
+> seam is the SEC/H-1 fair-LP FUNDING gate on `addLiquidity`. The old dissolution gate on `removeLiquidity` was removed 2026-08-04 (see X-1).
 
 > **Update 2026-07-31 (Octane audit response, commit `7551f5b`): the SEC/H-1 fair-LP funding gate.** `addLiquidity`
 > now enforces on-chain what was previously a NatSpec invariant ("do not fund the LP with `lpTwapWindow == 0`"):
@@ -57,7 +57,7 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 
 | ID | Property | On-chain | Proven by |
 |---|---|---|---|
-| X-1 | **coverage path-lock** — `removeLiquidity` reverts `Undercovered` unless `coverageGate.lpBurnKeepsCovered(shares)`; gate==0 ⇒ ungated (M1 legacy) | Yes (reads `DurationFreezeModule`) | **`test_removeLiquidity_coverage_gate`** — all three states: gate `false` → `Undercovered`, gate `true` → dissolves, gate OFF (0) → ungated |
+| X-1 | **no dissolution gate** — `removeLiquidity` is NOT coverage-gated (removed 2026-08-04). Dissolving returns zipUSD + xALPHA to the same Safe, which `SzipNavOracle.mainSpotEquity` counts at the LP's value, so the burn cannot move the freeze floor. The gate also read NAV, which reads the LP price, so a dead Algebra plugin locked the LP in place behind the failure that made it unpriceable | n/a | **`test_removeLiquidity_is_not_coverage_gated`** — a gate that would refuse every burn is wired and ignored |
 | I-1 | **deposit `to` + all balance reads hard-pinned to `juniorTrancheEngine`** | Yes | `test_exec_discipline_addLiquidity_single`/`_both_legs` (deposit `to == safe`), `test_views_read_juniorTrancheEngine`, **`test_fork_real_vault_single_sided_deposit`** (shares land in the Safe) |
 | I-2 | **no standing approval** — approve→deposit→reset; atomic rollback on inner failure | Yes | `test_exec_discipline_*`, **`test_atomicity_addLiquidity_single_deposit_fail_rolls_back`**, `_both_legs_resets_both`, `_stake_deposit_fail_rolls_back`, fork (`allowance == 0` after) |
 | I-3 | **slippage floors — non-zero MANDATORY on BOTH legs** — `minShares != 0` on add (`ZeroMinShares`), and not-both-zero on remove (`ZeroMinAmount`). The remove floor is the *sole* sandwich guard: the ICHI `withdraw` self-protects with nothing (decomposes at the current tick), unlike `deposit` (vault hysteresis), so the CRE sizes it off the TWAP fair reserves | Yes | `test_addLiquidity_slippage_floor`, `test_zero_minShares_reverts`, `test_removeLiquidity_slippage_floor`, `test_removeLiquidity_zero_minAmount_reverts`, **`test_fork_slippage_floor_snapshot_guarded`** (probe-then-floor+1 → `Slippage`) |
@@ -82,12 +82,14 @@ No permissionless mutators. No custody, no recipient parameter except the pinned
 
 ## 5. Attack surfaces
 
-- **The coverage path-lock is the load-bearing seam — and it's tested across all states (X-1)** — `removeLiquidity`
-  converts path-locked LP into exitable legs, so it must respect the same coverage floor as `release`/exit. The gate
-  reads `DurationFreezeModule.lpBurnKeepsCovered(shares)`; `test_removeLiquidity_coverage_gate` proves a breaching
-  burn reverts `Undercovered`, an excess burn clears, and the gate-OFF (zero) state is ungated legacy. This is the
-  exact counterpart to the freeze module's `lpBurnKeepsCovered` (covered in `DurationFreezeModule.md`) — the two
-  halves of the LP-in-place accounting line up.
+- **The coverage path-lock was REMOVED 2026-08-04 (X-1)** — it rested on the claim that `removeLiquidity` converts
+  path-locked LP into exitable legs. That stopped being true when `SzipNavOracle.mainSpotEquity()` landed: the
+  withdraw returns zipUSD and xALPHA to the same Safe, and coverage counts them at the value it counted the LP at,
+  so a dissolution is coverage-neutral. The gate had become arithmetically wrong rather than idle — it subtracted
+  the burn from coverage without adding the proceeds back, blocking withdrawals that provably do not move the
+  floor. It also read NAV, which reads the LP price, so a dead Algebra plugin locked the LP in place behind the
+  same failure that made it unpriceable; removing it is what makes a dead-plugin unwind possible without a
+  separate Timelock escape hatch. `test_removeLiquidity_is_not_coverage_gated` pins the new behaviour.
 - **Approval hygiene + atomic rollback (I-2)** — every approving path (`addLiquidity`, `stake`) resets the allowance
   to 0, and a failing inner exec rolls the whole sequence back (the approve never survives); proven on the live ICHI
   vault (`allowance == 0` after) and in the rollback tests. No standing approval to grief.
@@ -133,6 +135,6 @@ build-phase mutable wiring pending the pre-prod re-freeze — neither a coverage
 **Structural facts:**
 1. 165 nSLOC; clone (`MastercopyInitLock` + `initializer`, no immutable); no custody, no EVC/borrow, no storage writes in mutating paths.
 2. 4 operator-only actions; deposit `to` + all balance reads pinned to `juniorTrancheEngine`; `value==0`, Call-only, no passthrough; `_exec` bubbles inner reverts.
-3. `removeLiquidity` is coverage-gated (`lpBurnKeepsCovered` → `Undercovered`) — the on-chain LP-dissolution path-lock; `token0`/`token1` live-read off the vault; approvals reset to 0 every path.
+3. `removeLiquidity` is ungated on coverage (2026-08-04) — a dissolution is coverage-neutral, so the gate blocked only harmless burns and blocked recovery from a dead TWAP source; `coverageGate` remains a wiring slot for the deploy seam but is unread; `token0`/`token1` live-read off the vault; approvals reset to 0 every path.
 4. Tests: 33 unit + 5 base-fork (0 fuzz/invariant); the coverage gate (3 states), slippage (incl. the `ZeroMinAmount` remove-floor guard), atomicity, live ICHI deposit, and every wiring setter all proven.
 5. No outstanding coverage gap on the contract surface; residuals are off-chain (the pre-prod wiring re-freeze).

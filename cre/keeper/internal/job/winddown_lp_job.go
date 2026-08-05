@@ -15,10 +15,12 @@ import (
 // (KEEPER-02). It is NOT part of the auto-compounder StrikeLoop; it is armed by
 // KEEPER_WINDDOWN_ENABLED and runs the global-wind-down LP→legs feeder.
 //
-// Per Evaluate it dissolves a COVERAGE-EXCESS-bounded slice: the burn `shares`
-// is sized to the largest amount the coverage gate still blesses
-// (coverageGate.lpBurnKeepsCovered(shares)), clamped to the live stakedBalance()
-// and an optional maxSlice cap. The withdraw floor (min0/min1) is sized off the
+// Per Evaluate it dissolves the live stakedBalance(), clamped to an optional
+// maxSlice cap. It used to bound the burn to the coverage excess by binary
+// searching coverageGate.lpBurnKeepsCovered(shares); that gate was removed on
+// 2026-08-04 because dissolving LP returns zipUSD and xALPHA to the same Safe
+// and coverage counts them at the same value, so the burn cannot move the freeze
+// floor. The withdraw floor (min0/min1) is sized off the
 // CURRENT pro-rata reserves with the StrikeLoop cushion, and a separate
 // spot↔TWAP deviation gate fences a manipulated/volatile pool (the SUPPLY-ADV-09
 // rule, withdraw variant). Both Actions are marked Private so chain.Submit
@@ -29,7 +31,7 @@ import (
 // module getters (§17 re-pointable), never cached. No-op gates return an EMPTY
 // Plan (nil error); read errors propagate (the Runner logs + continues).
 type WindDownLpJob struct {
-	lp              common.Address // LpStrategyModule — juniorTrancheEngine / ichiVault / coverageGate / stakedBalance / unstake / removeLiquidity
+	lp              common.Address // LpStrategyModule — juniorTrancheEngine / ichiVault / stakedBalance / unstake / removeLiquidity
 	quoter          quote.Quoter   // injectable price/share seam (production binds to Algebra/ICHI)
 	cushionBps      uint64         // withdraw min-floor cushion (200 = 2%)
 	maxDeviationBps uint64         // spot↔TWAP deviation ceiling (100 = 1%); above it the Job no-ops
@@ -77,11 +79,6 @@ func (j *WindDownLpJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	if err != nil {
 		return chain.Plan{}, err
 	}
-	gate, err := chain.CallAddress(ctx, r, j.lp, "coverageGate()")
-	if err != nil {
-		return chain.Plan{}, err // may be zero (ungated); a read failure still propagates
-	}
-
 	// d. the live staked LP (removeLiquidity burns LP held in the Safe; unstake pulls it back).
 	staked, err := chain.CallUint(ctx, r, j.lp, "stakedBalance()")
 	if err != nil {
@@ -97,20 +94,14 @@ func (j *WindDownLpJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 		slice = j.maxSlice
 	}
 
-	// f. size shares to the coverage excess: the largest s in [1, slice] the gate
-	//    still blesses. lpBurnKeepsCovered is monotonic (true for small s, false as
-	//    s grows), so binary-search the boundary.
+	// f. the burn is the whole clamped slice. There is no coverage-excess sizing any more:
+	//    LpStrategyModule.removeLiquidity dropped its coverage gate on 2026-08-04, because dissolving LP returns
+	//    zipUSD and xALPHA to the same Safe and SzipNavOracle.mainSpotEquity counts them at the value the LP was
+	//    counted at, so a dissolution cannot move the freeze floor. The old binary search over
+	//    lpBurnKeepsCovered therefore sized every tick against a predicate that under-reported coverage by the
+	//    full burn value. The remaining bound on this job is the spot/TWAP deviation gate in step g, which is now
+	//    the only thing standing between a manipulated pool and a badly-priced withdraw.
 	shares := slice
-	if gate != (common.Address{}) {
-		s, ok, err := j.largestCoveredSlice(ctx, r, gate, slice)
-		if err != nil {
-			return chain.Plan{}, err
-		}
-		if !ok {
-			return chain.Plan{}, nil // even s=1 is undercovered — no excess to dissolve, no-op
-		}
-		shares = s
-	}
 
 	// g. manipulation guard: skip if the pool's spot price deviates from its TWAP
 	//    beyond the ceiling (the withdraw floor is sized off CURRENT reserves).
@@ -143,46 +134,3 @@ func (j *WindDownLpJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	}}, nil
 }
 
-// largestCoveredSlice returns the largest s in [1, slice] with
-// coverageGate.lpBurnKeepsCovered(s) == true, via binary search on the monotonic
-// predicate (true for small s, false as s grows). ok=false means no s≥1 is
-// covered. A read error propagates.
-func (j *WindDownLpJob) largestCoveredSlice(ctx context.Context, r chain.Reader, gate common.Address, slice *big.Int) (*big.Int, bool, error) {
-	// Fast path: if the full slice is covered, take it.
-	full, err := chain.CallBoolWithUint(ctx, r, gate, "lpBurnKeepsCovered(uint256)", slice)
-	if err != nil {
-		return nil, false, err
-	}
-	if full {
-		return new(big.Int).Set(slice), true, nil
-	}
-	// Reject if even the smallest burn (s=1) is undercovered.
-	one := big.NewInt(1)
-	covered1, err := chain.CallBoolWithUint(ctx, r, gate, "lpBurnKeepsCovered(uint256)", one)
-	if err != nil {
-		return nil, false, err
-	}
-	if !covered1 {
-		return nil, false, nil
-	}
-	// Binary search the largest covered s in [1, slice): invariant lo=covered (≥1),
-	// hi=uncovered (≤slice). Converge until hi-lo == 1; lo is the answer.
-	lo := big.NewInt(1)        // known covered
-	hi := new(big.Int).Set(slice) // known uncovered
-	gap := new(big.Int).Sub(hi, lo)
-	for gap.Cmp(big.NewInt(1)) > 0 {
-		mid := new(big.Int).Add(lo, hi)
-		mid.Rsh(mid, 1) // (lo+hi)/2
-		covered, err := chain.CallBoolWithUint(ctx, r, gate, "lpBurnKeepsCovered(uint256)", mid)
-		if err != nil {
-			return nil, false, err
-		}
-		if covered {
-			lo.Set(mid)
-		} else {
-			hi.Set(mid)
-		}
-		gap.Sub(hi, lo)
-	}
-	return new(big.Int).Set(lo), true, nil
-}

@@ -916,6 +916,27 @@ contract SzAlphaBridgeTest is Test {
         assertGt(token.totalSupply(), 0);
     }
 
+    // --- 0.2b: the advisory previews fail closed in the vanished state (symmetry with deposit/rate) ---
+    /// @dev Before this guard, `previewDeposit` in the drifted state divided by ~0 and quoted an absurdly inflated
+    ///      share count (a UI could show "1 TAO -> a giant pile"); `previewRedeem` returned a silent ~0. Both now
+    ///      revert `BackingVanished` so a UI reads the same halt the real paths give, never a garbage quote.
+    function test_backingVanished_previewsRevert() public {
+        vm.deal(alice, 10 ether);
+        vm.prank(alice);
+        token.deposit{value: 5 ether}(1, MAX_DL);
+
+        // healthy: previews answer normally
+        token.previewDeposit(1 ether);
+        token.previewRedeem(1 ether);
+
+        _drift();
+
+        vm.expectRevert(SzAlpha.BackingVanished.selector);
+        token.previewDeposit(1 ether);
+        vm.expectRevert(SzAlpha.BackingVanished.selector);
+        token.previewRedeem(1 ether);
+    }
+
     // --- 0.3a: retarget recovers from drift (pointer update, no stake movement) ---
     function test_retarget_recoversFromDrift() public {
         vm.deal(alice, 20 ether);

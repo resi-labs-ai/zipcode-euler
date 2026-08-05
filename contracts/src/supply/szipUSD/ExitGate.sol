@@ -62,6 +62,7 @@ contract ExitGate is Ownable, ReentrancyGuard {
     error TvlCapExceeded();
     error NotWindowController();
     error TransferShortfall();
+    error EngineMustEqualSafe(address given, address juniorTrancheSafe); // mirrors SzipNavOracle: the burn Safe must be the one the oracle excludes from _effectiveSupply
 
     // --------------------------------------------------------------------- events
     event Deposited(address indexed receiver, address indexed asset, uint256 amount, uint256 value, uint256 shares);
@@ -106,9 +107,16 @@ contract ExitGate is Ownable, ReentrancyGuard {
         emit WindowControllerSet(controller_);
     }
 
-    /// @notice Wire/re-point the engine Safe (the 8-B14 buy-and-burn target). `onlyOwner` (Timelock).
+    /// @notice Wire/re-point the engine Safe (the 8-B14 buy-and-burn target). `onlyOwner` (Timelock). Mirrors the
+    ///         guard `SzipNavOracle.setJuniorTrancheEngine` already carries: the engine is the Safe `burnFor` burns
+    ///         szipUSD FROM, and the oracle's `_effectiveSupply` subtracts szipUSD held by ITS `juniorTrancheEngine`
+    ///         (== its immutable `juniorTrancheSafe`). If this Gate's engine diverges, szipUSD resting here between a
+    ///         CoW fill and the burn is counted in the NAV denominator — depressed NAV, cheap `navEntry` mint,
+    ///         under-paid `navExit`. Pin the two together against the wired oracle's counted Safe.
     function setJuniorTrancheEngine(address juniorTrancheEngine_) external onlyOwner {
         if (juniorTrancheEngine_ == address(0)) revert ZeroAddress();
+        address counted = navOracle.juniorTrancheSafe();
+        if (juniorTrancheEngine_ != counted) revert EngineMustEqualSafe(juniorTrancheEngine_, counted);
         juniorTrancheEngine = juniorTrancheEngine_;
         emit EngineSafeSet(juniorTrancheEngine_);
     }

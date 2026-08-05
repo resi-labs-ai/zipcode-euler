@@ -8,11 +8,6 @@ import {IICHIVault} from "../../interfaces/ichi/IICHIVault.sol";
 import {IGauge} from "../../interfaces/hydrex/IGauge.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @notice The coverage seam the LP-dissolution gate reads (the `DurationFreezeModule`): `removeLiquidity` may only
-///         dissolve LP that is EXCESS over the coverage floor. Local interface, not imported.
-interface ICoverageGate {
-    function lpBurnKeepsCovered(uint256 lpShares) external view returns (bool);
-}
 
 /// @notice The `SzipNavOracle` config surface `addLiquidity` reads to enforce the fair-LP funding invariant (SEC/H-1):
 ///         LP may enter the counted Safe ONLY when the oracle prices THIS vault off its manipulation-resistant
@@ -58,10 +53,11 @@ contract LpStrategyModule is MastercopyInitLock {
     address public token0;
     /// @notice The ICHI vault's `token1()` (read live in `setUp`) — the approval target for the `deposit1` leg.
     address public token1;
-    /// @notice The coverage gate (`DurationFreezeModule`) the `removeLiquidity` dissolution is bounded by. Zero ⇒
-    ///         gate OFF (M1 pre-wiring; dissolution ungated, the legacy behavior). Wired by the Timelock post-deploy
-    ///         (the module is Timelock-owned at `setUp`, and the gate is created after this module) — once set,
-    ///         `removeLiquidity` may only liquefy LP that is EXCESS over the coverage floor.
+    /// @notice The `DurationFreezeModule` address. RETAINED BUT UNREAD by this contract: it bounded
+    ///         `removeLiquidity` until coverage became shape-independent, at which point dissolving LP stopped
+    ///         moving the floor and the gate only blocked harmless withdrawals. Kept as a wiring slot because both
+    ///         deploy scripts assert it (`SeamCoverageGate`) and off-chain readers resolve the freeze module
+    ///         through it; dropping it would change `setUp`'s argument list. Nothing in this file reads it.
     address public coverageGate;
     /// @notice The `SzipNavOracle` this module checks before funding LP (SEC/H-1 fair-LP funding gate). Zero ⇒ the
     ///         gate is UNWIRED and `addLiquidity` fails closed (`NavOracleUnset`) — the correct v0/pre-LP posture:
@@ -74,8 +70,6 @@ contract LpStrategyModule is MastercopyInitLock {
     error ZeroAddress();
     error OwnerIsOperator();
     error ZeroAmount();
-    /// @notice `removeLiquidity` would dissolve floor-backing LP (coverage would fall below the liability floor).
-    error Undercovered();
     /// @notice `minShares == 0` — the slippage floor must be a real bound (a zero floor would no-op the only
     ///         sandwich protection on a direct ICHI deposit; the CRE robot always sizes a non-zero floor).
     error ZeroMinShares();
@@ -204,8 +198,9 @@ contract LpStrategyModule is MastercopyInitLock {
         emit WiringSet("token1", token1_);
     }
 
-    /// @notice Wire/re-point the coverage gate (`DurationFreezeModule`) that bounds `removeLiquidity` to the coverage
-    ///         excess. `onlyOwner` (Timelock). Zero is permitted (turns the gate OFF — the M1 pre-wiring state).
+    /// @notice Wire/re-point the `DurationFreezeModule` address. `onlyOwner` (Timelock). Zero is permitted. This
+    ///         slot is no longer read by this contract (see its declaration); it exists for the deploy seam assert
+    ///         and off-chain resolution.
     function setCoverageGate(address coverageGate_) external onlyOwner {
         coverageGate = coverageGate_; // address(0) is a valid "gate off" value
         emit WiringSet("coverageGate", coverageGate_);
@@ -322,11 +317,14 @@ contract LpStrategyModule is MastercopyInitLock {
         // The router-less ICHI `withdraw` self-protects with nothing, so `minAmount0/1` is the sole sandwich
         // guard — reject an all-zero floor (at least one leg must be floored; single-sided returns ~0 on one).
         if (minAmount0 == 0 && minAmount1 == 0) revert ZeroMinAmount();
-        // PATH-LOCK: only LP that is EXCESS over the coverage floor may be liquefied —
-        // dissolution converts path-locked LP into exitable legs, so it must respect the same floor as release/exit.
-        // Gate OFF (`coverageGate == 0`) is the M1 pre-wiring state (ungated, legacy). Wired by the Timelock.
-        address gate = coverageGate;
-        if (gate != address(0) && !ICoverageGate(gate).lpBurnKeepsCovered(shares)) revert Undercovered();
+        // NO COVERAGE GATE. The old path-lock argument was that dissolution converts floor-backing LP into freely
+        // exitable legs. That stopped being true when `SzipNavOracle.mainSpotEquity()` landed: the ICHI withdraw
+        // returns zipUSD and xALPHA to this same Safe, and coverage now counts them at the same value it counted
+        // the LP. Dissolving changes the shape of the backing, not its size, so the gate blocked withdrawals that
+        // provably do not move the floor. It also made the LP unrecoverable exactly when it mattered — the gate
+        // read NAV, NAV reads the LP price, so a dead Algebra plugin locked the liquidity in place behind the same
+        // failure that made it unpriceable. Removing it is what makes a dead-plugin unwind possible without a
+        // separate Timelock escape hatch.
         bytes memory ret = _exec(ichiVault, abi.encodeCall(IICHIVault.withdraw, (shares, juniorTrancheEngine)));
         (amount0, amount1) = abi.decode(ret, (uint256, uint256));
         if (amount0 < minAmount0 || amount1 < minAmount1) revert Slippage();

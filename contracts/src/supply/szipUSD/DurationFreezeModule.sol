@@ -96,8 +96,9 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     // --------------------------------------------------------------------- setUp (initializer; NO immutable)
     /// @notice Initialize a clone (the mastercopy is locked in its constructor and CANNOT be setUp). One-shot via the zodiac-core
     ///         `initializer`. Decodes the wired addresses, reads the movable assets (5 plain legs + the ICHI LP
-    ///         share, the latter possibly address(0) pre-LP) LIVE off the oracle (so the
-    ///         whitelist == exactly what the oracle prices — no drift), sets `avatar == target == juniorTrancheSafe` (the
+    ///         share, the latter possibly address(0) pre-LP) LIVE off the oracle (so the whitelist == exactly what
+    ///         the oracle KNOWS — no drift; note two of the five, `hydx`/`oHydx`, are marked $0 and so are known-but-
+    ///         unvalued, see the `onlyValued` NatSpec), sets `avatar == target == juniorTrancheSafe` (the
     ///         inherited single-avatar exec is NOT used; both rotations go through explicit `ISafe(src)` calls), and
     ///         transfers ownership to the Timelock `owner`.
     function setUp(bytes memory initParams) public override initializer {
@@ -131,7 +132,9 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
         warehouseSafe = warehouseSafe_;
 
         // Read the movable assets LIVE off the wired oracle (the LpStrategyModule "read token0/token1 live"
-        // idiom) — the whitelist is EXACTLY what the oracle prices, removing drift and five setUp args.
+        // idiom) — the whitelist is EXACTLY what the oracle KNOWS, removing drift and five setUp args. ("Knows,"
+        // not "values": `hydx`/`oHydx` are marked $0 yet still admitted — the inert divergence the `onlyValued`
+        // NatSpec explains.)
         ISzipNavBasket o = ISzipNavBasket(navOracle_);
         zipUSD = o.zipUSD();
         usdc = o.usdc();
@@ -318,8 +321,19 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     /// @notice The coverage numerator the floor is checked against: juniorTrancheSidecar liquid legs (`committedValue`) + the
     ///         fenced LP equity (`pathLockedLpEquity`). Using this — NOT `committedValue()` alone — is what lets the
     ///         productive LP back the floor without being hoarded idle in the juniorTrancheSidecar (the line-74 resolution).
+    /// @dev SHAPE-INDEPENDENT. `mainSpotEquity()` (main-Safe zipUSD + xALPHA) is counted alongside the fenced LP
+    ///      because an ICHI LP share IS those two tokens in a wrapper, priced pro-rata off the same reserves.
+    ///      Counting the wrapped form and not the unwrapped form made the floor move when the operator merely
+    ///      changed the shape of an asset — and made any LP unwind, including a recovery unwind, read as coverage
+    ///      vanishing while nothing left the Safe. USDC stays out: it is the form buy-burn spends, and
+    ///      `SzipBuyBurnModule` relies on the bid's outflow not reducing coverage.
     function coverageValue() public view returns (uint256) {
-        return committedValue() + pathLockedLpEquity();
+        return committedValue() + pathLockedLpEquity() + mainSpotEquity();
+    }
+
+    /// @notice The main Safe's zipUSD + xALPHA, 18-dp USD, read FROM the oracle.
+    function mainSpotEquity() public view returns (uint256) {
+        return ISzipNavBasket(navOracle).mainSpotEquity();
     }
 
     /// @notice The absolute lent-out (illiquid) senior dollars = the liability the junior backs, 18-dp USD. This is
@@ -361,21 +375,29 @@ contract DurationFreezeModule is MastercopyInitLock, ReentrancyGuard {
     ///      lifting `illiquidSeniorValue()` and thus `requiredCommittedValue()`. The two effects do NOT cancel. This
     ///      is FAIL-CLOSED / SELF-DoS by design: the borrower can only freeze its own outflow, and it recovers fully
     ///      on repay (the debt clears, both sides relax). Liveness footgun only — never a solvency hole.
+    /// @dev COVERAGE-EXCEEDS-GROSS — `pathLockedLpEquity()` returns 0 when the farm/liquidation debt is bigger than
+    ///      the LP mark (`SzipNavOracle.sol:538`), while `grossBasketValue()` subtracts that debt in full
+    ///      (`SzipNavOracle.sol:483`). The two therefore disagree once a borrow against the fenced LP goes past 100%
+    ///      LTV, and `coverageValue()` can read ABOVE `grossBasketValue()`. Since the floor is capped at gross, that
+    ///      state would return true for any liability. It is not reachable through the 8-B5 strike loop (a per-harvest
+    ///      borrow of roughly 2% of the counted LP, repaid in the same CRE run) and nothing is exitable in it anyway —
+    ///      the LP is locked in EVK as collateral and `postBid` has no USDC to spend. The guard is here so the
+    ///      predicate cannot report a healthy answer on an impossible state, which matters as larger borrowers
+    ///      (the liquidation vault) come onto the same fenced LP.
     function covered() public view returns (bool) {
-        return coverageValue() >= requiredCommittedValue();
+        uint256 cov = coverageValue();
+        if (cov > grossBasketValue()) return false;
+        return cov >= requiredCommittedValue();
     }
 
-    /// @notice True iff dissolving `lpShares` of the fenced LP would leave coverage still at/above the floor — the
-    ///         excess bound the LP-dissolution gate (`LpStrategyModule.removeLiquidity`) enforces so the floor-backing
-    ///         LP cannot be liquefied into exitable legs. Dissolving the LP drops the coverage
-    ///         numerator by exactly its mark (the legs land free/exitable, no longer path-locked), so the check is
-    ///         `coverageValue − lpShareValue(lpShares) >= requiredCommittedValue`. Saturating.
-    function lpBurnKeepsCovered(uint256 lpShares) external view returns (bool) {
-        uint256 lpVal = ISzipNavBasket(navOracle).lpShareValue(lpShares);
-        uint256 cov = coverageValue();
-        uint256 remaining = cov > lpVal ? cov - lpVal : 0;
-        return remaining >= requiredCommittedValue();
-    }
+    // REMOVED 2026-08-04: `lpBurnKeepsCovered(uint256)`. It bounded `LpStrategyModule.removeLiquidity` to the
+    // coverage excess, on the argument that dissolving the fenced LP converted floor-backing value into freely
+    // exitable legs. `mainSpotEquity()` ended that: the ICHI withdraw returns zipUSD and xALPHA to the same Safe
+    // and coverage counts them at the same value it counted the LP, so a dissolution is coverage-neutral. The
+    // predicate had become arithmetically wrong rather than merely idle — it subtracted the burn value from
+    // coverage without adding back the proceeds, so it under-reported and blocked withdrawals that provably do
+    // not move the floor. It also read NAV, which reads the LP price, so a dead Algebra plugin locked the LP in
+    // place behind the very failure that made it unpriceable. `covered()` is unchanged and still gates `postBid`.
 
     // --------------------------------------------------------------------- commit (MAIN→SIDECAR — increase the freeze)
     /// @notice Rotate `amount` of a whitelisted `asset` from the main Safe into the non-ragequittable juniorTrancheSidecar,

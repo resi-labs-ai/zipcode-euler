@@ -49,7 +49,7 @@ exits) but **cannot steal** and **cannot under-freeze**.
 | `release(asset, amount)` | operator + `nonReentrant` + `onlyValued` | SIDECAR→MAIN; **the autonomous floor** — reverts `FreezeFloorBreach` unless post-move coverage ≥ `requiredCommittedValue()` (atomic rollback) |
 | `setUp(initParams)` | `initializer` (clone) | wires 7 addrs, reads the 5 movable legs LIVE off the oracle, sets `avatar=target=juniorTrancheSafe`, transfers ownership to Timelock |
 | 12 × `setX(...)` | `onlyOwner` (Timelock) | build-phase wiring re-points (2 Safes, operator, oracle, eulerEarn, warehouse, 5 leg tokens) |
-| views | public | `utilization`, `requiredFraction`, `committedValue()`, `grossBasketValue()`, `freeValue()`, `pathLockedLpEquity()`, `coverageValue()`, `illiquidSeniorValue`, `requiredCommittedValue()`, `covered()`, `lpBurnKeepsCovered` |
+| views | public | `utilization`, `requiredFraction`, `committedValue()`, `grossBasketValue()`, `freeValue()`, `pathLockedLpEquity()`, `coverageValue()`, `illiquidSeniorValue`, `requiredCommittedValue()`, `covered()` |
 
 No permissionless mutators. The operator supplies only `(asset, amount)`; the module builds all calldata.
 
@@ -96,12 +96,22 @@ No permissionless mutators. The operator supplies only `(asset, amount)`; the mo
   oracle: a sidecar LP donation raises coverage by *exactly one* mark (`pathLockedLpEquity()` is main-only, so the
   sidecar LP isn't double-counted), and `test_SEC02_floor_breach_covered_flips_false` proves the pre-fix
   double-count *would* have falsely reported `covered()`.
-- **The double-squeeze (documented, fail-closed by design)** — `covered():323-329` documents that a farm utility borrow
+- **The double-squeeze (documented, fail-closed by design)** — `covered()` documents that a farm utility borrow
   against the fenced LP pushes **both** sides the wrong way at once: the numerator drops (`pathLockedLpEquity()`
   subtracts strike debt) **and** the floor rises (the borrow draws senior cash → `maxWithdraw` falls →
   `illiquidSeniorValue` rises). The two do **not** cancel. This is **self-DoS**: the borrower can only freeze its own
   outflow, and it recovers fully on repay. A liveness footgun, never a solvency hole — well-reasoned and explicitly
   documented (the docstring corrects an earlier "debt nets out" rationale that was wrong).
+- **Coverage-exceeds-gross guard** — `covered()` returns `false` when
+  `coverageValue() > grossBasketValue()`. The two reads disagree once a borrow against the fenced LP passes 100% LTV:
+  `pathLockedLpEquity()` returns 0 (`SzipNavOracle.sol:538`) while `grossBasketValue()` still subtracts the debt in
+  full (`SzipNavOracle.sol:483`), so coverage can read above gross, and because the floor is capped at gross that
+  state would satisfy any liability. It is **not reachable through the 8-B5 strike loop** — a per-harvest borrow of
+  roughly 2% of the counted LP, repaid inside the same CRE run — and nothing is exitable in it regardless, since the
+  LP is locked in EVK as collateral and `postBid` has no USDC to spend. The guard is defence-in-depth so the
+  predicate cannot return a healthy answer on an impossible state, and it matters as larger borrowers (the
+  liquidation vault) come onto the same fenced LP. `grossBasketValue()` is already a local view (`:301`), so the
+  guard adds no external call.
 - **Single-operator assumption is off-chain (X-1)** — the floor read is sound only under the single-operator
   invariant (no concurrent sibling-module rotation mid-`release`). Not on-chain enforced; relies on the
   one-trusted-operator model shared across the engine fleet.
@@ -146,5 +156,5 @@ assumption, and the cross-contract dependence on `SzipNavOracle`'s marks (X-2).
 1. 199 nSLOC; clone (`MastercopyInitLock` + `initializer`, no immutable); `nonReentrant` on both mutators; no custody.
 2. Operator supplies only `(asset, amount)`; the module builds all calldata; source/dest are the literal set-once Safes; `value==0`; no recipient param, no delegatecall.
 3. The floor = `min(illiquidSeniorValue, grossBasketValue)`, debt-pinned (not a basket fraction), read live + donation-immune; `release` enforces coverage ≥ floor post-move with atomic rollback.
-4. Coverage = `committedValue + pathLockedLpEquity` — the fenced LP backs the floor IN PLACE (single-counted); its only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated via `lpBurnKeepsCovered`.
+4. Coverage = `committedValue + pathLockedLpEquity + mainSpotEquity` — shape-independent. The LP backs the floor in place and is single-counted, and the main Safe's zipUSD and xALPHA back it at the same value, because an ICHI share is those two tokens in a wrapper. `lpBurnKeepsCovered` was REMOVED 2026-08-04: dissolving LP returns the two tokens to the same Safe, so the burn is coverage-neutral and the gate only blocked harmless withdrawals while making the LP unrecoverable behind a dead Algebra plugin. `covered()` returns false if coverage ever reads above `grossBasketValue()`, which is only possible past 100% LTV on a borrow against the fenced LP.
 5. Tests: 54 unit + 1 fuzz + **1 stateful invariant (128k calls, 0 breaches)** + 2 base-fork; the floor and LP-accounting drill questions are both directly answered.

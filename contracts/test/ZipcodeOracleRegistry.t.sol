@@ -535,31 +535,49 @@ contract ZipcodeOracleRegistryTest is Test {
     // always passes. Mirrors `SzAlphaRateOracle:86`.
 
     // seedPrice path: a same-ts re-seed (equal source ts) is a replay → StaleReport.
-    function test_SEC01_seedPrice_equalTs_reverts() public {
+    // The strictly-newer guard applies to REVALUATIONS ONLY. A seed re-writing at the same ts is the ordinary
+    // origination-then-draw sequence (both legs carry the same measured-at time), so it must land, not revert.
+    function test_seedPrice_equalTs_writes() public {
         _wireController();
         _seed(address(LIEN), 100_000e6); // first write, cache.timestamp = source ts (here block.timestamp)
-        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
         vm.prank(CTRL);
         reg.seedPrice(address(LIEN), 200_000e6, uint48(block.timestamp)); // same ts == cache.timestamp
+        (uint208 price, uint48 ts) = reg.cache(address(LIEN));
+        assertEq(price, 200_000e6, "seed at an equal ts overwrites");
+        assertEq(ts, uint48(block.timestamp), "cache ts follows the seed");
     }
 
-    // SEC/L-3: a controller seed carrying an APPRAISAL ts older than a newer cached mark reverts StaleReport — this is
-    // the fix's core property (an out-of-order stale draw can no longer clobber a fresher revaluation and borrow
-    // against the older, higher mark). Before the fix the seed stamped block.timestamp and ALWAYS won this race.
-    function test_SEC_L3_seed_with_stale_sourceTs_reverts() public {
+    // The seed is NOT ordered against revaluations, and must not be: the two paths do not share a clock. A
+    // revaluation stamps one DON run time per sweep; a seed carries its mark's measured-at time, which is routinely
+    // older. Ordering them together fenced legitimate draws out entirely (the whole origination/draw batch reverted
+    // `StaleReport` whenever the mark predated the last sweep's run time). The seed writes; the most recent write is
+    // the mark, and `onlyController` plus the atomic batch is what orders this path.
+    function test_seed_with_older_sourceTs_still_writes() public {
         _wireController();
         uint32 tNew = uint32(block.timestamp);
-        // A fresher revaluation lands first (stamped with its source ts tNew).
+        // A revaluation lands first, stamped with its DON run time.
         vm.prank(FORWARDER);
         reg.onReport("", _revalReport(_one(address(LIEN)), _one(uint256(80_000e6)), tNew));
-        // An out-of-order draw appraised EARLIER (tNew - 1) with a higher, stale mark must be rejected.
-        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
+        // A draw whose mark was measured EARLIER must still land — this is the revolving-draw path.
         vm.prank(CTRL);
         reg.seedPrice(address(LIEN), 100_000e6, uint48(tNew - 1));
-        // the fresh revaluation mark is intact.
         (uint208 price, uint48 ts) = reg.cache(address(LIEN));
-        assertEq(price, 80_000e6, "stale seed did not clobber");
-        assertEq(ts, tNew, "cache ts unchanged");
+        assertEq(price, 100_000e6, "seed wrote over the revaluation");
+        assertEq(ts, uint48(tNew - 1), "cache ts is the seed's measured-at time");
+    }
+
+    // The other half of the same rule: revaluations ARE still ordered against each other, so a replayed or
+    // out-of-order shard is rejected. This is the guard's remaining job.
+    function test_reval_with_stale_ts_still_reverts() public {
+        _wireController();
+        uint32 tNew = uint32(block.timestamp);
+        vm.prank(FORWARDER);
+        reg.onReport("", _revalReport(_one(address(LIEN)), _one(uint256(80_000e6)), tNew));
+        vm.expectRevert(ZipcodeOracleRegistry.StaleReport.selector);
+        vm.prank(FORWARDER);
+        reg.onReport("", _revalReport(_one(address(LIEN)), _one(uint256(90_000e6)), tNew - 1));
+        (uint208 price,) = reg.cache(address(LIEN));
+        assertEq(price, 80_000e6, "stale revaluation did not clobber");
     }
 
     // SEC/L-3: with the source ts now producer-supplied, the seed path CAN reach the FutureTimestamp guard (it no

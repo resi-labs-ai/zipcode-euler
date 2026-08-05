@@ -437,9 +437,11 @@ contract SellModuleUnitTest is Test {
         m.setMaxSellHydx(0);
     }
 
-    /// @dev The six build-phase wiring setters (besides `setOperator`/`setMaxSellHydx`, covered above): each is
+    /// @dev The seven build-phase wiring setters (besides `setOperator`/`setMaxSellHydx`, covered above): each is
     ///      `onlyOwner`, non-zero-guarded, and takes effect. `setJuniorTrancheEngine` additionally keeps `avatar`/
-    ///      `target` in lockstep (the module is enabled ON, and only mutates, the engine Safe).
+    ///      `target` in lockstep (the module is enabled ON, and only mutates, the engine Safe). `setOHYDX` closed
+    ///      the one slot that shipped setter-less — a clone's `setUp` cannot re-run, so it was frozen against the
+    ///      ratified wiring posture.
     function test_wiring_setters_onlyOwner_effect_and_zeroGuard() public {
         address x = makeAddr("rewire");
 
@@ -458,6 +460,8 @@ contract SellModuleUnitTest is Test {
         m.setZipUSD(x);
         vm.expectRevert(unauth);
         m.setXAlpha(x);
+        vm.expectRevert(unauth);
+        m.setOHYDX(x);
         vm.stopPrank();
 
         // owner re-points take effect
@@ -472,6 +476,10 @@ contract SellModuleUnitTest is Test {
         assertEq(m.zipUSD(), x, "zipUSD re-pointed");
         m.setXAlpha(x);
         assertEq(m.xAlpha(), x, "xAlpha re-pointed");
+        // setOHYDX probes paymentToken() on the incoming option, so the re-point target must be a real option
+        address opt2 = address(new MockOption(address(usdc), address(hydx)));
+        m.setOHYDX(opt2);
+        assertEq(m.oHYDX(), opt2, "oHYDX re-pointed");
 
         // setJuniorTrancheEngine keeps avatar/target in lockstep
         address newEngine = makeAddr("newEngineSafe");
@@ -493,6 +501,8 @@ contract SellModuleUnitTest is Test {
         m.setZipUSD(address(0));
         vm.expectRevert(SellModule.ZeroAddress.selector);
         m.setXAlpha(address(0));
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setOHYDX(address(0));
         vm.stopPrank();
     }
 
@@ -668,6 +678,33 @@ contract SellModuleUnitTest is Test {
         vm.prank(rando);
         vm.expectRevert(SellModule.NotOperator.selector);
         x.exerciseAndSell(1e18, 100e18, 1, block.timestamp + 1 hours);
+    }
+
+    /// @dev The strike token is read LIVE off the option and must be zero-asserted: a trapped option that answers
+    ///      a real token at wire-time and address(0) at exercise-time would otherwise turn the strike approve into
+    ///      a silent no-op through the Safe (fail-open). It must fail closed, loudly, here.
+    function test_exerciseAndSell_zero_paymentToken_reverts() public {
+        TrapOption trap = new TrapOption(address(usdc));
+        SellModule x = _cloneSellModule();
+        x.setUp(
+            abi.encode(
+                owner, address(safe), operator, address(router), address(hydx), address(usdc), address(zipUSD),
+                address(xAlpha), address(trap), MAX_SELL
+            )
+        );
+        trap.setPaymentToken(address(0)); // armed AFTER wiring — the booby-trap shape
+        vm.prank(operator);
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        x.exerciseAndSell(1e18, 100e18, 1, block.timestamp + 1 hours);
+    }
+
+    /// @dev `setOHYDX` probes the incoming option's `paymentToken()` non-zero (the `ExerciseModule` fail-closed
+    ///      shape), so a broken option is refused at wire-time rather than discovered at exercise-time.
+    function test_setOHYDX_probes_paymentToken_nonzero() public {
+        TrapOption dud = new TrapOption(address(0));
+        vm.prank(owner);
+        vm.expectRevert(SellModule.ZeroAddress.selector);
+        m.setOHYDX(address(dud));
     }
 
     /// @dev A live-Safe rig whose HYDX token is the one the MockOption mints, so the measured delta is real.
@@ -964,6 +1001,20 @@ contract SellModuleForkTest is ForkConfig, SummonSubstrate {
 
 /// @dev Minimal oHYDX stand-in for `exerciseAndSell`: pulls `maxPaymentAmount` of the payment token from the
 ///      caller and mints `amount` HYDX to `recipient`, mirroring the real option's observable effects.
+/// @dev An option whose `paymentToken` can be re-armed AFTER wiring — the booby-trap shape `exerciseAndSell`'s
+///      live read must survive: answer a real token at wire-time, answer address(0) at exercise-time.
+contract TrapOption {
+    address public paymentToken;
+
+    constructor(address paymentToken_) {
+        paymentToken = paymentToken_;
+    }
+
+    function setPaymentToken(address p) external {
+        paymentToken = p;
+    }
+}
+
 contract MockOption {
     address public immutable paymentToken;
     MockERC20 public immutable hydx;

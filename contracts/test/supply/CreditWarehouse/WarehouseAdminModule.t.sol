@@ -29,13 +29,22 @@ contract MockMember {
     }
 }
 
-/// @notice A minimal `avatar()`-only Roles stand-in: the ctor/`setRoles` parity guard reads ONLY `avatar()`,
-///         so this is all a re-point target needs to expose to exercise both sides of the guard.
+/// @notice A minimal Roles stand-in exposing BOTH parity slots. It must expose `target()` as well as `avatar()`:
+///         Zodiac executes through `target` (`Module.exec` → `IAvatar(target).execTransactionFromModule`), so the
+///         parity guard checks both. An avatar-only mock silently satisfied the old guard, which is how the
+///         target-side gap went unnoticed — `setTargetOnly` exists so the divergent case is testable.
 contract MockAvatarRoles {
     address public avatar;
+    address public target;
 
     constructor(address avatar_) {
         avatar = avatar_;
+        target = avatar_; // a real Zodiac deploy pairs both slots to the Safe
+    }
+
+    /// @notice Re-point ONLY `target`, leaving `avatar` intact — the redirect the parity guard must catch.
+    function setTargetOnly(address target_) external {
+        target = target_;
     }
 }
 
@@ -612,12 +621,42 @@ contract WarehouseAdminModuleTest is ForkConfig {
 
     function test_Parity_PairedRepoint_SetAvatarFirst_Succeeds() public {
         address newSafe = makeAddr("newWarehouseSafe2");
-        // pair it: set the modifier's avatar FIRST (as the Roles owner == this test), THEN the adapter accepts it.
+        // pair it: set BOTH modifier slots FIRST (as the Roles owner == this test), THEN the adapter accepts it.
         IRoles(roles).setAvatar(newSafe);
+        IRoles(roles).setTarget(newSafe);
         vm.prank(adapter.owner());
         adapter.setWarehouseSafe(newSafe); // parity holds -> succeeds
         assertEq(adapter.warehouseSafe(), newSafe, "paired re-point applied");
         assertEq(IRoles(roles).avatar(), adapter.warehouseSafe(), "parity restored: avatar == warehouseSafe");
+        assertEq(IRoles(roles).target(), adapter.warehouseSafe(), "parity restored: target == warehouseSafe");
+    }
+
+    /// @dev The target half of the parity guard: `Roles.setTarget` re-points which Safe actually executes
+    ///      (`Module.exec` → `IAvatar(target).execTransactionFromModule`) while leaving `avatar` intact, so an
+    ///      avatar-only guard passes and REPAY moves the WRONG Safe's USDC to the redemption box. Proven on a Base
+    ///      fork before the fix: 500,000e6 USDC drained from a second Safe by one honest REPAY report.
+    function test_Parity_UseTime_ExternalSetTarget_BlocksAllOps() public {
+        address other = makeAddr("otherSafe");
+        assertEq(IRoles(roles).avatar(), safe, "precondition: avatar still paired");
+        IRoles(roles).setTarget(other); // external target-only desync (test == Roles owner)
+
+        bytes memory report = abi.encode(REPAY, abi.encode(redemptionBox, uint256(1e6)));
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.TargetMismatch.selector, safe, other));
+        adapter.onReport("", report);
+
+        IRoles(roles).setTarget(safe); // re-pair → ops resume
+    }
+
+    /// @dev `setRoles` must reject an instance whose `target` points elsewhere even when its `avatar` matches —
+    ///      the exact shape a fork probe used to make the adapter accept a modifier attached to a foreign Safe.
+    function test_Parity_SetRoles_WrongTarget_Reverts() public {
+        address wrongSafe = makeAddr("wrongTargetSafe");
+        MockAvatarRoles spoofed = new MockAvatarRoles(safe); // avatar == safe (passes the avatar leg)
+        spoofed.setTargetOnly(wrongSafe); // but target points at a foreign Safe
+        vm.prank(adapter.owner());
+        vm.expectRevert(abi.encodeWithSelector(WarehouseAdminModule.TargetMismatch.selector, safe, wrongSafe));
+        adapter.setRoles(address(spoofed));
     }
 
     /// @dev setRoles avatar parity (the REPAY wrong-Safe drain guard): re-pointing `roles` to an instance attached
@@ -685,6 +724,7 @@ contract WarehouseAdminModuleTest is ForkConfig {
         // real modifier): pair the modifier's avatar, then the adapter accepts the re-point. setRoles is ALSO
         // parity-guarded, so its re-point target must be a contract whose avatar() == the (new) warehouseSafe.
         IRoles(roles).setAvatar(x); // test == Roles owner (godOwner)
+        IRoles(roles).setTarget(x); // both slots must be paired before the adapter accepts
         vm.prank(o);
         adapter.setWarehouseSafe(x);
         assertEq(adapter.warehouseSafe(), x, "warehouseSafe re-pointed (avatar-paired)");

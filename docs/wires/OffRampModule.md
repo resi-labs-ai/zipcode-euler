@@ -9,7 +9,9 @@ An engine **Zodiac Module** enabled on the **rq/main Safe** (`avatar == target =
 the back-office leg of the szipUSD CoW-book exit (`claude-zipcode.md` §6.4): it turns the rq Safe's **basket zipUSD
 into USDC** by driving the BUILT senior `ZipRedemptionQueue` (item 9) at par through its on-demand settle cycle
 (the 30-day epoch time gate was removed — see `9-ZipRedemptionQueue.md`) — sourcing the USDC the
-treasury's 8-B14 buy-and-burn bids exits with from un-lent EulerEarn cash. It is a **pure driver / C1 only**: par
+treasury's 8-B14 buy-and-burn bids exits with from un-lent EulerEarn cash. The claimed USDC is ordinary basket
+cash once landed: besides the buy-burn, it can fund the loss-side `divert` after the CRE credits it to 8-B10's
+free-value ledger (the self-haircut route — procedure in `docs/solvency.md`). It is a **pure driver / C1 only**: par
 and the `min(available, pending)` settle fill are the queue's job; this module adds **no redemption logic**.
 Operator-gated and manual (the CRE sizes each `requestRedeem`/`claim`), never autonomic. It never touches the
 warehouse Safe and never sells xALPHA or any other basket leg.
@@ -68,16 +70,19 @@ warehouse Safe and never sells xALPHA or any other basket leg.
   modules enabled on it — and its value is closing the **epoch-dilution / senior-USDC-griefing** vector of an open
   `requestRedeem`, NOT theft prevention (par is fixed, `settleEpoch` is `onlyController`, the queue is non-sweepable).
 - **zipUSD source = USDC sink = the rq Safe.** The basket zipUSD redeemed lives on the rq Safe; the claimed USDC
-  lands back on the **same** rq Safe (the basket), where the 8-B14 buyback spends it. `requester` is never
-  operator-supplied (always `juniorTrancheSafe`) — destination integrity, no cross-Safe routing.
+  lands back on the **same** rq Safe (the basket), where the 8-B14 buyback spends it — or, after an explicit CRE
+  `creditFreeValue`, the 8-B10 `divert` spends it against a loss provision (`docs/solvency.md`). `requester` is
+  never operator-supplied (always `juniorTrancheSafe`) — destination integrity, no cross-Safe routing.
 - **NOT wired to the warehouse.** The off-ramp never calls `WarehouseAdminModule` and never touches the warehouse
   Safe. The CRE separately drives REDEEM (`eePool.redeem(shares, safe, safe)`) → REPAY (`usdc.transfer(queue, …)`)
   to deliver USDC into the queue, which `settleEpoch()` (CRE, `onlyController`) then reserves at par. The off-ramp's
   USDC source (un-lent EulerEarn cash) is the **same** cash senior redemption draws — coupling noted, operator-managed.
 
 ## Item-10 deploy facts
-> No deploy script exists yet (`OffRampModule` does not appear in `contracts/script/`); item 10 is the next backlog
-> item. These are the wiring obligations the kept code imposes — to be discharged by the item-10 script.
+> Discharged: `DeployZipcode.s.sol` deploys the clone (`_cloneModule` with
+> `abi.encode(timelock, juniorTrancheEngine, operator, zipUSD, queue)`, enabled on the basket Safe) and wires
+> `queue.setRedeemController(juniorTrancheSafe)` in the same phase (`DeployZipcode.s.sol:561-567`). The
+> obligations below are what that script discharges.
 - **Clone, not `new`.** Deploy via the zodiac-core `ModuleProxyFactory.deployModule(mastercopy, setUpCalldata, salt)`
   (CREATE2) — the clone `setUp`s **atomically** with the deploy. `setUpCalldata` = `abi.encode(owner, juniorTrancheSafe,
   operator, zipUSD, queue)`. Set-once storage (not `immutable`) is exactly what makes the shared-bytecode clone work.

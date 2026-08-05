@@ -45,7 +45,7 @@ floor is checked against `coverageValue() = committedValue() + pathLockedLpEquit
 alone — the fenced ICHI LP (most of the basket) backs the floor IN PLACE, read from the oracle's
 `pathLockedLpEquity()`, so it need not be physically hoarded in the juniorTrancheSidecar (this RESOLVES the former line-74
 LP gotcha — see Gotchas). `release` reads `coverageValue()` post-move; `covered() = coverageValue() >=
-requiredCommittedValue()` is the outflow predicate; `lpBurnKeepsCovered(lpShares)` is the dissolution-gate
+requiredCommittedValue()` is the outflow predicate; the `lpBurnKeepsCovered(lpShares)` dissolution-gate
 helper. Both outflow gates are BUILT + armed at deploy: `SzipBuyBurnModule.postBid` reverts while
 `!covered()`, and `LpStrategyModule.removeLiquidity` reverts `Undercovered` past the excess (each wires a
 Timelock-settable `coverageGate` -> this module; kill-switch = `setCoverageGate(0)`). The draw-gate is SKIPPED
@@ -56,7 +56,7 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
 ## Contracts involved (what each does)
 | Contract / interface | What it does |
 |---|---|
-| `DurationFreezeModule` (`is Module, ReentrancyGuard`) | The actuator. `setUp` initializer (clone-safe set-once storage, NOT immutable); `commit`/`release` rotations; the floor + coverage math (`illiquidSeniorValue`, `requiredCommittedValue`, `committedValue`, `grossBasketValue`, `freeValue`, `pathLockedLpEquity`, `coverageValue`, `covered`, `lpBurnKeepsCovered`; `utilization`/`requiredFraction` retained as §12 metric); the 5-leg `onlyValued` whitelist (LP NOT movable — fenced in place); 11 onlyOwner (Timelock) setters (the 6 wired addrs + 5 legs — NO coverage knobs; the floor is structural). |
+| `DurationFreezeModule` (`is Module, ReentrancyGuard`) | The actuator. `setUp` initializer (clone-safe set-once storage, NOT immutable); `commit`/`release` rotations; the floor + coverage math (`illiquidSeniorValue`, `requiredCommittedValue`, `committedValue`, `grossBasketValue`, `freeValue`, `pathLockedLpEquity`, `coverageValue`, `covered`; `utilization`/`requiredFraction` retained as §12 metric; `lpBurnKeepsCovered` REMOVED 2026-08-04); the 5-leg `onlyValued` whitelist (LP NOT movable — fenced in place); 11 onlyOwner (Timelock) setters (the 6 wired addrs + 5 legs — NO coverage knobs; the floor is structural). |
 | `ISeniorPool` (`interfaces/supply/`) | Venue-neutral local interface for the §8.2 senior pool (CTR-10a — the generalization of the removed `IEulerEarnUtil`) — exactly the three views the donation-immune `U`/`illiquidSeniorValue` read needs: `maxWithdraw(owner)`, `convertToAssets(shares)`, `balanceOf(account)`. EulerEarn satisfies it directly (source `reference/euler-earn/src/EulerEarn.sol`, 0.8.26 — never compiled, fork-only). The `eulerEarn` storage slot name is retained (Euler is config one); only the read interface is generic. |
 | `ISzipNavBasket` (`interfaces/supply/`) | Minimal local interface for the `SzipNavOracle` seam: `grossBasketValue()` / `committedValue()` / `freeValue()` / `pathLockedLpEquity()` / `lpShareValue(uint256)` (18-dp USD) for the floor + coverage, plus the five movable plain-leg getters `zipUSD()/usdc()/xAlpha()/hydx()/oHydx()` (read LIVE at `setUp` to form the whitelist). The GPL oracle is not imported. |
 
@@ -105,8 +105,9 @@ reaches only the free main Safe). zipUSD never freezes (junior-only).
   move the 5 plain legs). The coverage numerator the floor checks is `coverageValue() = committedValue() +
   pathLockedLpEquity()`; `requiredCommittedValue()` is the debt-pinned floor (FLOOR note above) —
   `min( illiquidSeniorValue, grossBasketValue )`
-  (a `gross == 0` basket floors to 0 — any release allowed). `lpBurnKeepsCovered(lpShares) =
-  (coverageValue − lpShareValue(lpShares)) >= requiredCommittedValue` is the LP-dissolution gate's predicate.
+  (a `gross == 0` basket floors to 0 — any release allowed). The `lpBurnKeepsCovered(lpShares)` LP-dissolution
+  predicate was removed 2026-08-04: coverage now counts the main Safe's zipUSD and xALPHA via `mainSpotEquity()`,
+  so dissolving LP returns the same value in a different shape and cannot move the floor.
 - **Timelock-settable wiring (build phase, §17)** — eleven `onlyOwner` wiring setters, one per wired field
   (`setJuniorTrancheSafe`/`setJuniorTrancheSidecar`/`setOperator`/`setNavOracle`/`setEulerEarn`/`setWarehouseSafe` + the five legs
   `setZipUSD`/`setUsdc`/`setXAlpha`/`setHydx`/`setOHydx`), each zero-guarded and emitting

@@ -65,13 +65,20 @@ contract SzAlphaRateOracleTest is Test {
     // --------------------------------------------------------------------- push path
     function test_push_lands_and_serves_rate() public {
         _push(1.05e18, uint48(T0));
-        assertEq(oracle.exchangeRate(), 1.05e18);
+        assertEq(oracle.rawExchangeRate(), 1.05e18, "the seed lands raw for the monitor");
+        assertEq(oracle.exchangeRate(), 0, "but consumers stay closed until an interval closes");
         assertEq(oracle.lastUpdate(), uint48(T0));
         assertTrue(oracle.fresh());
+
+        vm.warp(T0 + 1 hours);
+        _push(1.05e18, uint48(T0 + 1 hours));
+        assertEq(oracle.exchangeRate(), 1.05e18, "push 2 closes the seed interval and opens the consumer read");
     }
 
     function test_exchangeRate_is_IXAlphaRate_dropin() public {
         _push(1.05e18, uint48(T0));
+        vm.warp(T0 + 1 hours);
+        _push(1.05e18, uint48(T0 + 1 hours));
         assertEq(IXAlphaRate(address(oracle)).exchangeRate(), 1.05e18);
     }
 
@@ -142,11 +149,45 @@ contract SzAlphaRateOracleTest is Test {
         assertEq(oracle.exchangeRate(), 1e18, "and it is the honest trailing value, not the inflated one");
     }
 
-    /// @dev The seed push is the one genuinely unsmoothed moment: nothing precedes it to average against.
-    function test_seed_push_is_unsmoothed_and_that_is_the_only_one() public {
-        _push(1e18, uint48(T0));
-        assertEq(oracle.exchangeRate(), 1e18, "the seed value serves itself");
+    /// @dev WARM-UP GATE. The seed push is the one value the TWAP cannot smooth, and the deploy wires this oracle
+    ///      into NAV before any push exists — so the seed must NOT be served to consumers. `exchangeRate()` returns 0
+    ///      (routing `SzipNavOracle._xAlphaUSD` into `RateUnseeded`) until the seed's interval is closed by push 2.
+    ///      `rawExchangeRate()` serves the seed immediately, so alarm 5's equality watch sees a bad first push.
+    function test_seed_push_serves_zero_to_consumers_until_interval_closes() public {
+        _push(5e18, uint48(T0)); // a mis-scaled seed: the exact failure class the smoothing exists to price
         assertEq(oracle.genesisTs(), uint48(T0), "genesis recorded");
+        assertEq(oracle.rawExchangeRate(), 5e18, "the monitor sees the bad seed the moment it lands");
+        assertEq(oracle.exchangeRate(), 0, "consumers get 0: NAV fails closed instead of marking the raw seed");
+
+        vm.warp(T0 + 1 hours);
+        _push(1e18, uint48(T0 + 1 hours)); // the corrected value
+        assertEq(oracle.exchangeRate(), 1e18, "push 2 opens the read at min(spot, twap), spot side");
+    }
+
+    /// @dev RING MISS. A cadence faster than `twapWindow / CARDINALITY` fills all 32 slots inside the window, so the
+    ///      walk finds no observation at or before the window edge. The average must then run over the ring's actual
+    ///      span (a shortened window), NOT since genesis — a lifetime average diverges from the window without bound
+    ///      as the deploy ages, silently re-marking the xALPHA leg far below every rate in the window.
+    function test_ring_miss_averages_over_ring_span_not_since_genesis() public {
+        // Ten days of honest hourly pushes at 1e18: a long lifetime history the miss path must NOT reach back to.
+        _push(1e18, uint48(T0));
+        uint256 t = T0;
+        for (uint256 i = 0; i < 240; i++) {
+            t += 1 hours;
+            vm.warp(t);
+            _push(1e18, uint48(t));
+        }
+        // The cron is tightened to 30 minutes and the rate steps to 2e18. 40 pushes = 20 hours: more than
+        // CARDINALITY pushes land inside the 24h window, so every ring slot is newer than the window edge.
+        for (uint256 i = 0; i < 40; i++) {
+            t += 30 minutes;
+            vm.warp(t);
+            _push(2e18, uint48(t));
+        }
+        // Ring holds the newest 32 observations, whose booked intervals are all at 2e18.
+        assertEq(oracle.twapRate(), 2e18, "the miss path averages over what the ring holds");
+        assertEq(oracle.exchangeRate(), 2e18, "so consumers see the ring-span average, not a lifetime average");
+        // Before the fix this returned cum/(now - genesis) ~= 1.075e18: ~54% of every rate in the window, forever.
     }
 
     function test_push_non_forwarder_reverts() public {
@@ -187,8 +228,10 @@ contract SzAlphaRateOracleTest is Test {
 
     function test_fresh_flips_false_past_maxStaleness() public {
         _push(1e18, uint48(T0));
+        vm.warp(T0 + 1 hours);
+        _push(1e18, uint48(T0 + 1 hours)); // close the seed interval so the consumer read is open
         assertTrue(oracle.fresh());
-        vm.warp(T0 + MAX_STALENESS + 1);
+        vm.warp(T0 + 1 hours + MAX_STALENESS + 1);
         assertFalse(oracle.fresh());
         assertEq(oracle.exchangeRate(), 1e18); // still served; consumer gates on fresh()
     }

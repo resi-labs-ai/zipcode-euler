@@ -259,6 +259,70 @@ contract F1DivertDoubleCountTest is RealOracleBase {
         recycle.divert(LIEN, 1e6);
     }
 
+    /// @notice REGRESSION for the divert TWAP drag. `divert` used to settle the markdown AFTER moving the cash,
+    ///         so `writeProvision`'s `_accumulate()` sampled the one instant where the basket was down by the
+    ///         cash but the hole was still open, and credited that depressed spot across the whole
+    ///         [lastUpdate, now] gap — dragging `twapNavPerShare` (and so `navExit`) below truth for up to `W`
+    ///         after every honest divert. With settle-first the sample is the true pre-divert spot, and spot is
+    ///         identical before and after the transaction either way.
+    function test_divert_books_pre_divert_spot_into_the_twap() public {
+        _lock();
+        _default(HOLE18);
+        assertEq(nav.spotNavPerShare(), 0.9e18, "marked-down spot");
+        uint256 cum0 = nav.cumNav();
+        assertEq(nav.lastUpdate(), uint32(block.timestamp), "the mark accumulated up to now");
+
+        uint256 gap = 1200; // a third of W — the poke keeper's normal cadence gap, not an edge case
+        vm.warp(block.timestamp + gap);
+
+        vm.prank(operator);
+        recycle.creditFreeValue(FILL6);
+        vm.prank(operator);
+        recycle.divert(LIEN, FILL6); // exact fill: the $1M cash retires the whole $1M hole
+
+        assertEq(nav.spotNavPerShare(), 0.9e18, "spot is identical before and after the transaction");
+        // The gap must be booked at the TRUE pre-divert spot ($0.90), never the mid-transaction dip ($0.80:
+        // cash gone, hole still open) that the old cash-first ordering sampled.
+        assertEq(nav.cumNav(), cum0 + 0.9e18 * gap, "the TWAP accumulator carries no divert dip");
+        assertEq(nav.lastUpdate(), uint32(block.timestamp), "accumulated through the divert");
+    }
+
+    /// @notice REGRESSION for L5 — `divert` bounds against the NAMED lien's own hole, not the whole book. A payment
+    ///         aimed at lien B that exceeds B's markdown but fits under the book total must fail EARLY with
+    ///         `ExceedsHole`, before any ledger debit or value move — not late with `SettlementShortfall` after the
+    ///         cash conceptually moved. Needs the REAL coordinator's real per-lien slots (the RecycleModule mock is
+    ///         single-lien), which is why it lives here.
+    function test_L5_divert_bounds_against_the_named_liens_own_hole() public {
+        bytes32 lienB = bytes32(uint256(0xB));
+        xa.mint(address(coord), BOND); // a second bond for lien B (setUp funded only A)
+
+        // A: provision 100e18, B: provision 30e18 (recoveryFloor 0 in this fixture -> provision == atRisk); book 130e18
+        _lock();
+        _default(100e18);
+        _drive(0, abi.encode(lienB, originator, BOND)); // lock B
+        _drive(2, abi.encode(lienB, uint256(30e18))); // default B
+        assertEq(nav.provision(), 130e18, "book total across A + B");
+
+        usdcTok.mint(address(engine), 60e6);
+        vm.prank(operator);
+        recycle.creditFreeValue(60e6);
+
+        // aim 50e6 ($50e18) at lien B whose own hole is only 30e18. 50e18 <= book 130e18 (would pass a book bound)
+        // but 50e18 > B's 30e18 -> ExceedsHole, EARLY, nothing moves.
+        uint256 provBefore = nav.provision();
+        uint256 engineUsdcBefore = usdcTok.balanceOf(address(engine));
+        vm.prank(operator);
+        vm.expectRevert(RecycleModule.ExceedsHole.selector);
+        recycle.divert(lienB, 50e6);
+        assertEq(nav.provision(), provBefore, "no markdown retired");
+        assertEq(usdcTok.balanceOf(address(engine)), engineUsdcBefore, "no cash moved");
+
+        // an EXACT fill of B's own hole (30e6 -> 30e18) succeeds
+        vm.prank(operator);
+        recycle.divert(lienB, 30e6);
+        assertEq(nav.provision(), 100e18, "B settled exactly; A's 100e18 remains");
+    }
+
     // ================================================================= A3
     /// @notice THE DECIDING TEST for A3 (`AGGREGATE-CRE-COMPROMISE.md` §5). `_default` accepts ANY `atRisk` — the
     ///         only on-chain transform is the `recoveryFloor` scaling — and `_recovery` reverses it by an

@@ -193,6 +193,13 @@ contract SzipNavOracle is ReceiverTemplate {
     error StaleReport(); // a leg push not strictly newer than the cached mark (replay / out-of-order). Mirrors `SzAlphaRateOracle`.
     error RateUnseeded(); // the xALPHA exchange rate was never seeded (genesis/uninitialized, ≠ stale) — fail closed rather than silently value xALPHA at 0
     error LpTwapPluginNotReady(); // setLpTwapWindow(>0) against a pool with no plugin / an uninitialized plugin — would brick every NAV read; reject at set-time
+    error RedemptionQueueNotReady(); // setRedemptionQueue(non-zero) with no code / missing the receivables getters — would brick every NAV read; reject at set-time
+    /// @notice `setLpTwapWindow(0)` while an LP position is wired. Zero prices counted LP off live pool reserves,
+    ///         which an in-block swap moves. That was the documented escape from a halted TWAP, and it is the wrong
+    ///         one: if the plugin dies while the LP holds most of the treasury, falling back to spot hands an
+    ///         attacker the mark for the majority of NAV. Halting is the correct end state. Recovery is
+    ///         `setLpPosition` onto a pool with a live plugin, or unwinding the LP.
+    error LpWiredCannotUseSpot();
 
     // --------------------------------------------------------------------- events
     event ShareTokenSet(address indexed szipUSD);
@@ -312,8 +319,13 @@ contract SzipNavOracle is ReceiverTemplate {
     ///      safety paths — so prefer waiting out `readyAt` over reflexively zeroing. `onlyOwner` (Timelock).
     function setLpTwapWindow(uint32 lpTwapWindow_) external onlyOwner {
         if (lpTwapWindow_ != 0) _assertLpTwapReady();
+        // Once an LP position is wired, spot is no longer an available valuation. Zero is still legal BEFORE the
+        // LP cutover (the M1 posture, where `_lpValue` returns 0 at the `lpShares == 0` guard and never reaches
+        // the branch), so this closes the fallback without blocking the pre-LP deploy. A different non-zero window
+        // remains settable, so repointing to a working pool is unaffected.
+        if (lpTwapWindow_ == 0 && ichiVault != address(0)) revert LpWiredCannotUseSpot();
         _checkpointBestEffort();
-        lpTwapWindow = lpTwapWindow_; // zero is a valid "use spot" value
+        lpTwapWindow = lpTwapWindow_;
         emit LpTwapWindowSet(lpTwapWindow_);
     }
 
@@ -384,6 +396,16 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         added back to the basket (SEC/M-2, the off-ramp undercount fix). Zero ⇒ the receivables leg contributes
     ///         0 (v0 / pre-off-ramp). `onlyOwner` (Timelock). Re-pointable, not set-once (§17 build-phase wiring).
     function setRedemptionQueue(address redemptionQueue_) external onlyOwner {
+        // Validate at SET time, mirroring the LP side's `_assertLpTwapReady` (SEC-10): `_queueReceivables` makes two
+        // high-level staticcalls that expect returndata, so a codeless address (an EOA fat-finger) reverts on the
+        // compiler's extcodesize check and bricks EVERY NAV read — grossBasketValue/spot/twap/navEntry/navExit/
+        // committedValue/freeValue/_accumulate. Reject the un-priceable wiring here instead. Probe both getters once
+        // so a contract missing the surface also fails closed at set time. Zero stays valid (unset / no off-ramp).
+        if (redemptionQueue_ != address(0)) {
+            if (redemptionQueue_.code.length == 0) revert RedemptionQueueNotReady();
+            IZipRedemptionQueueReceivables(redemptionQueue_).pendingRedeemRequest(0, juniorTrancheSafe);
+            IZipRedemptionQueueReceivables(redemptionQueue_).maxWithdraw(juniorTrancheSafe);
+        }
         _checkpointBestEffort();
         redemptionQueue = redemptionQueue_; // address(0) is a valid "unset / no off-ramp yet" value
         emit RedemptionQueueSet(redemptionQueue_);
@@ -525,13 +547,25 @@ contract SzipNavOracle is ReceiverTemplate {
         value = value > debt ? value - debt : 0;
     }
 
+    /// @notice The main Safe's holdings of the two priced spot legs — zipUSD at $1 and xALPHA at the CRE rate —
+    ///         18-dp USD. Counted as coverage alongside `pathLockedLpEquity()`: an ICHI LP share IS zipUSD and
+    ///         xALPHA in a wrapper, priced pro-rata off those same two reserves, so counting the wrapped form and
+    ///         not the unwrapped form made the freeze depend on the shape of an asset rather than its value. USDC
+    ///         is deliberately excluded — it is the form buy-burn spends, and `SzipBuyBurnModule` relies on the
+    ///         bid's outflow not reducing coverage. Farm utility debt is NOT subtracted here; `pathLockedLpEquity()`
+    ///         already nets the main Safe's debt once, and subtracting it twice would understate coverage.
+    function mainSpotEquity() public view returns (uint256) {
+        return IERC20(zipUSD).balanceOf(juniorTrancheSafe)
+            + IERC20(xAlpha).balanceOf(juniorTrancheSafe) * _xAlphaUSD() / 1e18;
+    }
+
     /// @notice The path-locked LP equity (18-dp USD): the MAIN-Safe ICHI LP in every state (loose + gauge-staked +
     ///         escrow-collateralized), NET of the main Safe's farm utility strike debt. MAIN-SAFE ONLY — the SIDECAR's
     ///         LP + debt are already owned by `committedValue()` (`_grossValueOf(juniorTrancheSidecar)`), so summing this into
     ///         `coverageValue()` counts every Safe's LP exactly once (double-count fix).
-    ///         The freeze module adds this to `committedValue()` for its coverage floor because the LP is fenced — its
-    ///         only dissolution path (`LpStrategyModule.removeLiquidity`) is coverage-gated, so it cannot reach an exit
-    ///         below the floor.
+    ///         The freeze module adds this to `committedValue()` for its coverage floor. Since `mainSpotEquity()`
+    ///         counts the unwrapped form at the same value, dissolving the LP is coverage-neutral — it changes the
+    ///         shape of the backing, not its size.
     function pathLockedLpEquity() public view returns (uint256) {
         uint256 lpValue = _lpValue(_lpShares(juniorTrancheSafe));
         uint256 debt = _farmUtilityDebt(juniorTrancheSafe);
@@ -633,10 +667,13 @@ contract SzipNavOracle is ReceiverTemplate {
     }
 
     // --------------------------------------------------------------------- bracket reads (consumer surface)
-    /// @notice The issuance price `max(spot, twap)`. Reverts `StalePrice` if either required pushed leg is stale.
+    /// @notice The issuance price `max(spot, twap)`. Reverts `StalePrice` if the required pushed leg is stale.
+    /// @dev  LEG_HYDX_USD is NOT a required leg (2026-08-05, finding L10): it is marked $0 in `grossBasketValue`, so
+    ///       its price contributes nothing to NAV, and gating issuance on its staleness froze minting on the
+    ///       liveness of a feed that prices nothing. It is KEPT as the exercise-profitability input
+    ///       (`emission-marking` [2026-07-30]), pushed and cached as before, just no longer a deposit gate.
     function navEntry() external view returns (uint256) {
         if (_legStale(LEG_ALPHA_USD)) revert StalePrice(LEG_ALPHA_USD);
-        if (_legStale(LEG_HYDX_USD)) revert StalePrice(LEG_HYDX_USD);
         // Cross-chain rate freshness: a stale CRE-pushed xALPHA rate must not mint (exit is unaffected — `navExit`
         // does not call this). Only enforced when the rate oracle is wired (M1 stand-in path is unchanged).
         if (xAlphaRateOracle != address(0) && !IXAlphaRateFresh(xAlphaRateOracle).fresh()) revert StaleRate();
@@ -652,16 +689,20 @@ contract SzipNavOracle is ReceiverTemplate {
         return s < t ? s : t;
     }
 
-    /// @notice True iff both required pushed legs are within `maxAge` (the §4 `navOracle.fresh()` issuance guard).
+    /// @notice True iff the required pushed leg (`LEG_ALPHA_USD`) is within `maxAge` (the §4 issuance guard) and the
+    ///         wired xALPHA rate is fresh. `LEG_HYDX_USD` is deliberately NOT gated (finding L10) — it is $0 in NAV,
+    ///         so its staleness must not halt issuance; it stays as the exercise-profitability input.
     function fresh() public view returns (bool) {
-        if (_legStale(LEG_ALPHA_USD) || _legStale(LEG_HYDX_USD)) return false;
+        if (_legStale(LEG_ALPHA_USD)) return false;
         if (xAlphaRateOracle != address(0) && !IXAlphaRateFresh(xAlphaRateOracle).fresh()) return false;
         return true;
     }
 
-    /// @notice The oldest CRE-push timestamp among the marks `navExit()`/`fresh()` are built from — the two required
-    ///         pushed legs (`LEG_ALPHA_USD`, `LEG_HYDX_USD`) and, when wired (`xAlphaRateOracle != 0`), the
-    ///         cross-chain xALPHA rate's `lastUpdate()`. A resting §7 buy-burn bid anchors its `validTo` ceiling to
+    /// @notice The oldest CRE-push timestamp among the marks `navExit()`/`fresh()` are built from — the required
+    ///         pushed leg (`LEG_ALPHA_USD`) and, when wired (`xAlphaRateOracle != 0`), the cross-chain xALPHA rate's
+    ///         `lastUpdate()`. `LEG_HYDX_USD` is NOT folded in (finding L10): it prices nothing in NAV and no longer
+    ///         gates issuance, so anchoring a resting bid's `validTo` to its staleness would tighten the bid on a
+    ///         feed the mark does not depend on. A resting §7 buy-burn bid anchors its `validTo` ceiling to
     ///         `oldestRequiredLegTs() + maxAge` so the NAV mark it can fill against is at
     ///         most `maxAge` old at fill, not `2·maxAge` (the pre-fix post-time anchor allowed legs already up to
     ///         `maxAge` old at post-time to age another full `maxAge` while the bid rests).
@@ -677,9 +718,7 @@ contract SzipNavOracle is ReceiverTemplate {
     ///         per-leg `maxAge` guarantee is never weakened; a shift past zero clamps to `0` and fails the bid
     ///         closed (the rate is far beyond stale there and `fresh()` blocks posting anyway).
     function oldestRequiredLegTs() external view returns (uint48) {
-        uint48 a = legCache[LEG_ALPHA_USD].ts;
-        uint48 h = legCache[LEG_HYDX_USD].ts;
-        uint48 oldest = a < h ? a : h;
+        uint48 oldest = legCache[LEG_ALPHA_USD].ts; // LEG_HYDX_USD excluded (L10): $0 in NAV, not an issuance gate
         address rate = xAlphaRateOracle;
         if (rate != address(0)) {
             uint48 r = IXAlphaRateFresh(rate).lastUpdate();

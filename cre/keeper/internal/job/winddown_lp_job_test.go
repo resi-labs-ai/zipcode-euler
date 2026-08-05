@@ -168,16 +168,18 @@ func TestWindDown_Unwired_Empty(t *testing.T) {
 	}
 }
 
-// ============================ gate binary search picks smaller s ============================
+// ============================ gate is ignored: full slice burns ============================
 
-// TestWindDown_GateBinarySearch: full slice (100e18) is undercovered, but the gate
-// blesses any s ≤ 40e18. The binary search must pick exactly 40e18.
-func TestWindDown_GateBinarySearch(t *testing.T) {
-	threshold := bigStr("40000000000000000000") // 40e18
+// TestWindDown_GateIgnored_FullSliceBurns: the coverage gate was removed from
+// LpStrategyModule.removeLiquidity on 2026-08-04 — dissolving LP returns zipUSD and xALPHA to the
+// same Safe, and SzipNavOracle.mainSpotEquity counts them at the value the LP was counted at, so a
+// burn cannot move the freeze floor. The job therefore no longer sizes against the gate: even a
+// gate that would refuse every burn leaves the full staked slice planned.
+func TestWindDown_GateIgnored_FullSliceBurns(t *testing.T) {
+	staked := bigStr("100000000000000000000") // 100e18, the wdBaseReader staked balance
 	r := wdBaseReader()
 	r.gate = wdGate
-	r.covered = func(s *big.Int) bool { return s.Cmp(threshold) <= 0 }
-	// e0/e1 per-share = 2 and 3 → expected scale with the chosen shares.
+	r.covered = func(s *big.Int) bool { return false } // would have blocked everything
 	q := &wdQuoter{dev: big.NewInt(0), e0: big.NewInt(2), e1: big.NewInt(3), perShare: true}
 
 	plan, err := newWDJob(q, nil).Evaluate(context.Background(), r)
@@ -188,39 +190,19 @@ func TestWindDown_GateBinarySearch(t *testing.T) {
 	if !eqLabels(labels(plan), want) {
 		t.Fatalf("labels = %v, want %v", labels(plan), want)
 	}
-	// shares must equal the threshold (largest covered s).
 	a, _ := actionByLabel(plan, "unstake")
-	if got := decodeUint256Args(t, a.Data, 1)[0]; got.Cmp(threshold) != 0 {
-		t.Fatalf("unstake shares = %s, want %s (largest covered)", got, threshold)
+	if got := decodeUint256Args(t, a.Data, 1)[0]; got.Cmp(staked) != 0 {
+		t.Fatalf("unstake shares = %s, want %s (full staked slice)", got, staked)
 	}
-	// removeLiquidity(shares, min0, min1): min_i = floor2pct(e_i*shares).
 	a, _ = actionByLabel(plan, "removeLiquidity")
 	got := decodeUint256Args(t, a.Data, 3)
-	if got[0].Cmp(threshold) != 0 {
-		t.Errorf("removeLiquidity shares = %s, want %s", got[0], threshold)
+	if got[0].Cmp(staked) != 0 {
+		t.Errorf("removeLiquidity shares = %s, want %s", got[0], staked)
 	}
-	wantMin0 := floor2pct(new(big.Int).Mul(big.NewInt(2), threshold))
-	wantMin1 := floor2pct(new(big.Int).Mul(big.NewInt(3), threshold))
+	wantMin0 := floor2pct(new(big.Int).Mul(big.NewInt(2), staked))
+	wantMin1 := floor2pct(new(big.Int).Mul(big.NewInt(3), staked))
 	if got[1].Cmp(wantMin0) != 0 || got[2].Cmp(wantMin1) != 0 {
 		t.Errorf("min = [%s %s], want [%s %s]", got[1], got[2], wantMin0, wantMin1)
-	}
-}
-
-// ============================ gate covers nothing → empty ============================
-
-// TestWindDown_GateCoversNothing_Empty: lpBurnKeepsCovered is false for every s ≥ 1
-// (including s=1) ⇒ no excess to dissolve ⇒ empty plan.
-func TestWindDown_GateCoversNothing_Empty(t *testing.T) {
-	r := wdBaseReader()
-	r.gate = wdGate
-	r.covered = func(s *big.Int) bool { return false }
-	q := &wdQuoter{dev: big.NewInt(0), e0: big.NewInt(1), e1: big.NewInt(1)}
-	plan, err := newWDJob(q, nil).Evaluate(context.Background(), r)
-	if err != nil {
-		t.Fatalf("Evaluate: %v", err)
-	}
-	if len(plan.Actions) != 0 {
-		t.Fatalf("expected empty plan (nothing covered), got %v", labels(plan))
 	}
 }
 

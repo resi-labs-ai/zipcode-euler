@@ -13,7 +13,7 @@ The single loss-side orchestrator: a CRE-gated `ReceiverTemplate` that is the im
 (owns the xALPHA bond lifecycle) AND the `SzipNavOracle.defaultCoordinator` (the sole `writeProvision` caller).
 Every action flows through `_processReport` (reportType 8, action-discriminated) behind the Timelock-pinned
 Forwarder. Ownership transfers to the Timelock at deploy (governs `recoveryFloor` + build-phase wiring; **no theft,
-no NAV-inflation, no sweep, no pause**). It custodies the launch xALPHA reserve; the escrow holds **no standing
+no sweep, no pause**). It custodies the launch xALPHA reserve; the escrow holds **no standing
 allowance** — `_lock` grants the exact bond `amount` just-in-time around its pull and resets to 0,
 so a re-pointed escrow has nothing to drain.
 
@@ -21,6 +21,17 @@ so a re-pointed escrow has nothing to drain.
 is real. The CRE is trusted for magnitude/timing/split/originator; the on-chain guarantees are the narrow arithmetic
 bounds + the lien status machine. A compromised CRE can grief (down-mark NAV, slash a healthy bond, reclaim a fresh
 bond via a hostile originator) but cannot steal to an arbitrary address or inflate NAV.
+
+**The owner bound, post-`settleFromJunior` (stated honestly):** the no-NAV-inflation bound holds against the CRE
+but NOT against the owner. `settleFromJunior` retires a markdown on the word of the wired `recycleModule` — the
+proof that cash moved lives in `RecycleModule`'s backing/liveness asserts, never here — and `setRecycleModule` is
+Timelock-re-pointable (§17, ratified `wiring-posture`). An owner re-point of that one slot erases any lien's
+markdown for free. Unlike every other Timelock lever on these modules (which redirect or grief), this one
+inflates. The bound is the Timelock delay + the pre-production immutable re-freeze, which MUST include
+`recycleModule`. A coordinator-side proof-of-payment is structurally unavailable (the cash never touches this
+contract). Mitigation shipped on the module side: `RecycleModule.setJuniorTrancheEngine` now enforces
+`EngineMustEqualSafe` against the wired oracle, closing the honest-mistake variant where `divert` spends an
+uncounted Safe's USDC while still retiring the markdown.
 
 ## 2. Entry points
 
@@ -31,6 +42,8 @@ bond via a hostile originator) but cannot steal to an arbitrary address or infla
 | `setNavOracle(navOracle_)` | `onlyOwner` | re-point the provision sink |
 | `setXAlpha(xAlpha_)` | `onlyOwner` | re-point bond asset (+ re-approve escrow) |
 | `setRecoveryFloor(newFloor)` | `onlyOwner` | bound `<1e18`; future defaults only |
+| `setRecycleModule(recycleModule_)` | `onlyOwner` | wires the sole `settleFromJunior` caller; zero-guarded, re-pointable (§17). **The owner NAV-inflation lever** — see the owner-bound note above; on the pre-prod re-freeze list |
+| `settleFromJunior(lienId, amount18)` | `recycleModule` only | retires `min(amount18, lien provision)` and pushes the new `totalProvision` to the oracle; `BadStatus` unless Defaulted/WrittenOff, `NothingToSettle` at zero. Sees no cash — the payment proof is `RecycleModule.divert`'s backing/liveness asserts, atomic in the same tx |
 
 No permissionless entry points. Internal handlers (`_lock`…`_writeOff`) are reachable only via the Forwarder dispatch.
 
@@ -110,5 +123,5 @@ emergency pause; the Tests axis is individually HARDENED.
 1. 158 nSLOC; non-upgradeable `ReceiverTemplate`; 0 permissionless entry points (Forwarder/CRE + 4 Timelock setters).
 2. Sole `writeProvision` caller into `SzipNavOracle`; immutable `coordinator` of `LienXAlphaEscrow`; holds the launch xALPHA reserve and grants the escrow only an exact-amount just-in-time allowance per lock (no standing allowance).
 3. Tests: 66 unit + 1 fuzz + 3 invariant — the conservation + oracle-equality seams are invariant-asserted.
-4. §13: bounds-and-routes only; a compromised CRE is bounded to grief, never theft/NAV-inflation (status machine + arithmetic bounds + no recipient parameter).
+4. §13: bounds-and-routes only; a compromised CRE is bounded to grief, never theft/NAV-inflation (status machine + arithmetic bounds + no recipient parameter). The OWNER is not so bounded: `setRecycleModule` + `settleFromJunior` is a NAV-inflation lever until the pre-prod re-freeze (see the owner-bound note, §1).
 5. Build-phase wiring is Timelock-re-pointable; the destination-integrity absolute lands at the deferred pre-prod immutable re-freeze (process, not code).

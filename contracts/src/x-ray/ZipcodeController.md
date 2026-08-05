@@ -12,9 +12,13 @@
 >   out-of-order/stale draw reverts `StaleReport` at the registry instead of re-anchoring an older, higher mark with
 >   `block.timestamp` and borrowing against it. `test_Draw_StaleSourceTs_RollsBack`.
 > - **SEC/L-4 — one-way `defaulted` flag.** The RT-5/6 marker branch is no longer emit-only: it sets
->   `liens[lienId].defaulted = true` (one-way, never cleared; inert on unknown lienIds) and `_draw` reverts
->   `LienDefaulted` — a defaulted line can never be re-drawn on-chain, hardening the trusted-CRE assumption.
->   Repay + close still work (`test_Draw_AfterDefault_Reverts`, `test_DefaultedLine_StillRepayAndCloses`).
+>   `liens[lienId].defaulted = true` and `_draw` reverts `LienDefaulted` — a defaulted line can never be re-drawn
+>   on-chain, hardening the trusted-CRE assumption. Truly one-way: a marker filed against a lienId BEFORE its
+>   origination (a retry after a reverted origination) sets the flag on a zeroed record, and `_origination` CARRIES
+>   it forward (`defaulted: liens[id].defaulted`, not a literal `false`), so the re-originated line stays fenced —
+>   before 2026-08-05 the re-origination silently cleared it. Repay + close still work
+>   (`test_Draw_AfterDefault_Reverts`, `test_DefaultedLine_StillRepayAndCloses`,
+>   `test_MarkerBeforeOrigination_SurvivesReorigination`).
 >   Clarification (b) below is superseded accordingly: the marker now has an on-chain effect for KNOWN liens.
 > - **`OrigParams` struct decode.** `_origination` decodes one memory struct (ABI-identical to the flat tuple)
 >   instead of 9 stack locals — stack-depth relief to carry `sourceTs`; no behavior change.

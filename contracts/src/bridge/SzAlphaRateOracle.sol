@@ -178,12 +178,18 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
     // --------------------------------------------------------------------- IXAlphaRate (the deliverable)
     /// @notice The Base-side xALPHA exchange rate (alpha per xALPHA, 18-dp) — the last value CRE pushed from 964.
     ///         Consumers (NAV / Euler adapter) read this and MUST gate on `fresh()` (a rate that moves NAV must
-    ///         fail-closed on a stale push). Returns 0 if never pushed — it does NOT revert, which is exactly
-    ///         why the `fresh()` gate is mandatory (`latest.ts == 0` ⇒ not fresh; an ungated consumer would
-    ///         read a 0 rate).
+    ///         fail-closed on a stale push). Returns 0 if never pushed OR while only the seed push exists — it
+    ///         does NOT revert; both consumers route 0 into their `RateUnseeded` fail-closed path.
+    /// @dev  WARM-UP GATE. The seed push is the one value `twapRate()` cannot smooth (nothing precedes it), and
+    ///       the failure the smoothing prices — a wrong value from our own producer side — arrives identically on
+    ///       push 1. Serving the raw seed would hand NAV that value unattenuated for one cadence period, and the
+    ///       deploy wires this oracle into `SzipNavOracle` before any push exists. So until one CLOSED interval
+    ///       exists (`latest.ts != genesisTs`) consumers get 0, i.e. stay closed; `rawExchangeRate()` still serves
+    ///       the seed so the alarm-5 equality watch sees a bad first push the moment it lands.
     function exchangeRate() external view returns (uint256) {
         uint256 spot = latest.rate;
         if (spot == 0) return 0; // never pushed — `fresh()` is the consumer's gate, unchanged
+        if (latest.ts == genesisTs) return 0; // seed only: no closed interval to smooth against — fail closed
         uint256 t = twapRate();
         return t < spot ? t : spot;
     }
@@ -199,8 +205,8 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
     /// @dev  NO SPOT FALLBACK. `SzipNavOracle.twapNavPerShare` returns raw spot when it has no history, which makes
     ///       its guard vanish exactly when there is nothing to smooth against. This uses whatever history exists
     ///       instead: after three pushes it averages three, after ten it averages ten, and the smoothing strengthens
-    ///       on its own. The only unsmoothed moment is the seed push, where there is genuinely nothing to average
-    ///       and nothing is marking NAV against the rate yet.
+    ///       on its own. The only unsmoothed moment is the seed push, where there is genuinely nothing to average —
+    ///       which is why `exchangeRate()` serves 0 (consumers fail closed) until the seed's interval is closed.
     /// @dev  CLOSED INTERVALS ONLY. The average runs to `latest.ts`, NOT to `block.timestamp`. Booking the trailing
     ///       segment `[latest.ts, now]` at the newest rate is the right-endpoint mistake that makes
     ///       `SzipNavOracle._accumulate` reprice a whole idle gap at whatever spot is current — measured here, a
@@ -234,7 +240,19 @@ contract SzAlphaRateOracle is ReceiverTemplate, IXAlphaRate {
             idx = idx == 0 ? uint256(CARDINALITY) - 1 : idx - 1;
         }
 
-        // The ring holds nothing that old: average over everything since the seed push (the partial window).
+        // The ring holds nothing that old and it is FULL: every slot was written inside the window, i.e. the push
+        // cadence outran CARDINALITY. Average from the oldest surviving observation, so the window degrades to the
+        // ring's actual span instead of silently stretching to the oracle's whole lifetime. The next slot to be
+        // overwritten is the oldest; `ts == 0` there means the ring never filled, which is the young-feed case below.
+        Observation memory oldest = observations[(uint256(obsIndex) + 1) % CARDINALITY];
+        if (oldest.ts != 0) {
+            uint256 ringSpan = nowTs - uint256(oldest.ts); // > 0: 32 strictly-increasing ts, so oldest < latest
+            unchecked {
+                return (cumNow - oldest.cum) / ringSpan; // difference across the wrapping accumulator
+            }
+        }
+
+        // Young feed: the ring still holds everything since the seed push — average over the partial window.
         uint256 span = nowTs - uint256(genesisTs);
         if (span == 0) return latest.rate; // the seed push itself, read in the same second
         return cumNow / span;

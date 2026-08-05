@@ -38,8 +38,16 @@ import {ILienXAlphaEscrow} from "../interfaces/loss/ILienXAlphaEscrow.sol";
 ///      hostile `originator`) but CANNOT steal to an arbitrary address or inflate NAV. The contract is
 ///      non-sweepable (over-funding is a permanent accepted loss — fund exactly `amount` just-in-time) and
 ///      Timelock-owned (the owner governs `recoveryFloor` + the CRE Forwarder/workflow identity; no sweep, no
-///      pause; the owner cannot redirect bond destinations or inflate NAV — those bounds hold against the owner
-///      too). The MAX xALPHA allowance is granted only to the immutable, non-sweepable, `onlyCoordinator` escrow
+///      pause; the owner cannot redirect bond destinations).
+///
+///      OWNER BOUND, STATED HONESTLY: since `settleFromJunior` landed, the no-NAV-inflation bound holds against
+///      the CRE but NOT against the owner. That function retires a markdown on the word of the wired
+///      `recycleModule` — the proof that cash actually moved lives in `RecycleModule`'s backing/liveness asserts,
+///      not here — and `setRecycleModule` is Timelock-re-pointable (§17 build-phase posture, ratified). An owner
+///      who re-points the slot can therefore erase any lien's markdown with no cash moved. The bound is the
+///      Timelock delay plus the pre-production immutable re-freeze, which MUST include `recycleModule`. A
+///      coordinator-side proof-of-payment is not available — the cash never touches this contract.
+///      The MAX xALPHA allowance is granted only to the immutable, non-sweepable, `onlyCoordinator` escrow
 ///      whose sole pull path is this contract's own LOCK.
 contract DefaultCoordinator is ReceiverTemplate {
     using SafeERC20 for IERC20;

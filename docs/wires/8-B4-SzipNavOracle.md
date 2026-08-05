@@ -41,7 +41,7 @@ from gross.
 | Contract | What it does |
 |---|---|
 | `SzipNavOracle` (`is ReceiverTemplate`) | The whole primitive. Flat-ctor immutables for the basket tokens + both Safes + W/maxAge; the `_processReport` reportType-7 leg-push path (Forwarder-gated by the base); `poke()`/`_accumulate()` TWAP ring; `grossBasketValue()` (counts escrow-collateralized LP + subtracts farm utility debt) + per-leg valuation + `pathLockedLpEquity()`/`lpShareValue()`; `writeProvision()` (DC-only); the wiring setters (`setShareToken`/`setLpPosition`/`setFarmUtilityLeg`/`setJuniorTrancheEngine`/`setDefaultCoordinator` + `setXAlphaRateOracle`); the consumer reads `navEntry()`/`navExit()`/`spotNavPerShare()`/`twapNavPerShare()`/`fresh()`/`valueOf()`/`oldestRequiredLegTs()` (SEC-13 — the oldest required-leg push ts, min of `LEG_ALPHA_USD`/`LEG_HYDX_USD` + the wired rate's `lastUpdate()` when seeded; the buy-burn fence anchors `validTo` to it). |
-| `DurationFreezeModule` (8-B / §6.4 freeze) | Reads `committedValue()` (= `_grossValueOf(juniorTrancheSidecar)`), `freeValue()` (= `_grossValueOf(juniorTrancheSafe)`), AND `pathLockedLpEquity()` — its coverage numerator is `committedValue() + pathLockedLpEquity()`, and `lpBurnKeepsCovered` reads `lpShareValue()`. `grossBasketValue()` now counts the escrow LP + subtracts farm utility debt (no longer "unchanged"), but the freeze module never moves the LP, so it stays rotation-invariant under `commit`/`release` (which move only the 5 plain legs). |
+| `DurationFreezeModule` (8-B / §6.4 freeze) | Reads `committedValue()` (= `_grossValueOf(juniorTrancheSidecar)`), `freeValue()` (= `_grossValueOf(juniorTrancheSafe)`), AND `pathLockedLpEquity()` — its coverage numerator is `committedValue() + pathLockedLpEquity() + mainSpotEquity()` (shape-independent: the main Safe's zipUSD and xALPHA count at the same value the LP does). `lpBurnKeepsCovered` was removed 2026-08-04, so `lpShareValue()` has no production consumer. `grossBasketValue()` now counts the escrow LP + subtracts farm utility debt (no longer "unchanged"), but the freeze module never moves the LP, so it stays rotation-invariant under `commit`/`release` (which move only the 5 plain legs). |
 | `IFarmUtilityEscrow` / `IFarmUtilityDebt` (declared inline in the .sol) | Minimal faces for the 8-B5 escrow vault (`balanceOf`/`convertToAssets` — the escrow-collateralized LP) and the borrow vault (`debtOf` — the strike debt subtracted). |
 | `IXAlphaRate` (`contracts/src/interfaces/bridge/IXAlphaRate.sol`) | The `exchangeRate()` face the xALPHA NAV leg reads (LST stake-accounting; non-manipulable in production, M1 stand-in mock). |
 | `IXAlphaRateFresh` (declared inline in the .sol) | The `fresh()` + `lastUpdate()` face of the wired Base `SzAlphaRateOracle` — issuance gates on `fresh()` when `xAlphaRateOracle != 0`; `lastUpdate()` (the 964 read-time of the latest push, `0` ⇒ unset) is folded into `oldestRequiredLegTs()` for the SEC-13 buy-burn fence. |
@@ -116,8 +116,9 @@ lives in the DC (M2), which the oracle trusts. Until `defaultCoordinator` is wir
 first runs a **best-effort TWAP checkpoint** (`try this.poke() {} catch {}`): elapsed history is booked at the OLD
 configuration's spot so a re-point can't retroactively re-weight the TWAP window. Best-effort, never mandatory —
 during an outage the basket walk reverts and a hard checkpoint would brick the recovery levers
-(`setFarmUtilityLeg(0,0)`, `setLpTwapWindow(0)`, rate re-points); the skip's residue is bounded by the
-`navEntry()`/`navExit()` brackets.
+(`setFarmUtilityLeg(0,0)`, `setLpPosition` onto a healthy pool / LP unwind — NOT `setLpTwapWindow(0)`, which 0c-b
+bars while LP is wired; rate re-points); the skip's residue is bounded by the `navEntry()`/`navExit()` brackets.
+Operator steps: `docs/NAV-ORACLE-RUNBOOK.md`.
 - `setShareToken(szipUSD_)` → `shareToken` (the supply denominator).
 - `setLpPosition(ichiVault_, gauge_)` → `ichiVault` + `gauge` (the LP reserves + staked-LP source). Re-pointable;
   if a non-zero `lpTwapWindow` is live, re-asserts SEC-10 readiness against the new vault.
@@ -137,12 +138,14 @@ during an outage the basket walk reverts and a hard checkpoint would brick the r
   closes the gross "no plugin / uninitialized plugin" brick (a non-zero window against a plugin-less pool would
   otherwise make every NAV read revert via `_lpValue`→`fairReserves`→`NoPlugin`). `isInitialized()` is
   necessary-not-sufficient: the residual window > accumulated-history edge (observation cardinality is NOT
-  on-chain-queryable) still fails closed at read-time in `getTimepoints` and is recoverable via `setLpTwapWindow(0)`.
+  on-chain-queryable) still fails closed at read-time in `getTimepoints`. Recovery is `setLpPosition` onto a pool
+  with a live, recently-writing plugin, or unwinding the LP (`LpStrategyModule.removeLiquidity`, ungated since
+  0c-c) — NOT `setLpTwapWindow(0)`, which 0c-b bars while an LP is wired (`LpWiredCannotUseSpot`). See
+  `docs/NAV-ORACLE-RUNBOOK.md` Lever B.
   **Enforced at BOTH wiring sites:** the check is the shared `_assertLpTwapReady()`, run on
   `setLpTwapWindow` (arm) AND on `setLpPosition` (re-point the vault) when a non-zero window is already live — so
   re-pointing the LP to a plugin-less pool reverts instead of silently leaving a live window over an unready vault
-  (which would brick every LP-containing NAV read, irrecoverable after renounce since `setLpTwapWindow(0)` would
-  be frozen).
+  (which would brick every LP-containing NAV read).
 
 (A **fifth** setter `setXAlphaRateOracle(rateOracle_)` exists — `onlyOwner`, **not** zero-guarded because
 `address(0)` is the valid "use M1 fallback" value. When set, `rateSrc = xAlphaRateOracle` and `navEntry()`/`fresh()`

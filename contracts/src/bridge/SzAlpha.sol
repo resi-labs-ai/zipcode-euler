@@ -355,17 +355,30 @@ contract SzAlpha is
     ///      `minSharesOut` from this minus a tolerance. Spot-based (manipulable in-block), so never
     ///      consume it for pricing funds on-chain; NAV reads `exchangeRate()` only.
     function previewDeposit(uint256 taoWei) external view returns (uint256 shares) {
+        uint256 supply = totalSupply();
+        uint256 stake18 = _stake18();
+        // Match the real `deposit` path (:228): supply outstanding but a zero backing read is the drifted-hotkey
+        // state, where the share math divides by ~0 and quotes an absurdly inflated number. Revert here too so a
+        // UI reads the same "halted" answer the mint would give, not garbage. (Advisory only — nothing on-chain
+        // consumes this; NAV reads `exchangeRate()`, which already reverts `BackingVanished`.)
+        if (supply != 0 && stake18 == 0) revert BackingVanished();
         uint256 amountRao = taoWei / RAO;
         if (amountRao == 0) return 0;
         uint256 alphaOutRao = _simSwapTaoForAlpha(amountRao);
-        return _previewDeposit(alphaOutRao * RAO, totalSupply(), _stake18());
+        return _previewDeposit(alphaOutRao * RAO, supply, stake18);
     }
 
     /// @notice Quote the TAO (wei) redeeming `shares` would pay RIGHT NOW: exact share->alpha rate
     ///         math, then the Alpha precompile's alpha->TAO swap simulation.
     /// @dev ADVISORY, same caveats as `previewDeposit`; derive `minTaoOut` from this minus a tolerance.
     function previewRedeem(uint256 shares) external view returns (uint256 taoWei) {
-        uint256 alphaOutRao = _previewRedeem(shares, totalSupply(), _stake18()) / RAO;
+        uint256 supply = totalSupply();
+        uint256 stake18 = _stake18();
+        // Symmetry with `previewDeposit`: a zero backing read against live supply is the drifted-hotkey halt state.
+        // Revert `BackingVanished` (the true condition) rather than return a silent ~0 payout. The real `redeem`
+        // path halts here too, though it surfaces `ZeroAmount` (its payout floors to 0) — both refuse to fill.
+        if (supply != 0 && stake18 == 0) revert BackingVanished();
+        uint256 alphaOutRao = _previewRedeem(shares, supply, stake18) / RAO;
         if (alphaOutRao == 0) return 0;
         return _simSwapAlphaForTao(alphaOutRao) * RAO;
     }

@@ -3,15 +3,15 @@
 > RecycleModule | 165 nSLOC | 2109fe5 (`main`, working tree) | Foundry | 20/06/26 | **Verdict: ADEQUATE**
 
 Dedicated single-contract X-Ray for `contracts/src/supply/szipUSD/RecycleModule.sol`, the 8-B10 free-value ledger —
-**the only engine module that carries real mutable state** (`freeValueAccrued` + the SEC-09 cumulative-divert
-tally). Connected to `test/RecycleModule.t.sol`: **40 unit + 2 base-fork = 42 tests, all passing** (0 fuzz, 0
-Foundry invariant — but the load-bearing cumulative bound has a dedicated 5-test SEC-09 suite). After
-DurationFreezeModule, the best-tested fleet module. **Every mutator is exercised** (all 7 setters + the 3 operator
-legs + `creditFreeValue`).
+**the only engine module that carries real mutable state** (`freeValueAccrued`; the SEC-09 cumulative-divert tally
+was REMOVED 2026-08-02 with the F1 atomic-settle fix — see I-3). Connected to `test/supply/szipUSD/RecycleModule.t.sol`:
+**40 unit + 2 base-fork = 42 tests, all passing** (0 fuzz, 0 Foundry invariant — but the load-bearing divert bound
+has a dedicated suite). After DurationFreezeModule, the best-tested fleet module. **Every mutator is exercised**
+(all 7 setters + the 3 operator legs + `creditFreeValue`).
 
 > Correction to the portfolio map: its `access` column lists "nonReentrant" for this module — that's wrong. The
 > code uses **no** `ReentrancyGuard` (a clone never runs the guard's ctor); reentrancy safety is **effects-before-
-> interaction** — the ledger decrement + tally bump land *before* the value-moving `_exec`s (`:69-72`, tested).
+> interaction** — the ledger decrement lands *before* the value-moving `_exec`s (tested).
 
 ## 1. What it is
 
@@ -20,9 +20,10 @@ the engine's one piece of real state — the single `freeValueAccrued` accumulat
 — and spends it through **two sinks**, both debiting the same ledger:
 - `recycle(usdcAmount)` — **NAV accretion**: `ZipDepositModule.deposit` parks the USDC as senior backing + mints
   backed zipUSD 1:1 into the basket (no share issuance → NAV-per-share rises for all holders).
-- `divert(usdcAmount)` — **Stream 2 (loss-side)**: supplies raw USDC into the senior pool crediting the warehouse
-  Safe (`eePool.deposit(amount, warehouseSafe)`, no zipUSD minted), **bounded cumulatively by the live
-  `provision()` hole** (SEC-09).
+- `divert(lienId, usdcAmount)` — **Stream 2 (loss-side)**: supplies raw USDC into the senior pool crediting the
+  warehouse Safe (`eePool.deposit(amount, warehouseSafe)`, no zipUSD minted), **bounded by the live `provision()`
+  hole**, and retires that hole atomically via `settleFromJunior` — so the live read is always the remaining
+  budget (I-3). Funding procedure: `docs/solvency.md`.
 
 **The load-bearing free-value invariant, two-layer (§8 inv. 3):** (a) **policy ceiling** — spends debit
 `freeValueAccrued` and revert if it would go negative; (b) **hard backing** — the actual USDC is pulled from the
@@ -36,7 +37,7 @@ and operator-trusted** (layer (a) is policy, not cryptographic) — the §17 sin
 |---|---|---|
 | `creditFreeValue(amount)` | operator-only | unbounded ledger increment (the §17 trusted-writer residual) |
 | `recycle(usdcAmount)` | operator-only | debit-first, then approve→`ZipDepositModule.deposit`→reset; backed-mint into basket |
-| `divert(lienId, usdcAmount)` | operator-only | bounds-before-spend (`CoordinatorUnwired`/`NoHole`/`ExceedsHole`) → CEI debit → approve→`eePool.deposit(amount, warehouseSafe)`→reset; `BackingShortfall`/`NoSharesMinted` post-guards; then `DefaultCoordinator.settleFromJunior(lienId, amount*1e12)` retires the markdown atomically, `SettlementShortfall` on anything less than exact |
+| `divert(lienId, usdcAmount)` | operator-only | bounds-before-spend (`CoordinatorUnwired`/`NoHole`/`ExceedsHole`) → CEI debit → `DefaultCoordinator.settleFromJunior(lienId, amount*1e12)` retires the markdown FIRST (`SettlementShortfall` on anything less than exact; settle-first keeps `writeProvision`'s `_accumulate` sampling the true pre-divert spot, never the cash-gone/hole-open dip) → approve→`eePool.deposit(amount, warehouseSafe)`→reset; `BackingShortfall`/`NoSharesMinted` post-guards roll the WHOLE call back, settlement included, if the deposit misbehaves |
 | `setUp` + 7 × `setX` | `initializer` / `onlyOwner` | clone init; build-phase wiring (`setJuniorTrancheEngine` syncs `avatar`/`target`). The settlement coordinator is NOT wired here — `divert` reads it live off `SzipNavOracle.defaultCoordinator()`, so there is no second copy to drift |
 | `freeValueAccrued` | public state | the ledger. The SEC-09 epoch tally (`lastSeenProvision`/`divertedSinceProvisionChange`) was REMOVED 2026-08-02 with the F1 fix — see I-3 |
 
@@ -71,18 +72,20 @@ No permissionless mutators, no custody. `recycle`/`divert` route value only to t
 
 ## 5. Attack surfaces
 
-- **SEC-09 cumulative divert bound — the subtle property, tested thoroughly (I-3)** — `divert` can over-fill the
-  capital hole only across provision re-marks, never within an epoch. The 5-test SEC-09 suite proves: per-call passes
-  but cumulative over-fill reverts; exact fill (`sum*1e12 == hole`) is allowed and one-wei-over reverts;
-  reset-on-remark frees a fresh budget; and the **stale-value remark (`H→H'→H`) does NOT resurrect the old tally**
-  (the value-key bug the ticket forbids). This is the most careful invariant testing among the fleet drivers.
+- **Divert bound — the subtle property, tested thoroughly (I-3)** — since the F1 atomic-settle fix (2026-08-02)
+  each `divert` retires `provision()` by exactly what it paid via `settleFromJunior`, so the hole itself is the
+  cumulative budget and over-fill is impossible in any ordering. The bound suite proves: cumulative over-fill
+  reverts `ExceedsHole`; exact fill (`sum*1e12 == hole`) is allowed and one-wei-over reverts; the settle reduces
+  the provision by exactly the amount paid; an unwired coordinator reverts `CoordinatorUnwired`; a short apply
+  reverts `SettlementShortfall`. The old per-epoch tally, reset-on-remark, and stale-remark cases are gone with
+  the counter they defended.
 - **Two-layer free-value enforcement (I-1/I-2)** — the policy ceiling (debit-first) is operator-trusted, but the
   hard-backing guard (`BackingShortfall` — the Safe's USDC must fall by exactly `usdcAmount`) means even an
   over-credited accumulator cannot conjure value. Both layers tested. The §17 residual is real but bounded: an
   over-`creditFreeValue` can mis-route *real* free value, never *invent* it.
 - **No `ReentrancyGuard` — CEI instead (I-5)** — uniquely among stateful modules, reentrancy safety is the
-  effects-first decrement (clones can't run a guard ctor); `test_*_decrement_before_exec` proves the ledger + tally
-  update before the value-moving execs, so a reentrant spend can't double-spend. Sound and tested — but worth noting
+  effects-first decrement (clones can't run a guard ctor); `test_*_decrement_before_exec` proves the ledger
+  updates before the value-moving execs, so a reentrant spend can't double-spend. Sound and tested — but worth noting
   it's a structural argument, not a guard, so any future code that moves an `_exec` before the decrement would break it.
 - **3 wiring setters — now covered** — `test_wiring_setters_repoint_only_owner` exercises
   `setJuniorTrancheEngine`/`setZipDepositModule`/`setUsdc` for onlyOwner + zero-guard + effect + `WiringSet` event.
@@ -92,36 +95,37 @@ No permissionless mutators, no custody. `recycle`/`divert` route value only to t
   `divert` reads `juniorTrancheEngine` as the executor account for its `BackingShortfall` balance-delta guard (`:325/:332`),
   so a non-syncing re-point would have left that guard measuring a non-executing Safe (fail-closed DoS on `divert`,
   owner-only, build-phase). The sync is asserted in `test_wiring_setters_repoint_only_owner`.
-- **No Foundry stateful invariant on the ledger** — the conservation + SEC-09 properties are covered by deterministic
-  boundary tests rather than fuzzed interleavings. Lower-priority than ExitGate's was: the consequence is smaller
-  (mis-routing realized free value, not minting), and the tricky SEC-09 cases (exact/over/reset/stale-remark) are
-  explicitly tested. A fuzzed credit/recycle/divert+remark handler would add some assurance but isn't a clear gap.
+- **No Foundry stateful invariant on the ledger** — the conservation + divert-bound properties are covered by
+  deterministic boundary tests rather than fuzzed interleavings. Lower-priority than ExitGate's was: the consequence
+  is smaller (mis-routing realized free value, not minting), and the tricky bound cases (exact fill / one-wei-over /
+  settle-exactness) are explicitly tested. A fuzzed credit/recycle/divert handler would add some assurance but isn't
+  a clear gap.
 
 ## 6. Test analysis
 
 | Category | Count | Notes |
 |---|---|---|
-| Unit | 40 | setUp/guards, SEC-14/15, all 7 wiring setters (stream-2 trio + the `juniorTrancheEngine`/`zipDepositModule`/`usdc` trio), ledger credit/spend arithmetic + overspend, recycle exec-shape/decode/malformed/bubble, the full divert guard matrix (no-hole/exceeds-hole/backing-shortfall/no-shares/overflow/two-bounds/decrement-before-exec), the **5-test SEC-09 cumulative-bound suite**, shared-ledger interaction |
+| Unit | 40 | setUp/guards, SEC-14/15, all 7 wiring setters (stream-2 trio + the `juniorTrancheEngine`/`zipDepositModule`/`usdc` trio), ledger credit/spend arithmetic + overspend, recycle exec-shape/decode/malformed/bubble, the full divert guard matrix (no-hole/exceeds-hole/backing-shortfall/no-shares/overflow/two-bounds/decrement-before-exec/coordinator-unwired/nothing-settles), the divert bound + atomic-settle suite, shared-ledger interaction |
 | Base-fork | 2 | `test_fork_recycle_against_real_safe`, `test_fork_divert_against_real_safe` (real summoned Safe driving the actual deposit/eePool legs) |
-| Stateless fuzz / Foundry invariant | 0 | the conservation + SEC-09 bounds are covered by deterministic boundary tests; a fuzzed handler is optional, not a clear gap |
+| Stateless fuzz / Foundry invariant | 0 | the conservation + divert bounds are covered by deterministic boundary tests; a fuzzed handler is optional, not a clear gap |
 
-All **42 pass** (`forge test --match-path test/RecycleModule.t.sol`). The decisive properties (ledger conservation,
-two-layer enforcement, the SEC-09 cumulative bound, CEI ordering) are tested unit + fork. Coverage % uninstrumentable
-(project-wide stack-too-deep); green run confirmed.
+All **42 pass** (`forge test --match-path test/supply/szipUSD/RecycleModule.t.sol`). The decisive properties (ledger
+conservation, two-layer enforcement, the hole-is-the-budget divert bound, CEI ordering) are tested unit + fork.
+Coverage % uninstrumentable (project-wide stack-too-deep); green run confirmed.
 
 ## X-Ray Verdict
 
 **ADEQUATE** — the most stateful fleet module, and its state is well-defended: the free-value ledger conservation,
-the two-layer (policy + hard-backing) free-value enforcement, the CEI reentrancy argument, and especially the SEC-09
-cumulative-divert bound (with the exact-fill / reset / stale-remark edge cases) are all tested, unit + fork. **Every
-mutator is now exercised** (all 7 setters + the 3 legs + `creditFreeValue`; the 3-setter gap was filled).
+the two-layer (policy + hard-backing) free-value enforcement, the CEI reentrancy argument, and especially the
+atomic-settle divert bound (with the exact-fill / one-wei-over / settle-exactness edge cases) are all tested, unit +
+fork. **Every mutator is now exercised** (all 7 setters + the 3 legs + `creditFreeValue`; the 3-setter gap was filled).
 Capped at ADEQUATE by: the §17 `creditFreeValue` operator-trust residual (bounded by hard-backing, not eliminated),
 no Foundry stateful invariant on the ledger (optional — boundary cases are covered deterministically), and the
 build-phase mutable wiring pending the pre-prod re-freeze — none a coverage gap.
 
 **Structural facts:**
 1. 165 nSLOC; clone (`MastercopyInitLock` + `initializer`, no immutable); **no `ReentrancyGuard`** — CEI/effects-first instead; the only engine module with real mutable state.
-2. One owned ledger (`freeValueAccrued`); two sinks (`recycle` NAV-accretion + `divert` Stream-2), both debit it; `divert` bounded cumulatively by the live `provision()` (SEC-09, reset-on-remark).
+2. One owned ledger (`freeValueAccrued`); two sinks (`recycle` NAV-accretion + `divert` Stream-2), both debit it; `divert` bounded by the live `provision()`, which it retires atomically via `settleFromJunior` (the hole is the budget).
 3. Two-layer free-value guarantee: policy ceiling (debit-first) + hard backing (`BackingShortfall` — exact USDC pull); `creditFreeValue` unbounded/operator-trusted (§17).
-4. Tests: 40 unit + 2 base-fork (0 fuzz/invariant); every mutator exercised; the SEC-09 cumulative bound has a dedicated 5-test suite.
+4. Tests: 40 unit + 2 base-fork (0 fuzz/invariant); every mutator exercised; the divert bound + atomic settle has a dedicated suite.
 5. No outstanding coverage gap on the contract surface; residuals are off-chain (the §17 `creditFreeValue` trust, the pre-prod wiring re-freeze) + an optional ledger stateful invariant.

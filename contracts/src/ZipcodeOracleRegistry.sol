@@ -109,16 +109,22 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
     }
 
     /// @notice Origination/draw seed (§4.4a/a'): the controller writes a single lien's mark inside its atomic batch,
-    ///         stamped with the equity mark's APPRAISAL SOURCE ts (SEC/L-3) — the SAME clock the Forwarder revaluation
-    ///         (rt-3, `_processReport`) stamps. This makes the strictly-newer `_writePrice` guard order controller
-    ///         seeds and revaluations UNIFORMLY: a stale (out-of-order) seed carrying an older appraisal now reverts
-    ///         `StaleReport` instead of clobbering a newer revaluation, because it no longer wins on wall-clock alone.
-    ///         The producer supplies `ts` (the equityMark's appraisal time); the `_writePrice` `FutureTimestamp` guard
-    ///         rejects `ts > now`, and read-staleness (`getQuote`) is unaffected — a draw's appraisal is fresh by
-    ///         construction (minutes old vs the line-term `validityWindow`).
+    ///         stamped with the equity mark's measured-at time (SEC/L-3). This path is NOT ordered against the
+    ///         revaluation path — the seed always writes, and the most recent write is the mark.
+    /// @dev NOT one clock, and it never was. `_processReport` stamps one DON `runtime.Now()` per sweep
+    ///      (`cre/revaluation/workflow.go`); this carries the mark's measured-at time, supplied on the producer
+    ///      payload (`cre/controller/README.md`: "appraisal as-of time … NOT emit time"). SEC/L-3 originally fed
+    ///      both into one strictly-newer guard, which ordered them by when each was MEASURED rather than by which
+    ///      arrived last: a draw carrying a mark older than the last sweep's run time reverted `StaleReport` and
+    ///      rolled back the whole draw. That is the same false-revert-on-sequential-draws failure the auditor's own
+    ///      proposed fix was rejected for. The guard now lives in `_processReport` only. Ordering here is enforced
+    ///      by the transaction — `onlyController`, inside the controller's atomic batch — and rests on the same CRE
+    ///      that supplies the mark in the first place. `ts` still gates `FutureTimestamp` and is the instant
+    ///      `_getQuote` counts `validityWindow` from, so a mark measured long ago expires sooner, which is the safe
+    ///      direction.
     /// @param lien The lien token (oracle key).
     /// @param price The equity mark, in the quote asset's native units.
-    /// @param ts The appraisal source timestamp (same clock as rt-3), NOT `block.timestamp`.
+    /// @param ts The mark's measured-at timestamp, NOT `block.timestamp` and NOT the revaluation clock.
     function seedPrice(address lien, uint256 price, uint48 ts) external {
         if (msg.sender != controller) revert NotController();
         _writePrice(lien, price, ts);
@@ -141,17 +147,29 @@ contract ZipcodeOracleRegistry is ReceiverTemplate, BaseAdapter {
             abi.decode(payload, (address[], uint256[], uint32));
         if (liens.length != prices.length) revert LengthMismatch();
         for (uint256 i = 0; i < liens.length; i++) {
+            // SEC-01 strictly-newer, applied to THIS path only (see `_writePrice`). The producer stamps one DON
+            // `runtime.Now()` per sweep (`cre/revaluation/workflow.go`), so revaluations are monotonic against each
+            // other and this rejects a replayed or out-of-order shard.
+            if (uint48(ts) <= cache[liens[i]].timestamp) revert StaleReport();
             _writePrice(liens[i], prices[i], uint48(ts));
             emit RegistryPriceUpdated(liens[i], prices[i], uint48(ts));
         }
     }
 
     /// @notice Shared write guards (fail-closed): price != 0, price <= uint208.max, ts <= now, decimals() == 18.
+    /// @dev NO strictly-newer check here — it lives in `_processReport` and applies to REVALUATIONS ONLY. The two
+    ///      write paths do not share a clock: `_processReport` stamps one DON `runtime.Now()` per sweep, while
+    ///      `seedPrice` carries the equity mark's measured-at time. Ordering both by that one number ordered them by
+    ///      when each was MEASURED, not by which arrived last, so a draw whose mark predated the last sweep's run
+    ///      time reverted `StaleReport` and rolled back the whole origination/draw batch — a fail-closed liveness
+    ///      break on the revolving product. `seedPrice` is `onlyController` and runs inside the controller's atomic
+    ///      batch, so its ordering is already enforced by the transaction; letting it always write restores the
+    ///      pre-SEC/L-3 behaviour (the seed then stamped `block.timestamp`, which always won) without giving up the
+    ///      measured-at time, which `_getQuote` still counts `validityWindow` from.
     function _writePrice(address lien, uint256 price, uint48 ts) internal {
         if (price == 0) revert Errors.PriceOracle_InvalidAnswer();
         if (price > type(uint208).max) revert Errors.PriceOracle_Overflow();
         if (ts > block.timestamp) revert FutureTimestamp();
-        if (ts <= cache[lien].timestamp) revert StaleReport(); // strictly-newer (first write: timestamp==0 passes); covers seedPrice clobber + out-of-order rt-3
         if (_strictDecimals(lien) != LIEN_DECIMALS) revert InvalidLienDecimals(lien);
         cache[lien] = Cache({price: uint208(price), timestamp: ts});
     }

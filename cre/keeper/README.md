@@ -89,7 +89,7 @@ the global-wind-down `unstake` → `removeLiquidity` feeder on `LpStrategyModule
 the one engine leg with no off-chain caller otherwise. It is **disarmed by default**
 and armed only by `KEEPER_WINDDOWN_ENABLED`. Per tick it dissolves a
 **coverage-excess-bounded** slice: the burn `shares` is sized to the largest amount
-`coverageGate.lpBurnKeepsCovered(shares)` still blesses (binary-searched on that
+the live `stakedBalance()` clamped to `maxSlice` (the coverage-excess binary search was removed 2026-08-04 with the on-chain gate; that
 monotonic predicate), clamped to the live `stakedBalance()` and the optional
 `KEEPER_WINDDOWN_MAX_SLICE` cap. The withdraw floor (`minAmount0/1`) is the
 pro-rata expected at current reserves cushioned down by `KEEPER_CUSHION_BPS`, and a

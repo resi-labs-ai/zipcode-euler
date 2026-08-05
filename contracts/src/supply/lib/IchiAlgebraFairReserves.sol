@@ -40,6 +40,18 @@ library IchiAlgebraFairReserves {
     ///         exists to price out — an attacker must otherwise hold a displaced price against arbitrage for a
     ///         large fraction of the window, bleeding capital to the (vault-owned) counter-side.
     error LpTwapHistoryTooShort(address plugin, uint256 readyAt);
+    /// @notice The plugin has ample history but has recorded NOTHING inside the requested window, so the average
+    ///         would be built entirely by extrapolation and equal the current tick exactly. `LpTwapHistoryTooShort`
+    ///         guards the OPPOSITE end of the ring (too little history, self-healing); this guards the near end
+    ///         (history exists but has gone stale, which does NOT self-heal — the gap only grows). Algebra's
+    ///         `getTimepoints` extrapolates BOTH requested endpoints from the newest stored timepoint using the
+    ///         pool's live tick, so with nothing inside the window `cum(now) - cum(now-window) == tick * window` and
+    ///         `_meanTick` returns spot with zero averaging — the manipulation-resistance this library exists for is
+    ///         silently gone while `historyStatus` still reports ready. Reachable if the pool stops writing
+    ///         timepoints: `pluginConfig`'s before-swap bit is a live Hydrex-controlled bitmask, and clearing it
+    ///         leaves the plugin attached and initialized while no swap records a price. Carries the newest stored
+    ///         timestamp so a halted caller can see how far behind the feed is.
+    error LpTwapNoRecentTimepoint(address plugin, uint256 newest);
 
     /// @notice Reconstruct the vault's `(amount0, amount1)` at the `window`-second TWAP tick (fair, manipulation-
     ///         resistant), and return that mean tick. Reverts `NoPlugin` if the pool exposes no TWAP plugin.
@@ -64,8 +76,14 @@ library IchiAlgebraFairReserves {
         // `getTimepoints` revert on a predating request remains as defense-in-depth behind this gate.
         {
             // scoped: keeps the reserve-reconstruction frame below the stack limit
-            uint256 readyAt = uint256(_oldestTimestamp(plugin)) + window;
+            (uint32 oldest, uint32 newest) = _ringBounds(plugin);
+            uint256 readyAt = uint256(oldest) + window;
             if (block.timestamp < readyAt) revert LpTwapHistoryTooShort(plugin, readyAt);
+            // Freshness gate (the near end of the ring): at least ONE timepoint must fall inside the window,
+            // otherwise both endpoints are extrapolated from `newest` at the live tick and the mean IS spot.
+            // Derived from `window` rather than a separate tunable — a pool liquid enough to collateralise
+            // against trades at least once per window, and a quieter one should halt, not price off spot.
+            if (uint256(newest) + window <= block.timestamp) revert LpTwapNoRecentTimepoint(plugin, newest);
         }
 
         meanTick = _meanTick(plugin, window);
@@ -98,11 +116,14 @@ library IchiAlgebraFairReserves {
         amount1 += IERC20(IICHIVault(vault).token1()).balanceOf(vault);
     }
 
-    /// @notice Non-reverting status probe of the history-depth gate — the "is the TWAP halted, and until when"
-    ///         surface CRE (`cre/buyburn-bid`) and front-ends poll instead of decoding reverts. `ready == false`
-    ///         means `fairReserves`-based reads currently revert: `LpTwapHistoryTooShort(plugin, readyAt)` when a
-    ///         replaced plugin is still re-accumulating (resumes unaided at `readyAt`), or `NoPlugin`/
-    ///         `PluginNotReady` when `readyAt == 0` (no ETA — the pool has no initialized plugin at all).
+    /// @notice Non-reverting status probe of both history gates — the "is the TWAP halted, and until when" surface
+    ///         CRE (`cre/buyburn-bid`) and front-ends poll instead of decoding reverts. `ready == false` means
+    ///         `fairReserves`-based reads currently revert: `LpTwapHistoryTooShort(plugin, readyAt)` when a replaced
+    ///         plugin is still re-accumulating (resumes unaided at `readyAt`), `LpTwapNoRecentTimepoint` when the
+    ///         feed has gone quiet (does NOT resume unaided — `readyAt` is meaningless there and is returned as the
+    ///         coverage figure only), or `NoPlugin`/`PluginNotReady` when `readyAt == 0` (no ETA — the pool has no
+    ///         initialized plugin at all). Both gates must be mirrored here or the probe reports healthy on the one
+    ///         state a collateral oracle most needs flagged.
     function historyStatus(address vault, uint32 window)
         internal
         view
@@ -111,22 +132,27 @@ library IchiAlgebraFairReserves {
         address pool = IICHIVault(vault).pool();
         plugin = IAlgebraPool(pool).plugin();
         if (plugin == address(0) || !IAlgebraOraclePlugin(plugin).isInitialized()) return (false, plugin, 0);
-        readyAt = uint256(_oldestTimestamp(plugin)) + window;
-        ready = block.timestamp >= readyAt;
+        (uint32 oldest, uint32 newest) = _ringBounds(plugin);
+        readyAt = uint256(oldest) + window;
+        ready = block.timestamp >= readyAt && uint256(newest) + window > block.timestamp;
     }
 
-    /// @dev The timestamp of the plugin's OLDEST stored timepoint. The 65536-slot ring buffer is written in order:
-    ///      before wrap the oldest is slot 0; after wrap it is the slot just ahead of the write head
-    ///      (`timepointIndex + 1`, uint16-wrapping) — that slot's `initialized` flag IS the wrapped test.
-    function _oldestTimestamp(address plugin) private view returns (uint32 ts) {
+    /// @dev Both ends of the plugin's stored history. The 65536-slot ring buffer is written in order, so the write
+    ///      head (`timepointIndex`) is always the NEWEST; the oldest is slot 0 before wrap, or the slot just ahead
+    ///      of the head (`timepointIndex + 1`, uint16-wrapping) after — that slot's `initialized` flag IS the
+    ///      wrapped test. Both ends matter and for opposite reasons: `oldest` says whether the window is COVERED,
+    ///      `newest` says whether it is POPULATED. `prepayTimepointsStorageSlots` writes `blockTimestamp` without
+    ///      `initialized`, so it cannot fool the wrap test.
+    function _ringBounds(address plugin) private view returns (uint32 oldest, uint32 newest) {
         uint16 head = IAlgebraOraclePlugin(plugin).timepointIndex();
         uint16 next;
         unchecked {
             next = head + 1; // ring arithmetic: 65535 + 1 wraps to 0 on purpose
         }
+        (, newest,,,,,) = IAlgebraOraclePlugin(plugin).timepoints(head);
         (bool wrapped, uint32 nextTs,,,,,) = IAlgebraOraclePlugin(plugin).timepoints(next);
-        if (wrapped) return nextTs;
-        (, ts,,,,,) = IAlgebraOraclePlugin(plugin).timepoints(0);
+        if (wrapped) return (nextTs, newest);
+        (, oldest,,,,,) = IAlgebraOraclePlugin(plugin).timepoints(0);
     }
 
     /// @notice The arithmetic-mean tick over `[now - window, now]` from the Algebra plugin, rounded toward negative
