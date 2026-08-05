@@ -15,6 +15,13 @@
 // maxWithdraw). An undercovered or reserve-starved pool has availP == 0 ⇒ weight 0 ⇒ it is skipped automatically;
 // "starved/undercovered pool is skipped" falls out of the weight, not a special case.
 //
+// availP IS FLOORED AT 0 EXPLICITLY (CRE-ADV-01) — do not rely on clampF alone. A pool whose freeReservoir cannot
+// cover its own HarvestReserve + SafetyBuffer produces a NEGATIVE difference, and the "MaxRedeemPerTick unset ⇒ no
+// upper clamp" idiom installs that negative as its own ceiling, so clampF returned it. A negative availP is skipped
+// from the pro-rata NUMERATOR but was still summed into the totalAvail DENOMINATOR, understating it and
+// over-weighting every healthy pool — Σ funded EXCEEDED the shortfall (1 healthy + 4 starved turned a 1200
+// shortfall into 1500 funded). Regression: TestSolverStarvedPoolDoesNotInflateProRata.
+//
 // THE JOIN (the registry gap — a config seam, not back-pressure). SiloRegistry.Silo has NO warehouseAdminModule
 // field, so the silo→WAM binding is config (cfg.Warehouses) joined by warehouseSafe: for each WAM read its
 // warehouseSafe() once and pair it to the active registry silo with the matching warehouseSafe (1:1 — one Safe
@@ -195,11 +202,19 @@ func onSolverTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, 
 			return struct{}{}, err
 		}
 
-		// (5) availP = covered ? clamp(freeReservoir − HarvestReserve − SafetyBuffer, 0, MaxRedeemPerTick) : 0.
+		// (5) availP = covered ? clamp(max(0, freeReservoir − HarvestReserve − SafetyBuffer), 0, MaxRedeemPerTick) : 0.
 		// MaxRedeemPerTick == 0 ⇒ no upper clamp. PER-POOL knobs reused from CRE-02b (applied per pool identically).
+		// availP is ALWAYS >= 0 — a starved pool contributes weight 0, never a negative (CRE-ADV-01; see the header).
 		availP := big.NewInt(0)
 		if covered {
 			a := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, mustBigF(cfg.HarvestReserve)), mustBigF(cfg.SafetyBuffer))
+			// Floor at 0 BEFORE choosing the ceiling (CRE-ADV-01). A pool whose freeReservoir cannot cover its own
+			// reserves yields a NEGATIVE a; the "no upper clamp" branch would install that negative as the ceiling,
+			// clampF would return it, and the negative would then SHRINK totalAvail below — understating the
+			// pro-rata denominator and over-weighting every healthy pool (Σ funded > shortfall).
+			if a.Sign() < 0 {
+				a = big.NewInt(0)
+			}
 			hi := mustBigF(cfg.MaxRedeemPerTick)
 			if hi.Sign() <= 0 {
 				hi = a
@@ -234,6 +249,10 @@ func onSolverTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, 
 	// Per pool: redeemAssetsP = floor(redeemTarget · availP / totalAvail) (integer floor ⇒ Σ ≤ redeemTarget,
 	// conservative; redeemAssetsP ≤ availP because availP/totalAvail ≤ 1 and redeemTarget ≤ totalAvail). totalAvail
 	// == 0 ⇒ no REDEEM (every pool starved/undercovered).
+	//
+	// The Σ ≤ redeemTarget claim above holds ONLY because every availP is >= 0 (CRE-ADV-01). It is a sum over a
+	// subset of the same terms that form the denominator; a single negative term would break that identity by
+	// shrinking the denominator without shrinking the numerator set.
 	totalAvail := big.NewInt(0)
 	for _, p := range pools {
 		totalAvail = new(big.Int).Add(totalAvail, p.availP)
@@ -323,7 +342,7 @@ func getSilo(client *evm.Client, runtime cre.Runtime, registry common.Address, i
 // decodeSilo extracts {warehouseSafe, eePool, freeze, active} from the getSilo(bytes32) reply by WORD OFFSET (P1
 // — the load-bearing pin). The Silo tuple is 11 fully-static fields (9 × address, uint16 lineCount, bool active)
 // ⇒ a fully-static, inline-encoded 11-word blob: len == 352 (11 × 32), NO leading offset word, field i at word i.
-// Field order (SiloRegistry.sol:82-95): adapter(0), warehouseSafe(1), eePool(2), juniorBasket(3), escrow(4),
+// Field order (SiloRegistry.sol:85-98): adapter(0), warehouseSafe(1), eePool(2), juniorBasket(3), escrow(4),
 // defaultCoordinator(5), navOracle(6), freeze(7), curator(8), lineCount(9), active(10).
 func decodeSilo(data []byte) (safe, eePool, freeze common.Address, active bool, ok bool) {
 	if len(data) < 352 {

@@ -15,8 +15,10 @@
 //	3. scaleUp == 0                   ⇒ no-op (malformed/unwired queue; mirrors RedemptionJob).
 //	4. shortfall = max(0, totalPending/scaleUp − (usdc.balanceOf(queue) − reservedAssets)). 0 ⇒ no funding.
 //	5. REPAY leg (NOT coverage-gated — moves cash the Safe already holds): repayAmt = min(safeUsdc, shortfall).
-//	6. REDEEM leg (reserve/coverage-gated): avail = clamp(maxWithdraw(safe) − harvestReserve − safetyBuffer, 0,
-//	   maxRedeemPerTick); floor = covered ? avail : 0; redeemAssets = min(shortfall − repayAmt, floor);
+//	6. REDEEM leg (reserve/coverage-gated): avail = clamp(max(0, maxWithdraw(safe) − harvestReserve −
+//	   safetyBuffer), 0, maxRedeemPerTick) — the max(0, …) is explicit, NOT left to clampF (CRE-ADV-01: the
+//	   "maxRedeemPerTick unset ⇒ no upper clamp" idiom makes a negative its own ceiling, which clampF returned);
+//	   floor = covered ? avail : 0; redeemAssets = min(shortfall − repayAmt, floor);
 //	   redeemShares = redeemAssets · totalShares / navAssets (ERC-4626 convertToAssets ratio; integer floor ⇒
 //	   conservative, never over-redeems).
 //	7. Order: REPAY then REDEEM — each sized off the SAME pre-tick reads; order is for clarity/abort-safety.
@@ -159,10 +161,18 @@ func onFundingTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{},
 	// engine) is funded by reallocating idle USDC from the resting-USDC market into the "farm utility vault" it
 	// borrows from; if this worker drains the resting-USDC market to fund redemptions, that path starves and yield
 	// can no longer be transmuted into the juniorTrancheSafe. So to always keep ~$25k of working room for the
-	// exercise, set HarvestReserve to 25_000_000000 ($25k at 6-dp USDC). DEFAULT 0 ⇒ no cushion: any idle USDC is fully
+	// exercise, set HarvestReserve to 25000000000 ($25k at 6-dp USDC). WRITE IT WITHOUT DIGIT SEPARATORS: mustBigF
+	// parses with base 10, and Go's math/big accepts `_` separators ONLY at base 0 — "25_000_000000" parses as
+	// FAILED and mustBigF silently returns 0, i.e. NO CUSHION. Same trap for SafetyBuffer, and for MaxRedeemPerTick
+	// where 0 is not a zero ceiling but the "no upper clamp at all" sentinel. DEFAULT 0 ⇒ no cushion: any idle USDC is fully
 	// redeemable and paid out toward the CoW order book. (SafetyBuffer is an additional general ops buffer, same
 	// units, also default 0.)
 	avail := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, mustBigF(cfg.HarvestReserve)), mustBigF(cfg.SafetyBuffer))
+	// Floor at 0 BEFORE choosing the ceiling (CRE-ADV-01): a starved reservoir makes this negative, and the
+	// "no upper clamp" branch below would otherwise install that negative AS the ceiling.
+	if avail.Sign() < 0 {
+		avail = big.NewInt(0)
+	}
 	hi := mustBigF(cfg.MaxRedeemPerTick)
 	if hi.Sign() <= 0 {
 		hi = avail // maxRedeemPerTick == 0 (or unset) ⇒ no upper clamp by this knob
@@ -324,7 +334,15 @@ func decodeUintF(data []byte) (*big.Int, error) {
 // ──────────────────────────────────────────────────────────────────── sizing helpers
 
 // clampF(v, lo, hi) = min(max(v, lo), hi). Cloned from buyburn-bid's clamp.
+//
+// DEGENERATE RANGE (CRE-ADV-01): lo/hi are caller-supplied and the "no upper clamp" idiom passes the value as
+// its own ceiling, so hi < lo is constructible whenever the value is negative (a pool too poor to cover its own
+// HarvestReserve + SafetyBuffer). Applying lo then hi unconditionally would let the ceiling UNDO the floor and
+// return a negative. The floor wins: a clamp must never return below its own lo.
 func clampF(v, lo, hi *big.Int) *big.Int {
+	if hi.Cmp(lo) < 0 {
+		return new(big.Int).Set(lo)
+	}
 	out := new(big.Int).Set(v)
 	if out.Cmp(lo) < 0 {
 		out.Set(lo)

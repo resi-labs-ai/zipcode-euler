@@ -8,7 +8,8 @@
 //	(a) a starved pool (freeReservoir ≤ reserves ⇒ availP=0) AND an undercovered pool (covered=false ⇒ availP=0)
 //	    each get ZERO redeem and are skipped;
 //	(b) the REDEEM split matches pro-rata: two healthy pools with availP 3:1 split the redeem 3:1 (modulo floor);
-//	(c) Σ repaidP + Σ redeemAssetsP ≤ shortfall;
+//	(c) Σ repaidP + Σ redeemAssetsP ≤ shortfall — including when a starved-but-COVERED pool is present and
+//	    remaining < totalAvail, the case that exposed CRE-ADV-01 (TestSolverStarvedPoolDoesNotInflateProRata);
 //	(d) redeemAssetsP ≤ availP for every pool;
 //	(e) SolverEnabled=false ⇒ ZERO reads, ZERO writes; empty Warehouses / no active silos / no shortfall ⇒ no writes;
 //	(f) each REDEEM/REPAY is written to the CORRECT per-silo WAM (the warehouseSafe join routes correctly).
@@ -471,5 +472,59 @@ func TestSolverAllStarvedNoRedeem(t *testing.T) {
 	out := runSolver(t, cfg, shortfallQueue(5_000_000_000), silos)
 	if len(out) != 0 {
 		t.Fatalf("all starved/undercovered + no safe USDC: expected 0 writes, got %d", len(out))
+	}
+}
+
+// ───────────────────────────────────── CRE-ADV-01: mixed healthy + starved-BUT-COVERED, remaining < totalAvail
+//
+// The regression the pro-rata suite missed. TestSolverProRataSplitAndSkips also builds a starved-covered pool
+// (p3), but its remaining (4900) EXCEEDS totalAvail, so redeemTarget is clamped to totalAvail and the pro-rata
+// ratio collapses to exactly availP — masking a negative availP entirely. The break needs remaining < totalAvail.
+//
+// Pre-fix, a starved-covered pool took availP = clampF(negative, 0, negative) = NEGATIVE (the "no upper clamp"
+// branch installed the negative value as its own ceiling), which SHRANK the totalAvail denominator while being
+// skipped from the numerator. One healthy pool + four drained ones turned a 1200 shortfall into 1500 funded.
+func TestSolverStarvedPoolDoesNotInflateProRata(t *testing.T) {
+	healthy := pool(0x01, 0x01, true, true, 0, 3_150_000_000) // availP = 3150 − 150 = 3000
+	silos := []siloMock{healthy}
+	for i := byte(2); i <= 5; i++ {
+		silos = append(silos, pool(i, i, true, true, 0, 0)) // COVERED but 0 < 150 reserves ⇒ availP must be 0
+	}
+	cfg := solverConfig(wamsOf(silos))
+
+	const shortfall = int64(1_200_000_000) // < totalAvail(3000) — the case the suite never exercised
+	out := runSolver(t, cfg, shortfallQueue(shortfall), silos)
+
+	// Only the healthy pool may be written to; a starved pool has nothing to give.
+	if len(out) != 1 {
+		t.Fatalf("expected exactly 1 write (healthy REDEEM), got %d", len(out))
+	}
+	if out[0].wam != healthy.wam {
+		t.Fatalf("write routed to %s, want healthy WAM %s", out[0].wam.Hex(), healthy.wam.Hex())
+	}
+
+	// Σ redeemAssets must never exceed the shortfall (K5 invariant (c)).
+	shares := decodeRedeemEnv(t, out[0].env)
+	assets := new(big.Int).Div(new(big.Int).Mul(shares, healthy.nav), healthy.shares)
+	if assets.Cmp(big.NewInt(shortfall)) > 0 {
+		t.Fatalf("conservation broken: funded %s > shortfall %d", assets, shortfall)
+	}
+	if assets.Cmp(big.NewInt(shortfall)) != 0 {
+		t.Fatalf("expected the healthy pool to cover the whole shortfall exactly: got %s want %d", assets, shortfall)
+	}
+}
+
+// clampF must never return below its own floor, however degenerate the range (CRE-ADV-01).
+func TestClampFNeverReturnsBelowFloor(t *testing.T) {
+	neg := big.NewInt(-30_000_000)
+	if got := clampF(neg, big.NewInt(0), neg); got.Sign() < 0 {
+		t.Fatalf("clampF(%s, 0, %s) = %s — returned below its floor", neg, neg, got)
+	}
+	// Non-degenerate ranges are unchanged.
+	if got := clampF(big.NewInt(500), big.NewInt(0), big.NewInt(100)); got.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("clampF(500, 0, 100) = %s want 100", got)
+	}
+	if got := clampF(big.NewInt(50), big.NewInt(0), big.NewInt(100)); got.Cmp(big.NewInt(50)) != 0 {
+		t.Fatalf("clampF(50, 0, 100) = %s want 50", got)
 	}
 }
