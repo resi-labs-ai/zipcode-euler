@@ -28,12 +28,13 @@
 // per silo). A WAM with no matching active silo, or an active silo with no mapped WAM, is skipped + logged.
 //
 // REUSE: every read helper (readAddr/readUint/readUintWithAddr/readUintWithArg/readBool/callF/selectorF/
-// decodeUintF) and sizing helper (clampF/bigMin/mustBigF) lives in funding.go; the encoders buildRedeem/buildRepay
+// decodeUintF) and sizing helper (clampF/bigMin/parseSizingKnobs) lives in funding.go; the encoders buildRedeem/buildRepay
 // live in workflow.go; the write path generalizes to writeReportTo (workflow.go). This file adds only the
 // registry decode (readSiloIds / getSilo / decodeSilo) and the solver tick.
 package main
 
 import (
+	"fmt"
 	"math/big"
 	"strings"
 
@@ -75,6 +76,13 @@ func onSolverTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, 
 	if strings.TrimSpace(cfg.SiloRegistry) == "" || len(cfg.Warehouses) == 0 {
 		logger.Info("warehouse solver: no-op (registry unset or no warehouses)")
 		return struct{}{}, nil
+	}
+	// Parse the sizing knobs BEFORE any CallContract (CRE-ADV-01 part b). Parsed ONCE and applied per pool, so
+	// every silo is measured against the identical cushion — a mid-loop reparse could not diverge, but a
+	// mid-loop FAILURE would leave earlier pools already written. Abort before the first read instead.
+	knobs, err := parseSizingKnobs(cfg)
+	if err != nil {
+		return struct{}{}, fmt.Errorf("warehouse solver: config: %w", err)
 	}
 
 	client := &evm.Client{ChainSelector: cfg.ChainSelector}
@@ -207,7 +215,7 @@ func onSolverTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, 
 		// availP is ALWAYS >= 0 — a starved pool contributes weight 0, never a negative (CRE-ADV-01; see the header).
 		availP := big.NewInt(0)
 		if covered {
-			a := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, mustBigF(cfg.HarvestReserve)), mustBigF(cfg.SafetyBuffer))
+			a := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, knobs.harvestReserve), knobs.safetyBuffer)
 			// Floor at 0 BEFORE choosing the ceiling (CRE-ADV-01). A pool whose freeReservoir cannot cover its own
 			// reserves yields a NEGATIVE a; the "no upper clamp" branch would install that negative as the ceiling,
 			// clampF would return it, and the negative would then SHRINK totalAvail below — understating the
@@ -215,7 +223,7 @@ func onSolverTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{}, 
 			if a.Sign() < 0 {
 				a = big.NewInt(0)
 			}
-			hi := mustBigF(cfg.MaxRedeemPerTick)
+			hi := knobs.maxRedeemPerTick
 			if hi.Sign() <= 0 {
 				hi = a
 			}

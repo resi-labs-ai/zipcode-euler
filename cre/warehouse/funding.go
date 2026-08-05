@@ -10,18 +10,18 @@
 // One tick (stateless / idempotent, like the keeper's RedemptionJob — no cross-tick state, no EMA, no stored
 // target; the cycle is self-healing so a partial or manual firing is always safe):
 //
-//	1. FundingEnabled == false        ⇒ no-op (return before any read).
-//	2. Resolve safe/eePool/usdc/queue OFF the warehouse adapter (re-pointable, §17). Any zero ⇒ no-op.
-//	3. scaleUp == 0                   ⇒ no-op (malformed/unwired queue; mirrors RedemptionJob).
-//	4. shortfall = max(0, totalPending/scaleUp − (usdc.balanceOf(queue) − reservedAssets)). 0 ⇒ no funding.
-//	5. REPAY leg (NOT coverage-gated — moves cash the Safe already holds): repayAmt = min(safeUsdc, shortfall).
-//	6. REDEEM leg (reserve/coverage-gated): avail = clamp(max(0, maxWithdraw(safe) − harvestReserve −
-//	   safetyBuffer), 0, maxRedeemPerTick) — the max(0, …) is explicit, NOT left to clampF (CRE-ADV-01: the
-//	   "maxRedeemPerTick unset ⇒ no upper clamp" idiom makes a negative its own ceiling, which clampF returned);
-//	   floor = covered ? avail : 0; redeemAssets = min(shortfall − repayAmt, floor);
-//	   redeemShares = redeemAssets · totalShares / navAssets (ERC-4626 convertToAssets ratio; integer floor ⇒
-//	   conservative, never over-redeems).
-//	7. Order: REPAY then REDEEM — each sized off the SAME pre-tick reads; order is for clarity/abort-safety.
+//  1. FundingEnabled == false        ⇒ no-op (return before any read).
+//  2. Resolve safe/eePool/usdc/queue OFF the warehouse adapter (re-pointable, §17). Any zero ⇒ no-op.
+//  3. scaleUp == 0                   ⇒ no-op (malformed/unwired queue; mirrors RedemptionJob).
+//  4. shortfall = max(0, totalPending/scaleUp − (usdc.balanceOf(queue) − reservedAssets)). 0 ⇒ no funding.
+//  5. REPAY leg (NOT coverage-gated — moves cash the Safe already holds): repayAmt = min(safeUsdc, shortfall).
+//  6. REDEEM leg (reserve/coverage-gated): avail = clamp(max(0, maxWithdraw(safe) − harvestReserve −
+//     safetyBuffer), 0, maxRedeemPerTick) — the max(0, …) is explicit, NOT left to clampF (CRE-ADV-01: the
+//     "maxRedeemPerTick unset ⇒ no upper clamp" idiom makes a negative its own ceiling, which clampF returned);
+//     floor = covered ? avail : 0; redeemAssets = min(shortfall − repayAmt, floor);
+//     redeemShares = redeemAssets · totalShares / navAssets (ERC-4626 convertToAssets ratio; integer floor ⇒
+//     conservative, never over-redeems).
+//  7. Order: REPAY then REDEEM — each sized off the SAME pre-tick reads; order is for clarity/abort-safety.
 //
 // Utilization U is NOT read via a bespoke getter (FINDING): there is no separate U getter, and introducing one
 // would fight the freeze over the same cash. U is captured by maxWithdraw(safe) through the reserve math — high U
@@ -34,6 +34,7 @@
 package main
 
 import (
+	"fmt"
 	"math/big"
 	"strings"
 
@@ -67,6 +68,12 @@ func onFundingTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{},
 	if strings.TrimSpace(cfg.Warehouse) == "" {
 		logger.Info("warehouse funding: no-op (warehouse unset)")
 		return struct{}{}, nil
+	}
+	// Parse the sizing knobs BEFORE any CallContract (CRE-ADV-01 part b): a typo'd reserve must abort the tick
+	// with zero reads and zero writes, never degrade to a permissive 0 mid-arithmetic.
+	knobs, err := parseSizingKnobs(cfg)
+	if err != nil {
+		return struct{}{}, fmt.Errorf("warehouse funding: config: %w", err)
 	}
 
 	client := &evm.Client{ChainSelector: cfg.ChainSelector}
@@ -161,19 +168,16 @@ func onFundingTick(cfg *Config, runtime cre.Runtime, _ *cron.Payload) (struct{},
 	// engine) is funded by reallocating idle USDC from the resting-USDC market into the "farm utility vault" it
 	// borrows from; if this worker drains the resting-USDC market to fund redemptions, that path starves and yield
 	// can no longer be transmuted into the juniorTrancheSafe. So to always keep ~$25k of working room for the
-	// exercise, set HarvestReserve to 25000000000 ($25k at 6-dp USDC). WRITE IT WITHOUT DIGIT SEPARATORS: mustBigF
-	// parses with base 10, and Go's math/big accepts `_` separators ONLY at base 0 — "25_000_000000" parses as
-	// FAILED and mustBigF silently returns 0, i.e. NO CUSHION. Same trap for SafetyBuffer, and for MaxRedeemPerTick
-	// where 0 is not a zero ceiling but the "no upper clamp at all" sentinel. DEFAULT 0 ⇒ no cushion: any idle USDC is fully
-	// redeemable and paid out toward the CoW order book. (SafetyBuffer is an additional general ops buffer, same
-	// units, also default 0.)
-	avail := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, mustBigF(cfg.HarvestReserve)), mustBigF(cfg.SafetyBuffer))
+	// exercise, set HarvestReserve to 25000000000 ($25k at 6-dp USDC) — no digit separators, parseBigF rejects them
+	// with a message naming the fix. DEFAULT 0 ⇒ no cushion: any idle USDC is fully redeemable and paid out toward
+	// the CoW order book. (SafetyBuffer is an additional general ops buffer, same units, also default 0.)
+	avail := new(big.Int).Sub(new(big.Int).Sub(freeReservoir, knobs.harvestReserve), knobs.safetyBuffer)
 	// Floor at 0 BEFORE choosing the ceiling (CRE-ADV-01): a starved reservoir makes this negative, and the
 	// "no upper clamp" branch below would otherwise install that negative AS the ceiling.
 	if avail.Sign() < 0 {
 		avail = big.NewInt(0)
 	}
-	hi := mustBigF(cfg.MaxRedeemPerTick)
+	hi := knobs.maxRedeemPerTick
 	if hi.Sign() <= 0 {
 		hi = avail // maxRedeemPerTick == 0 (or unset) ⇒ no upper clamp by this knob
 	}
@@ -361,15 +365,57 @@ func bigMin(a, b *big.Int) *big.Int {
 	return new(big.Int).Set(b)
 }
 
-// mustBigF parses a base-10 config string into a *big.Int (0 if empty/unparseable — the conservative direction).
-// Cloned from buyburn-bid's mustBig.
-func mustBigF(s string) *big.Int {
-	if strings.TrimSpace(s) == "" {
-		return big.NewInt(0)
+// sizingKnobs is the three 6-dp USDC magnitude knobs, parsed ONCE per tick before any CallContract.
+type sizingKnobs struct {
+	harvestReserve   *big.Int // idle USDC to LEAVE behind for the harvest engine
+	safetyBuffer     *big.Int // additional general ops buffer
+	maxRedeemPerTick *big.Int // per-tick REDEEM ceiling; 0 ⇒ no upper clamp by this knob
+}
+
+// parseSizingKnobs parses all three magnitude knobs up front so an unparseable one aborts the tick BEFORE any
+// read or write, not silently in the middle of the sizing math (CRE-ADV-01 part b).
+func parseSizingKnobs(cfg *Config) (sizingKnobs, error) {
+	hr, err := parseBigF("harvestReserve", cfg.HarvestReserve)
+	if err != nil {
+		return sizingKnobs{}, err
 	}
-	v, ok := new(big.Int).SetString(strings.TrimSpace(s), 10)
+	sb, err := parseBigF("safetyBuffer", cfg.SafetyBuffer)
+	if err != nil {
+		return sizingKnobs{}, err
+	}
+	mr, err := parseBigF("maxRedeemPerTick", cfg.MaxRedeemPerTick)
+	if err != nil {
+		return sizingKnobs{}, err
+	}
+	return sizingKnobs{harvestReserve: hr, safetyBuffer: sb, maxRedeemPerTick: mr}, nil
+}
+
+// parseBigF parses a non-negative base-10 config magnitude. Empty ⇒ 0 (these knobs are genuinely optional).
+//
+// FAILS LOUDLY on anything else (CRE-ADV-01 part b). The predecessor `mustBigF` returned 0 on an unparseable
+// string and called that "the conservative direction" — it is the exact opposite for every knob here: 0
+// harvestReserve is NO cushion, 0 safetyBuffer is NO buffer, and 0 maxRedeemPerTick is not a zero ceiling but
+// the "no upper clamp at all" sentinel. A typo therefore removed a safety rail with no log and no error, and
+// the suite stayed green because its fixtures happened to be well-formed. The sibling parser in this binary
+// (parsePositiveBig, workflow.go) already rejected !ok; these now agree.
+func parseBigF(name, s string) (*big.Int, error) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return big.NewInt(0), nil
+	}
+	v, ok := new(big.Int).SetString(t, 10)
 	if !ok {
-		return big.NewInt(0)
+		// Name the most likely cause: Go's math/big accepts `_` digit separators ONLY at base 0, so a
+		// human-readable "25_000_000000" is a parse FAILURE at base 10.
+		if strings.ContainsRune(t, '_') {
+			return nil, fmt.Errorf(
+				"%s: %q is not a base-10 integer — digit separators are not accepted; write it as %q",
+				name, t, strings.ReplaceAll(t, "_", ""))
+		}
+		return nil, fmt.Errorf("%s: %q is not a base-10 integer", name, t)
 	}
-	return v
+	if v.Sign() < 0 {
+		return nil, fmt.Errorf("%s: must be >= 0, got %s", name, v)
+	}
+	return v, nil
 }

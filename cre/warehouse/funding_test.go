@@ -9,6 +9,7 @@ package main
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -50,9 +51,9 @@ func fundingConfig() *Config {
 	cfg.FundingEnabled = true
 	cfg.FundingSchedule = "0 */5 * * * *"
 	cfg.CoverageGate = fGate.Hex()
-	cfg.HarvestReserve = "100000000"   // 100 USDC (6-dp)
-	cfg.SafetyBuffer = "50000000"      // 50 USDC
-	cfg.MaxRedeemPerTick = "0"         // uncapped by this knob unless a case overrides
+	cfg.HarvestReserve = "100000000" // 100 USDC (6-dp)
+	cfg.SafetyBuffer = "50000000"    // 50 USDC
+	cfg.MaxRedeemPerTick = "0"       // uncapped by this knob unless a case overrides
 	return cfg
 }
 
@@ -274,7 +275,7 @@ func TestFundingRepayThenRedeem(t *testing.T) {
 	// avail = maxWithdraw 5000 − 100 − 50 = 4850 ⇒ floor 4850; redeemAssets = min(800, 4850) = 800 USDC.
 	// NAV: totalShares = 2e18, navAssets = 2000 USDC ⇒ rate 1 share : 1e-6 USDC... redeemShares = 800·2e18/2e9.
 	totalShares := new(big.Int).Mul(big.NewInt(2), big.NewInt(1_000_000_000_000_000_000)) // 2e18
-	navAssets := big.NewInt(2_000_000_000)                                                  // 2000 USDC (6-dp)
+	navAssets := big.NewInt(2_000_000_000)                                                // 2000 USDC (6-dp)
 	st := fundingState{
 		covered:      true,
 		totalPending: pending18(1_000_000_000), scaleUp: scaleUp1e12(),
@@ -362,5 +363,72 @@ func TestFundingScaleUpZeroNoOp(t *testing.T) {
 	out := runFunding(t, fundingConfig(), st)
 	if len(out) != 0 {
 		t.Fatalf("scaleUp 0: expected 0 reports, got %d", len(out))
+	}
+}
+
+// ─────────────────────────────────────── CRE-ADV-01 part (b): a typo'd sizing knob aborts, it does not degrade
+//
+// The predecessor mustBigF returned 0 on an unparseable string and called that conservative. It is the exact
+// opposite for all three knobs: 0 harvestReserve is NO cushion, 0 safetyBuffer is NO buffer, and 0
+// maxRedeemPerTick is the "no upper clamp at all" sentinel. The trap that motivated this: funding.go's own
+// operator note prescribed "25_000_000000", which Go's math/big rejects at base 10 (digit separators are a
+// base-0 feature), so following the instruction in the code removed the cushion silently.
+
+func TestParseBigFRejectsDigitSeparators(t *testing.T) {
+	if _, err := parseBigF("harvestReserve", "25_000_000000"); err == nil {
+		t.Fatal("25_000_000000 must be REJECTED, not silently parsed to 0")
+	} else if !strings.Contains(err.Error(), "25000000000") {
+		t.Fatalf("error must name the corrected literal, got: %v", err)
+	}
+	v, err := parseBigF("harvestReserve", "25000000000")
+	if err != nil || v.Cmp(big.NewInt(25_000_000_000)) != 0 {
+		t.Fatalf("plain literal must parse: got %v err %v", v, err)
+	}
+}
+
+func TestParseBigFEmptyIsZeroOtherGarbageErrors(t *testing.T) {
+	for _, s := range []string{"", "   "} {
+		v, err := parseBigF("safetyBuffer", s)
+		if err != nil || v.Sign() != 0 {
+			t.Fatalf("empty knob must be 0 with no error: got %v err %v", v, err)
+		}
+	}
+	for _, s := range []string{"none", "TBD", "1e6", "0x10", "12.5", "-5"} {
+		if _, err := parseBigF("safetyBuffer", s); err == nil {
+			t.Fatalf("%q must be rejected", s)
+		}
+	}
+}
+
+// A bad knob must abort the tick BEFORE any read or write — not mid-arithmetic.
+func TestFundingBadKnobNoReportsNoReads(t *testing.T) {
+	cfg := testConfig()
+	cfg.FundingEnabled = true
+	cfg.HarvestReserve = "25_000_000000" // the operator note's own literal
+	runtime := testutils.NewRuntime(t, testutils.Secrets{})
+	_, err := onFundingTick(cfg, runtime, nil)
+	if err == nil {
+		t.Fatal("a typo'd HarvestReserve must abort the tick with an error")
+	}
+	// Assert it aborted for the RIGHT reason — a non-nil error alone would also be produced by the missing
+	// evm capability, so the message must name the config knob, not some downstream read failure.
+	if !strings.Contains(err.Error(), "config: harvestReserve") {
+		t.Fatalf("must abort on the knob, got: %v", err)
+	}
+}
+
+func TestSolverBadKnobNoReportsNoReads(t *testing.T) {
+	cfg := testConfig()
+	cfg.SolverEnabled = true
+	cfg.SiloRegistry = "0x0000000000000000000000000000000000005E00"
+	cfg.Warehouses = []string{"0x00000000000000000000000000000000000000C1"}
+	cfg.MaxRedeemPerTick = "1_000_000000"
+	runtime := testutils.NewRuntime(t, testutils.Secrets{})
+	_, err := onSolverTick(cfg, runtime, nil)
+	if err == nil {
+		t.Fatal("a typo'd MaxRedeemPerTick must abort the tick with an error")
+	}
+	if !strings.Contains(err.Error(), "config: maxRedeemPerTick") {
+		t.Fatalf("must abort on the knob, got: %v", err)
 	}
 }
