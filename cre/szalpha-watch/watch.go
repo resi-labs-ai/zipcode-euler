@@ -229,15 +229,23 @@ func evaluateMetagraph(found bool, dividends uint64) []Alert {
 
 // ──────────────────────────────────────────────────────────────────────── revert classification
 
-// dataError is go-ethereum's rpc.DataError shape: an error carrying EVM return data — i.e. a REVERT,
-// as opposed to a transport/RPC failure.
+// dataError is go-ethereum's rpc.DataError shape. IMPLEMENTING IT PROVES NOTHING — go-ethereum defines
+// ErrorData() on *every* JSON-RPC error (`rpc/json.go:157-159`, an unconditional `return err.Data`), so a
+// rate limit, a missing trie node and an internal node error all satisfy this interface. The REVERT signal
+// is the PAYLOAD being present, not the method existing.
 type dataError interface{ ErrorData() interface{} }
 
 // isRevert distinguishes an EVM revert (the breaker state — an ALARM) from a transport error (a skipped
 // tick). Fail toward the transport reading only when neither signal is present.
+//
+// The non-nil check on ErrorData() is load-bearing. Without it every JSON-RPC error read as a revert, and
+// because alarm 3a fires on RateReverted (:106) while alarms 3b (:139) and 5 (:189) are both GATED on
+// !RateReverted, a single flaky RPC reply simultaneously raised a false CRITICAL "backing vanished" page
+// and silenced the two alarms that would have contradicted it — including alarm 5, the only transport-fault
+// detector. Regression: TestIsRevert_TransportErrorsAreNotReverts.
 func isRevert(err error) bool {
 	var de dataError
-	if errors.As(err, &de) {
+	if errors.As(err, &de) && de.ErrorData() != nil {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "execution reverted")

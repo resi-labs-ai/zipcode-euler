@@ -5,11 +5,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 func snap(block uint64, stake, supply int64, hotkey byte, rate int64, reverted bool) *Snapshot {
@@ -205,5 +210,74 @@ func TestAlarm5SkipsWhenSourceReverted(t *testing.T) {
 func TestAlarm5UnconfiguredIsNoop(t *testing.T) {
 	if got := evaluateTransport(snap(10, 1000, 1000, 1, 1_000_000, false), nil, defaults); len(got) != 0 {
 		t.Fatalf("nil BaseSnapshot must produce no alerts, got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// REGRESSION — isRevert against REAL go-ethereum JSON-RPC errors, not a hand-rolled stand-in.
+//
+// TestIsRevert above feeds isRevert a locally declared fakeDataError, which by construction returns
+// non-nil ErrorData. That shape cannot express the defect: go-ethereum defines ErrorData() on EVERY
+// JSON-RPC error (rpc/json.go:157-159, an unconditional `return err.Data`), so before the non-nil check
+// a rate limit, a missing trie node and an internal node error ALL classified as reverts. Since alarm 3a
+// fires on RateReverted while alarms 3b and 5 are gated on !RateReverted, that one misclassification
+// raised a false CRITICAL page and silenced the only transport-fault detector on the same tick.
+//
+// This drives a real *rpc.jsonError through ethclient by answering with a canned JSON-RPC error body.
+
+func rpcErrorFromNode(t *testing.T, body string) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c, err := ethclient.Dial(srv.URL)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	to := common.HexToAddress("0x00000000000000000000000000000000000000C8")
+	_, callErr := c.CallContract(context.Background(),
+		ethereum.CallMsg{To: &to, Data: []byte{0x18, 0x16, 0x0d, 0xdd}}, big.NewInt(1))
+	if callErr == nil {
+		t.Fatal("expected an error from the stub node")
+	}
+	return callErr
+}
+
+func TestIsRevert_TransportErrorsAreNotReverts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			"genuine revert carries data",
+			`{"jsonrpc":"2.0","id":1,"error":{"code":3,"message":"execution reverted","data":"0x08c379a0"}}`,
+			true,
+		},
+		{
+			"rate limited, no data member",
+			`{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"limit exceeded"}}`,
+			false,
+		},
+		{
+			"missing trie node, no data member",
+			`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"missing trie node"}}`,
+			false,
+		},
+		{
+			"internal node error, no data member",
+			`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal error"}}`,
+			false,
+		},
+	} {
+		err := rpcErrorFromNode(t, tc.body)
+		if got := isRevert(err); got != tc.want {
+			t.Fatalf("%s: isRevert(%q) = %v, want %v — a transport failure classified as a revert both "+
+				"pages a false rate-reverted CRITICAL and gates off alarms 3b and 5",
+				tc.name, err.Error(), got, tc.want)
+		}
 	}
 }
