@@ -72,10 +72,16 @@ func (j *BurnJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Plan, err
 		return chain.Plan{}, err
 	}
 
-	// 2. engineSafe. If unwired (zero), no-op (NOT an error): burnFor would revert
-	//    NotWired. (§7: engineSafe() resolves to the main/rq Safe — one address,
-	//    two role names; the mechanic is identical.)
-	engineSafe, err := chain.CallAddress(ctx, r, j.exitGate, "engineSafe()")
+	// 2. juniorTrancheEngine. If unwired (zero), no-op (NOT an error): burnFor would
+	//    revert NotWired. (§7: juniorTrancheEngine resolves to the main/rq Safe — one
+	//    address, two role names; the mechanic is identical.)
+	//
+	//    The getter is juniorTrancheEngine(), NOT engineSafe(). ExitGate renamed the slot
+	//    (ExitGate.sol:53) but kept the OLD word in its event name (EngineSafeSet, :72),
+	//    which is how this straggler survived: strike_loop_job.go and winddown_lp_job.go
+	//    were both updated, this one was not. ExitGate has no fallback/receive, so the
+	//    retired selector REVERTED — every tick errored and no burn plan was ever produced.
+	engineSafe, err := chain.CallAddress(ctx, r, j.exitGate, "juniorTrancheEngine()")
 	if err != nil {
 		return chain.Plan{}, err
 	}

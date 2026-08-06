@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 /// @notice Anvil/simulated-backend probe for the FILL-TRIGGERED BurnJob (KEEPER-01a, 2026-07-28 shape).
-///         One contract answers every read the job makes — it returns ITSELF as `shareToken()`/`engineSafe()`/
+///         One contract answers every read the job makes — it returns ITSELF as `shareToken()`/`juniorTrancheEngine()`/
 ///         `settlement()` (so the gate, module, token, Safe, and settlement are all this address in the sim) —
 ///         plus the two settable fill-evidence knobs:
 ///           - `setBal(uint256)`     — the engine Safe's szipUSD balance (`balanceOf(address)` returns it).
@@ -33,7 +33,7 @@ contract BurnFillProbe {
         return address(this);
     }
 
-    function engineSafe() external view returns (address) {
+    function juniorTrancheEngine() external view returns (address) {
         return address(this);
     }
 

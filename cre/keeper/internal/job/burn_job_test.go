@@ -15,7 +15,7 @@ import (
 // ---- stub Reader for BurnJob (anvil-free, the primary proof) ----
 
 // burnStubReader returns canned ABI-encoded values keyed by the 4-byte selector
-// in the call data: shareToken()->shareTok, engineSafe()->engine,
+// in the call data: shareToken()->shareTok, juniorTrancheEngine()->engine,
 // balanceOf(address)->bal, currentBid()->(uid, sell), settlement()->settle,
 // filledAmount(bytes)->filled. An optional err short-circuits every call (the
 // RPC-failure branch). Reuses sel/encodeAddr from job_test.go (same package).
@@ -54,7 +54,7 @@ func (s burnStubReader) CallContract(ctx context.Context, call ethereum.CallMsg,
 	switch got {
 	case sel("shareToken()"):
 		return encodeAddr(s.shareTok), nil
-	case sel("engineSafe()"):
+	case sel("juniorTrancheEngine()"):
 		return encodeAddr(s.engine), nil
 	case sel("balanceOf(address)"):
 		return encodeUint(s.bal), nil
@@ -226,7 +226,7 @@ func TestBurnJob_NewUidResetsLatch(t *testing.T) {
 	}
 }
 
-// TestBurnJob_Unwired_NoOp: engineSafe == 0x0 ⇒ empty plan, nil error.
+// TestBurnJob_Unwired_NoOp: juniorTrancheEngine == 0x0 ⇒ empty plan, nil error.
 func TestBurnJob_Unwired_NoOp(t *testing.T) {
 	r := burnStubReader{shareTok: burnShare, engine: common.Address{}, bal: big.NewInt(100)}
 	plan, err := NewBurnJob(burnGate, burnModule).Evaluate(context.Background(), r)
