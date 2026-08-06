@@ -58,6 +58,11 @@ const defaultSchedule = "0 */5 * * * *" // every 5 minutes
 var (
 	bps10000  = big.NewInt(10_000)
 	scale1e18 = func() *big.Int { return new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil) }()
+	// chainlinkUsdScale divides out the Chainlink aggregator's 8 decimals when a 18-dp source price is
+	// multiplied by an 8-dp USD answer. VERIFIED live against the configured TAO/USD proxy
+	// (0x1c88503c9A52aE6aaE1f9bb99b3b7e9b8Ab35459): description() == "TAO / USD", decimals() == 8.
+	// Nothing reads decimals() at runtime — if the feed is ever re-pointed, re-check this constant.
+	chainlinkUsdScale = big.NewInt(100_000_000)
 )
 
 // alphaPrecompile is the Subtensor Alpha precompile (0x…0808) — a chain constant on 964, not a wiring slot.
@@ -285,10 +290,17 @@ func readUint(client *evm.Client, runtime cre.Runtime, addr common.Address, sig 
 // standalone doc, bridge/xalpha-price-leg.md, was retired 2026-08-02 once the build made it redundant;
 // the rate-factor severity argument it carried moved to todo-bridge.md item 6):
 //
-//	alphaUSD (18-dp) = getMovingAlphaPrice(netuid) (964, 9-dp TAO/alpha EMA) × TAO/USD (Chainlink, 8-dp) × 10
+//	alphaUSD (18-dp) = getMovingAlphaPrice(netuid) (964, 18-dp TAO/alpha EMA) × TAO/USD (Chainlink, 8-dp) / 1e8
 //
-// (Scaling verified against the precompile source: get_moving_alpha_price is multiplied by 1e9 before
-// return — reference/subtensor/precompiles/src/alpha.rs:54. 9dp × 8dp × 10¹ = 18dp.)
+// (Scaling verified against the precompile source, BOTH multiplies: get_moving_alpha_price multiplies by
+// 1e9 at reference/subtensor/precompiles/src/alpha.rs:54, and then hands the result to
+// BalanceConverter::into_evm_balance at :56, which multiplies by EVM_TO_SUBSTRATE_DECIMALS = 1e9 again
+// (reference/subtensor/runtime/src/lib.rs:1301,1309; the runtime's own test_into_evm_balance_valid at
+// :2824 asserts 1e9 in ⇒ 1e18 out). The precompile therefore returns 18-dp, NOT 9-dp. 18dp × 8dp / 1e8 =
+// 18dp. This file previously cited only alpha.rs:54 and stopped one line short of the second multiply,
+// which made every pushed alphaUSD 1e9 too high; contracts/script/RUNBOOK-mainnet-deploy.md:183 already
+// documented the precompile as 18-dp. Measured live on SN46 before the fix: EMA 4714930000000000 ×
+// TAO/USD 19237506419 gave $907,034,961.40 where the true price is $0.907035.)
 //
 // Guards, all fail-closed SKIPS (silence is honest; a clamped number is not — the band-removal rule):
 //  1. AVERAGE AT THE SOURCE. The EMA precompile is the priced value, never getAlphaPrice spot — spot on a
@@ -350,7 +362,9 @@ func deriveAlphaUSD(c *Config, runtime cre.Runtime) (*big.Int, bool, error) {
 		return nil, true, nil
 	}
 
-	alphaUSD := new(big.Int).Mul(new(big.Int).Mul(ema, answer), big.NewInt(10)) // 9dp × 8dp × 10 = 18dp
+	// 18dp (precompile, see the header — BOTH 1e9 multiplies) × 8dp (Chainlink) / 1e8 = 18dp.
+	// Integer division truncates, so the leg rounds DOWN by under a wei — the conservative direction.
+	alphaUSD := new(big.Int).Div(new(big.Int).Mul(ema, answer), chainlinkUsdScale)
 	return alphaUSD, false, nil
 }
 

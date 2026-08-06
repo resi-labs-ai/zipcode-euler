@@ -268,8 +268,8 @@ var (
 
 // derivedState scripts the 964 + Ethereum reads for the derived alpha-USD path.
 type derivedState struct {
-	ema           *big.Int // getMovingAlphaPrice (9-dp TAO/alpha)
-	spot          *big.Int // getAlphaPrice (9-dp TAO/alpha)
+	ema           *big.Int // getMovingAlphaPrice (18-dp TAO/alpha — the precompile applies 1e9 TWICE)
+	spot          *big.Int // getAlphaPrice (18-dp TAO/alpha — same double multiply)
 	feedAnswer    *big.Int // Chainlink TAO/USD answer (8-dp, int256)
 	feedUpdatedAt int64    // Chainlink round updatedAt
 	alphaReadErr  error    // non-nil ⇒ both precompile reads error (a failed read, not a guard)
@@ -329,16 +329,21 @@ func runDerivedTick(t *testing.T, cfg *Config, st chainState, ds derivedState) (
 	return runTick(t, cfg, LegMarks{AlphaUSD: "", HydxUsd: e18().String()}, st)
 }
 
-// TestSimDerivedAlphaUSD: the real composition lands in the NAV push — EMA (9-dp) × TAO/USD (8-dp) × 10 =
-// 18-dp — and the EMA is the priced value (spot only guards).
+// TestSimDerivedAlphaUSD: the real composition lands in the NAV push — EMA (18-dp) × TAO/USD (8-dp) / 1e8
+// = 18-dp — and the EMA is the priced value (spot only guards).
+//
+// The fixture feeds the precompile's ACTUAL 18-dp scale. It previously fed 9-dp, matching a workflow that
+// applied the wrong divisor, so the pair agreed with each other and disagreed with the chain — the mock
+// could not express the failing state. Cross-checked against live SN46 the day this was fixed:
+// getMovingAlphaPrice returned 4714930000000000 (0.00471493 TAO/alpha), i.e. e15-scale, not e6-scale.
 func TestSimDerivedAlphaUSD(t *testing.T) {
 	ds := derivedState{
-		ema:           big.NewInt(500_000_000),    // 0.5 TAO/alpha, 9-dp
-		spot:          big.NewInt(520_000_000),    // 4% off the EMA — within tolerance, ignored as value
-		feedAnswer:    big.NewInt(42_000_000_000), // $420.00, 8-dp
-		feedUpdatedAt: int64(testTs) - 3600,       // an hour-old round: fresh
+		ema:           big.NewInt(500_000_000_000_000_000), // 0.5 TAO/alpha, 18-dp
+		spot:          big.NewInt(520_000_000_000_000_000), // 4% off the EMA — within tolerance, ignored as value
+		feedAnswer:    big.NewInt(42_000_000_000),          // $420.00, 8-dp
+		feedUpdatedAt: int64(testTs) - 3600,                // an hour-old round: fresh
 	}
-	// expected: 5e8 × 4.2e10 × 10 = 2.1e20 ($210, 18-dp)
+	// expected: 5e17 × 4.2e10 / 1e8 = 2.1e20 ($210, 18-dp)
 	want := new(big.Int).Mul(big.NewInt(210), e18())
 
 	out, err := runDerivedTick(t, derivedConfig(), chainState{exchangeRate: e18()}, ds)
@@ -354,7 +359,7 @@ func TestSimDerivedAlphaUSD(t *testing.T) {
 	}
 	_, prices, _ := decodeNavPayload(t, payload)
 	if prices[0].Cmp(want) != 0 {
-		t.Fatalf("derived alphaUSD: got %v want %v (EMA × TAO/USD × 10)", prices[0], want)
+		t.Fatalf("derived alphaUSD: got %v want %v (EMA × TAO/USD / 1e8)", prices[0], want)
 	}
 }
 
@@ -362,8 +367,8 @@ func TestSimDerivedAlphaUSD(t *testing.T) {
 // (manipulation and a violent real move are indistinguishable in one read; silence is the honest output).
 func TestSimDerivedSkipDislocation(t *testing.T) {
 	ds := derivedState{
-		ema:           big.NewInt(500_000_000),
-		spot:          big.NewInt(1_000_000_000), // 100% off — far beyond the 25% default
+		ema:           big.NewInt(500_000_000_000_000_000),
+		spot:          big.NewInt(1_000_000_000_000_000_000), // 1.0 vs 0.5 = 100% off — far beyond the 25% default
 		feedAnswer:    big.NewInt(42_000_000_000),
 		feedUpdatedAt: int64(testTs) - 3600,
 	}
@@ -379,8 +384,8 @@ func TestSimDerivedSkipDislocation(t *testing.T) {
 // TestSimDerivedSkipStaleFeed: a TAO/USD round older than MaxFeedAgeSeconds ⇒ skip.
 func TestSimDerivedSkipStaleFeed(t *testing.T) {
 	ds := derivedState{
-		ema:           big.NewInt(500_000_000),
-		spot:          big.NewInt(500_000_000),
+		ema:           big.NewInt(500_000_000_000_000_000),
+		spot:          big.NewInt(500_000_000_000_000_000),
 		feedAnswer:    big.NewInt(42_000_000_000),
 		feedUpdatedAt: int64(testTs) - 90_001, // one second past the default 90000s bound
 	}
@@ -396,8 +401,8 @@ func TestSimDerivedSkipStaleFeed(t *testing.T) {
 // TestSimDerivedSkipNonPositiveAnswer: a non-positive Chainlink answer ⇒ skip.
 func TestSimDerivedSkipNonPositiveAnswer(t *testing.T) {
 	ds := derivedState{
-		ema:           big.NewInt(500_000_000),
-		spot:          big.NewInt(500_000_000),
+		ema:           big.NewInt(500_000_000_000_000_000),
+		spot:          big.NewInt(500_000_000_000_000_000),
 		feedAnswer:    big.NewInt(-1),
 		feedUpdatedAt: int64(testTs) - 3600,
 	}
