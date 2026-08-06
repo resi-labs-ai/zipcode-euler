@@ -33,6 +33,7 @@ bridge/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+contracts/deployments/
 
 # Local env / secrets (the .example template stays tracked)
 .env
