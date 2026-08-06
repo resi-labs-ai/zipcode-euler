@@ -57,6 +57,14 @@ contract StrikeLoopProbe {
     function maxSellHydx() external view returns (uint256) { return maxSell; }
     function quoteStrike(uint256) external view returns (uint256) { return strike; }
 
+    /// @notice The live farm-utility debt the job now reads before borrowing (the self-heal guard).
+    ///         Settable so the sim can model a Plan that aborted between borrow and repay.
+    uint256 public debt;
+
+    function setDebt(uint256 v) external { debt = v; }
+
+    function outstandingDebt() external view returns (uint256) { return debt; }
+
     // ---- state-changing legs (recorded, in submission order) ----
     function claimReward() external {
         recs.push(Rec(this.claimReward.selector, 0, 0, 0));

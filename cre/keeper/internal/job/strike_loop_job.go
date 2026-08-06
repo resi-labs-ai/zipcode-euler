@@ -36,12 +36,12 @@ var scaleUp = func() *big.Int { v, _ := new(big.Int).SetString("1000000000000", 
 // deposit1=expectedZip).
 type StrikeLoopJob struct {
 	// the six engine module addresses (re-pointable; from cfg.MustAddr).
-	harvest   common.Address // HarvestVoteModule — claimReward / pendingReward / oHYDX
+	harvest     common.Address // HarvestVoteModule — claimReward / pendingReward / oHYDX
 	farmUtility common.Address // FarmUtilityLoopModule — borrow / repay / usdc
-	exercise  common.Address // ExerciseModule — exercise / quoteStrike / oHYDX
-	sell      common.Address // SellModule — sellHydx / maxSellHydx / hydx / usdc
-	recycle   common.Address // RecycleModule — creditFreeValue / recycle / usdc
-	lp        common.Address // LpStrategyModule — addLiquidity / stake / ichiVault
+	exercise    common.Address // ExerciseModule — exercise / quoteStrike / oHYDX
+	sell        common.Address // SellModule — sellHydx / maxSellHydx / hydx / usdc
+	recycle     common.Address // RecycleModule — creditFreeValue / recycle / usdc
+	lp          common.Address // LpStrategyModule — addLiquidity / stake / ichiVault
 
 	quoter quote.Quoter // injectable price/share seam (production binds to Algebra/ICHI)
 
@@ -61,19 +61,19 @@ type StrikeLoopJob struct {
 // StrikeLoopConfig groups the StrikeLoopJob construction inputs (modules +
 // knobs) so the wiring in cmd/keeper is explicit.
 type StrikeLoopConfig struct {
-	Harvest, FarmUtility, Exercise, Sell, Recycle, Lp  common.Address
-	Quoter                                           quote.Quoter
-	CushionBps, AmberFractionBps, RecycleFractionBps uint64
-	HaltPriceUsdc, AmberPriceUsdc                    uint64
-	DeadlineBuffer                                   time.Duration
-	MaxBorrowPerCycle                                *big.Int
+	Harvest, FarmUtility, Exercise, Sell, Recycle, Lp common.Address
+	Quoter                                            quote.Quoter
+	CushionBps, AmberFractionBps, RecycleFractionBps  uint64
+	HaltPriceUsdc, AmberPriceUsdc                     uint64
+	DeadlineBuffer                                    time.Duration
+	MaxBorrowPerCycle                                 *big.Int
 }
 
 // NewStrikeLoopJob builds the job. clock is nil-safe (defaults to time.Now).
 func NewStrikeLoopJob(c StrikeLoopConfig) *StrikeLoopJob {
 	return &StrikeLoopJob{
 		harvest:            c.Harvest,
-		farmUtility:          c.FarmUtility,
+		farmUtility:        c.FarmUtility,
 		exercise:           c.Exercise,
 		sell:               c.Sell,
 		recycle:            c.Recycle,
@@ -155,6 +155,29 @@ func (j *StrikeLoopJob) Evaluate(ctx context.Context, r chain.Reader) (chain.Pla
 	vault, err := chain.CallAddress(ctx, r, j.lp, "ichiVault()")
 	if err != nil {
 		return chain.Plan{}, err
+	}
+
+	// --- 1b. SELF-HEAL: clear any stranded farm-utility debt BEFORE borrowing again. ---
+	//
+	// The Plan below is ordered borrow(leg 2) … repay(leg 5), and the Runner aborts a Plan on the
+	// FIRST action error (job.go:85-99). So a failure at `exercise` or `sellHydx` stops the sequence
+	// BETWEEN the borrow and the repay — producing exactly the borrow-without-repay the Runner's own
+	// comment names as "the one unsafe outcome to avoid". Evaluate is stateless and CRE holds no state
+	// (the SDK offers only evm/http/cron — no storage), so nothing remembered the broken tick: the next
+	// tick borrowed AGAIN on top of the stranded debt, and the only repay in the whole keeper was the
+	// one inside the aborted Plan. The debt ratcheted with no path down.
+	//
+	// The chain already holds the state we need. Read it, and if the book is not flat, emit a
+	// repay-ONLY Plan and return — the harvest resumes next tick once the debt is cleared. Idempotent
+	// (a repay of the live debt is safe to re-issue) and it keeps the whole job stateless.
+	debt, err := chain.CallUint(ctx, r, j.farmUtility, "outstandingDebt()")
+	if err != nil {
+		return chain.Plan{}, err
+	}
+	if debt.Sign() > 0 {
+		return chain.Plan{Actions: []chain.Action{
+			{Label: "repayStrandedDebt", To: j.farmUtility, Data: chain.PackUintCall("repay(uint256)", debt)},
+		}}, nil
 	}
 
 	// --- 2. totalOHydx = oHYDX.balanceOf(safe) + pendingReward() (claim adds pendingReward). ---

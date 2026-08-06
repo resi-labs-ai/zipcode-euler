@@ -119,7 +119,7 @@ func (e *simEnv) deployProbe(client interface {
 	maxFee := new(big.Int).Add(new(big.Int).Mul(head.BaseFee, big.NewInt(2)), tip)
 	tx := types.NewTx(&types.DynamicFeeTx{
 		ChainID: simChainID, Nonce: nonce, GasTipCap: tip, GasFeeCap: maxFee,
-		Gas: 1_000_000, To: nil, Data: common.FromHex(bytecode),
+		Gas: 3_000_000, To: nil, Data: common.FromHex(bytecode),
 	})
 	signed, err := e.signer.SignTx(tx, simChainID)
 	if err != nil {

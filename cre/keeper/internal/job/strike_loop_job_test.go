@@ -16,12 +16,12 @@ import (
 
 // ---- fixed addresses for the engine modules + tokens ----
 var (
-	slHarvest   = common.HexToAddress("0x0000000000000000000000000000000000000A01")
+	slHarvest     = common.HexToAddress("0x0000000000000000000000000000000000000A01")
 	slFarmUtility = common.HexToAddress("0x0000000000000000000000000000000000000A02")
-	slExercise  = common.HexToAddress("0x0000000000000000000000000000000000000A03")
-	slSell      = common.HexToAddress("0x0000000000000000000000000000000000000A04")
-	slRecycle   = common.HexToAddress("0x0000000000000000000000000000000000000A05")
-	slLp        = common.HexToAddress("0x0000000000000000000000000000000000000A06")
+	slExercise    = common.HexToAddress("0x0000000000000000000000000000000000000A03")
+	slSell        = common.HexToAddress("0x0000000000000000000000000000000000000A04")
+	slRecycle     = common.HexToAddress("0x0000000000000000000000000000000000000A05")
+	slLp          = common.HexToAddress("0x0000000000000000000000000000000000000A06")
 
 	slSafe  = common.HexToAddress("0x0000000000000000000000000000000000005AFE")
 	slOHydx = common.HexToAddress("0x000000000000000000000000000000000000d111")
@@ -34,18 +34,19 @@ var (
 // slReader returns canned values keyed by (to, selector). It models the exact set
 // of reads StrikeLoopJob.Evaluate makes.
 type slReader struct {
-	safe     common.Address
-	oHydx    common.Address
-	hydx     common.Address
-	vault    common.Address
+	safe        common.Address
+	oHydx       common.Address
+	hydx        common.Address
+	vault       common.Address
 	gauge       common.Address // harvest.gauge() (F13 drift check)
 	gaugeReward common.Address // gauge.rewardToken(); zero ⇒ mirrors oHydx (healthy)
-	oHydxBal *big.Int // oHYDX.balanceOf(safe)
-	hydxBal  *big.Int // hydx.balanceOf(safe)
-	pending  *big.Int // harvest.pendingReward()
-	maxSell  *big.Int // sell.maxSellHydx()
-	strike   *big.Int // exercise.quoteStrike(_)
-	err      error
+	oHydxBal    *big.Int       // oHYDX.balanceOf(safe)
+	hydxBal     *big.Int       // hydx.balanceOf(safe)
+	pending     *big.Int       // harvest.pendingReward()
+	maxSell     *big.Int       // sell.maxSellHydx()
+	strike      *big.Int       // exercise.quoteStrike(_)
+	debt        *big.Int       // farmUtility.outstandingDebt(); nil ⇒ 0 (a flat book, the harvest path)
+	err         error
 }
 
 func slEncUint(v *big.Int) []byte {
@@ -91,6 +92,12 @@ func (s *slReader) CallContract(ctx context.Context, call ethereum.CallMsg, _ *b
 		return slEncUint(s.maxSell), nil
 	case sel("quoteStrike(uint256)"):
 		return slEncUint(s.strike), nil
+	case sel("outstandingDebt()"):
+		// nil ⇒ flat book. Tests set debt to model a Plan that aborted between borrow and repay.
+		if s.debt == nil {
+			return slEncUint(big.NewInt(0)), nil
+		}
+		return slEncUint(s.debt), nil
 	case sel("balanceOf(address)"):
 		if to == s.oHydx {
 			return slEncUint(s.oHydxBal), nil
@@ -161,7 +168,7 @@ func fixedClock(unix int64) func() time.Time {
 func newSLJob(q *fakeQuoter) *StrikeLoopJob {
 	j := NewStrikeLoopJob(StrikeLoopConfig{
 		Harvest:            slHarvest,
-		FarmUtility:          slFarmUtility,
+		FarmUtility:        slFarmUtility,
 		Exercise:           slExercise,
 		Sell:               slSell,
 		Recycle:            slRecycle,
@@ -586,5 +593,58 @@ func TestStrikeLoop_MinSharesZero_RecycleNoRestake(t *testing.T) {
 	want := []string{"claimReward", "borrow", "exercise", "sellHydx", "repay", "creditFreeValue", "recycle"}
 	if !eqLabels(labels(plan), want) {
 		t.Fatalf("labels = %v, want %v (recycle, no restake)", labels(plan), want)
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// SELF-HEAL — stranded farm-utility debt is cleared before any new borrow.
+//
+// The Plan is ordered borrow(leg 2) … repay(leg 5) and the Runner aborts on the FIRST action error
+// (job.go:85-99), so a failure at exercise or sellHydx stops BETWEEN them and strands the borrow. CRE
+// holds no state and Evaluate is stateless, so before this guard nothing remembered the broken tick:
+// the next tick borrowed again on top, and the only repay in the keeper was the one inside the aborted
+// Plan. outstandingDebt() (FarmUtilityLoopModule.sol:291) is the state the chain already holds.
+
+func TestStrikeLoop_StrandedDebt_RepaysBeforeBorrowing(t *testing.T) {
+	r := baseReader()
+	r.debt = bigStr("12345000000") // 12,345 USDC stranded by an aborted tick
+
+	q := &fakeQuoter{priceUsdc: big.NewInt(20000), usdcPerHydx: bigStr("1000000"), shares: big.NewInt(1)}
+	plan, err := newSLJob(q).Evaluate(context.Background(), r)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	got := labels(plan)
+	if len(got) != 1 || got[0] != "repayStrandedDebt" {
+		t.Fatalf("expected a repay-ONLY plan, got %v", got)
+	}
+	// It must repay the LIVE debt, and it must not borrow.
+	for _, a := range plan.Actions {
+		if a.Label == "borrow" {
+			t.Fatal("borrowed while debt was outstanding — the ratchet this guard exists to stop")
+		}
+	}
+	want := append(chain.PackCall("repay(uint256)"), slEncUint(bigStr("12345000000"))...)
+	if string(plan.Actions[0].Data) != string(want) {
+		t.Fatalf("repay calldata mismatch:\n got %x\nwant %x", plan.Actions[0].Data, want)
+	}
+	if plan.Actions[0].To != slFarmUtility {
+		t.Fatalf("repay routed to %s, want farmUtility %s", plan.Actions[0].To.Hex(), slFarmUtility.Hex())
+	}
+}
+
+func TestStrikeLoop_FlatBook_RunsTheFullHarvest(t *testing.T) {
+	r := baseReader() // debt nil ⇒ 0
+	q := &fakeQuoter{priceUsdc: big.NewInt(20000), usdcPerHydx: bigStr("1000000"), shares: big.NewInt(1)}
+	plan, err := newSLJob(q).Evaluate(context.Background(), r)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	got := labels(plan)
+	if len(got) == 1 && got[0] == "repayStrandedDebt" {
+		t.Fatal("a flat book must NOT short-circuit into the repay-only plan")
+	}
+	if len(got) < 6 || got[1] != "borrow" || got[4] != "repay" {
+		t.Fatalf("expected the full ordered harvest, got %v", got)
 	}
 }
