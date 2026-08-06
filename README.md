@@ -39,8 +39,23 @@ BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/xxxxx ./contracts/script/boot
 
 Paste your own url from step 2 in place of the `https://...` value.
 
-The FIRST run downloads about 10 dependency repos and can take a while.
+The FIRST run downloads the 10 dependency repos below and can take a while.
 Runs after that take a couple of minutes.
+
+The script clones each one into `reference/` and pins it to a known-good
+commit, so you do not have to run these yourself. They are listed here so
+you know what is being downloaded (full manifest: `reference/MANIFEST.md`):
+
+- `git clone https://github.com/euler-xyz/ethereum-vault-connector.git reference/ethereum-vault-connector` (commit `b9d557a`)
+- `git clone https://github.com/euler-xyz/euler-vault-kit.git reference/euler-vault-kit` (commit `5b98b42`)
+- `git clone https://github.com/euler-xyz/euler-price-oracle.git reference/euler-price-oracle` (commit `abfbfc9`)
+- `git clone https://github.com/euler-xyz/euler-earn.git reference/euler-earn` (commit `b2fd6e6`)
+- `git clone https://github.com/euler-xyz/evk-periphery.git reference/evk-periphery` (commit `23ea8c3c`)
+- `git clone https://github.com/gnosisguild/zodiac-core.git reference/zodiac-core` (commit `6bf0d41`)
+- `git clone https://github.com/smartcontractkit/x402-cre-price-alerts.git reference/x402-cre-price-alerts` (commit `d582019`)
+- `git clone https://github.com/smartcontractkit/chainlink-ccip.git reference/chainlink-ccip` (commit `349cdba`)
+- `git clone https://github.com/smartcontractkit/chainlink-evm.git reference/chainlink-evm` (commit `fdf8945351`)
+- `git clone https://github.com/smartcontractkit/chainlink-local.git reference/chainlink-local` (commit `f8c0efe`)
 
 ### 4. What you get
 
